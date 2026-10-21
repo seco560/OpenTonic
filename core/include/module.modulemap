@@ -1,0 +1,4 @@
+module TonicCore {
+    umbrella header "tonic/tonic.h"
+    export *
+}

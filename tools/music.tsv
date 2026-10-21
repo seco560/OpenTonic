@@ -1,0 +1,46 @@
+# Level music for TonicViewer: <level><TAB><track file in files/out/audio/music>. Leave the track empty for silence.
+# Tracks (listen in Finder/QuickLook):
+# Matched to the official soundtrack by length and audio. Level pairings marked ? in docs/NOTES.md are inferred.
+#   Bnk_21_2.wav  371s  = North Plain
+#   Bnk_22_2.wav  31s
+#   Bnk_42_5.wav  449s  = Vegetable HQ
+#   Bnk_47_3.wav  374s  = Glacier Cocktail
+#   Bnk_50_2.wav  586s  = Doc's Cave
+#   Bnk_66_30.wav  196s
+#   Bnk_71_1.wav  30s
+#   Bnk_72_1.wav  30s
+#   Bnk_73_1.wav  30s
+#   Bnk_74_1.wav  527s  = Canyon
+#   Bnk_75_1.wav  30s
+#   Bnk_76_1.wav  283s  = Grögh HQ
+#   Bnk_77_1.wav  419s  = Pressure Cooker
+#   Bnk_78_1.wav  29s
+#   Bnk_79_1.wav  30s
+#   Bnk_8_6.wav  311s  = Pyramid
+#   Bnk_80_1.wav  200s  = Ski Slope
+#   Bnk_87_6.wav  30s
+#   Bnk_88_5.wav  30s
+#   Bnk_89_1.wav  139s  = Bonus (Crazy Town)
+#   Bnk_9_8.wav  367s  = South Plain
+menu	Bnk_66_30.wav
+bar	Bnk_47_3.wav
+BigBoss	Bnk_76_1.wav
+carota	Bnk_42_5.wav
+cavedoc	Bnk_50_2.wav
+cock01	Bnk_47_3.wav
+death	Bnk_21_2.wav
+Land	Bnk_21_2.wav
+LeCanyon	Bnk_74_1.wav
+mammyon	Bnk_21_2.wav
+marmite	Bnk_77_1.wav
+north	Bnk_21_2.wav
+outro	Bnk_21_2.wav
+pharmmap	Bnk_21_2.wav
+pyr_fou	Bnk_8_6.wav
+pyramide	Bnk_8_6.wav
+skymap	Bnk_21_2.wav
+SpyCarota	Bnk_21_2.wav
+spynorth	Bnk_21_2.wav
+sud0	Bnk_9_8.wav
+Totalski	Bnk_80_1.wav
+Transit	Bnk_21_2.wav

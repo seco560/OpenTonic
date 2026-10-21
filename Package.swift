@@ -1,26 +1,37 @@
 // swift-tools-version: 6.4
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
+// The game core is portable C (core/, see core/README.md); Swift is only the macOS platform layer.
+let coreWarnings: [CSetting] = [.unsafeFlags(["-Wall", "-Wextra", "-Wpedantic"])]
+
 let package = Package(
     name: "TonicViewer",
-    products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
+    platforms: [.macOS(.v14)],
+    targets: [
+        // Portable C11 core: .ttlv loader, collision, Ed's controller, animation sampling. No platform code.
+        .target(
+            name: "TonicCore",
+            path: "core",
+            exclude: ["tests", "Makefile", "README.md"],
+            sources: ["src"],
+            publicHeadersPath: "include",
+            cSettings: coreWarnings
+        ),
+        .executableTarget(
             name: "TonicViewer",
-            targets: ["TonicViewer"]
+            dependencies: ["TonicCore"],
+            path: "Sources/TonicViewer",
+            resources: [.copy("Shaders.metal")]
+        ),
+        // Headless checks of the core against converted levels: `swift run -c release CorePlayCheck ../out/ttlv`.
+        .executableTarget(
+            name: "CorePlayCheck",
+            dependencies: ["TonicCore"],
+            path: "core/tests",
+            sources: ["playcheck.c"],
+            cSettings: coreWarnings
         ),
     ],
-    targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
-        .target(
-            name: "TonicViewer",
-            swiftSettings: [
-                .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
-        ),
-
-    ]
+    cLanguageStandard: .c11
 )

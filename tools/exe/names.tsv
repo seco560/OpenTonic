@@ -1,0 +1,17 @@
+# Hand-assigned names for TonicTrouble.exe (unpacked dump, sha256 fea1140e...). addr<TAB>name<TAB>note
+# Applied after the automatic module names from modmap.py; these win.
+0040ee40	GAM_fn_vStartUp	engine startup; refs "Tonic Trouble", "StartUp", GAM\Engine.c
+0040d9e0	GAM_fn_vLoadFix	loads gamedata\world\levels\fix.ptx, Fix.snd, Fix.vgm
+0045b6d0	GAM_fn_vReadGameDsb	parses GameData\Game.dsb
+004873e0	CD_fn_vCheckAtStartup	calls CD_fn_bReadDiscToc, result ignored
+004874b0	CD_fn_vCheckAtFixLoad	calls CD_fn_bReadDiscToc, result ignored
+0048ed40	CD_fn_cGetDriveLetter	returns drive letter found via GetDriveTypeA/GetVolumeInformationA
+0048f020	CD_fn_lMciSend	mciSendCommandA on the open cdaudio device
+0048f040	CD_fn_hMciOpen	MCI_OPEN cdaudio on "<drive>:"
+0048f100	CD_fn_vMciClose	MCI_CLOSE
+0048f120	CD_fn_vMciSetTimeFormat	MCI_SET time format
+0048f160	CD_fn_lMciStatus	MCI_STATUS item
+0048f1b0	CD_fn_lMciTrackStatus	MCI_STATUS item for one track
+0048f2a0	CD_fn_bReadTocInternal	opens drive, reads track count/types/lengths, sums disc size (audio 2352 B/sector, data 2048)
+0048f440	CD_fn_bCloseDevice
+0048f460	CD_fn_bReadDiscToc	read TOC then close

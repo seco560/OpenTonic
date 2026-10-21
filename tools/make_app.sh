@@ -1,0 +1,61 @@
+#!/bin/sh
+# This is a fairly dodgy self-contained build script Claude whipped up that only uses bash commands to produce
+# a .app file. It forces a code sign that circumvents all the usual Apple privacy restrictions. For those reasons
+# this can NOT be considered a "production release" and must thus remain on the user's machine at all times.
+# This on top of the fact that you'd be redistributing copyrighted Ubisoft assets (textures and music mainly)
+# if you were posting this anywhere.
+
+# Needs: files/out/ttlv, files/out/Textures, files/out/Vignette, files/out/audio (music + music.tsv), files/out/icon (tools/make_icon.sh).
+# Usage (from the repo root): tools/make_app.sh [install dir, default ~/Applications]
+set -e
+DEST="${1:-$HOME/Applications}"
+APP="out/TonicViewer.app"
+(cd port && swift build -c release)
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/data"
+cp port/.build/release/TonicViewer "$APP/Contents/MacOS/TonicViewer"
+cp port/Sources/TonicViewer/Shaders.metal "$APP/Contents/Resources/"
+
+# Data keeps the out/ layout, so the .ttlv files' relative texture paths (../Textures/...) still resolve.
+R="$APP/Contents/Resources/data"
+cp -R out/ttlv out/Textures "$R/"
+mkdir -p "$R/Vignette" "$R/audio/music" "$R/icon"
+cp -R out/Vignette/Level "$R/Vignette/"
+cp out/icon/TonicViewer.png "$R/icon/"
+# Music: WAV -> AAC (about 10x smaller); the table is rewritten to the .m4a names.
+for w in out/audio/music/*.wav; do
+  ffmpeg -v error -y -i "$w" -c:a aac -b:a 128k "$R/audio/music/$(basename "$w" .wav).m4a"
+done
+sed 's/\.wav/.m4a/g' out/audio/music.tsv > "$R/audio/music.tsv"
+
+# Icon: PNG -> .icns
+ICONSET="out/icon/TonicViewer.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+for s in 16 32 128 256 512; do
+  sips -z $s $s out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/TonicViewer.icns"
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>TonicViewer</string>
+  <key>CFBundleDisplayName</key><string>Tonic Trouble Viewer</string>
+  <key>CFBundleIdentifier</key><string>local.retonictrouble.viewer</string>
+  <key>CFBundleExecutable</key><string>TonicViewer</string>
+  <key>CFBundleIconFile</key><string>TonicViewer</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+</dict></plist>
+PLIST
+
+codesign --force --deep -s - "$APP"
+mkdir -p "$DEST"
+rm -rf "$DEST/TonicViewer.app"
+cp -R "$APP" "$DEST/"
+echo "Installed $DEST/TonicViewer.app ($(du -sh "$DEST/TonicViewer.app" | cut -f1))"
