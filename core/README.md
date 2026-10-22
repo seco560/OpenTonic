@@ -1,8 +1,9 @@
 # TonicCore: the portable core
 
-Plain C11 library with the platform-independent part of the port: the `.ttlv` loader (v1-v5),
-world collision (uniform grid, raycast, closest point), Ed's play-mode controller and the
-animation sampling helpers. Every platform (macOS now, PS Vita and 3DS later) links the same code.
+Plain C11 library with the platform-independent part of the port: the `.ttlv` loader (v1-v8),
+world collision (uniform grid, raycast, closest point), Ed's play-mode controller, the
+animation sampling helpers, the AI interpreter (`tc_ai.h`: runs Ed's own scripts from a
+`.ttai`, see docs/NOTES.md "AI interpreter") and `tc_ed_ai.h`, which drives Ed's controller with it. Every platform (macOS now, PS Vita and 3DS later) links the same code.
 
 ## Layering rules
 - **Core = no platform code.** Only the C standard library and `<math.h>`: no OS, file, GPU, audio
@@ -25,11 +26,17 @@ animation sampling helpers. Every platform (macOS now, PS Vita and 3DS later) li
 4. **Input mapping:** each frame, turn pad/keys into a `tc_player_input` (camera-relative world XY
    move of length <= 1, run, jump held) and call `tc_player_step(&player, dt, &input)` on a
    `tc_player` created with `tc_player_init` over a `tc_collision` built from `level.collision`.
+   With Ed's AI instead: load the level's `.ttai` with `tc_ai_model_load`, `tc_ed_ai_init` over that
+   player, and each frame `tc_ed_ai_step(&ed, dt, buttons, stick_x, stick_y, camera_eye)` with
+   `1 << TC_AI_IN_*` bits (the game's own inputs: directions, SpeedUp, Jump, Action, Shoot, ...);
+   draw Ed's animation `"s<tc_ed_ai_anim>"` at frame `tc_ed_ai_frame` (`tc_ed_ai_loops`: wrap).
 
 ## Building
 - SwiftPM (macOS): target `TonicCore`, test `swift run -c release CorePlayCheck files/out/ttlv` from the repo root.
 - Any C compiler: `make` here builds `build/libtoniccore.a` and `build/playcheck` (`make check` runs
   it). Without make: `cc -std=c11 -O2 -Iinclude src/*.c tests/playcheck.c -lm -o playcheck`.
+  `make aicheck` runs Ed's AI headless on bar (`python3 -m tools.ttre level-ttai bar files/out/ttlv/bar.ttai`
+  first); `AI_TRACE=<frame>` prints the statements executed from that frame on.
   The test (not the library) uses POSIX `<dirent.h>` to list the level folder.
 
 ## Vita backend sketch (VitaSDK + vitaGL)

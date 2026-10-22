@@ -62,6 +62,10 @@ final class GameView: MTKView {
             updateTitle()
             return
         }
+        if event.keyCode == 34 {  // I: Ed's AI / simple controller
+            if !event.isARepeat, let r = renderer { r.toggleAI(); updateTitle() }
+            return
+        }
         if event.keyCode == 48 {  // Tab: play as Ed / free-fly
             if !event.isARepeat, let r = renderer { r.togglePlay(); updateTitle() }
             return
@@ -96,6 +100,7 @@ final class GameView: MTKView {
         if r.lightSetCount > 1 { s += ", lighting \(r.lightSet + 1)/\(r.lightSetCount)" }
         if r.fog != nil { s += r.fogEnabled ? ", fog on (G)" : ", fog off (G)" }
         if r.playing { s += "  ·  PLAYING as Ed (Tab: free-fly)" }
+        if r.playing, let p = r.player, p.hasAI { s += p.useAI ? "  ·  AI \(p.aiStatus) (I: simple controller)" : "  ·  simple controller (I: Ed's AI)" }
         w.title = base + s
     }
 
@@ -116,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var renderer: Renderer?
     private var gameView: GameView?
+    private var titleTimer: Timer?  // refreshes the AI's behaviour/state in the title while playing
     /// Default data, first that exists: inside TonicViewer.app (Contents/Resources/data/ttlv, built by
     /// tools/make_app.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
@@ -207,7 +213,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Field of view:  , narrower  ·  . wider
 
         Play as Ed:  the default; Tab toggles free-fly, fly somewhere and press Tab again to drop Ed there
-          Move:  W A S D, relative to the camera  ·  Run:  hold Shift  ·  Jump:  Space
+          Move:  W A S D, relative to the camera  ·  Jump:  Space
+          With Ed's AI (levels with a .ttai, the default; I switches to the simple controller):
+            Ed runs by default, hold Shift to walk  ·  E stick (Action)  ·  Q Shoot  ·  C Lateral
+          Simple controller:  hold Shift to run
           Camera:  arrow keys or mouse orbit around Ed
           (simple collision and physics, not the original game's)
 
@@ -246,6 +255,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let s = renderer!.stats
         window.title = "TonicViewer — \(url.deletingPathExtension().lastPathComponent)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(s.textures) textures (\(s.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(renderer!.player != nil ? "  ·  Tab: play as Ed" : "")"
         view.updateTitle()  // play mode is on from the start when the level has Ed
+        titleTimer?.invalidate()
+        titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in
+            MainActor.assumeIsolated {
+                if let v = view, let r = v.renderer, r.playing, r.player?.useAI == true { v.updateTitle() }
+            }
+        }
         print("Loaded \(url.lastPathComponent): \(s.meshes) meshes, \(s.persos) persos (\(s.parts) parts), \(s.triangles) triangles, \(s.textures) textures, \(s.missingTextures) missing")
     }
 

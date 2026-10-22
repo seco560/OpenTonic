@@ -22,9 +22,13 @@ cp -R files/out/ttlv files/out/Textures "$R/"
 mkdir -p "$R/Vignette" "$R/audio/music" "$R/icon"
 cp -R files/out/Vignette/Level "$R/Vignette/"
 cp files/out/icon/TonicViewer.png "$R/icon/"
-# Music: WAV -> AAC (about 10x smaller); the table is rewritten to the .m4a names.
+# Music: WAV -> AAC (about 10x smaller), tracks already in .m4a are copied; the table is rewritten to the .m4a names.
 for w in files/out/audio/music/*.wav; do
+  [ -e "$w" ] || continue
   ffmpeg -v error -y -i "$w" -c:a aac -b:a 128k "$R/audio/music/$(basename "$w" .wav).m4a"
+done
+for m in files/out/audio/music/*.m4a; do
+  [ -e "$m" ] && cp "$m" "$R/audio/music/"
 done
 sed 's/\.wav/.m4a/g' files/out/audio/music.tsv > "$R/audio/music.tsv"
 

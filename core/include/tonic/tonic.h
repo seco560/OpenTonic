@@ -7,4 +7,6 @@
 #include "tc_collision.h"
 #include "tc_player.h"
 #include "tc_anim.h"
+#include "tc_ai.h"
+#include "tc_ed_ai.h"
 #endif

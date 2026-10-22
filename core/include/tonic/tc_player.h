@@ -35,6 +35,7 @@ typedef struct tc_player {
     tc_vec3 velocity;
     float heading;         /* radians; Ed's local -Y (his front) points along (sin, -cos) */
     bool grounded;
+    bool against_wall;     /* a contact steeper than max_slope during the last substep */
     tc_vec3 start_position;
     float start_heading;
 
@@ -63,6 +64,10 @@ void tc_player_apply_floors(tc_player *p);
 /* Put Ed somewhere else (e.g. below the free-fly camera) with movement state reset. */
 void tc_player_teleport(tc_player *p, tc_vec3 position, float heading);
 void tc_player_step(tc_player *p, float dt, const tc_player_input *input);
+/* Physics only, for a driver that decides the motion itself (tc_ed_ai): the horizontal velocity is steered
+ * towards target_velocity with the usual ground/air acceleration, the heading is left alone, no jump input
+ * (set velocity.z yourself), gravity and collisions as in tc_player_step. No animation update. */
+void tc_player_drive(tc_player *p, float dt, tc_vec2 target_velocity);
 float tc_player_horizontal_speed(const tc_player *p);
 /* Ed -> world: translate to the feet, turn by heading (Z up). */
 tc_mat4 tc_player_model_matrix(const tc_player *p);

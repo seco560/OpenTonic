@@ -256,6 +256,26 @@ class Anim:
 ED_ANIMS = (('idle', 0, True), ('walk', 1, True), ('run', 10, True), ('jump', 39, False),
             ('jump_air', 43, True), ('fall', 44, True), ('land', 41, False))
 
+def forward_stride(anim):
+    """Units per animation frame Ed's feet cover when the animation walks forward (local -Y), else 0: the two
+    channels lowest at frame 0 are the feet; 2 x their mean Y range / frames, if both feet sweep mostly along Y
+    (range >= 0.6 and >= 2 x the X range). Sideways and backward cycles are not told apart yet (0 / forward).
+    Checked: run (state 10) 0.100 x 45 fps x the script's 222 % rate = 9.9 u/s, the speed matched by eye earlier."""
+    if anim.n_frames < 4:
+        return 0.0
+    poses = [anim.pose(f) for f in range(anim.n_frames)]
+    lows = sorted(range(len(poses[0])), key=lambda c: poses[0][c][1][11])[:2]
+    ys = []
+    for c in lows:
+        x = [q[c][1][3] for q in poses]
+        y = [q[c][1][7] for q in poses]
+        rx, ry = max(x) - min(x), max(y) - min(y)
+        if ry < 0.6 or ry < 2 * rx:
+            return 0.0
+        ys.append(ry)
+    return 2 * sum(ys) / len(ys) / len(poses)
+
+
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
 
 
@@ -640,10 +660,21 @@ class LevelData:
             st = self.lv.ptr(st)
         return out
 
-    def ed(self):
+    def state_anim_keys(self, states):
+        """Per state: the index of the first state sharing its A3D (states sharing one animation get the same key),
+        or -1 without an animation."""
+        first, keys = {}, []
+        for i, st in enumerate(states):
+            ar = self.lv.ptr(st, 0xC)
+            a3 = self.lv.ptr(ar, 0x28) if ar else None
+            keys.append(first.setdefault(a3, i) if a3 else -1)
+        return keys
+
+    def ed(self, state_anims=False):
         """The player: the first GPT perso-in-fix (family "NewEd" in all 21 levels, 369 states).
         Returns (Perso, start 3x4 world matrix, [(name, Anim, loop)]) for ED_ANIMS, with every
-        object those animations show loaded into perso.objects; None if absent."""
+        object those animations show loaded into perso.objects; None if absent. With state_anims, also every
+        distinct state animation, named "s<k>" (k = state_anim_keys), at the A3D's own speed, loop False."""
         if not self.perso_in_fix or not self.perso_in_fix[0][0]:
             return None
         loc = self.perso_in_fix[0][0]
@@ -660,6 +691,11 @@ class LevelData:
                 a = self.read_a3d(a3, self.un('B', states[i], 0x3B)[0])
                 self.load_objects(p, ol, {o for t in a.objects for o in t if o is not None})
                 anims.append((name, a, loop))
+        if state_anims:
+            for k in sorted(set(self.state_anim_keys(states)) - {-1}):
+                a = self.read_a3d(self.lv.ptr(self.lv.ptr(states[k], 0xC), 0x28))
+                self.load_objects(p, ol, {o for t in a.objects for o in t if o is not None})
+                anims.append((f's{k}', a, False))
         return p, self.fix_matrices.get(loc, p.world), anims
 
     def read_a3d(self, a3, state_speed=0):

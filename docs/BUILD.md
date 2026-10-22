@@ -24,11 +24,14 @@ Textures must exist before the levels are converted (the level files reference t
 mkdir -p files/out/ttlv
 for l in $(ls files/sources/GAMEDATA/WORLD/LEVELS | grep -v '\.'); do
   python3 -m tools.ttre level-ttlv "$l" "files/out/ttlv/$l.ttlv"
+  python3 -m tools.ttre level-ttai "$l" "files/out/ttlv/$l.ttai"   # Ed's AI (optional: without it, the simple controller)
 done
 ```
 Each line should end in `0 not found` (all textures resolved). Lightmapped levels (bar, death, PharmMap, pyr_fou,
 SpyCarota, spynorth) also get a `<level>_lightmap.png` atlas next to their .ttlv. The format is documented at the top of
-`tools/ttre/ttlv.py`; re-run this step whenever the exporter changes.
+`tools/ttre/ttlv.py`; re-run this step whenever the exporter changes. The .ttai (format in `tools/ttre/ai.py`) also
+writes `<level>_ai.txt` (node-indexed scripts, for debugging); .ttlv and .ttai of a
+level must come from the same exporter run (the .ttai points at the .ttlv's `s<k>` state animations).
 
 ## 5. Music (optional)
 `tools/music.tsv` maps levels to tracks named `Bnk_<bank>_<subsong>.wav` (one loop each):

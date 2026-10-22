@@ -1,5 +1,6 @@
 #include "tc_internal.h"
 #include "tonic/tc_player.h"
+#include <stddef.h>
 
 static const char *const anim_names[TC_ANIM_COUNT] = {"idle", "walk", "run", "jump", "jump_air", "fall", "land"};
 
@@ -20,6 +21,7 @@ void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float head
     p->start_position = start;
     p->start_heading = heading;
     p->position = tc_v3_add(start, tc_v3(0, 0, 0.3f)); /* GPT placements sit a little into the floor */
+    p->against_wall = false;
     p->heading = heading;
     reset_motion(p);
     // Speeds are guesswork: the AI sets them, not the ID cards.
@@ -100,6 +102,7 @@ static void resolve_tri(const tc_tri *t, void *user) {
         p->ground_grip = fminf(p->ground_grip, t->floor.grip);
     } else {
         float vn;
+        p->against_wall = true;
         p->position = tc_v3_add(p->position, tc_v3_scale(n, pen));
         vn = tc_v3_dot(p->velocity, n);
         if (vn < 0) p->velocity = tc_v3_sub(p->velocity, tc_v3_scale(n, vn)); /* slide along walls */
@@ -128,15 +131,15 @@ static void resolve(tc_player *p) {
     }
 }
 
-static void substep(tc_player *p, float h, const tc_player_input *in, bool jump) {
-    tc_vec2 move = in->move, target, vxy, dv;
-    float accel, dl, mlen = tc_v2_length(move), plen;
+/* One fixed step: steer the horizontal velocity towards target, turn towards *face (NULL: keep the heading),
+ * jump, gravity, then move in pieces and resolve contacts. */
+static void substep(tc_player *p, float h, tc_vec2 target, const tc_vec2 *face, bool jump) {
+    tc_vec2 vxy, dv;
+    float accel, dl, plen;
     bool was_grounded;
     tc_vec3 d;
     int pieces, i;
 
-    if (mlen > 1) { move.x /= mlen; move.y /= mlen; mlen = tc_v2_length(move); }
-    target = tc_v2(move.x * (in->run ? p->run_speed : p->walk_speed), move.y * (in->run ? p->run_speed : p->walk_speed));
     vxy = tc_v2(p->velocity.x, p->velocity.y);
     accel = p->grounded ? 42.0f : 14.0f;
     if (p->grounded && p->use_floor_grip && p->ground_grip < 1) {
@@ -150,8 +153,8 @@ static void substep(tc_player *p, float h, const tc_player_input *in, bool jump)
     else { vxy.x += dv.x; vxy.y += dv.y; }
     p->velocity.x = vxy.x;
     p->velocity.y = vxy.y;
-    if (mlen > 0.05f) {
-        float want = atan2f(move.x, -move.y);
+    if (face && tc_v2_length(*face) > 0.05f) {
+        float want = atan2f(face->x, -face->y);
         float dh = fmodf(want - p->heading, 2 * TC_PI);
         if (dh > TC_PI) dh -= 2 * TC_PI;
         else if (dh < -TC_PI) dh += 2 * TC_PI;
@@ -173,6 +176,7 @@ static void substep(tc_player *p, float h, const tc_player_input *in, bool jump)
     plen = ceilf(tc_v3_length(d) / (p->radius * 0.5f));
     pieces = plen > 1 ? (plen < 1e6f ? (int)plen : 1000000) : 1;
     p->grounded = false;
+    p->against_wall = false;
     p->ground_grip = 1;
     for (i = 0; i < pieces; i++) {
         p->position = tc_v3_add(p->position, tc_v3_div(d, (float)pieces));
@@ -220,15 +224,30 @@ void tc_player_step(tc_player *p, float dt, const tc_player_input *input) {
     bool jump_pressed = input->jump && !p->jump_held;
     bool want_jump = jump_pressed;
     float remaining = fminf(dt, 0.25f);
+    tc_vec2 move = input->move, target;
+    float mlen = tc_v2_length(move), speed;
     p->jump_held = input->jump;
+    if (mlen > 1) { move.x /= mlen; move.y /= mlen; }
+    speed = input->run ? p->run_speed : p->walk_speed;
+    target = tc_v2(move.x * speed, move.y * speed);
     while (remaining > 1e-6f) {
         float h = fminf(remaining, 1.0f / 120);
-        substep(p, h, input, want_jump);
+        substep(p, h, target, &move, want_jump);
         want_jump = false;
         remaining -= h;
     }
     if (p->position.z < p->world->bounds_min.z - 20) tc_player_respawn(p); /* fell out of the level */
     update_animation(p, dt, input->run);
+}
+
+void tc_player_drive(tc_player *p, float dt, tc_vec2 target_velocity) {
+    float remaining = fminf(dt, 0.25f);
+    while (remaining > 1e-6f) {
+        float h = fminf(remaining, 1.0f / 120);
+        substep(p, h, target_velocity, NULL, false);
+        remaining -= h;
+    }
+    if (p->position.z < p->world->bounds_min.z - 20) tc_player_respawn(p);
 }
 
 tc_mat4 tc_player_model_matrix(const tc_player *p) {

@@ -102,6 +102,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var edStaticPerso = -1
     private var edClip = ""
     private var edPhase: Float = 0  // samples into the current clip
+    private var edLoop = false      // AI clips: whether the playing state loops (blend last -> first frame)
     var orbitDistance: Float = 4.5
     private var lastTime: CFTimeInterval?
 
@@ -224,7 +225,8 @@ final class Renderer: NSObject, MTKViewDelegate {
                 guard a.pointee.sample_count > 0, let name = a.pointee.name else { continue }
                 edAnimations[String(cString: name)] = UnsafePointer(a)
             }
-            if edAnimations["idle"] != nil, let p = PlaySession(level: level) {
+            let ai = AIModel(url: level.url.deletingPathExtension().appendingPathExtension("ttai"))
+            if edAnimations["idle"] != nil, let p = PlaySession(level: level, ai: ai) {
                 for (name, a) in edAnimations where a.pointee.loop == 0 {
                     p.setClipLength(name, Float(a.pointee.sample_count) / max(a.pointee.sample_rate, 1e-3))
                 }
@@ -258,6 +260,14 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// Tab: enter/leave play mode. Entering puts the orbit camera behind Ed; leaving keeps the camera where it is.
     /// Re-entering after flying elsewhere drops Ed onto the ground below the camera, facing the view direction.
+    /// I: Ed's own AI <-> the simple controller (play mode, levels with a .ttai).
+    func toggleAI() {
+        guard let p = player, p.hasAI else { return }
+        p.useAI.toggle()
+        edClip = ""
+        edPhase = 0
+    }
+
     func togglePlay() {
         guard let p = player else { return }
         playing.toggle()
@@ -276,15 +286,27 @@ final class Renderer: NSObject, MTKViewDelegate {
     private func updatePlay(dt: Float) {
         guard let p = player else { return }
         input.look(&camera, dt: dt)
-        p.step(dt: dt, move: input.moveDirection(yaw: camera.yaw), run: input.held.contains(.fast), jump: input.held.contains(.jump))
+        if p.useAI {
+            // Ed's own scripts; they see last frame's camera eye (it makes the direction keys camera-relative).
+            p.stepAI(dt: paused ? 0 : dt, inputs: input.aiInputs, camera: camera.position)
+        } else {
+            p.step(dt: dt, move: input.moveDirection(yaw: camera.yaw), run: input.held.contains(.fast), jump: input.held.contains(.jump))
+        }
         // Third-person orbit around Ed's chest; pulled in when the level is in the way.
         let target = p.position + SIMD3(0, 0, 1.1), back = -camera.forward
         var d = orbitDistance
         if let hit = p.raycast(from: target, dir: back, maxDistance: d + 0.3) { d = max(0.4, hit - 0.3) }
         camera.position = target + back * d
 
+        if p.useAI, let a = p.aiAnimation {  // the AI's state clock picks the frame (one sample per frame)
+            edClip = edAnimations[a.name] != nil ? a.name : "idle"
+            edPhase = a.frame
+            edLoop = a.loops
+            return
+        }
         // Clip from the movement state; walk/run play at the rate that matches Ed's ground speed.
         if p.animation != edClip { edClip = p.animation; edPhase = 0 }
+        edLoop = (edAnimations[edClip] ?? edAnimations["idle"])?.pointee.loop != 0
         guard let a = (edAnimations[edClip] ?? edAnimations["idle"])?.pointee else { return }
         let rate = a.ground_speed > 0 ? a.sample_rate * p.horizontalSpeed / a.ground_speed : a.sample_rate
         edPhase = tc_phase_advance(edPhase, dt * (rate / 4) * (paused ? 0 : animationSpeed), UInt32(a.sample_count), a.loop != 0)
@@ -350,7 +372,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         if playing, let pl = player, let a = (edAnimations[edClip] ?? edAnimations["idle"])?.pointee {
-            let s = tc_sample_at_phase(edPhase, UInt32(a.sample_count), a.loop != 0)
+            let s = tc_sample_at_phase(edPhase, UInt32(a.sample_count), edLoop)
             let nch = Int(a.channel_count), model = pl.modelMatrix
             for ch in 0..<nch {
                 let obj = a.shown![Int(s.s0) * nch + ch]

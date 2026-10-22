@@ -4,6 +4,8 @@
   python3 -m tools.ttre cnt-extract ARCHIVE OUTDIR [--png]
   python3 -m tools.ttre level-info LEVEL
   python3 -m tools.ttre level-export LEVEL OUTDIR [--no-preview] [--no-persos]
+  python3 -m tools.ttre level-ai LEVEL OUT.txt   (Ed's AI behaviours as indented trees, plus primitive usage counts)
+  python3 -m tools.ttre level-ttai LEVEL OUT.ttai   (Ed's AI for the core's interpreter; format: see tools/ttre/ai.py)
   python3 -m tools.ttre level-ttlv LEVEL OUT.ttlv [--no-persos]   (for TonicViewer; current format: see tools/ttre/ttlv.py)
 Level commands read from GAMEDATA/WORLD/LEVELS textures from files/out/Textures (so, generate textures before the levels)
 """
@@ -31,11 +33,33 @@ def level_cmd(cmd, argv):
     with_persos = '--no-persos' not in argv
     for w in data.warnings:
         print('warning:', w, file=sys.stderr)
+    if cmd == 'level-ai':
+        import collections
+        from . import ai
+        a = ai.AI(data, data.perso_in_fix[0][0])
+        ai.dump(a, argv[1])
+        use = collections.Counter((ai.KINDS[n.type], n.param) for n in a.nodes() if n.type in ai.KINDS)
+        with open(os.path.splitext(argv[1])[0] + '_usage.tsv', 'w') as f:
+            for (kind, idx), c in sorted(use.items()):
+                f.write(f'{kind}\t{idx}\t{c}\n')
+        print(f'wrote {argv[1]}: {sum(1 for b in a.behaviours if not b.reflex)} behaviours, '
+              f'{sum(1 for b in a.behaviours if b.reflex)} reflexes, {sum(1 for _ in a.nodes())} nodes; '
+              f'{len(use)} distinct primitives')
+    if cmd == 'level-ttai':
+        from . import ai
+        r = ai.export(ai.AI(data, data.perso_in_fix[0][0]), argv[1])
+        print(f"wrote {argv[1]} ({r['bytes']} bytes): {r['nodes']} nodes, {r['scripts']} scripts, behaviours "
+              f"{r['behaviours']} (initial {r['initial']}), {r['dsgvars']} dsgvars, other persos {r['persos']}, {r['states']} states "
+              f"(initial {r['initial_state']}, {r['transitions']} transitions; moving {r['moving']}), {len(r['buttons'])} buttons, "
+              f"strings {r['strings']}, unresolved {r['unresolved']}")
+        for off, mask, kind, lo, hi in r['buttons']:
+            print(f'  button {off:#x}: {[n for i, n in enumerate(ai.INPUTS) if mask >> i & 1]} analog {kind} [{lo}, {hi}]')
     if cmd == 'level-ttlv':
         from . import ttlv
         nm, ntri, ntex, missing, npe, npa, ncol, ed = ttlv.write(data, argv[1], persos=with_persos)
         print(f'wrote {argv[1]}: {nm} static meshes, {ntri} triangles, {ntex} textures, {len(missing)} not found; '
-              f'{npe} animated persos, {npa} parts; {ncol} collision triangles; Ed anims: {", ".join(ed) or "none"}')
+              f'{npe} animated persos, {npa} parts; {ncol} collision triangles; Ed anims: {", ".join(n for n in ed if not n[1:].isdigit()) or "none"}'
+              f' + {sum(n[1:].isdigit() for n in ed)} state animations')
     if cmd == 'level-export':
         out = argv[1]
         nm, missing = export.write_obj(data, out)

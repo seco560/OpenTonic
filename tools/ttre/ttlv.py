@@ -27,6 +27,9 @@ section, so headless tools can seek to it) and a play section after the perso se
       playback by its move speed / ground_speed so the feet don't slide),
       n_samples x n_channels x f32[12] channel -> Ed, n_samples x n_channels x u16 object (0xFFFF none) }
   Parts are keyed by object only: channel numbering differs between Ed's animations.
+  After the 7 named clips come Ed's state animations for the AI (no format change): one per distinct A3D, named
+  "s<k>" (k = the first state using it; .ttai states point at it), one sample per animation frame, sample_rate =
+  the A3D's own frames per second (no ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
 Version 4 = v3 plus u32 light_set_count right after the version, and 44-byte vertices carrying
 3 baked sets (rgba8 each, alpha 0 = set absent: the viewer falls back to set 0). Number keys pick
 the set. Version 3 (v2 = the same with 32-byte vertices, no colour; v1 = v2 without scroll/anim in the
@@ -278,7 +281,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     play += struct.pack('<HH', len(table), 0) + b''.join(struct.pack('<2f', *f) for f in table)
     play += struct.pack(f'<{len(floors)}H', *(0xFFFF if f is None else index[f] for f in floors))
     play += b'\0' * (-len(floors) * 2 % 4)
-    ed = data.ed()
+    ed = data.ed(state_anims=True)
     if ed:
         p, start, anims = ed
         parts = []
@@ -289,9 +292,10 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
             parts += [struct.pack('<2H', obj, 0) + mm['surface'] + geometry(mm) for mm in pm.values()]
         recs = []
         for name, a, loop in anims:
-            k = max(1, round(60 / a.fps)) if a.n_frames > 1 else 1
+            state_anim = name.startswith('s') and name[1:].isdigit()
+            k = max(1, round(60 / a.fps)) if a.n_frames > 1 and not state_anim else 1
             poses = [a.pose(s / k) for s in range(a.n_frames * k)]
-            rate = a.fps * k * ANIM_TIME_SCALE
+            rate = a.fps * k * (1 if state_anim else ANIM_TIME_SCALE)
             b = name.encode()
             recs.append(struct.pack('<H', len(b)) + b + struct.pack('<2Hf2BHf', len(a.chans), len(poses), rate, int(loop), 0, 0,
                                                                     ground_speed(poses, rate) if name in ('walk', 'run') else 0.0)

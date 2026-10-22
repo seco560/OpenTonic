@@ -1,0 +1,197 @@
+# Tonic Trouble AI primitive names: <kind> TAB <index> TAB <name> TAB <exe implementation> TAB <notes>
+# kinds: KW keyword, COND condition, OP operator, FUNC function, PROC procedure, META meta-action, FIELD field.
+# Tables: PROC 0x4E5A48 (8 B), KW 0x4E6378 (4 B), COND 0x4E63A0 (8 B), FUNC 0x4E6718 (8 B), OP 0x4E6C40 (4 B),
+# FIELD 0x4E6CB0 (16 B). Handler(perso, node_after_self, result*): node_after_self[-8] = own index.
+KW	0	If	0x497400	evaluates the condition, skips the Then branch when false
+KW	1	Then	0x497380
+KW	2	Else	0x4973a0
+KW	4	Me	0x497220	the perso itself (value type 0xC = perso)
+COND	0	And	0x497bf0	short-circuit
+COND	1	Or	0x497bf0	short-circuit
+COND	2	Not	0x497bf0
+COND	3	Equal	0x497970	int or float (types 6 int, 8 float)
+COND	4	NotEqual	0x497970
+COND	5	Less	0x497970
+COND	6	Greater	0x497970
+COND	7	LessOrEqual	0x497970
+COND	8	GreaterOrEqual	0x497970
+COND	9	ButtonHeld	0x497c90	input entry +0x10 = frame counter: > 0 held, 1 just pressed, < 0 released, -1 just released; +0x14 analog
+COND	10	ButtonJustPressed	0x497c90	counter == 1
+COND	11	ButtonNotHeld	0x497c90	counter < 0
+COND	12	ButtonJustReleased	0x497c90	counter == -1
+COND	55	TimeElapsed	0x498970	(stored ms, duration): |now - stored| >= duration
+OP	0	Add	0x4905f0
+OP	1	Sub	0x4905f0
+OP	2	Mul	0x4905f0
+OP	3	Div	0x4905f0
+OP	4	Neg	0x4905f0	unary minus
+OP	11	Assign	0x490b80	dsgvar/field := value
+OP	12	Dot	0x490a70	perso.dsgvar / perso.field
+OP	13	VecX	0x490b30
+OP	14	VecY	0x490b30
+OP	15	VecZ	0x490b30
+FUNC	43	GetTime	0x49b040	ms clock DAT_008bd090
+FUNC	44	TimeSince?	0x49b040
+FUNC	49	ButtonAnalog	0x49b200	FUN_0044a6e0(button) -> float
+PROC	120	HideChannel?	0x48a510	sets channel flag 0x800000 (arg = channel, node type 33)
+PROC	121	ShowChannel?	0x48a510	clears channel flag 0x800000
+PROC	203	Show?	0x48c1c0	clears display flag 8
+PROC	204	Hide?	0x48c1c0	sets display flag 8
+PROC	205	SetTransparency	0x48c1c0	0..255
+PROC	239	ChangeBehaviour	0x48b8a0	normal behaviour (arg = behaviour ref, node type 32)
+PROC	240	ChangeReflex	0x48b900	reflex behaviour
+PROC	249	ChangeState	0x48c010	GAM_00437260: honours the family's transition (goes through its intermediate state) and prohibited lists, then plays the anim; on refusal AI_0048e690(2)
+COND	31	OnGround	0x498370	dynamics report +0x18 & 1 (contact classes from the mechanics ID card)
+COND	32	AgainstWall	0x498370	& 4
+COND	33	NoContact	0x498370	report == 0 (airborne)
+COND	34	OnSteepSlope	0x498370	& 2
+COND	35	Overhang?	0x498370	& 8
+COND	36	Ceiling?	0x498370	& 0x10
+COND	37	ReportFlag10000	0x498370	& 0x10000
+COND	38	ReportOnly20	0x498370	== 0x20
+COND	44	GroundMaterialIs	0x4985e0	(mask) against the ground contact's material (+0x8C)
+COND	45	WallMaterialIs	0x4985e0	(mask) against the wall contact (+0x108)
+COND	46	NoContactMaterialIs	0x4985e0
+COND	47	SlopeMaterialIs	0x4985e0
+COND	56	InBehaviour	0x498bb0	(perso, behaviour ref)
+COND	57	CanChangeState	0x498bb0	GAM_00437600: already there, or allowed by the transition/prohibited tables
+COND	58	InState	0x498bb0	GAM_00437680: current state == arg
+COND	61	SpeedAbove?	0x498bb0	arg^2 > DAT_008bc744
+COND	62	LevelIs	0x498bb0	strcmpi(arg string, current level name); node type 20 = string
+COND	65	IsValid	0x498af0	object/perso reference is non-null (65-68)
+COND	90	GlobalFlag?	0x4991d0	func_0x00419680(mask), masks 256/512 seen
+PROC	38	SetMoveVectorAndExtra	0x489210	dynamics proposal (AI_00491e00): [1..3] = vector, [0x11] = scalar, [0x12..0x14] = vector
+PROC	39	SetProposal18	0x489210	proposal [0x18] (Ed: 2.5 / 4 / 2)
+PROC	40	SetProposalB	0x489210	proposal [0xB] (Ed: 3.25 / 4 / 2)
+PROC	41	ProposalVecA	0x489210	AI_00488070(perso, vector)
+PROC	42	ProposalVecB	0x489210	AI_004891a0(perso, v1, v2)
+PROC	43	SetSpeed	0x489210	proposal [10]
+PROC	44	AddSpeed	0x489210	proposal [10] +=
+PROC	45	MulSpeed	0x489210	proposal [10] *=
+PROC	46	ProposalVecC	0x489210	AI_004880d0
+PROC	47	ProposalVecD	0x489210	AI_004881d0
+PROC	48	SetMoveDirection	0x489210	normalises the vector into [7..9], its length into [10] (zero vector: speed 0)
+PROC	49	SetProposal0	0x489210	[0]
+PROC	50	SetProposalVec0	0x489210	[1..3] = vector, [0] = scalar
+PROC	245	TurnBy	0x48bd50	degrees (x DAT_004d2cdc)
+PROC	246	TurnBySpeed	0x48bd50	degrees per second (divided by the frame time)
+PROC	247	TurnTowardPoint	0x48be20	(perso, x, y, z)
+PROC	248	TurnTowardPerso?	0x48be20
+COND	30	PathBlocked?	0x4982e0	GAM_ZdxStuff_00420df0(perso, 1, a, vector) == 0: collision probe
+FUNC	0	GetPosition	0x49a140	target perso's position (vector, value type 22)
+FUNC	1	AngleTo?	0x49a140
+FUNC	3	PositionOf?	0x49a140	(object) -> vector
+FUNC	21	ToReal	0x49a770
+FUNC	22	ToInt	0x49a770
+FUNC	23	SinDeg	0x49a770
+FUNC	24	CosDeg	0x49a770
+FUNC	25	Square	0x49a770
+FUNC	26	Sqrt	0x49a770
+FUNC	27	RandomInt	0x49a770	(min, max) FUN_00450070
+FUNC	28	RandomReal	0x49a770	(min, max) FUN_004500c0; Ed's random idles
+FUNC	29	Min	0x49a770
+FUNC	30	Max	0x49a770
+FUNC	31	DegToRad	0x49a770
+FUNC	32	RadToDeg	0x49a770
+FUNC	33	Abs	0x49a770	case 0x21: x <= 0 ? -x : x
+FUNC	51	EnvHeight?	0x49b350	dynamics +0x2E0 (set from the mechanics environment lookup; water level?)
+FUNC	52	EnvHeightAbove?	0x49b350	+0x2E0 + own z
+FUNC	50	FindPerso?	0x49b350	(perso, ...) via GAM_Always_004259a0
+FUNC	88	GetSpeed	0x49b610	|velocity| (report +0x1AC..+0x1B4)
+FUNC	98	VecLength	0x49ab10
+FUNC	99	VecNormalize	0x49ab10
+FUNC	100	LocalToGlobalVec	0x49ab10	perso matrix
+FUNC	101	GlobalToLocalVec	0x49ab10
+FUNC	104	Report234	0x49b880	dynamics report float +0x234 (compared with 255: fall/air time?)
+PROC	32	DynamicsOn?	0x488cd0	func_0x00431ff0(dynamics)
+PROC	33	DynamicsOff?	0x488cd0	func_0x00432000(dynamics)
+PROC	34	StopMotion	0x488cd0	zeroes the dynamics speeds (+0x38..+0x50, +0x25C..+0x274)
+PROC	51	SetMechMode23	0x488f20	AI_004920a0(perso, dynamics, mode): mode indexes the 26-slot handler table of GAM_0042a7e0
+PROC	52	SetMechMode12	0x488f20	Ed: before SetMoveDirection
+PROC	53	SetMechMode20	0x488f20
+PROC	54	SetMechMode3	0x488f20	Ed: next to the speed setup (PROC_39/40)
+PROC	55	SetMechMode4	0x488f20
+PROC	56	SetMechMode1	0x488f20
+PROC	57	SetMechMode2	0x488f20
+PROC	58	SetMechMode10Value	0x488f20	proposal [0] = value, mode 10 (254 too)
+PROC	59	SetMechMode21Vec	0x488f20	proposal [1..3] = vector, mode 21
+PROC	60	SetMechMode6	0x488f20
+PROC	61	SetMechMode7	0x488f20
+PROC	62	SetMechMode8	0x488f20
+PROC	63	SetMechMode21	0x488f20
+PROC	64	SetMechMode19	0x488f20
+PROC	65	SetMechMode22	0x488f20
+PROC	254	SetMechMode10Value	0x488f20	same case as 58 (Ed: 45000 / 0)
+PROC	105	ResetChannelTransform?	0x48a0c0	0x69: clears channel overrides (FLT_MAX markers)
+PROC	106	ResetChannel?	0x48a0c0	0x6a
+PROC	107	FreezeChannelPosition?	0x48a0c0	0x6b
+PROC	108	RandomChannelRotation?	0x48a0c0	0x6c (random 0..2pi)
+PROC	145	PlaySound3D	0x48af90	SND_sound3d_00404db0(perso, bank, event)
+PROC	146	PlaySound3DOther	0x48af90
+PROC	147	PlaySoundGlobal	0x48af90
+PROC	148	PlaySoundGlobal2	0x48af90
+OP	5	AddAssign	0x490b80	+= (cases 5/9 add, 6/10 sub, 7 mul, 8 div)
+OP	6	SubAssign	0x490b80
+OP	7	MulAssign	0x490b80
+OP	8	DivAssign	0x490b80
+OP	9	Increment?	0x490b80
+OP	10	Decrement?	0x490b80
+OP	16	VecAdd	0x4907b0
+OP	17	VecSub	0x4907b0
+OP	18	VecScale	0x4907b0	vector * scalar
+OP	19	VecDiv	0x4907b0
+OP	20	VecNeg	0x4907b0
+FIELD	0	Position	0x4a66d0	table 0x4E6FA0 = 12 bytes {value type, getter, setter}
+FIELD	1	FacingDirection	0x4a6720	normalised (0,-1,0) in world space
+FIELD	2	Velocity	0x4a6820	report +0x1AC
+FIELD	4	DynAxis0	0x4a68e0	GAM_00431e30(dynamics); Ed sets it to orient himself
+FIELD	5	DynAxis1	0x4a6930	GAM_00431e40
+FIELD	6	DynAxis2	0x4a6980	GAM_00431e50
+FIELD	13	Float13	0x4a6650	GAM_0041ed30(perso) (float)
+FIELD	14	Float14	0x4a6690	GAM_0041ed60(perso) (float)
+META	4	ChangeStateAndWait	0x49ef20	table 0x4E6CB0 = 16 bytes {start, per-frame continuation, packed signature, 0}; continuation 0x49ef70 returns 4 while running
+META	11	SpawnInState?	0x49f190	signature "PAV": spawn/attach an object and change its state
+META	12	ChangeStateByDirection	0x49f310	"PVAA": state 2 or 3 depending on the side of a vector
+META	13	ChangeStateBySpeed	0x49f750	speed thresholds -> one of two states (not used by Ed)
+META	19	TurnTowardOverFrames	0x4a0460	"L": (target, frames)
+META	21	GoToWaypoint?	0x49fc50	"W"
+META	40	RotateChannelToward	0x49d730	"MVV"
+PROC	0	GameAction0	0x488530	GAM_Objinit_00419e50 (0-3: global game actions)
+PROC	2	GameAction2	0x488530	GAM_00429070
+PROC	5	ActivatePerso?	0x488580	GAM_Objinit_004199f0
+PROC	7	ChangeLevel	0x488580	GAM_Basic_004105f0(level name string)
+PROC	9	Proc9	0x488580	AI_0048f490(arg); AI_0048f4b0(1)
+PROC	10	Proc10	0x488580	GAM_0041ec90(perso object)
+PROC	25	ClearPersoFlag10000	0x488580
+PROC	26	SetPersoFlag10000	0x488580
+PROC	27	SetPositionFrom?	0x488aa0	AI_00488010(perso, a, b)
+PROC	79	Proc79	0x4899e0	0x4D-0x4F: GAM_00437a00/a10/a30
+PROC	236	Nop	0x495df0
+PROC	244	JumpBallistic	0x48bbe0	(vector, height): impulse and mechanics slot 9
+DSGTYPE	0	DsgVarTypes	0x4e5910	table: 12 bytes {value type, getter, setter} per dsgvar type (1 char, 2 byte?, 3 ubyte, 5 ushort, 6/7 int, 0x19 perso ref, 0x23 ...)
+COND	53	ModelNameIs?	0x4988c0	0x35: func_0x0048fd50(string, perso model name)
+COND	54	IsEmpty?	0x4988c0	0x36: *arg == 0 (Ed: on dsgvars 93/97)
+COND	59	TouchingObject	0x498bb0	0x3B: report non-zero and FUN_004978d0(perso, object)
+COND	63	GameState63	0x498bb0	GAM_004290a0()
+COND	64	GameState64	0x498bb0	GAM_00429130()
+COND	69	PersoStatus69	0x4989e0	FUN_00497690
+COND	70	PersoStatus70	0x4989e0	FUN_004976f0
+COND	71	PersoStatus71	0x4989e0	FUN_00497770
+COND	72	PersoStatus72	0x4989e0	FUN_004977b0
+COND	73	ZoneTest	0x4989e0	FUN_004977f0: GAM_004378a0 zone queries (type 2)
+COND	74	NotInAnyZone	0x4989e0	FUN_00497840: no zone (types 0-6) reports 1
+FUNC	34	Counter34?	0x49ad30	main actor: GAM_00419490(); others: 0x4CE.. table (hit points?)
+FUNC	37	Counter37?	0x49ad30
+FUNC	91	Report2BC	0x49b610	dynamics +0x2BC
+FUNC	92	Report2C0	0x49b610	dynamics +0x2C0
+PROC	66	SetCounter66?	0x489590	FUN_004cebf0(perso, value) (same 0x4CE.. table as FUNC_34)
+PROC	70	SetCounter70?	0x489590	AI_00489790 -> FUN_004cecb0
+PROC	71	SetCounter71?	0x489590	AI_004896d0 -> GAM_00423ac0
+PROC	80	CollectInZone80	0x489a70	GAM_ZdxStuff_00420580 into a list
+PROC	84	CollectNearby	0x489a70	0x54: GAM_ZdxStuff_0041fa70(perso, 0, a, list, b)
+PROC	85	CollectNearby85	0x489a70	0x55
+PROC	86	CollectNearby86	0x489a70	0x56: func_0x0041fff0
+PROC	154	ShowText?	0x48af30	0x9A
+PROC	155	ClearText	0x48af30	GAM_00418cb0(slot 0..19)
+PROC	291	Mode291	0x48cc20	0x123: func_0x0042cf00(0, perso, n) + GAM_00414xxx per n (0-3); camera/inventory mode?
+PROC	292	Mode292	0x48cc20	0x124: func_0x0042cf00(1, perso, n) (0-2)

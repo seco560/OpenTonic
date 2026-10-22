@@ -91,34 +91,66 @@
 - **Avoid (clean room):** the 2022 Rayman 2 DS source leak.
 
 ## Next session: start here
-**State (end of session 1, 2026-10-19).** The user tested every feature; the portable-core move changed nothing visible.
-- **Data:** CNT/GF textures, encrypted SNA/RTB/GPT/PTX level snapshots, static geometry, persos with animations,
-  baked radiosity (3 sets in sud0/Land), texture scroll and flipbooks, collision (= visual mesh), Ed's 7 animations,
-  music (vgmstream; level table in tools/music.tsv). Exe: unpacked dump analysed, module map, CD check understood.
-- **Runtime:** `port/core` (C11, portable: loader, collision, Ed controller, anim sampling) plus a thin macOS layer
-  `port/Sources/TonicViewer` (Swift/AppKit/Metal/AVFoundation): level picker with music, fly/play modes, lighting
-  sets, gamma, FOV, animation speed, help (⌘/).
-- **Rebuild from scratch:**
-  1. `python3 -m tools.ttre cnt-extract …Textures.cnt out/Textures --png` (and Vignette.cnt → out/Vignette)
-  2. level-ttlv for every level (loop in the "Commands" history; see tools/ttre/__main__.py)
-  3. `tools/make_icon.sh`; extract the music (see Audio); `cp tools/music.tsv out/audio/`
-  4. `cd port && swift build -c release`
-- **Rules:** the user runs the viewer/game (never launch them); game logic goes in port/core only (C11, no platform
-  code); never commit game data; clean room (no leaked R2 source).
+**State (end of session 5, 2026-10-22).** Ed is driven by **his own AI scripts** in the viewer (default when a level has
+a .ttai; I switches to the simple controller). The user tested it: "playing pretend Tonic Trouble". Idle with random
+idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/air/land, turning, the stick attack
+(E) all come from the game's behaviours; only the physics is ours (tc_player) with hand-tuned speeds.
+- **Pipeline:** docs/BUILD.md (textures, vignettes, then per level `level-ttlv` + `level-ttai`, icon, music, app via
+  `tools/make_app.sh`). The .ttlv and .ttai of a level must come from the same exporter run.
+- **Code map:** core/ = portable C11 (tc_level loader, tc_collision, tc_player physics, tc_anim, **tc_ai** interpreter,
+  **tc_ed_ai** AI + physics driver); Sources/TonicViewer = macOS layer. Tests: `make -C core check` (playcheck, must
+  stay output-identical) and `make -C core aicheck` (Ed's AI headless on bar's collision; AI_TRACE=<frame>).
+  Python: tools/ttre (ai.py = scripts, buttons, .ttai export; level-ai dumps scripts as text). Primitive names:
+  tools/exe/ai_names.tsv. Ghidra helpers: tools/ghidra (MkDis/Raw/RefsIn). Details: "AI interpreter" below.
+- **Rules:** the user runs the viewer/game and handles commits; game logic goes in core/ only (no platform code);
+  never commit game data; clean room (no leaked source).
 
-**Queue, in order:**
-1. **Ed's mechanical ID card** (MEC `hidcard.c`): real gravity, speeds and jump in tc_player. May also explain the
-   4x animation time factor (ANIM_TIME_SCALE = 0.25, TEXTURE_TIME_SCALE GEN_ARCH = 0.5 are empirical).
-2. **Vita backend**: VitaSDK build of port/core, vitaGL renderer (GLSL port of Shaders.metal), SceCtrl input, data on
-   ux0:data/TonicTrouble/ (see port/core/README.md). Then 3DS.
-3. MEC physics engine reverse-engineering, then the **AI script interpreter** (player behaviours, sound events →
-   automatic music, day/night logic, the invisible sud0 river, portals' runtime state).
-4. Parked: lighting stages 2–4 (set selection, sector lights + fog, lightmaps), water/death collision materials,
-   steps > 0.15, morphs/sprites, the CD-archive asset pipeline (tt1–tt4.cnt via InstalTT.exe), intro video upscale,
-   disc demos.
+**Queue, in order (agreed 2026-10-22):**
+1. **Decompile the MEC physics** (the big next step; expect a long session): the mechanics handler table of
+   GAM_0042a7e0 (26 slots; the AI picks one with SetMechMode*, Ed uses modes 3 turn, 12 move, 10, 9 ballistic jump,
+   1/2/4/7/21), how the dynamics proposal (dynamics +0x314: [0] |v|, [1..3] wanted speed vector from ProposalVecA,
+   [4..6] steered by ProposalVecD, [7..9]+[10] SetMoveDirection, [0xB], [0x18]) becomes velocity, Ed's ID card
+   (gravity per state, ground/slope/wall angles; State +0x2C read as null, the offset is probably wrong) and the
+   report bits the AI reads (dynamics +0x18: ground 1, slope 2, wall 4 ...). Goal: replace tc_ed_ai's
+   approximations and hand tuning (run_scale 2.0 -> 9.0 u/s, walk 3.5 u/s, jump impulse with tc_player's gravity
+   gives ~5 units, likely too high) with the game's own rules. Check whether walking really is
+   animation-driven (no move direction is set for it) or comes from the ID card.
+2. **Skiing (Totalski, skymap):** the sliding profile's 10 degree ground limit makes the slopes "air", so the AI
+   plays falling. Probably solved by item 1 (slope contact class, ski mechanics mode); check the
+   LevelIs("totalski") branches in Ed's scripts.
+3. **Rest of the moveset through the AI:** Shoot (Q) / Lateral (C) / pogo / fly need their effects: channel
+   hide/show (PROC_120/121, props like the stick), meta-actions other than ChangeStateAndWait (11, 12, 19, 21, 40
+   finish at once now), collision probes (PathBlocked? is always false), touched objects, zones. Unimplemented
+   primitives are counted in tc_ai_perso.unknown (aicheck prints them): FUNC_95/164, PROC_16/35/212-214/290, META_6.
+4. **Gamepad:** tc_ed_ai_step takes a stick (-1..1); the viewer passes 0 (keyboard path in the scripts).
+5. Other persos' AI (doors, platforms, enemies, bonuses) once the shared primitives exist; then sound events.
+6. Older parked items: the 0.25 animation time factor for non-Ed persos (Ed's AI path uses the exe's 1x clock and
+   looks right), the invisible sud0 river, Vita/3DS backends, CD-archive pipeline.
 
-**Budget note:** the user funds this personally and is budget-limited. Prefer one focused agent with a tight brief,
-verify by data or headless tests, and ask before large explorations.
+**Project direction (agreed with the user, 2026-10-22):**
+- **Two apps, one repo for now.** TonicViewer stays a self-contained, macOS-native app: the inspection and debug tool
+  (free-fly, AI traces, collision/contact views, later physics debug views). The game ("Tonic Trouble Recomp") is
+  a separate app in the same repo. Name caveat: it is a reimplementation running the original data and AI scripts
+  (OpenMW/ScummVM style), not a static recompilation of the exe; keep that clear in the docs. Split into separate
+  repos (core as submodule/package) only once the core API is stable (after the MEC physics). A move to a layout
+  like `core/`, `viewer/`, `game/`, `tools/` is cheap and can happen any time.
+- **Layering (the "higher-level approach" = this layering, not another language; all C11):**
+  1. core (shared): loaders, collision, AI interpreter, animation sampling, physics. No platform code.
+  2. game layer (game only, portable): persos/sectors world model, fixed-timestep loop, camera, sound events,
+     level transitions, menus/HUD. Talks to the platform through a small interface: input state in; a **render
+     list**, audio events and file reads out. The core never calls a graphics API.
+  3. platform backends (thin, per target): Metal (macOS), **vitaGL + SceCtrl + SceAudio on Vita (first non-Mac
+     target, the user's main interest)**, later GL desktop, citro3d (3DS). SDL may cover desktop windowing/input/
+     audio; its Vita/3DS ports need checking. SDL_GPU/bgfx/sokol do not reach Vita/3DS, so render list + thin
+     backends.
+- **Shared rendering:** move "what to draw" (render list, material/fog parameters, Ed's animation sampling) into the
+  core so TonicViewer's Metal renderer and the game consume the same list; shaders stay per backend.
+- **Order:** MEC physics first (it shapes the game layer: who owns velocity, how mechanics modes plug in, the frame
+  update); then design the game layer + render list (its own session); then the Vita backend (core/README.md has
+  the Vita sketch).
+
+**Budget note:** the user funds this personally and is budget-limited. Prefer one focused pass, verify by data or
+headless tests, and ask before large explorations.
 
 ## Roadmap
 1. ~~Repo + CNT/GF tools~~
@@ -195,7 +227,7 @@ verify by data or headless tests, and ask before large explorations.
 - Parity: `CorePlayCheck` prints the same lines as the Swift PlayCheck did, byte for byte on all 21 levels (only the wall-clock "sim time" lines differ). One subtlety: Apple's `simd_cross` is compiled with FMA contraction, which decides whether a few near-degenerate sliver triangles are kept (Transit, north: one each), so `tc_v3_cross` uses `fmaf` explicitly; all other core math is compiled without contraction.
 
 
-## Next session plan (2026-10-22, agreed with user; NOT started)
+## Earlier plan (2026-10-22, session 3; superseded by "Next session: start here")
 Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay(); main.swift title/help; Input.swift; this file).
 1. **Ed's mechanical ID card** (MEC `hidcard.c`, 2 funcs in modmap; MEC ≈ 107 funcs total). Find hidcard.c funcs in the
    Ghidra project (files/out/_decomp_artifacts/ghidra), recover the struct layout, locate Ed's IDCard (State +0x2C read
@@ -212,7 +244,8 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
 - **Where:** State **+0x30** is the MEC ID card pointer (TT; +0x2C is something else, which is why it read null). Ed's
   cards are in fix, identical in every level. Card = u32 type @0 + fields; type 0..12, sizes from the constructor
   `MEC_hidcard_004b7d04` (0/4/6: 0x40, 1: 0x48, 2/5: 0x50, 3: 0x10, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14, 11: 0x34, 12: 0x18).
-  Handlers per type: table filled by GAM_0042a7e0 (type 0 and 4 share FUN_004aa6af).
+  Handler table filled by GAM_0042a7e0 (26 slots). **Correction (session 4):** it is indexed by the dynamics *mode* that
+  the AI sets (PROC_51..65, see tools/exe/ai_names.tsv), not by the card type; slots 0 and 8 share FUN_004aa6af.
 - **Ed's states:** idle/walk/run/jump take-off (39, 5 frames at 30 fps: the first 1/6 s of a jump)/land = card type 0 @fix 0x3c33c8 (234 of 369 states use type 0);
   jump_air (43) = type 4 @0x3c34c0, fall (44) and fall start (40) = type 4 @0x3c3500 / 0x3c36e8.
 - **Type 0/4 fields** (Ed ground / jump_air / fall): +4 = 120 (mass-like: stored in dynamics +0x98, force integration
@@ -353,3 +386,141 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   rainbow water, glass/vitrine, water, LAND_MORT liquid); 0x8|0x2 = hard cut-outs (*_nz teeth, cloth). Exporter sets
   TC_FLAG_TRANSPARENT (and drops ALPHA_TEST) for the former when the PNG has alpha; the viewer draws those after all
   opaque geometry with source-alpha blending and no depth writes (no back-to-front sorting yet).
+
+## AI scripts: structure and plan (2026-10-22, session 4)
+- **Path:** perso +0xC brain -> +0 mind -> +0 AI model = {ptr normal behaviours list, ptr reflex list, ptr dsgVar
+  defs, ...}; mind +0xC = dsgMem. Behaviour list = {ptr array, u32 n, ...}; behaviour = 12 bytes {ptr scripts (ptr[n]),
+  ptr schedule script (may be null), u32 n_scripts}. Ed (NewEd): 109 normal behaviours + 38 reflexes, 532 scripts,
+  18,028 nodes.
+- **Script = array of 8-byte nodes** {u32 param, u8 0, u8 0, u8 depth, u8 type}, a pre-order tree by depth; depth 0 ends
+  it. Types seen: 0 keyword (If/Then/Else...), 1 condition, 2 operator, 3 function, 4 procedure, 5 meta-action,
+  9 field, 11 dsgvar ref, 12 int constant, 13 float constant (bits), 14 pointer (likely input button; 515 uses),
+  16 vector, 17 mask, 20/24/25/31/32/37 pointers (24 likely state/action ref, 25/32 other refs), 30, 33, 34.
+- **Exe dispatch tables** (accessors AI_004923a0..00492837; index * stride + base):
+  procedures 0x4E5A48 (8 bytes {fn, u8 flag}, 294); keywords 0x4E6378 (4 bytes, 10); conditions 0x4E63A0 (8 bytes,
+  111); functions 0x4E6718 (8 bytes, 165); operators 0x4E6C40 (4 bytes, 28); 0x4E6CB0 (16 bytes {fn, fn, size, 0},
+  probably fields); 0x4E5910/14/18 (small 4-byte tables, maybe meta-actions). Ed's max index per type fits each table
+  (conditions 90 < 111, functions 164 < 165, procedures 292 < 294, operators 23 < 28). Many implementations live in
+  0x49B000+ that Ghidra never made into functions (create them in the scratch project before decompiling).
+  AI_00490b80 reads the node type byte and is itself an operator-table entry.
+- **Plan:**
+  A. `tools/ttre/ai.py`: disassemble any perso's behaviours into readable pseudo-code (types, dsgvar names by index,
+     state/anim refs resolved), with per-primitive usage counts. Export of Ed's scripts as the working reference.
+  B. Name the primitives Ed uses (about 157: 40 conditions, 31 functions, 56 procedures, 16 operators, 6 meta-actions,
+     8 fields), most-used first: decompile each table entry, record in tools/exe/names.tsv + an AI table in NOTES.
+  C. Core runtime (C, core/src/tc_ai.c): tree evaluator, dsgvars, per-frame normal/reflex scheduling, state changes
+     (-> animation + mechanics card), input buttons, the MEC calls (speeds, impulses). Drive Ed by his real AI:
+     walk/run/jump, fly, stick attack/shoot/pogo, random idles, and Totalski skiing (check whether skiing is Ed's own
+     AI or a separate ski perso/family with its own models).
+  D. Other persos (doors, platforms, enemies, bonuses) once the shared primitives exist.
+- **Phase B progress (session 4):** tools/exe/ai_names.tsv names ~125 primitives (keywords, all comparisons and logic,
+  arithmetic, vectors, math incl. RandomInt/RandomReal, time and TimeElapsed, input ButtonHeld/JustPressed/NotHeld/
+  JustReleased/Analog, ChangeState (honours transitions) / InState / CanChangeState, ChangeBehaviour/Reflex, contact
+  tests OnGround/AgainstWall/NoContact/OnSteepSlope + material tests, the dynamics proposal setters (speed, direction,
+  turn) and **SetMechMode*: the AI picks the mechanics handler slot**, channels hide/show, transparency, sounds).
+  `python3 -m tools.ttre level-ai LEVEL OUT.txt` prints them by name (files/out/ai/ed_bar.txt).
+  Left for Ed: ~35 low-use primitives (PROC_0/2/4-26/27/66-71/79/84-86/149-155/212-216/236/244/290-292, FUNC_2/4/13/
+  34/37/40/54/91/92/95/96/162/164, OP_5/6/9/16-18/23, the FIELDs, META_* whose table is not found yet, COND_59/61/63/
+  69-74), button names (input entries are 0x1C-byte records in fix, no names; map them via OPTIONS/IPT.bin or usage),
+  dsgvar meaning, and node types 17/30/33/34/37 (33 = channel index).
+- **Phase B result (session 4):** 142 of Ed's 161 primitives named (9,773 of his 9,878 primitive uses, 99%); see
+  tools/exe/ai_names.tsv (with implementations and how each was identified; "?" = inferred). Key tables besides the five
+  dispatch tables: **meta-actions** 0x4E6CB0 (16 B {start, per-frame continuation, packed signature, 0}; multi-frame
+  actions, continuation returns 4 while running), **fields** 0x4E6FA0 (12 B {value type, getter, setter}), **dsgvar
+  types** 0x4E5910 (12 B {value type, getter, setter}). Value types: 6 int, 7 uint (time), 8 float, 0xC perso,
+  0x16 vector (getters write type 0x16), 0x19/0x23 references. Node types relabelled in ai.py: 14 button, 20 string,
+  24 perso, 32 behaviour, 33 channel. Still unknown: a dozen 1-15-use primitives (FUNC_2/4/13/95/96/162/164, PROC_35/
+  212-214/290, OP_23, COND_41), button names, dsgvar meanings, and the exact meaning of mechanics modes 1-23.
+- **TODO (later, user decision):** the 19 rare primitives (FUNC_2/4/13/40/54/95/96/102/162/164, PROC_35/149/153/212-214/
+  290, OP_23, COND_41), probably cutscene/special-case code; name them when a script needs them.
+- **Tooling for this work** (tools/ghidra): MkDis.java (creates missing functions, then decompiles a list of addresses;
+  run without -readOnly on a *copy* of the project), Raw.java (dump data words with symbol hints), RefsIn.java (code
+  references into an address range). Example: copy files/out/_decomp_artifacts/ghidra to a scratch dir, then
+  `analyzeHeadless <copy> TonicTrouble -process -noanalysis -scriptPath tools/ghidra -postScript MkDis.java out.txt 00497970`.
+  Table entry addresses: base + index * stride (tables listed above).
+
+
+## AI interpreter (phase C, 2026-10-22, session 5)
+- **Phase A bug fixed:** a behaviour's schedule pointer is ptr -> {ptr nodes} (one more indirection than the rule
+  scripts); ai.py read it as nodes, so all 71 schedules of Ed came out empty (behaviour 0, his init, looked empty).
+  Ed now has 23,462 nodes and 177 distinct primitives (31 unnamed, 174 of 12,637 uses). FUNC_33 is Abs, not
+  NormalizeAngle.
+- **Engine loop (exe):** GAM_0042b260 runs the reflex intelligence (mind +8) then, unless a meta-action ran in it,
+  the normal one (mind +4); mind +0x10 = "running normal". AI_0048eb20 per intelligence: every rule script of the
+  behaviour in order (each from its start, or from its running meta-action), then the schedule (AI_0048ec60), which
+  resumes where it stopped (intelligence +4; restarts after its end). Intelligence = {model, schedule pos (+4),
+  behaviour (+8), previous (+0xC), action table (+0x10: 0x50-byte entries {.., +0x48 node, +0x4C active,
+  +0x4D script (0 = schedule, k + 1 = rule k)})}.
+- **Nodes run linearly** (handler table 0x4E43F8 by type; each returns the next node): If evaluates its child and
+  continues into Then's children (true) or past Then, into Else's children (false); an Else reached from a Then
+  branch skips itself. End node = type 8. Types 10/11 dsgvar, 12 int, 13 real, 14 button, 15 constant vector
+  (pointer), 16 vector from 3 children, 17 mask (u16), 20 string, 24 perso, 25 state, 32 behaviour, 33 channel.
+- **Result flags** (AI_0048e970/eab0): 1 stop the intelligence this frame, 2 stop this script (refused ChangeState;
+  a schedule retries that statement next frame), 4 meta-action done, 8 behaviour changed (start the new one now),
+  0x10 end. Stop beats restart. **Proc9(v)**: v replaces the flags of the statement after the next one; scripts use
+  `Proc9(1); ChangeBehaviour(X)` (switch, run X next frame) and `Proc9(1); Nop` (wait one frame).
+  ChangeBehaviour/ChangeReflex restart only when they change the intelligence that is running.
+- **Meta-actions** start once, then a continuation runs every frame (1 running, 4 done); the script blocks on it.
+  ChangeStateAndWait: done when the requested state changed or the animation "ended".
+- **States** (Perso3dData): +4 playing, +8 requested (InState; only ChangeState sets it), +0x15C next to play,
+  +0x160 change pending, +0x161 ended (animation finished, no repeats left, no next state), +0x163 frame rate
+  (State +0x3B), +0x78 repeats left (State +0x3A). ChangeState(t) (GAM_00437260): no-op if t is the requested
+  state and not ended; else look t up in the transitions of the state to play (play its intermediate), refuse if
+  prohibited or if the state has flag +0x3C = 1; at the end of an animation: repeat, else next state (InState keeps
+  the requested one), so a looping state never "ends".
+- **dsgvars:** mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current}; def {ptr default buffer, ptr
+  infos (16 B {offset, type, ..}), size, count}. Types index table 0x4E5910: 0/1 int8, 2 uint8, 3/4 16-bit, 5/6 int,
+  7 float, 10 perso, 11 perso list (count in byte 0, capacity byte 1; CollectNearby fills it), 12 vector.
+  Ed reads/writes the camera perso's dsgvars (perso-in-fix 1) all the time: `Dot(camera, dsg20)` gates the idle.
+- **Inputs:** the 23 button entries Ed uses are formulas over key/pad entries (0xF001 AND, 0xF002 OR, 0xF00B NOT,
+  0xF00A ref, 0xF006 DIK key, 0xF01A pad button, 0xF010 axis range, 0xF011/12 stick angle/magnitude). Names (string
+  before each list): Left/Right/Up/Down (arrows, pad axes), SpeedUp (LSHIFT, pad 16), Jump (Z, pad 10), Lateral
+  (LALT, 13), Action (LCTRL, 11), Shoot (SPACE, 12), Camera (NUM0, 14). Keyboard: Ed runs by default, SpeedUp makes
+  him **walk** (magnitude 0.625 instead of 1). Stick angle: degrees, 0 = right, -90 = up; scripts add 90.
+- **Movement:** TurnBy(deg) = mechanics mode 3 at deg*pi/180 rad/s; TurnBySpeed divides by the frame time (turn
+  by that much this frame). FUNC_2(perso) = angle to that perso in Ed's frame (inferred: degrees, CCW, 0 = facing),
+  with the camera it makes the stick camera-relative. Ground walking/running sets **no move direction**: speed
+  comes from the animation (Proc10(int(dsg75 * dsg79 * 100 or 222)) looks like an animation-rate %), so the
+  mechanics must apply the state animation's root motion. SetMoveDirection + SetMechMode12 only on special ground
+  (TouchingObject(0x20)).
+- **Code:** `level-ttai LEVEL OUT.ttai` (format in tools/ttre/ai.py; also writes OUT_ai.txt, the node-indexed
+  listing); core/include/tonic/tc_ai.h + core/src/tc_ai.c (loader, interpreter; the host fills inputs, stick,
+  position, contacts, the camera position, reads the requested motion and state); core/tests/aicheck.c
+  (`make aicheck`, AI_TRACE=<frame> prints executed node indices). Ed's AI is identical in every level (fix).
+- **Status (bar, scripted keys, fake ground contact):** init B63 -> B0 -> idle B87; up -> B88 via transition state
+  158 into run (10); release -> idle via 159; SpeedUp + up -> walk (9 then 1); jump -> B85 -> B89 (state 43 air)
+  -> land (41) -> idle; left -> turn; stick forward -> turn back; Action -> stick attack B72/B69 (128/129).
+  Stubbed (constant answers): collision probes (PathBlocked false), materials, zones (ZoneTest true), touched
+  objects, GlobalFlag (abilities: all on), sounds, channel effects. Not implemented (counted in
+  tc_ai_perso.unknown): FUNC_95/164, PROC_16/35/41/212-214/290, META_6.
+- **C2, viewer integration (same day):**
+  - **Animation clock = the exe's:** frames advance by dt x frame rate (+0x163 = State +0x3B, reset on every new
+    animation); **Proc10(pct) = frame rate x pct / 100** (GAM_0041ec90, stored as a byte). Ed's AI path therefore
+    uses no ANIM_TIME_SCALE; the unexplained 0.25 for other persos stays an open question.
+  - **.ttlv:** after the 7 named clips, every distinct state animation (298 A3Ds for 369 states) as "s<k>" (k = the
+    first state using it), one sample per frame (bar.ttlv 3.6 MB; all levels 125 MB). **.ttai** states gain the
+    animation key and `ground` (units per frame).
+  - **Ground speed:** walking/running set no move direction, so speed = the state animation's forward foot stride
+    (level.forward_stride: feet sweep >= 0.6 mostly along Y; looping states only: 1, 2, 10, 25, 30, 96, 213, 215,
+    235, 247, 320) x the current frame rate. Walk: 0.086 x 30 x Proc10 139 % = 3.5 u/s (hand-tuned earlier 3.3).
+    **Run: 0.100 x 45 x Proc10 100 % = 4.5 u/s (hand-tuned 9.9): a run has a flight phase, so the stride
+    underestimates it; the stance-phase foot speed was too noisy to use.** Backward and sideways cycles (2, 30,
+    101 ...) move forward or not at all. The real answer is in the MEC handlers / ID cards.
+  - **Jump = ProposalVecA** (AI_00488070: proposal [1..3] = wanted speed vector, local; [0] its length): B85 sets
+    (8 x stick x sin/cos(turn), 1.3 x dsg62 = 15.6 up). Applied as an impulse; with tc_player's gravity (x1 for the
+    take-off 1/6 s, then x3.5 rising) Ed rises ~5 units (the old hand-tuned jump: ~3). ProposalVecD (AI_004881d0)
+    rotates proposal [4..6] towards a direction keeping its length (air control, not applied yet).
+  - **core/src/tc_ed_ai.c** (tc_ed_ai): AI + tc_player. Contacts from tc_player (grounded, new `against_wall`),
+    turn = heading += turn_speed x dt, impulse, Velocity field, StopMotion, SetMoveDirection under mode 12, ground
+    speed above, airborne: momentum kept. tc_player_drive = tc_player_step's physics with a target velocity
+    (playcheck output unchanged). aicheck now runs on the level's collision.
+  - **Viewer:** loads `<level>.ttai` when present; Ed's AI is the default, I toggles the simple controller.
+    WASD = direction buttons (camera-relative through the scripts, which get the camera eye), Shift = SpeedUp
+    (walk), Space jump, E Action (stick), Q Shoot, C Lateral. Title bar: behaviour, reflex, state (4 Hz).
+  - **Hand tuning (user request, until the MEC is decoded):** tc_ed_ai.run_scale = 2.0 on run cycles (> 4 u/s at
+    their own rate: 10, 25, 30, 96): run 9.0 u/s (user: a tad under the old 9.9); walk_scale = 1 (3.5 u/s).
+    Start-up and transition states without a cycle (walk start 9, run start 158, run -> walk 272) borrow the
+    speed of the state they lead into; before that Ed stopped ~0.5 s when Shift switched him to walking.
+  - **Known gaps:** Totalski/skymap: the sliding profile's 10° ground limit makes the slopes count as air, so the
+    AI falls (skiing needs its own pass); no gamepad stick yet (stick inputs are 0: keyboard behaviour); channel
+    hide/show, transparency, sounds not shown; camera perso's own AI does not run.
