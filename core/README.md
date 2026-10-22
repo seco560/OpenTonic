@@ -11,7 +11,7 @@ animation sampling helpers. Every platform (macOS now, PS Vita and 3DS later) li
 - Must stay clean with `-std=c11 -Wall -Wextra -Wpedantic`.
 - No FP contraction (`src/tc_internal.h`), except the cross product, which uses `fmaf` on purpose
   to match the original Swift code exactly. `tests/playcheck.c` must keep matching the reference output.
-- Platform layers (Swift/AppKit/Metal in `port/Sources/TonicViewer`, a future Vita backend) own the
+- Platform layers (Swift/AppKit/Metal in `Sources/TonicViewer`, a future Vita backend) own the
   window, rendering, audio, file I/O and input, and talk to the core only through `include/tonic/*.h`.
 
 ## What a platform backend provides
@@ -27,7 +27,7 @@ animation sampling helpers. Every platform (macOS now, PS Vita and 3DS later) li
    `tc_player` created with `tc_player_init` over a `tc_collision` built from `level.collision`.
 
 ## Building
-- SwiftPM (macOS): target `TonicCore`, test `swift run -c release CorePlayCheck ../out/ttlv` from `port/`.
+- SwiftPM (macOS): target `TonicCore`, test `swift run -c release CorePlayCheck files/out/ttlv` from the repo root.
 - Any C compiler: `make` here builds `build/libtoniccore.a` and `build/playcheck` (`make check` runs
   it). Without make: `cc -std=c11 -O2 -Iinclude src/*.c tests/playcheck.c -lm -o playcheck`.
   The test (not the library) uses POSIX `<dirent.h>` to list the level folder.

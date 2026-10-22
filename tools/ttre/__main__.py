@@ -4,7 +4,7 @@
   python3 -m tools.ttre cnt-extract ARCHIVE OUTDIR [--png]
   python3 -m tools.ttre level-info LEVEL
   python3 -m tools.ttre level-export LEVEL OUTDIR [--no-preview] [--no-persos]
-  python3 -m tools.ttre level-ttlv LEVEL OUT.ttlv [--no-persos]   (for port/ TonicViewer; v5 adds collision + Ed)
+  python3 -m tools.ttre level-ttlv LEVEL OUT.ttlv [--no-persos]   (for TonicViewer; current format: see tools/ttre/ttlv.py)
 Level commands read from GAMEDATA/WORLD/LEVELS textures from files/out/Textures (so, generate textures before the levels)
 """
 import os

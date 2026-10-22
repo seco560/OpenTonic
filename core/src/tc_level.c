@@ -90,7 +90,13 @@ static void rd_geometry(reader *r, tc_mesh *m, uint32_t words) {
         for (k = 0; k < 3; k++) v->normal[k] = rd_f32(r);
         v->uv[0] = rd_f32(r);
         v->uv[1] = rd_f32(r);
-        for (k = 0; k + 8 < words; k++) v->color[k] = rd_u32(r);
+        for (k = 0; k < 3 && k + 8 < words; k++) v->color[k] = rd_u32(r);
+        if (words >= 13) {
+            v->uv2[0] = rd_f32(r);
+            v->uv2[1] = rd_f32(r);
+        } else {
+            v->uv2[0] = v->uv2[1] = -1;
+        }
     }
     m->indices = (uint32_t *)rd_array(r, ni, sizeof(uint32_t), 4);
     if (r->error) return;
@@ -136,6 +142,7 @@ void tc_level_free(tc_level *level) {
     tc_free(level->persos);
     tc_free(level->collision);
     tc_free(level->collision_floors);
+    tc_free(level->lightmap_atlas);
     for (i = 0; i < level->ed.part_count; i++) free_mesh(&level->ed.parts[i].mesh);
     tc_free(level->ed.parts);
     for (i = 0; i < level->ed.anim_count; i++) {
@@ -163,11 +170,22 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     r->offset = 4;
     level->version = rd_u32(r);
     if (r->error) return r->error;
-    if (level->version < 1 || level->version > 6) return TC_ERR_UNSUPPORTED_VERSION;
+    if (level->version < 1 || level->version > 8) return TC_ERR_UNSUPPORTED_VERSION;
     v2 = level->version >= 2;
     if (level->version >= 4) level->light_set_count = rd_u32(r);
     if (level->version >= 5) (void)rd_u32(r); /* play_offset: for seeking tools; read sequentially here */
-    words = level->version >= 4 ? 11 : level->version >= 3 ? 9 : 8; /* vertex size in 4-byte words */
+    if (level->version >= 7) {
+        level->fog_near = rd_f32(r);
+        level->fog_far = rd_f32(r);
+        level->fog_rgb[0] = rd_f32(r);
+        level->fog_rgb[1] = rd_f32(r);
+        level->fog_rgb[2] = rd_f32(r);
+    }
+    if (level->version >= 8) {
+        level->lightmap_atlas = rd_string(r);
+        if (level->lightmap_atlas && !level->lightmap_atlas[0]) { tc_free(level->lightmap_atlas); level->lightmap_atlas = NULL; }
+    }
+    words = level->version >= 8 ? 13 : level->version >= 4 ? 11 : level->version >= 3 ? 9 : 8; /* vertex size in 4-byte words */
 
     n = rd_u32(r);
     level->textures = (char **)rd_array(r, n, sizeof(char *), 2);

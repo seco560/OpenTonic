@@ -27,7 +27,7 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 check: $(BUILD)/playcheck
-	$(BUILD)/playcheck ../../out/ttlv
+	$(BUILD)/playcheck ../files/out/ttlv
 
 clean:
 	rm -rf $(BUILD)

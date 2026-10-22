@@ -236,10 +236,17 @@ static void level(const char *folder, const char *name) {
             check(crossed == 0, "no tunnelling while walking/falling");
             goto out;
         }
-        snprintf(msg, sizeof msg,
-                 "walk then run 3 s at the nearest head-on wall (%.2f away, normal z %.2f): no tunnelling; moved %.2f along, z %.2f -> %.2f, grounded %s",
-                 best_dist, best_n.z, travelled, from.z, p.position.z, b(p.grounded));
-        check(crossed == 0 && travelled < best_dist, msg);
+        /* Still facing a wall at the end (pressed against it, not past it). Ed may slide along a wall that is not
+         * planar, so his progress along the run direction can exceed the distance measured at the start
+         * (mammyon: up a ramp, then along a slightly receding wall). */
+        {
+            tc_hit ahead;
+            int facing = tc_collision_raycast(&world, tc_v3_add(p.position, tc_v3(0, 0, 0.8f)), tc_v3(best_dir.x, best_dir.y, 0), 2, &ahead);
+            snprintf(msg, sizeof msg,
+                     "walk then run 3 s at the nearest head-on wall (%.2f away, normal z %.2f): no tunnelling, still facing it; moved %.2f along, z %.2f -> %.2f, grounded %s",
+                     best_dist, best_n.z, travelled, from.z, p.position.z, b(p.grounded));
+            check(crossed == 0 && facing, msg);
+        }
         printf("  sim time 3 s + %.1f s took %.0f ms\n", best_dist / p.walk_speed + 3,
                (double)(clock() - t0) * 1000.0 / CLOCKS_PER_SEC);
     }

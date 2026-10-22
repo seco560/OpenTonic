@@ -24,7 +24,7 @@ let package = Package(
             path: "Sources/TonicViewer",
             resources: [.copy("Shaders.metal")]
         ),
-        // Headless checks of the core against converted levels: `swift run -c release CorePlayCheck ../out/ttlv`.
+        // Headless checks of the core against converted levels: `swift run -c release CorePlayCheck files/out/ttlv`.
         .executableTarget(
             name: "CorePlayCheck",
             dependencies: ["TonicCore"],

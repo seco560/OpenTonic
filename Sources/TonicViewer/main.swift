@@ -76,6 +76,11 @@ final class GameView: MTKView {
             Music.shared.muted.toggle()
             return
         }
+        if event.keyCode == 5, !event.isARepeat, let r = renderer {  // G: level fog on/off
+            r.fogEnabled.toggle()
+            updateTitle()
+            return
+        }
         if event.keyCode == 35 {  // P: pause/resume animation
             if !event.isARepeat, let r = renderer { r.paused.toggle() }
             return
@@ -89,6 +94,7 @@ final class GameView: MTKView {
         let base = w.title.components(separatedBy: "  ·  view:").first ?? w.title
         var s = String(format: "  ·  view: anim %.2f×, gamma %.2f, FOV %.0f°", r.animationSpeed, r.gamma, r.camera.verticalFOV * 180 / .pi)
         if r.lightSetCount > 1 { s += ", lighting \(r.lightSet + 1)/\(r.lightSetCount)" }
+        if r.fog != nil { s += r.fogEnabled ? ", fog on (G)" : ", fog off (G)" }
         if r.playing { s += "  ·  PLAYING as Ed (Tab: free-fly)" }
         w.title = base + s
     }
@@ -141,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if args.count > 1 { levelFolder = URL(fileURLWithPath: args[1]) }
             showPicker()
         }
-        // Dock icon: Ed's original icon on the sud0 water swirl, generated into out/icon by tools/make_icon.sh.
+        // Dock icon: Ed's original icon on the sud0 water swirl, generated into files/out/icon by tools/make_icon.sh.
         if let icon = NSImage(contentsOf: levelFolder.deletingLastPathComponent().appendingPathComponent("icon/TonicViewer.png")) {
             NSApp.applicationIconImage = icon
         }
@@ -207,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Animation:  P pause / resume  ·  [ slower  ·  ] faster
         Lighting variant:  1, 2, 3 …  (levels with day/night lighting, e.g. South Plain)
-        Gamma:  - darker  ·  = brighter
+        Gamma:  - darker  ·  = brighter  ·  Fog:  G on / off (levels with fog, e.g. north, Totalski)
         (current speed, gamma, field of view, lighting variant and play mode are shown in the title bar)
 
         Music:  M mute / unmute  (level → track table: out/audio/music.tsv)

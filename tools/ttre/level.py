@@ -121,6 +121,7 @@ class Element:
     triangles: list  # (a, b, c) vertex indices
     uv_tris: list    # (a, b, c) indices into uvs
     uvs: list
+    lightmaps: list = field(default_factory=list)  # per triangle: lightmap Texture or None (+0x18; see read below)
 
 
 @dataclass(eq=False)
@@ -129,6 +130,7 @@ class Geometric:
     normals: list
     elements: list = field(default_factory=list)
     skipped: dict = field(default_factory=dict)  # element type -> count not handled
+    sprites: list = field(default_factory=list)  # (vertex index of the centre, half width, half height, Material)
 
 
 @dataclass(eq=False)
@@ -350,6 +352,7 @@ class LevelData:
         self.fix_textures = self.read_ptx(lv.fix_ptx)
         self.level_textures = self.read_ptx(lv.ptx)
         self.root = self.read_so(self.father_sector, IDENTITY)
+        self.mark_sky()
         self.dynamic = self.read_so(self.dynamic_world, IDENTITY)
 
     def un(self, fmt, loc, off=0):
@@ -402,6 +405,9 @@ class LevelData:
         elems = lv.ptr(loc, 28)
         for i, t in enumerate(types):
             el = lv.ptr(elems, 4 * i)
+            if t == 3 and el is not None and nv:
+                self.read_sprites(geo, el)
+                continue
             if t != 1 or el is None:
                 geo.skipped[t] = geo.skipped.get(t, 0) + 1
                 continue
@@ -414,8 +420,35 @@ class LevelData:
             if bad or any(max(u) >= nuv or min(u) < 0 for u in uvt):
                 self.warnings.append(f'element {el[1]:#x}: out-of-range indices')
                 continue
-            geo.elements.append(Element(self.material(lv.ptr(el, 0)), tris, uvt, uvs))
+            # +0x18: per-triangle array of ptr {ptr TextureInfo, u32 1} = that triangle's own lightmap (32x32 BMP,
+            # the triangle drawn in the upper-left half: vertex a -> (0, 0), b -> (1, 0), c -> (0, 1), image
+            # top-left origin; found by edge continuity, see NOTES). bar, death, PharmMap, pyr_fou, SpyCarota,
+            # spynorth have one per triangle; radiosity levels have none.
+            lm_arr, lms = lv.ptr(el, 0x18), []
+            for k in range(nt if lm_arr else 0):
+                e = lv.ptr(lm_arr, 4 * k)
+                t = self.texture(lv.ptr(e)) if e else None
+                lms.append(t if t and 'LIGHTMAP' in t.name.upper() else None)
+            geo.elements.append(Element(self.material(lv.ptr(el, 0)), tris, uvt, uvs, lms if any(lms) else []))
         return geo
+
+    def read_sprites(self, geo, el):
+        """Element type 3 (TT): u32 n, ptr sprites, u32. Sprite (0x10): u32, ptr info, f32 size[2].
+        Info: u32, ptr, ptr, ptr scale f32[2] (+0xC: half extents), ptr f32[2] (+0x10), ptr (+0x14) ->
+        {ptr GameMaterial, ...}. TT has no centre-point field (raymap reads none before Montreal); sprite k
+        sits on vertex k (these objects have one vertex per sprite). Camera-facing billboards in the game."""
+        lv, un = self.lv, self.un
+        n, = un('I', el)
+        sp = lv.ptr(el, 4)
+        for k in range(min(n, 256) if sp else 0):
+            info = lv.ptr(sp, 0x10 * k + 4)
+            sx, sy = un('2f', sp, 0x10 * k + 8)
+            scale = lv.ptr(info, 0xC) if info else None
+            hx, hy = un('2f', scale) if scale else (0.5, 0.5)
+            mp = lv.ptr(info, 0x14) if info else None
+            mat = self.material(lv.ptr(mp)) if mp else None
+            if mat is not None:
+                geo.sprites.append((min(k, len(geo.vertices) - 1), abs(hx * sx), abs(hy * sy), mat))
 
     def matrix(self, loc):
         """Matrix -> row-major 3x4 = T * M, M = the second 3x3 (the complete rotation x scale
@@ -654,6 +687,55 @@ class LevelData:
         return Anim(state_speed or speed, nf, vec, quat, hier, ntto, frames, chans, num_ntto, fkf, kfs)
     def persos(self):
         return [so.perso for so in self.walk(self.dynamic) if so.perso] if self.dynamic else []
+
+    def sector_name(self, so):
+        """Sector SuperObject -> its name (sector data +0x94, NUL-terminated, e.g. "sctciel"), or ''."""
+        data = self.lv.ptr(so.loc, 4) if so.kind == 'sector' else None
+        if data is None:
+            return ''
+        raw = data[0].data[data[1] + 0x94:data[1] + 0x94 + 0x40]
+        return raw.split(b'\0')[0].decode('latin-1')
+
+    def fog(self):
+        """The level's fog: (near, far, (r, g, b)) of the visual environment most sectors use, or None when
+        it is the engine default (near 20000: no visible fog). Sector data +4 = list of environment entries
+        {ptr mechanics env, ptr ?, ptr visual env}; visual env = {u32, ptr, f32 near, far, f32 (third
+        distance, unused here), f32 rgb}. north: black 80..120 (night), Totalski: light blue 200..400."""
+        lv, un, count = self.lv, self.un, {}
+        for so in self.walk():
+            data = lv.ptr(so.loc, 4) if so.kind == 'sector' else None
+            node = lv.ptr(data, 4) if data else None
+            for _ in range(8):
+                if node is None:
+                    break
+                env = lv.ptr(node)
+                ve = lv.ptr(env, 8) if env else None
+                if ve:
+                    near, far = un('2f', ve, 8)
+                    key = (near, far, un('3f', ve, 0x14))
+                    count[key] = count.get(key, 0) + 1
+                node = lv.ptr(node, 4)
+        if not count:
+            return None
+        near, far, rgb = max(count, key=count.get)
+        return (near, far, rgb) if near < 10000 and far > near else None
+
+    def mark_sky(self):
+        """Sky sectors are named "...ciel..." (sctciel, sct3ciel02, BigBoss "ciel"). Their baked radiosity is
+        unusable (sud0 -13, Totalski 0, north 0..267) while the game shows the skies evenly lit, so their
+        IPOs get neutral light (RADIOSITY_ONE: texture unchanged) in every baked set. Inferred from the data
+        and the in-game look, not from the exe. so.sky marks them."""
+        for sec in self.walk():
+            if sec.kind != 'sector' or 'CIEL' not in self.sector_name(sec).upper():
+                continue
+            for so in self.walk(sec):
+                if so.kind != 'ipo' or not so.lods:
+                    continue
+                so.sky = True
+                one = (int(RADIOSITY_ONE),) * 3
+                n = max(1, len(so.color_sets))
+                so.colors = [[one] * len(g.vertices) for g in so.lods]
+                so.color_sets = [so.colors] + [[[one] * len(g.vertices) for g in so.lods] for _ in range(n - 1)]
 
     def surfaces(self):
         """Water surfaces: [(loc, Geometric, world 3x4)], each once (several sectors list the same

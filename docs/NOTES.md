@@ -281,4 +281,75 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
 - No baked radiosity (no ISI), so they use the viewer's placeholder key light (alpha 0) in every light set. Not collision.
 - Viewer data path: the viewer now looks in the app bundle, ./files/out/ttlv, then the source checkout's
   files/out/ttlv (via #filePath, so Xcode builds running from DerivedData read the repo directly), then ./out/ttlv.
-  tools/make_app.sh updated to the files/out layout (not run). files/out has no Vignette folder yet (picker images).
+  tools/make_app.sh updated to the files/out layout (not run).
+
+## Skies and fog (2026-10-22, autonomous session)
+- **Sky sectors are named "...ciel..."** (sector data +0x94 = NUL-terminated name: "sctciel", "sctciel02", north's
+  "sct3ciel02" window skies, BigBoss "ciel"; "fond"/"plafond" sectors are background walls/ceilings, not sky). Object
+  flags (SO +0x2C/+0x30) are identical for sky and non-sky IPOs.
+- **Why skies were black:** their baked radiosity is unusable (sud0 dome mean -13, Totalski 0, death 2, many north
+  panels 0; Land 135, north main 204, Transit 223). `LevelData.mark_sky` gives sky-sector IPOs neutral light
+  (RADIOSITY_ONE, texture unchanged) in every set. **Inferred** from the data and the in-game look, not the exe.
+- Sky geometry encloses the playable area in BigBoss, death, north, skymap, Totalski; sud0/Land/Transit domes stop
+  above the deepest pits (below the horizon), cock01 = two backdrop panels, pyramide = a ceiling opening. So no
+  camera-follow needed for now.
+- **Material flag bit 0x400 = backface culling** (raymap: flags_backfaceCulling = 1 << 10); clear on double-sided
+  materials (sky domes, water, shadows, paintings). Not "unlit". The viewer draws everything without culling anyway.
+- **Fog:** sector data +4 environment entries = {ptr mechanics env, ptr ?, ptr visual env}; visual env = {u32, ptr,
+  f32 near, f32 far, f32 third distance (40000 / 600 / 128; unused), f32 rgb}. Engine default 20000/30000/40000 light
+  blue (0.736, 0.768, 0.961) = no visible fog. Real fog: north black 80..120 (night), Totalski light blue 200..400,
+  Land 68 sectors grey at 5000. `LevelData.fog` takes the most common one per level (fog is per sector in the game).
+  **.ttlv v7** stores it after play_offset; the viewer applies linear fog by eye distance after gamma, uses the fog
+  colour as the background, and G toggles it. Unverified against the exe (GLI vComputeFogEffect lives in the driver
+  DLL); north's 120-unit black fog in particular needs an in-game comparison.
+- Other unused-texture finds: bar loads 676 lightmaps (BAR\LIGHTMAP\00000..00675.BMP; lighting stage 4), north has
+  unused comet (NORD_COMETE*) and torch (North\torche01..07) flipbooks, probably sprites/particles.
+
+## Sprites / billboards (2026-10-22, autonomous session)
+- **Element type 3 (TT):** {u32 n, ptr sprites, u32}; sprite (0x10) {u32, ptr info, f32 size[2] (1, 1 seen)}; info
+  {u32 1, ptr, ptr, ptr scale f32[2] (+0xC), ptr f32[2] (+0x10, zeros), ptr (+0x14) -> {ptr GameMaterial, f32 x2, ...}}.
+  No centre-point field in TT; the sprite objects have one vertex per sprite, so sprite k sits on vertex k.
+  Half extents = info scale x size (raymap's convention; a shield effect comes out 2.4 wide around Ed, which fits).
+- They are effects and pickups on persos: bonus collectibles (BONUS1 flipbook + BOULE1-3 orbs), sparks, chrome glints,
+  ELEC1 arcs, mines (MINE/_MINETTE), smoke (Fum06-09), north's torch flames (TORCHE01-07, one object per frame,
+  switched by the animation), shields, hearts, stars, death's letter sprites. sud0: 524 billboard parts, north 505.
+- **Export (v7, no extra fields):** each sprite = a 4-vertex quad in a mesh flagged TC_FLAG_BILLBOARD (1 << 2); every
+  vertex holds the centre, normal.xy = the corner offset (world units, object scale applied), uv corners, no baked
+  colour. The vertex shader adds camRight/camUp x offset after the model transform and zeroes the normal (unlit).
+- Not done: additive blending (many effect textures are *_ANU, probably additive in the game; the viewer only
+  alpha-tests), mirror flags, per-sprite sizes from the (+0x10) pair. Sizes unverified in game (bonus 2.2 wide, mines
+  3.5-4.2, smoke 5.4).
+
+## Housekeeping (2026-10-22, autonomous session)
+- **playcheck mammyon "failure" was a test assumption, not a controller bug:** Ed walks up a ramp, hits the wall and
+  slides along it; the wall recedes slightly, so his progress along the run direction ended 0.02 beyond the distance
+  measured at the start. The tunnelling detector (exact path segments) never fired. The check now requires "no
+  tunnelling and still facing a wall within 2 units" instead. All checks pass.
+- Paths moved to the files/out layout: core/Makefile `check`, tools/make_icon.sh, core/README.md, Package.swift comment,
+  CLI help. **docs/BUILD.md** = the full reproducible pipeline (textures, vignettes, levels, music via vgmstream,
+  icon, run, checks); the music loop was tested on one track.
+- The top-level README's paragraph about copying files into DerivedData is outdated (the viewer finds files/out/ttlv
+  itself now); left for the user to edit (personal write-up).
+
+## Lightmaps (2026-10-22, autonomous session) — lighting stage 4 done for the lightmapped levels
+- **Triangle element +0x18 = per-triangle lightmap array** (our layout notes called it "vertex_indices"; the vertex
+  index list is +0x20 with its count at +0x1C): ptr per triangle -> {ptr TextureInfo, u32 1}. Each lightmap is a
+  32x32 BMP (`<LEVEL>\LIGHTMAP\00000.BMP`...), one per triangle. bar 677/688 triangles, death 545, PharmMap 291,
+  pyr_fou 700, SpyCarota 362, spynorth 356 (all of their static triangles); radiosity levels (sud0 ...) have none.
+- **Mapping:** the triangle is drawn in the upper-left half (right angle top-left); vertex a -> (0, 0), b -> (1, 0),
+  c -> (0, 1) in image coordinates (top-left origin). Chosen by edge continuity over shared edges: mean |diff| 14.6
+  (bar) / 17.9 (death) vs >= 25.5 for the other five assignments; top-down lightmap-only rasters of bar show
+  continuous shading and cast shadows across triangles. The lightmapper fades the last ~3 texels before the
+  hypotenuse to black (pixels with x + y >= 31 are black), so the exporter maps the legs to texel 0.5 .. w - 4.5.
+- **.ttlv v8:** per level, `<level>_lightmap.png` next to the .ttlv (32x32 tiles in a square power of two, each tile's
+  empty half mirrored from the triangle so filtering never reaches black), its path after the fog, and 52-byte
+  vertices with uv2 (atlas coords, -1 = none; lightmapped triangles get their own vertices). tc_vertex is 52 bytes.
+- **Viewer:** where uv2 >= 0 the atlas sample (linear, clamped) x 255/128 replaces the baked vertex light (same scale as
+  radiosity: 128 = texture unchanged; inferred, like RADIOSITY_ONE). Levels without an atlas bind a 1x1 white texture.
+
+## Transparency (2026-10-22, autonomous session)
+- raymap pre-R3 rule: material flag 0x4000000 and texture flags & 0x10A = transparent (texture flag 0x20 = "light",
+  unused in the levels checked). In TT, texture flag 0x8 alone = blended (effects, *_ANU/*AUN, OMBRE shadows, the sud0
+  rainbow water, glass/vitrine, water, LAND_MORT liquid); 0x8|0x2 = hard cut-outs (*_nz teeth, cloth). Exporter sets
+  TC_FLAG_TRANSPARENT (and drops ALPHA_TEST) for the former when the PNG has alpha; the viewer draws those after all
+  opaque geometry with source-alpha blending and no depth writes (no back-to-front sorting yet).

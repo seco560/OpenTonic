@@ -1,5 +1,12 @@
 """Writer for .ttlv, the native viewer's level format (reader: port/core/src/tc_level.c).
 
+Version 8 = v7 plus per-triangle lightmaps: right after the fog, u16 len + utf8 path (relative to the .ttlv) of
+  a lightmap atlas PNG (len 0 = none), and 52-byte vertices: v7's 44 bytes + f32 uv2[2] = atlas coordinates
+  (top-left origin, 0..1; -1 = no lightmap). Lightmapped triangles get their own vertices. The lightmap value
+  replaces the baked light (same x255/128 scale). Atlas = 32x32 tiles in a square power of two.
+Version 7 = v6 plus level fog right after play_offset: f32 fog_near, f32 fog_far, f32 fog_rgb[3]
+  (linear by eye distance; fog_far <= fog_near = no fog). LevelData.fog: the visual environment most
+  sectors use. Sky-sector IPOs ("...ciel..." sectors) carry neutral baked light (LevelData.mark_sky).
 Version 6 = v5 plus floor materials right after the collision triangles in the play section:
   u16 n_floors, u16 0, n_floors x { f32 grip, f32 rebound }   (the mechanics material of the
       triangle's GameMaterial: grip = mat[2], rebound = mat[1]; see NOTES "Floor mechanical material")
@@ -54,9 +61,11 @@ import math
 import os
 import struct
 
-from . import export, level
+from . import export, gf, level
 
 ALPHA_TEST = 1 << 0
+TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8 without 0x2, see surface())
+BILLBOARD = 1 << 2  # TC_FLAG_BILLBOARD: sprite quads, expanded towards the camera by the vertex shader
 # Empirical: the user compared against the original running in Wine and 0.25x matched.
 # The exe's formula (frame += dt_ms/1000 * state FrameRate @0x3B, FUN_00415fb0) gives 1x, so some
 # unit is still unexplained (open question in NOTES). Applied to persos only, not textures.
@@ -66,7 +75,7 @@ ANIM_TIME_SCALE = 0.25
 # right. Texture-name prefix (case-insensitive, file name only) -> factor on the playback rate, so
 # 0.25 makes each frame last 4x longer. Hypothesis: the same unexplained 4x as ANIM_TIME_SCALE.
 TEXTURE_TIME_SCALE = {'GEN_ARCH': 0.5}  # user-matched: 0.25 was too slow, 2x that looked natural
-VERSION = 6
+VERSION = 8
 LIGHT_SETS = 3  # baked radiosity sets per vertex (set 0 everywhere; 1-2 only in Land/sud0)
 
 
@@ -90,9 +99,66 @@ def rotate(m, n):
     return (x / l, y / l, z / l) if l > 1e-9 else (0.0, 0.0, 0.0)
 
 
-def add_geometry(meshes, key, geo, m, new_mesh):
+class LightmapAtlas:
+    """Packs per-triangle lightmaps (TILE x TILE) into one square power-of-two image, tiles in first-use order."""
+    TILE = 32
+    CORNERS = ((0, 0), (1, 0), (0, 1))  # triangle vertex a, b, c -> lightmap corner (image top-left origin)
+
+    def __init__(self, idx):
+        self.idx, self.slots = idx, {}
+
+    def uv(self, tex, corner):
+        """Atlas coordinates (0..1, top-left origin) of a corner's texel centre, or None if the image is missing."""
+        if tex not in self.slots:
+            png = export.tex_png(self.idx, tex)
+            if png is None:
+                self.slots[tex] = None
+            else:
+                w, h, px = export.read_png(png)
+                self.slots[tex] = (len([s for s in self.slots.values() if s]), w, h, px)
+        s = self.slots[tex]
+        if s is None:
+            return None
+        i, w, h, _ = s
+        cu, cv = self.CORNERS[corner]
+        n = self.side() // self.TILE
+        # Legs end 4 texels short of the edge: the lightmapper fades the last ~3 texels before the hypotenuse
+        # to black (anti-aliased triangle edge), which would show as a dark seam on every long edge.
+        x = (i % n) * self.TILE + 0.5 + cu * (w - 5)
+        y = (i // n) * self.TILE + 0.5 + cv * (h - 5)
+        return x / self.side(), y / self.side()
+
+    def side(self):
+        """Fixed once the first tile is placed: room for every lightmap the level references (counted up front)."""
+        return self._side
+
+    def plan(self, count):
+        n, self._side = max(1, math.ceil(math.sqrt(count))), self.TILE
+        while self._side < n * self.TILE:
+            self._side *= 2
+
+    def png(self):
+        a, n = self.side(), self.side() // self.TILE
+        img = bytearray(a * a * 4)
+        for s in self.slots.values():
+            if s is None:
+                continue
+            i, w, h, px = s
+            x0, y0 = (i % n) * self.TILE, (i // n) * self.TILE
+            for y in range(min(h, self.TILE)):
+                for x in range(min(w, self.TILE)):
+                    # The triangle fills the upper-left half up to x + y = w - 2 (the diagonal itself is black);
+                    # mirror it into the rest so filtering at the hypotenuse doesn't pull in black.
+                    sx, sy = (x, y) if x + y <= w - 2 else (max(0, w - 2 - y), max(0, h - 2 - x))
+                    o, so = ((y0 + y) * a + x0 + x) * 4, (sy * w + sx) * 4
+                    img[o:o + 4] = px[so:so + 4]
+        return gf.to_png(a, a, bytes(img))
+
+
+def add_geometry(meshes, key, geo, m, new_mesh, atlas=None):
     """Append geo transformed by m to meshes[material] (created by new_mesh(material)), with the
-    key's baked radiosity as rgba8 (alpha 0 = none)."""
+    key's baked radiosity as rgba8 (alpha 0 = none) and, given an atlas, per-triangle lightmap
+    coordinates (uv2; -1 = none)."""
     verts = [level.mat_apply(m, v) for v in geo.vertices]
     def packed(baked):
         return [struct.unpack('<I', bytes((*(min(max(x, 0), 255) for x in c), 255)))[0] for c in baked] if baked else None
@@ -105,16 +171,32 @@ def add_geometry(meshes, key, geo, m, new_mesh):
             mesh = meshes[el.material] = dict(new_mesh(el.material), verts=[], index={}, indices=[])
         for k, tri in enumerate(el.triangles):
             uvt = el.uv_tris[k] if el.uv_tris else (None,) * 3
+            lm = el.lightmaps[k] if atlas and k < len(el.lightmaps) else None
+            uv2 = [atlas.uv(lm, c) for c in range(3)] if lm else [None] * 3  # corners follow the stored order
             if flip:
-                tri, uvt = tri[::-1], uvt[::-1]
-            for vi, ti in zip(tri, uvt):
+                tri, uvt, uv2 = tri[::-1], uvt[::-1], uv2[::-1]
+            for vi, ti, l2 in zip(tri, uvt, uv2):
                 u, v = el.uvs[ti] if ti is not None and el.uvs else (0.0, 0.0)
-                vk = (key, vi, ti)
+                vk = (key, vi, ti) if l2 is None else (key, vi, ti, id(el), k)  # lightmapped: own vertices
                 if vk not in mesh['index']:
                     mesh['index'][vk] = len(mesh['verts'])
                     mesh['verts'].append((*verts[vi], *(norms[vi] if norms else (0.0, 0.0, 0.0)), u, 1.0 - v,
-                                          *(c[vi] if c else 0 for c in sets)))
+                                          *(c[vi] if c else 0 for c in sets), *(l2 or (-1.0, -1.0))))
                 mesh['indices'].append(mesh['index'][vk])
+    # Sprites: a quad per sprite in a BILLBOARD mesh; every vertex holds the centre (transformed by m) and
+    # carries its corner offset (half extents x the object's scale) in the normal slot, unlit (no colour).
+    sx = math.sqrt(m[0] * m[0] + m[4] * m[4] + m[8] * m[8])
+    for ci, hx, hy, mat in geo.sprites:
+        mesh = meshes.get(('sprite', mat))
+        if mesh is None:
+            base = new_mesh(mat)
+            surf = bytearray(base['surface'])
+            struct.pack_into('<I', surf, 4, struct.unpack_from('<I', surf, 4)[0] | BILLBOARD)
+            mesh = meshes[('sprite', mat)] = dict(base, surface=bytes(surf), verts=[], index={}, indices=[])
+        first = len(mesh['verts'])
+        for dx, dy, u, v in ((-1, -1, 0, 1), (1, -1, 1, 1), (-1, 1, 0, 0), (1, 1, 1, 0)):
+            mesh['verts'].append((*verts[ci], dx * hx * sx, dy * hy * sx, 0.0, u, v, *(0,) * LIGHT_SETS, -1.0, -1.0))
+        mesh['indices'] += [first, first + 1, first + 2, first + 2, first + 1, first + 3]
 
 
 def write(data, path, tex_root='files/out/Textures', persos=True):
@@ -135,18 +217,35 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
 
     def surface(mat):
         tid, flags = texture_id(mat.texture) if mat else (-1, 0)
+        # raymap's pre-R3 rule: material flag 0x4000000 + texture flags 0x10A = transparent. In TT, texture flag
+        # 0x8 alone marks blended textures (effects, OMBRE shadows, the sud0 rainbow water, *_ANU), while 0x8|0x2
+        # marks hard cut-outs (*_nz teeth, cloth): those keep the alpha test.
+        t = mat.texture if mat else None
+        if t and mat.flags & 0x4000000 and t.flags & 0x8 and not t.flags & 0x2 and flags & ALPHA_TEST:
+            flags = (flags & ~ALPHA_TEST) | TRANSPARENT
         su, sv = (s * level.SCROLL_RATE for s in mat.scroll) if mat else (0, 0)
         frames = [(texture_id(t)[0], d / level.SCROLL_RATE / texture_time_scale(t)) for t, d in mat.frames] if mat else []
         return dict(surface=struct.pack('<iI2f2H', tid, flags, -su, sv, len(frames), 0)
                     + b''.join(struct.pack('<if', t, d) for t, d in frames))
 
     def geometry(m):
-        return (struct.pack('<II', len(m['verts']), len(m['indices'])) + b''.join(struct.pack(f'<8f{LIGHT_SETS}I', *v) for v in m['verts'])
+        return (struct.pack('<II', len(m['verts']), len(m['indices'])) + b''.join(struct.pack(f'<8f{LIGHT_SETS}I2f', *v) for v in m['verts'])
                 + struct.pack(f'<{len(m["indices"])}I', *m['indices']))
 
     meshes = {}
-    for key, geo, m in data.meshes(False):
-        add_geometry(meshes, key, geo, m, surface)
+    statics = list(data.meshes(False))
+    lightmaps = {t for _, geo, _ in statics for el in geo.elements for t in el.lightmaps if t}
+    atlas = LightmapAtlas(idx) if lightmaps else None
+    if atlas:
+        atlas.plan(len(lightmaps))
+    for key, geo, m in statics:
+        add_geometry(meshes, key, geo, m, surface, atlas)
+    atlas_rel = ''
+    if atlas:
+        atlas_path = os.path.splitext(os.path.abspath(path))[0] + '_lightmap.png'
+        with open(atlas_path, 'wb') as f:
+            f.write(atlas.png())
+        atlas_rel = os.path.relpath(atlas_path, out_dir).replace(os.sep, '/')
     blobs, n_parts, ed_blob = [], 0, None
     ed_loc = data.perso_in_fix[0][0] if data.perso_in_fix else None
     for p in data.persos() if persos else ():
@@ -212,7 +311,9 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     for m in meshes.values():
         body += m['surface'] + geometry(m)
     body += struct.pack('<I', len(blobs)) + b''.join(blobs)
-    head = b'TTLV' + struct.pack('<III', VERSION, max(1, n_sets), 0) + struct.pack('<I', len(tex_paths))
+    fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
+    head = (b'TTLV' + struct.pack('<III', VERSION, max(1, n_sets), 0) + struct.pack('<5f', fog[0], fog[1], *fog[2])
+            + struct.pack('<H', len(atlas_rel.encode())) + atlas_rel.encode() + struct.pack('<I', len(tex_paths)))
     head = head[:12] + struct.pack('<I', len(head) + len(body)) + head[16:]  # play_offset
     with open(path, 'wb') as f:
         f.write(head + body + play)

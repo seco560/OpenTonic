@@ -14,6 +14,7 @@ extern "C" {
 
 #define TC_FLAG_ALPHA_TEST (1u << 0)
 #define TC_FLAG_TRANSPARENT (1u << 1)
+#define TC_FLAG_BILLBOARD (1u << 2)  /* v7 sprites: vertex = centre, normal.xy = corner offset (camera plane) */
 #define TC_HIDDEN 0xFFFFu /* "shown object" value of a hidden channel */
 
 typedef enum tc_result {
@@ -26,17 +27,19 @@ typedef enum tc_result {
 
 const char *tc_result_string(tc_result r);
 
-/* 44 bytes, tightly packed: exactly the GPU vertex layout the viewer uses.
+/* 52 bytes, tightly packed: exactly the GPU vertex layout the viewer uses.
  * color[i]: baked lighting set i, rgba8 little-endian (r in the low byte); alpha 0 = none.
- * Files before v4 fill only color[0] (v3) or nothing (v1/v2). */
+ * Files before v4 fill only color[0] (v3) or nothing (v1/v2).
+ * uv2: v8 lightmap atlas coordinates (texel space / atlas size, top-left origin); -1 = no lightmap. */
 typedef struct tc_vertex {
     float position[3];
     float normal[3];
     float uv[2];
     uint32_t color[3];
+    float uv2[2];
 } tc_vertex;
-/* Platform backends upload tc_vertex arrays to the GPU as-is (44-byte stride). */
-_Static_assert(sizeof(tc_vertex) == 44, "tc_vertex must stay the packed 44-byte GPU vertex layout");
+/* Platform backends upload tc_vertex arrays to the GPU as-is (52-byte stride). */
+_Static_assert(sizeof(tc_vertex) == 52, "tc_vertex must stay the packed 52-byte GPU vertex layout");
 
 typedef struct tc_frame { int32_t texture; float seconds; } tc_frame;
 
@@ -94,6 +97,9 @@ typedef struct tc_ed {
 typedef struct tc_level {
     uint32_t version;
     uint32_t light_set_count;    /* 1 before v4 */
+    float fog_near, fog_far;     /* v7: linear fog by eye distance; fog_far <= fog_near: none */
+    float fog_rgb[3];
+    char *lightmap_atlas;        /* v8: per-triangle lightmaps packed into one image, path relative to the .ttlv (NULL: none) */
     uint32_t texture_count;
     char **textures;             /* NUL-terminated UTF-8 paths relative to the .ttlv */
     uint32_t mesh_count;
