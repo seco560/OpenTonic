@@ -140,7 +140,7 @@ class SuperObject:
     lods: list = field(default_factory=list)  # Geometric per LOD (IPOs only)
     colors: list = field(default_factory=list)  # baked radiosity per LOD: [(r, g, b) i16 per vertex] (IPOs only)
     perso: 'Perso' = None
-    collide: tuple = None  # (vertices, triangles) of the collide set (IPOs only), see LevelData.collide
+    collide: tuple = None  # (vertices, triangles, floors) of the collide set (IPOs only), see LevelData.collide
 
     @property
     def kind(self):
@@ -255,6 +255,28 @@ ED_ANIMS = (('idle', 0, True), ('walk', 1, True), ('run', 10, True), ('jump', 39
             ('jump_air', 43, True), ('fall', 44, True), ('land', 41, False))
 
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
+
+
+def fill_unbaked(so):
+    """An element whose vertices are all exactly (0, 0, 0) in one baked set but lit in another was
+    not baked for that set (baked values are signed and noisy, never exactly zero over a whole
+    element): copy the first lit set's values. Only sud0's rainbow water (O_ZARBI_AUNTXY, sets 0
+    and 2 zero, set 1 ~95) matches in the levels checked; it is visible in the game in every set.
+    north has 25 elements that are zero in its only set; with nothing to copy they stay black."""
+    sets = so.color_sets
+    for lod, geo in enumerate(so.lods):
+        for e in geo.elements:
+            vs = {v for t in e.triangles for v in t}
+            cols = [s[lod] if lod < len(s) else None for s in sets]
+            if not vs or any(c is not None and max(vs) >= len(c) for c in cols):
+                continue
+            lit = [c for c in cols if c and any(c[v] != (0, 0, 0) for v in vs)]
+            if not lit:
+                continue
+            for c in cols:
+                if c and all(c[v] == (0, 0, 0) for v in vs):
+                    for v in vs:
+                        c[v] = lit[0][v]
 
 
 def baked_colors(key, index=0):
@@ -422,6 +444,7 @@ class LevelData:
             # Extra baked sets (day/night variants) exist only where ISI+4 is set (Land, sud0).
             so.color_sets = [so.colors] + ([self.radiosity(isi, so.lods, i) for i in (1, 2)]
                                            if isi and lv.ptr(isi, 4) else [])
+            fill_unbaked(so)
         elif so.kind == 'perso' and data:
             so.perso = self.read_perso(data, so.world)
         c = lv.ptr(loc, 8)
@@ -511,8 +534,9 @@ class LevelData:
                     p.collides[obj] = col
 
     def collide(self, po):
-        """PhysicalObject -> (vertices, triangles) from its collide set's indexed-triangle elements
-        (layout in the module docstring), or None. Other element types are counted in
+        """PhysicalObject -> (vertices, triangles, floors) from its collide set's indexed-triangle
+        elements (layout in the module docstring), or None. floors[k] = (grip, rebound) of triangle
+        k's mechanical material, or None when it has none. Other element types are counted in
         self.collide_skipped."""
         if not hasattr(self, 'collide_cache'):
             self.collide_cache, self.collide_skipped = {}, {}
@@ -527,7 +551,7 @@ class LevelData:
             ne, = un('I', zdr, 0x14)
             pv, pt = lv.ptr(zdr, 4), lv.ptr(zdr, 0x18)
             verts = [un('3f', pv, 12 * i) for i in range(nv)] if pv else []
-            tris = []
+            tris, floors = [], []
             for i, t in enumerate(un(f'{ne}H', pt) if ne and pt else ()):
                 el = lv.ptr(lv.ptr(zdr, 0x1C), 4 * i)
                 if t != 1 or el is None:
@@ -535,24 +559,37 @@ class LevelData:
                     continue
                 nt, = un('H', el, 4)
                 ti = lv.ptr(el, 8)
+                floor = self.floor_material(lv.ptr(el))
                 for k in range(nt if ti else 0):
                     tri = un('3h', ti, 6 * k)
                     if 0 <= min(tri) and max(tri) < nv:
                         tris.append(tri)
-            out = (verts, tris) if tris else None
+                        floors.append(floor)
+            out = (verts, tris, floors) if tris else None
         self.collide_cache[po] = out
         return out
 
-    def collision(self):
+    def floor_material(self, gm):
+        """GameMaterial -> (grip, rebound) from its mechanics material (+4; 0x1C bytes, 5 floats read
+        by the engine: [1] rebound, [2] grip, see NOTES "Floor mechanical material"), or None."""
+        mm = self.lv.ptr(gm, 4) if gm else None
+        if mm is None:
+            return None
+        _, rebound, grip = self.un('3f', mm)
+        return (grip, rebound)
+
+    def collision(self, floors=False):
         """World-space collision triangles [((x, y, z) * 3)]: every static IPO's collide set, plus
         perso collide meshes posed at frame 0 of their initial state (sud0's lava-pit platforms,
-        doors, ...; moving persos are treated as static). Ed's family has none."""
-        out = []
+        doors, ...; moving persos are treated as static). Ed's family has none.
+        floors=True returns (triangles, per-triangle (grip, rebound) or None)."""
+        out, out_floors = [], []
 
         def add(col, m):
             verts = [mat_apply(m, v) for v in col[0]]
             flip = mat_det(m) < 0
             out.extend(tuple(verts[i] for i in (t[::-1] if flip else t)) for t in col[1])
+            out_floors.extend(col[2])
         for so in self.walk():
             if so.collide:
                 add(so.collide, so.world)
@@ -561,7 +598,7 @@ class LevelData:
                 for o, m in p.anim.pose(0):
                     if o in p.collides:
                         add(p.collides[o], mat_mul(p.world, mat_mul(m, p.objects[o][1])))
-        return out
+        return (out, out_floors) if floors else out
 
     def family_states(self, fam):
         st, out = self.lv.ptr(fam, 0x10), []
@@ -618,12 +655,38 @@ class LevelData:
     def persos(self):
         return [so.perso for so in self.walk(self.dynamic) if so.perso] if self.dynamic else []
 
+    def surfaces(self):
+        """Water surfaces: [(loc, Geometric, world 3x4)], each once (several sectors list the same
+        one). Sector data +0x10 = {ptr head, ptr tail, u32 n} of nodes {ptr surface, ptr next, ...};
+        surface = {ptr GeometricObject, Matrix (0x58, world), Matrix (copy), ...}. sud0: the rainbow
+        river, the pools at the top and foot of the falls, two OO_MER01 sea quads."""
+        if hasattr(self, '_surfaces'):
+            return self._surfaces
+        lv, out, seen = self.lv, [], set()
+        for so in self.walk():
+            data = lv.ptr(so.loc, 4) if so.kind == 'sector' else None
+            node = lv.ptr(data, 0x10) if data else None
+            n = self.un('I', data, 0x18)[0] if data else 0
+            for _ in range(min(n, 64)):
+                if node is None:
+                    break
+                srf = lv.ptr(node)
+                geo = lv.ptr(srf) if srf else None
+                if srf and geo and srf not in seen:
+                    seen.add(srf)
+                    out.append((srf, self.geometric(geo), self.matrix((srf[0], srf[1] + 4))))
+                node = lv.ptr(node, 4)
+        self._surfaces = out
+        return out
+
     def meshes(self, persos=True, t=None):
-        """Yield (key, Geometric LOD 0, world 3x4) for static IPOs and (optionally) perso parts,
-        posed at frame 0 or, given t, at t seconds into their animation."""
+        """Yield (key, Geometric LOD 0, world 3x4) for static IPOs, water surfaces and (optionally)
+        perso parts, posed at frame 0 or, given t, at t seconds into their animation."""
         for so in self.walk():
             if so.lods:
                 yield so, so.lods[0], so.world
+        for loc, geo, m in self.surfaces():
+            yield ('surface', loc), geo, m
         if persos and self.dynamic:
             for so in self.walk(self.dynamic):
                 for i, (geo, m) in enumerate((so.perso.parts if t is None else so.perso.at(t)) if so.perso else ()):

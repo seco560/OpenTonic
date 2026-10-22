@@ -246,9 +246,39 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
 - Values: Totalski/skymap {1, 0.8, **0**, 1, 1}: no grip, so momentum only and zero steering from the walk/run
   input (in the game Ed skis there using other states/AI). cock01 ice {0, 1, **0.6/0.5/0.4**, 1, 1}: steering
   scaled 0.13 / 0.06 / 0.03 with momentum. Everything else: no material (grip 1).
-- **Sliding in the viewer (2026-10-22, user decision): per-level switch only.** `tc_player_apply_level` gives
-  Totalski and skymap the user's sliding profile (walk 10.1, run 20.2, jump 22.3, gravity 11.2, air scales 1,
-  max_slope 10°); no .ttlv change.
-- **TODO (user request): re-export the levels with the mechanical data** — per-triangle floor material (grip mat[2],
-  rebound mat[1]) in .ttlv, so sliding/ice (Totalski, skymap, cock01) comes from the data instead of the name switch.
-  Needs a ttlv version bump (tools/ttre/ttlv.py + level.py, core/src/tc_level.c), then re-run level-ttlv for all levels.
+
+## Level re-export: .ttlv v6, floor materials, rainbow lighting (2026-10-22, session 3)
+- **.ttlv v6** (spec in tools/ttre/ttlv.py): the play section adds a floor table {grip, rebound} and a u16 index per
+  collision triangle. C: `tc_level.collision_floors` (per triangle), `tc_tri.floor`, `tc_collision_init(..., floors)`.
+  All 21 levels re-exported (0 textures missing). Totalski: 3028/3356 triangles grip 0 (rebound 0.8); skymap: same
+  material; cock01: 736/1900 triangles grip 0.4/0.5/0.6 (rebound 1); everything else: none.
+- **Controller:** `tc_player_apply_floors` replaces the level-name switch: any zero-grip floor → the user's sliding
+  profile (walk 10.1, run 20.2, jump 22.3, gravity 11.2, air scales 1, max_slope 10°; per-triangle grip ignored).
+  Elsewhere, while grounded on grip < 1 the ground acceleration (42) is scaled by grip^4, as the engine scales steering
+  (cock01 ice: ×0.03..0.13, so momentum carries). Rebound is exported but not applied yet (cock01's 1.0 would make
+  ice walls fully elastic on head-on hits; unverified, so left out).
+- **Exporter texture root** now defaults to files/out/Textures (the repo moved out/ → files/out/; it was still
+  out/Textures, which exports 0 textures). Other docs still say out/... in places.
+- **"Patch" visual sets do not exist in sud0** (the water was a sector surface list, see below) (all 508 visual sets are type 0; bar and Land too). The only skipped
+  geometry is element type 3 (sprites): 102 in sud0, all on perso objects (incl. Ed's family), billboards 0.1–0.7
+  units, not water. TT sprite layout: element {u32 n, ptr sprites, u32}; sprite (0x10) {u32, ptr info, f32 size[2]};
+  info {u32 1, ptr, ptr, ptr scale f32[2] (+0xC), ptr f32[2] (+0x10), ptr → ptr GameMaterial (+0x14)}. Not rendered yet.
+- **sud0 rainbow water / falls black in light sets 0 and 2:** its baked radiosity is exactly (0,0,0) on every vertex
+  in sets 0 and 2 (set 1: ~95). Material flag bit 0x400 is clear on it, but also on normally lit shadows/paintings/Land
+  terrain, so it is not an "unlit" flag. Fix (heuristic, level.fill_unbaked): an element all-zero in one set but lit in
+  another takes the first lit set's values. Only these two elements match in the levels checked. north has 25
+  elements zero in its only set (nothing to copy; check whether they look black in the viewer).
+
+### Water surfaces found (2026-10-22, session 3, continued)
+- **The missing water is a sector-level "surface" list**, not a patch visual set: sector data +0x10 = {ptr head,
+  ptr tail, u32 n} of nodes {ptr surface, ptr next, ...}; surface = {ptr GeometricObject, Matrix 0x58 (world),
+  Matrix (copy), ... (rest not decoded; maybe wave parameters)}. Several sectors share one surface. Found by tracing
+  pointers back from the unused texture SUD0\OO_MER01ANU.TGA. Probably the engine's SRF (water surface) module.
+- 34 surfaces in 12 levels, all liquids: sud0 6 (rainbow river at z -5.2, pools at the top (5.2) and **foot of the
+  falls (-77.5, the "hole")**, two OO_MER01 sea quads), cock01 2 (O8TXY pools), pyramide 9 (PYR_O*, incl. a waterfall
+  texture), skymap 4 (ACID1), cavedoc 1 (OO_EAU), marmite 3, BigBoss 4 / Land 2 / Transit 1 (LAND_MORT1, likely a death
+  liquid). `LevelData.surfaces()`; `meshes()` yields them as static meshes, so all exports include them.
+- No baked radiosity (no ISI), so they use the viewer's placeholder key light (alpha 0) in every light set. Not collision.
+- Viewer data path: the viewer now looks in the app bundle, ./files/out/ttlv, then the source checkout's
+  files/out/ttlv (via #filePath, so Xcode builds running from DerivedData read the repo directly), then ./out/ttlv.
+  tools/make_app.sh updated to the files/out layout (not run). files/out has no Vignette folder yet (picker images).

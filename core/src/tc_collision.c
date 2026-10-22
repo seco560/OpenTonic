@@ -39,7 +39,7 @@ void tc_collision_free(tc_collision *col) {
     memset(col, 0, sizeof *col);
 }
 
-int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count) {
+int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count, const tc_floor *floors) {
     uint32_t i, n = 0, cells;
     tc_vec3 lo, hi;
     float ex, ey;
@@ -62,6 +62,8 @@ int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t verte
         t->normal = tc_v3_div(nrm, len);
         t->lo = tc_v3_min(a, tc_v3_min(b, c));
         t->hi = tc_v3_max(a, tc_v3_max(b, c));
+        if (floors) t->floor = floors[i / 3];
+        else { t->floor.grip = 1; t->floor.rebound = 1; }
     }
     col->tri_count = n;
     lo = tc_v3(INFINITY, INFINITY, INFINITY);

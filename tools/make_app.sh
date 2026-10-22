@@ -9,30 +9,30 @@
 # Usage (from the repo root): tools/make_app.sh [install dir, default ~/Applications]
 set -e
 DEST="${1:-$HOME/Applications}"
-APP="out/TonicViewer.app"
-(cd port && swift build -c release)
+APP="files/out/TonicViewer.app"
+swift build -c release
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/data"
-cp port/.build/release/TonicViewer "$APP/Contents/MacOS/TonicViewer"
-cp port/Sources/TonicViewer/Shaders.metal "$APP/Contents/Resources/"
+cp .build/release/TonicViewer "$APP/Contents/MacOS/TonicViewer"
+cp Sources/TonicViewer/Shaders.metal "$APP/Contents/Resources/"
 
-# Data keeps the out/ layout, so the .ttlv files' relative texture paths (../Textures/...) still resolve.
+# Data keeps the files/out/ layout, so the .ttlv files' relative texture paths (../Textures/...) still resolve.
 R="$APP/Contents/Resources/data"
-cp -R out/ttlv out/Textures "$R/"
+cp -R files/out/ttlv files/out/Textures "$R/"
 mkdir -p "$R/Vignette" "$R/audio/music" "$R/icon"
-cp -R out/Vignette/Level "$R/Vignette/"
-cp out/icon/TonicViewer.png "$R/icon/"
+cp -R files/out/Vignette/Level "$R/Vignette/"
+cp files/out/icon/TonicViewer.png "$R/icon/"
 # Music: WAV -> AAC (about 10x smaller); the table is rewritten to the .m4a names.
-for w in out/audio/music/*.wav; do
+for w in files/out/audio/music/*.wav; do
   ffmpeg -v error -y -i "$w" -c:a aac -b:a 128k "$R/audio/music/$(basename "$w" .wav).m4a"
 done
-sed 's/\.wav/.m4a/g' out/audio/music.tsv > "$R/audio/music.tsv"
+sed 's/\.wav/.m4a/g' files/out/audio/music.tsv > "$R/audio/music.tsv"
 
 # Icon: PNG -> .icns
-ICONSET="out/icon/TonicViewer.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+ICONSET="files/out/icon/TonicViewer.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do
-  sips -z $s $s out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $s $s files/out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) files/out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/TonicViewer.icns"
 

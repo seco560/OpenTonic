@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "tc_math.h"
+#include "tc_collision.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,6 +102,7 @@ typedef struct tc_level {
     tc_perso *persos;
     uint32_t collision_triangle_count;
     tc_vec3 *collision;          /* v5: 3 vertices per triangle, world space */
+    tc_floor *collision_floors;  /* v6: one per triangle (NULL before v6: all {1, 1}) */
     int has_ed;
     tc_ed ed;
 } tc_level;

@@ -10,10 +10,16 @@
 extern "C" {
 #endif
 
+/* Mechanics material of a collision triangle (.ttlv v6). grip 1 = normal ground; below 1 the
+ * engine keeps momentum and scales the steering by grip^4. rebound: share of the normal speed kept
+ * on impact (1 elastic). No material = {1, 1}. */
+typedef struct tc_floor { float grip, rebound; } tc_floor;
+
 typedef struct tc_tri {
     tc_vec3 a, b, c;
     tc_vec3 normal; /* unit, from counter-clockwise winding */
     tc_vec3 lo, hi;
+    tc_floor floor;
 } tc_tri;
 
 typedef struct tc_collision {
@@ -34,9 +40,10 @@ typedef struct tc_hit {
     const tc_tri *tri;
 } tc_hit;
 
-/* `vertices`: 3 per triangle (vertex_count / 3 triangles). Degenerate triangles are dropped.
- * Returns 0 on success, -1 when out of memory (then *col is empty). */
-int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count);
+/* `vertices`: 3 per triangle (vertex_count / 3 triangles); `floors`: one per triangle, or NULL
+ * (all {1, 1}). Degenerate triangles are dropped. Returns 0 on success, -1 when out of memory
+ * (then *col is empty). */
+int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count, const tc_floor *floors);
 void tc_collision_free(tc_collision *col);
 
 /* Calls fn once for each triangle whose bounds overlap the box lo..hi. Not reentrant. */

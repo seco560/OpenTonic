@@ -110,12 +110,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var renderer: Renderer?
     private var gameView: GameView?
-    /// Default data: inside TonicViewer.app (Contents/Resources/data/ttlv, built by tools/make_app.sh),
-    /// otherwise out/ttlv relative to the working directory (running from the repo).
+    /// Default data, first that exists: inside TonicViewer.app (Contents/Resources/data/ttlv, built by
+    /// tools/make_app.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
+    /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
+    /// up without copying); out/ttlv in the working directory (older layout).
     private var levelFolder: URL = {
-        if let res = Bundle.main.resourceURL?.appendingPathComponent("data/ttlv"),
-           FileManager.default.fileExists(atPath: res.path) { return res }
-        return URL(fileURLWithPath: "out/ttlv")
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()  // Sources/TonicViewer
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let candidates = [Bundle.main.resourceURL?.appendingPathComponent("data/ttlv"),
+                          URL(fileURLWithPath: "files/out/ttlv"),
+                          repo.appendingPathComponent("files/out/ttlv"),
+                          URL(fileURLWithPath: "out/ttlv")]
+        return candidates.compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
+            ?? URL(fileURLWithPath: "files/out/ttlv")
     }()
 
     func applicationDidFinishLaunching(_ note: Notification) {

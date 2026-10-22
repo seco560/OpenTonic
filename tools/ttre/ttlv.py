@@ -1,5 +1,9 @@
 """Writer for .ttlv, the native viewer's level format (reader: port/core/src/tc_level.c).
 
+Version 6 = v5 plus floor materials right after the collision triangles in the play section:
+  u16 n_floors, u16 0, n_floors x { f32 grip, f32 rebound }   (the mechanics material of the
+      triangle's GameMaterial: grip = mat[2], rebound = mat[1]; see NOTES "Floor mechanical material")
+  n_triangles x u16 floor index (0xFFFF = no material: grip 1, rebound 1), padded to 4 bytes
 Version 5 = v4 plus u32 play_offset right after light_set_count (absolute file offset of the play
 section, so headless tools can seek to it) and a play section after the perso section:
   u32 n_triangles, n_triangles x f32[9]   collision, world space (LevelData.collision: static
@@ -62,7 +66,7 @@ ANIM_TIME_SCALE = 0.25
 # right. Texture-name prefix (case-insensitive, file name only) -> factor on the playback rate, so
 # 0.25 makes each frame last 4x longer. Hypothesis: the same unexplained 4x as ANIM_TIME_SCALE.
 TEXTURE_TIME_SCALE = {'GEN_ARCH': 0.5}  # user-matched: 0.25 was too slow, 2x that looked natural
-VERSION = 5
+VERSION = 6
 LIGHT_SETS = 3  # baked radiosity sets per vertex (set 0 everywhere; 1-2 only in Land/sud0)
 
 
@@ -113,7 +117,7 @@ def add_geometry(meshes, key, geo, m, new_mesh):
                 mesh['indices'].append(mesh['index'][vk])
 
 
-def write(data, path, tex_root='out/Textures', persos=True):
+def write(data, path, tex_root='files/out/Textures', persos=True):
     idx = export.texture_index(tex_root)
     out_dir = os.path.dirname(os.path.abspath(path))
     tex_paths, tex_ids, missing = [], {}, set()
@@ -168,8 +172,13 @@ def write(data, path, tex_root='out/Textures', persos=True):
                      + b''.join(struct.pack('<H', 0xFFFF if o is None or o not in p.objects else o)
                                 for pose in poses for o, _ in pose))
 
-    tris = data.collision()
+    tris, floors = data.collision(floors=True)
     play = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
+    table = sorted({f for f in floors if f is not None})
+    index = {f: i for i, f in enumerate(table)}
+    play += struct.pack('<HH', len(table), 0) + b''.join(struct.pack('<2f', *f) for f in table)
+    play += struct.pack(f'<{len(floors)}H', *(0xFFFF if f is None else index[f] for f in floors))
+    play += b'\0' * (-len(floors) * 2 % 4)
     ed = data.ed()
     if ed:
         p, start, anims = ed

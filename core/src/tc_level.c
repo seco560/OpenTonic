@@ -135,6 +135,7 @@ void tc_level_free(tc_level *level) {
     }
     tc_free(level->persos);
     tc_free(level->collision);
+    tc_free(level->collision_floors);
     for (i = 0; i < level->ed.part_count; i++) free_mesh(&level->ed.parts[i].mesh);
     tc_free(level->ed.parts);
     for (i = 0; i < level->ed.anim_count; i++) {
@@ -162,7 +163,7 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     r->offset = 4;
     level->version = rd_u32(r);
     if (r->error) return r->error;
-    if (level->version < 1 || level->version > 5) return TC_ERR_UNSUPPORTED_VERSION;
+    if (level->version < 1 || level->version > 6) return TC_ERR_UNSUPPORTED_VERSION;
     v2 = level->version >= 2;
     if (level->version >= 4) level->light_set_count = rd_u32(r);
     if (level->version >= 5) (void)rd_u32(r); /* play_offset: for seeking tools; read sequentially here */
@@ -209,6 +210,24 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         level->collision[i].x = rd_f32(r);
         level->collision[i].y = rd_f32(r);
         level->collision[i].z = rd_f32(r);
+    }
+    if (level->version >= 6) {
+        tc_floor *table;
+        uint32_t floor_count = rd_u16(r);
+        (void)rd_u16(r);
+        table = (tc_floor *)rd_array(r, floor_count, sizeof(tc_floor), 8);
+        for (i = 0; i < floor_count && table; i++) {
+            table[i].grip = rd_f32(r);
+            table[i].rebound = rd_f32(r);
+        }
+        level->collision_floors = (tc_floor *)rd_array(r, level->collision_triangle_count, sizeof(tc_floor), 2);
+        for (i = 0; i < level->collision_triangle_count && level->collision_floors; i++) {
+            uint16_t k = rd_u16(r);
+            if (k < floor_count && table) level->collision_floors[i] = table[k];
+            else { level->collision_floors[i].grip = 1; level->collision_floors[i].rebound = 1; }
+        }
+        if (level->collision_triangle_count % 2) (void)rd_u16(r);
+        tc_free(table);
     }
     if (rd_u32(r) != 1 || r->error) goto done;
     ed = &level->ed;

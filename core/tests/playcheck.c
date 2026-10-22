@@ -100,7 +100,7 @@ static void synthetic(void) {
     n += quad(tris + n, tc_v3(-20, -20, 0), tc_v3(20, -20, 0), tc_v3(20, 20, 0), tc_v3(-20, 20, 0));
     n += quad(tris + n, tc_v3(-20, 10, 0), tc_v3(-20, 10, 5), tc_v3(20, 10, 5), tc_v3(20, 10, 0)); /* wall plane y = 10 */
     n += quad(tris + n, tc_v3(5, -20, 0.001f), tc_v3(15, -20, 10 * s), tc_v3(15, -5, 10 * s), tc_v3(5, -5, 0.001f)); /* ramp */
-    if (tc_collision_init(&synth, tris, (uint32_t)n) != 0) { puts("out of memory"); exit(1); }
+    if (tc_collision_init(&synth, tris, (uint32_t)n, NULL) != 0) { puts("out of memory"); exit(1); }
 
     tc_player_init(&p, &synth, tc_v3(0, 0, 3), 0);
     run(&p, 2, 120, none);
@@ -187,7 +187,7 @@ static void level(const char *folder, const char *name) {
         return;
     }
     free(data);
-    if (tc_collision_init(&world, lv.collision, 3 * lv.collision_triangle_count) != 0) { puts("out of memory"); exit(1); }
+    if (tc_collision_init(&world, lv.collision, 3 * lv.collision_triangle_count, lv.collision_floors) != 0) { puts("out of memory"); exit(1); }
     start = tc_v3(lv.ed.start.m[3], lv.ed.start.m[7], lv.ed.start.m[11]);
     tc_player_init(&p, &world, start, tc_heading_of(&lv.ed.start));
     printf("%s: %u triangles, Ed at (%s, %s, %s)\n", name, world.tri_count, swift_float(start.x, fx, sizeof fx),

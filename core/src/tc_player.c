@@ -1,6 +1,5 @@
 #include "tc_internal.h"
 #include "tonic/tc_player.h"
-#include <ctype.h>
 
 static const char *const anim_names[TC_ANIM_COUNT] = {"idle", "walk", "run", "jump", "jump_air", "fall", "land"};
 
@@ -39,6 +38,8 @@ void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float head
     p->takeoff_time = 5.0f / 30;
     p->max_slope = 50 * TC_PI / 180;
     p->snap_distance = 0.45f;
+    p->use_floor_grip = true;
+    p->ground_grip = 1;
     p->animation = TC_ANIM_IDLE;
     p->animation_time = 0;
     for (i = 0; i < TC_ANIM_COUNT; i++) p->clip_length[i] = 0;
@@ -48,16 +49,13 @@ void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float head
     p->land_timer = 0;
 }
 
-static bool same_name(const char *a, const char *b) {
-    for (; *a && *b; a++, b++)
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    return *a == *b;
-}
-
-void tc_player_apply_level(tc_player *p, const char *level_name) {
-    if (!level_name || !(same_name(level_name, "Totalski") || same_name(level_name, "skymap"))) return;
-    // Sliding profile (user's guesses, tuned without the air gravity scales, so those are 1 here). In the game
-    // data these floors carry a mechanical material with grip 0 (docs/NOTES.md, "Floor mechanical material").
+void tc_player_apply_floors(tc_player *p) {
+    uint32_t i;
+    bool sliding = false;
+    for (i = 0; p->world && i < p->world->tri_count && !sliding; i++) sliding = p->world->tris[i].floor.grip <= 0;
+    if (!sliding) return;
+    // Sliding profile (user's guesses, tuned without the air gravity scales, so those are 1 here) for levels
+    // with zero-grip floors (Totalski, skymap). Per-triangle grip is ignored there: this profile replaces it.
     p->walk_speed = 10.1f;
     p->run_speed = 20.2f;
     p->jump_speed = 22.3f;
@@ -65,6 +63,7 @@ void tc_player_apply_level(tc_player *p, const char *level_name) {
     p->rise_gravity_scale = 1;
     p->fall_gravity_scale = 1;
     p->max_slope = 10 * TC_PI / 180;
+    p->use_floor_grip = false;
 }
 
 void tc_player_respawn(tc_player *p) {
@@ -98,6 +97,7 @@ static void resolve_tri(const tc_tri *t, void *user) {
         p->position.z += fminf(pen / n.z, r); /* ground: straight up, no sliding down slopes */
         if (p->velocity.z < 0) p->velocity.z = 0;
         p->grounded = true;
+        p->ground_grip = fminf(p->ground_grip, t->floor.grip);
     } else {
         float vn;
         p->position = tc_v3_add(p->position, tc_v3_scale(n, pen));
@@ -139,6 +139,11 @@ static void substep(tc_player *p, float h, const tc_player_input *in, bool jump)
     target = tc_v2(move.x * (in->run ? p->run_speed : p->walk_speed), move.y * (in->run ? p->run_speed : p->walk_speed));
     vxy = tc_v2(p->velocity.x, p->velocity.y);
     accel = p->grounded ? 42.0f : 14.0f;
+    if (p->grounded && p->use_floor_grip && p->ground_grip < 1) {
+        /* Low-grip floor (cock01 ice): the engine keeps momentum and scales the steering by grip^4. */
+        float g = fmaxf(p->ground_grip, 0);
+        accel *= g * g * g * g;
+    }
     dv = tc_v2(target.x - vxy.x, target.y - vxy.y);
     dl = tc_v2_length(dv);
     if (dl > accel * h) { vxy.x += dv.x / dl * accel * h; vxy.y += dv.y / dl * accel * h; }
@@ -168,6 +173,7 @@ static void substep(tc_player *p, float h, const tc_player_input *in, bool jump)
     plen = ceilf(tc_v3_length(d) / (p->radius * 0.5f));
     pieces = plen > 1 ? (plen < 1e6f ? (int)plen : 1000000) : 1;
     p->grounded = false;
+    p->ground_grip = 1;
     for (i = 0; i < pieces; i++) {
         p->position = tc_v3_add(p->position, tc_v3_div(d, (float)pieces));
         resolve(p);
@@ -180,6 +186,7 @@ static void substep(tc_player *p, float h, const tc_player_input *in, bool jump)
             p->position.z = o.z - hit.distance;
             p->velocity.z = 0;
             p->grounded = true;
+            p->ground_grip = fminf(p->ground_grip, hit.tri->floor.grip);
         }
     }
     if (p->grounded) p->air_time = 0;

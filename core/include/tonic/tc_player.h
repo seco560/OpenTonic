@@ -43,6 +43,8 @@ typedef struct tc_player {
     /* Gravity multipliers from Ed's MEC ID cards (field +0x38): airborne and rising, airborne and falling.
      * For takeoff_time after a jump Ed is still in his take-off state, which uses the ground card (x1). */
     float rise_gravity_scale, fall_gravity_scale, takeoff_time;
+    bool use_floor_grip;   /* scale ground steering by the floor's grip^4 (off in the sliding profile) */
+    float ground_grip;     /* lowest grip among the ground contacts of the last substep (1 = none) */
 
     tc_anim_state animation;  /* chosen from the movement state */
     float animation_time;     /* seconds since `animation` started */
@@ -55,9 +57,9 @@ typedef struct tc_player {
 
 void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float heading);
 void tc_player_respawn(tc_player *p);
-/* Level-specific tunables, by level name (the .ttlv file name without extension). Totalski and skymap, whose
- * floors have a zero-grip mechanical material in the game data, get the sliding profile; others are unchanged. */
-void tc_player_apply_level(tc_player *p, const char *level_name);
+/* Level-wide tunables from the world's floor materials: a level with zero-grip floors (Totalski,
+ * skymap) gets the sliding profile; otherwise per-triangle grip applies while grounded. */
+void tc_player_apply_floors(tc_player *p);
 /* Put Ed somewhere else (e.g. below the free-fly camera) with movement state reset. */
 void tc_player_teleport(tc_player *p, tc_vec3 position, float heading);
 void tc_player_step(tc_player *p, float dt, const tc_player_input *input);
