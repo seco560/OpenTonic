@@ -20,9 +20,12 @@ func tcVec3(_ v: SIMD3<Float>) -> tc_vec3 { tc_vec3(x: v.x, y: v.y, z: v.z) }
 final class Level {
     private(set) var raw = tc_level()
     let folder: URL
+    /// File name without extension, e.g. "Totalski" (selects level-specific player tunables).
+    let name: String
 
     init(url: URL) throws {
         folder = url.deletingLastPathComponent()
+        name = url.deletingPathExtension().lastPathComponent
         let data = try Data(contentsOf: url)
         var level = tc_level()
         let r = data.withUnsafeBytes { tc_level_load(&level, $0.bindMemory(to: UInt8.self).baseAddress, data.count) }
@@ -62,6 +65,7 @@ final class PlaySession {
             return nil
         }
         tc_player_init(player, world, tc_vec3(x: start.m.3, y: start.m.7, z: start.m.11), tc_heading_of(&start))
+        tc_player_apply_level(player, level.name)
     }
 
     deinit {

@@ -194,3 +194,61 @@ verify by data or headless tests, and ask before large explorations.
 - Swift (`port/Sources/TonicViewer`) is only the platform layer: AppKit window/input/picker, Metal, AVFoundation music. `Core.swift` wraps the C structs. Removed: `TonicPlay`, `PlayCheck` (Swift), `LevelFile.swift`.
 - Parity: `CorePlayCheck` prints the same lines as the Swift PlayCheck did, byte for byte on all 21 levels (only the wall-clock "sim time" lines differ). One subtlety: Apple's `simd_cross` is compiled with FMA contraction, which decides whether a few near-degenerate sliver triangles are kept (Transit, north: one each), so `tc_v3_cross` uses `fmaf` explicitly; all other core math is compiled without contraction.
 
+
+## Next session plan (2026-10-22, agreed with user; NOT started)
+Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay(); main.swift title/help; Input.swift; this file).
+1. **Ed's mechanical ID card** (MEC `hidcard.c`, 2 funcs in modmap; MEC ≈ 107 funcs total). Find hidcard.c funcs in the
+   Ghidra project (files/out/_decomp_artifacts/ghidra), recover the struct layout, locate Ed's IDCard (State +0x2C read
+   null for all 369 states → offset likely wrong), read real walk/run speed, jump, gravity, slope values, check in 2+
+   levels, feed them into core/src/tc_player.c; verify with `make -C core check`. One focused pass, no broad sweeps.
+2. **Sliding stages:** skislope and topsecret use different physics. The user's guessed values are already in
+   tc_player.c; look for a separate ID card / MEC mode for these levels and replace the guesses if found.
+3. **Shelved (user, 2026-10-22):** animation speed. Each animation has its own speed; they can't share one clock
+   (so a single ANIM_TIME_SCALE is wrong). Large change, later.
+4. Small items: optional `swiftLanguageModes: [.v5]` in Package.swift (Swift 6 warnings); fix old `port/...` paths in
+   these notes (now `core/`, `Sources/`).
+
+## Ed's mechanics ID cards (2026-10-22, session 2)
+- **Where:** State **+0x30** is the MEC ID card pointer (TT; +0x2C is something else, which is why it read null). Ed's
+  cards are in fix, identical in every level. Card = u32 type @0 + fields; type 0..12, sizes from the constructor
+  `MEC_hidcard_004b7d04` (0/4/6: 0x40, 1: 0x48, 2/5: 0x50, 3: 0x10, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14, 11: 0x34, 12: 0x18).
+  Handlers per type: table filled by GAM_0042a7e0 (type 0 and 4 share FUN_004aa6af).
+- **Ed's states:** idle/walk/run/jump take-off (39, 5 frames at 30 fps: the first 1/6 s of a jump)/land = card type 0 @fix 0x3c33c8 (234 of 369 states use type 0);
+  jump_air (43) = type 4 @0x3c34c0, fall (44) and fall start (40) = type 4 @0x3c3500 / 0x3c36e8.
+- **Type 0/4 fields** (Ed ground / jump_air / fall): +4 = 120 (mass-like: stored in dynamics +0x98, force integration
+  divides by it, gravity multiplies by it, so it cancels for gravity); +8 = 1 / 0 / 0 (passed to collision response,
+  unknown); +0x14 = 50 / 100 / 100; +0x18 = angular speed (rad/s: 191.99 / 628.3); **+0x1C..+0x28 = cosines that
+  classify contacts by normal·up** (MEC_004bc477): >= +0x1C ground (Ed: cos 50°), >= +0x20 steep slope (cos 70°),
+  >= +0x24 wall (cos 120°), >= +0x28 overhang, else ceiling; +0x2C/+0x30 wall parameters; +0x34 = 0.4 / 0.3 / 0.3
+  (ground re-snap, MEC_004bf9f0 with +0x20); **+0x38 = gravity factor 1 / 3.5 / 3.0**; byte +0x3C = 1.
+- **Mechanical environment** (sector data +4 → list of {ptr mec env, ?, ptr visual env}): {9.81, dir (0,0,1), 1, 1, 1.3,
+  ...} in bar and Totalski. Gravity = 9.81 × card +0x38.
+- **Applied to tc_player:** gravity 9.81 ×1 grounded / ×3.5 rising / ×3.0 falling; max_slope 50°. Walk/run/jump speeds
+  stay the user's guesses: they come from the AI (proposed speed, dynamics param +0x6c), not the cards. The
+  take-off phase (1/6 s at ×1 before ×3.5, `takeoff_time`) matters: without it the apex was 1.44 units; with it ~2.6
+  (jump_speed 10.1, ~0.85 s in the air); user asked for slightly higher, jump_speed 11 → ~3.0. Ed's DsgVars (mind +0xC → dsgMem) hold 8, 6, 4, 0.05, 1.1 …
+  (unlabelled; need the AI interpreter).
+- **Sliding:** not a card; a **mechanical material** on the floor (GameMaterial +4, 0x1C bytes, ctor in hMecMatC.c).
+  Totalski (398 collide elements) and skymap (134) share 0x36ae40 = {1.0, 0.8, 0, 1, 1, 0, 0}; cock01 has
+  {0, 1, 0.6|0.5|0.4, 1, 1, 0, 0}; bar/sud0 have none. Field meanings not decoded yet (read in the collision
+  response, MEC_004bb904 and friends). skymap is presumably the user's "topsecret" (to confirm).
+- Pre-existing playcheck failure (also before this change): mammyon, running at the nearest wall climbs 1.7 units.
+
+### Floor mechanical material (sliding), decoded 2026-10-22
+- Collision detection (FUN_0043bff0) copies 5 floats of each side's material into the contact record (0x7C bytes):
+  obstacle at +0x30..+0x40, the moving object's own at +0x4C..+0x5C; a missing material reads as all 1.0
+  (DAT_004dc9c4..d4, also MEC_004baa78's defaults). Ed has none, so only the floor's values matter.
+- **mat[1] = rebound**: on a head-on impact (MEC_004bb904) v -= n·(2 − r)(v·n) with r = obstacle × own; r = 1 elastic, 0 dead stop.
+- **mat[2] = adhesion/grip**: the ground contact is kept at dynamics +0xCC; FUN_004c41c5 takes g = obstacle × own
+  (+0x104 × +0x120), clamped to 0..1. g >= 1: last frame's speed is discarded every frame (pure AI-driven speed, no
+  inertia). g < 1: the speed carries over (momentum), the AI-proposed speed is scaled by g^4, and slope forces are added.
+- mat[0], mat[3], mat[4]: not read by MEC/DNM code that has been decompiled (accessors exist for the AI: 0x49c140.., 0x48c6b3..).
+- Values: Totalski/skymap {1, 0.8, **0**, 1, 1}: no grip, so momentum only and zero steering from the walk/run
+  input (in the game Ed skis there using other states/AI). cock01 ice {0, 1, **0.6/0.5/0.4**, 1, 1}: steering
+  scaled 0.13 / 0.06 / 0.03 with momentum. Everything else: no material (grip 1).
+- **Sliding in the viewer (2026-10-22, user decision): per-level switch only.** `tc_player_apply_level` gives
+  Totalski and skymap the user's sliding profile (walk 10.1, run 20.2, jump 22.3, gravity 11.2, air scales 1,
+  max_slope 10°); no .ttlv change.
+- **TODO (user request): re-export the levels with the mechanical data** — per-triangle floor material (grip mat[2],
+  rebound mat[1]) in .ttlv, so sliding/ice (Totalski, skymap, cock01) comes from the data instead of the name switch.
+  Needs a ttlv version bump (tools/ttre/ttlv.py + level.py, core/src/tc_level.c), then re-run level-ttlv for all levels.

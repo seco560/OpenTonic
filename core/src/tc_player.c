@@ -1,5 +1,6 @@
 #include "tc_internal.h"
 #include "tonic/tc_player.h"
+#include <ctype.h>
 
 static const char *const anim_names[TC_ANIM_COUNT] = {"idle", "walk", "run", "jump", "jump_air", "fall", "land"};
 
@@ -22,20 +23,21 @@ void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float head
     p->position = tc_v3_add(start, tc_v3(0, 0, 0.3f)); /* GPT placements sit a little into the floor */
     p->heading = heading;
     reset_motion(p);
-    // Basic walking values for Ed: inferred from guesswork. Mechanics are for demonstration only.
+    // Speeds are guesswork: the AI sets them, not the ID cards.
     p->radius = 0.4f;
     p->height = 1.4f;
     p->walk_speed = 3.3f;
     p->run_speed = 9.9f;
-    p->jump_speed = 10.1f;
-    p->gravity = 13.37f;
-    p->max_slope = 33 * TC_PI / 180;
-    // "Sliding" Values: for skislope and topsecret. May be plugged directly into level or crudely decommented and rebuilt.
-//    p->walk_speed = 10.1f;
-//    p->run_speed = 20.2f;
-//    p->jump_speed = 22.3f;
-//    p->gravity = 11.2f;
-//    p->max_slope = 10 * TC_PI / 180;
+    p->jump_speed = 11.0f;
+    // From the data (docs/NOTES.md, "Ed's mechanics ID cards"): the sector's mechanical environment has
+    // g = 9.81; Ed's ground card scales it by 1, his jump_air card by 3.5 and his fall cards by 3.0.
+    // The take-off state (39: 5 frames at 30 fps) still uses the ground card, so the first 1/6 s of a jump is x1.
+    // The ground card counts contacts within 50 deg of up as ground (50-70 deg: steep slope, then wall).
+    p->gravity = 9.81f;
+    p->rise_gravity_scale = 3.5f;
+    p->fall_gravity_scale = 3.0f;
+    p->takeoff_time = 5.0f / 30;
+    p->max_slope = 50 * TC_PI / 180;
     p->snap_distance = 0.45f;
     p->animation = TC_ANIM_IDLE;
     p->animation_time = 0;
@@ -44,6 +46,25 @@ void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float head
     p->clip_length[TC_ANIM_LAND] = 0.5f;
     p->jump_held = false;
     p->land_timer = 0;
+}
+
+static bool same_name(const char *a, const char *b) {
+    for (; *a && *b; a++, b++)
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+    return *a == *b;
+}
+
+void tc_player_apply_level(tc_player *p, const char *level_name) {
+    if (!level_name || !(same_name(level_name, "Totalski") || same_name(level_name, "skymap"))) return;
+    // Sliding profile (user's guesses, tuned without the air gravity scales, so those are 1 here). In the game
+    // data these floors carry a mechanical material with grip 0 (docs/NOTES.md, "Floor mechanical material").
+    p->walk_speed = 10.1f;
+    p->run_speed = 20.2f;
+    p->jump_speed = 22.3f;
+    p->gravity = 11.2f;
+    p->rise_gravity_scale = 1;
+    p->fall_gravity_scale = 1;
+    p->max_slope = 10 * TC_PI / 180;
 }
 
 void tc_player_respawn(tc_player *p) {
@@ -139,7 +160,9 @@ static void substep(tc_player *p, float h, const tc_player_input *in, bool jump)
         p->air_time = 0.2f;
     }
     was_grounded = p->grounded;
-    p->velocity.z = fmaxf(p->velocity.z - p->gravity * h, -50);
+    p->velocity.z = fmaxf(p->velocity.z - p->gravity * h *
+                          (p->grounded || p->since_jump < p->takeoff_time ? 1
+                           : p->velocity.z > 0 ? p->rise_gravity_scale : p->fall_gravity_scale), -50);
 
     d = tc_v3_scale(p->velocity, h);
     plen = ceilf(tc_v3_length(d) / (p->radius * 0.5f));
