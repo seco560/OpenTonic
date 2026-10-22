@@ -1,4 +1,7 @@
 ## Tonic Viewer - native macOS renderer for Tonic Trouble levels
+
+<img width="1800" height="1130" alt="Screenshot 2026-10-19 at 20 55 41" src="https://github.com/user-attachments/assets/ce53b698-d818-4161-8d94-40539f97c555" />
+
 Unfortunately we're still quite far from calling this a proper game; it's rather an ambitious first step towards a full decompilation effort. The bulk (about 99% really, the rest were very small tweaks) of this project was produced in under 4 hours using Claude Code harnessed with REA. I'm very happy with the results but completely unsure about their correctness, and I also don't have a fully reproducible build process yet. Let's take a look at the project structure:
 * core - TonicCore: a reimplementation of the Tonic Trouble engine. I feel like Claude drew heavily from previous efforts to decompile the Rayman 2 engine (can be found by searching online) and was able to get it fairly accurately, at least as far as the rendering goes
 - Sources - TonicViewer: a Swift program that wraps around TonicCore to render game levels natively via Metal APIs. There's even a shader and some very basic lighting work done. This is the "impressive tech demo" part of this project
@@ -8,5 +11,10 @@ Unfortunately we're still quite far from calling this a proper game; it's rather
   - ttre - Python scripts used to extract and convert game files
   - audio\_inventory.py extracts and converts audio files
   - make\_app.sh and make\_icon.sh may be used to create a standalone redistributable which must NEVER be redistributed as it bundles copyrighted files. FOR PERSONAL USE ONLY!
+  
+ <img width="1800" height="1130" alt="Screenshot 2026-10-20 at 04 45 02" src="https://github.com/user-attachments/assets/aec86f85-30ff-4ddf-a167-1e21a0f756a7" /> 
+ 
 Once you do obtain the converted files you'll need to build TonicViewer and point it to the assets somehow. Currently the build process on Xcode is a tad broken and you have to manually copy the files inside the Library/Developer/Xcode/DerivedData folder which contains the program's build output. Quite cumbersome indeed. This is where make\_app.sh can come in handy to automatically install a self-contained version of the app inside your Applications folder.
-It's a bit iffy to get up and running, and there is a LOT of work left to do, but I'd like to publish this as a demonstration and hoping others can build on it. This can come in handy for Rayman 2 efforts as well, the two games are similar enough that they could probably be combined. Sky's the limit still.
+It's a bit iffy to get up and running, and there is a LOT of work left to do, but I'd like to publish this as a demonstration and hoping others can build on it. This can come in handy for Rayman 2 efforts as well, the two games are similar enough that they could probably be combined. Sky's the limit still. 
+
+<img width="1800" height="1130" alt="skislopes" src="https://github.com/user-attachments/assets/4aceb873-a9d7-409e-9ad1-9a7b344dec09" />
