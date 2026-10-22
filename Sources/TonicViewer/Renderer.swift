@@ -80,7 +80,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The loaded level (C core); kept alive because persos and Ed's clips point into it.
     private var level: Level?
 
-    // Play mode (Tab): Ed driven by the core's tc_player against the level's collision triangles.
+    // Play mode (the default when the level has Ed; Tab toggles free-fly): Ed driven by the core's tc_player against the level's collision triangles.
     private(set) var playing = false
     private(set) var player: PlaySession?
     private var edParts: [UInt16: [GPUMesh]] = [:]
@@ -207,6 +207,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         camera.pitch = -0.2
         camera.far = max(2000, simd_length(size) * 3)
         input.baseSpeed = max(2, simd_length(size) / 40)
+        // Start as Ed when the level has him (Tab still switches to free-fly).
+        if player != nil { togglePlay() }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}

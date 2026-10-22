@@ -3,7 +3,7 @@ import simd
 
 /// Keyboard state for the viewer. Defaults follow the port's control scheme:
 /// WASD = move, arrow keys = camera; plus R/F = up/down and Shift = faster (viewer-only extras).
-/// Play mode (Tab): the same WASD/arrows/Shift drive Ed and the orbit camera; Space jumps.
+/// Play mode (default when the level has Ed; Tab toggles free-fly): the same WASD/arrows/Shift drive Ed and the orbit camera; Space jumps.
 struct InputState {
     enum Action: CaseIterable { case forward, back, left, right, up, down, lookLeft, lookRight, lookUp, lookDown, fast, jump }
 

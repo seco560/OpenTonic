@@ -84,7 +84,7 @@ final class GameView: MTKView {
     }
 
     /// Live viewer settings appended to the window title.
-    private func updateTitle() {
+    func updateTitle() {
         guard let r = renderer, let w = window else { return }
         let base = w.title.components(separatedBy: "  ·  view:").first ?? w.title
         var s = String(format: "  ·  view: anim %.2f×, gamma %.2f, FOV %.0f°", r.animationSpeed, r.gamma, r.camera.verticalFOV * 180 / .pi)
@@ -140,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        print("Controls: WASD move, arrow keys look, R/F up/down, Shift fast; click to capture mouse-look, Esc to release; scroll = fly speed / play-mode zoom; , / . field of view; P pause animation; Tab play as Ed (Space jump); ⌘L level select; ⌃⌘F fullscreen")
+        print("Controls: WASD move, arrow keys look, R/F up/down, Shift fast; click to capture mouse-look, Esc to release; scroll = fly speed / play-mode zoom; , / . field of view; P pause animation; starts as Ed when the level has him, Tab toggles free-fly (Space jump); ⌘L level select; ⌃⌘F fullscreen")
     }
 
     @MainActor @objc func showPicker() {
@@ -193,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Faster:  hold Shift  ·  scroll wheel: fly speed (free-fly) / camera zoom (play mode)
         Field of view:  , narrower  ·  . wider
 
-        Play as Ed:  Tab toggles (free-fly is the default); fly somewhere and press Tab again to drop Ed there
+        Play as Ed:  the default; Tab toggles free-fly, fly somewhere and press Tab again to drop Ed there
           Move:  W A S D, relative to the camera  ·  Run:  hold Shift  ·  Jump:  Space
           Camera:  arrow keys or mouse orbit around Ed
           (simple collision and physics, not the original game's)
@@ -232,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeFirstResponder(view)
         let s = renderer!.stats
         window.title = "TonicViewer — \(url.deletingPathExtension().lastPathComponent)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(s.textures) textures (\(s.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(renderer!.player != nil ? "  ·  Tab: play as Ed" : "")"
+        view.updateTitle()  // play mode is on from the start when the level has Ed
         print("Loaded \(url.lastPathComponent): \(s.meshes) meshes, \(s.persos) persos (\(s.parts) parts), \(s.triangles) triangles, \(s.textures) textures, \(s.missingTextures) missing")
     }
 
