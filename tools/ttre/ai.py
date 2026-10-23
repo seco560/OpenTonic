@@ -199,7 +199,7 @@ def dump(ai, path, names=None):
 """
 import re
 
-TTAI_VERSION = 4
+TTAI_VERSION = 5
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
@@ -363,6 +363,82 @@ def zdm_sets(d, perso, n_states):
             per_state[st] = sets.setdefault(tuple(z), len(sets))
         e = lv.ptr(e)
     return [list(s) for s in sets], per_state
+
+
+def perso_dsg_value(d, perso, k):
+    """Current value of dsgvar k of a perso (float or int), or None."""
+    lv, un = d.lv, d.un
+    mind = lv.ptr(lv.ptr(perso, 0xC)) if lv.ptr(perso, 0xC) else None
+    dm = lv.ptr(mind, 0xC) if mind else None
+    dfn = lv.ptr(lv.ptr(dm)) if dm and lv.ptr(dm) else None
+    if not dfn:
+        return None
+    infos, (size, count) = lv.ptr(dfn, 4), un('2I', dfn, 8)
+    cur = lv.ptr(dm, 8) or lv.ptr(dm, 4) or lv.ptr(dfn)
+    if k >= count or not infos or not cur:
+        return None
+    off, typ = un('2I', infos, 16 * k)
+    return un('f', cur, off)[0] if typ == 7 else un('i', cur, off)[0]
+
+
+def proximity_triggers(ai):
+    """Level persos whose starting schedule is the obstacle pattern (Totalski's trees, cacti and standing icicles):
+        Proc9(1); PROC_18/19/20(Me, radius)          -- the perso's AI only runs while the main actor is within
+                                                        radius (std game +0x2C = radius^2; GAM_0042b520 compares it
+                                                        with GAM_0042a680's squared distance between the origins)
+        If Equal(Dot(KW_5, dsg<g>), 0)               -- KW_5 = the main actor; dsg<g> its "just crashed" flag
+        Then PROC_237(KW_5, <behaviour>)             -- force the main actor's normal behaviour (the skier's B9)
+        META_29(<ms>)                                -- wait (the If is skipped while the flag is set, the wait not)
+    The main actor is this AI's perso (the player). Returns [(position, radius, behaviour index, guard dsgvar or
+    0xFFFF, sleep ms, (family, instance))]. Running other persos' AI in general is not done yet; this extracts the
+    one effect these props have on the player."""
+    d, lv = ai.d, ai.lv
+    normal = {ref: int(name[1:]) for ref, name in ai.beh_names.items() if name.startswith('B')}
+    out = []
+    for p in d.persos():
+        if p.loc == ai.perso or not lv.ptr(p.loc, 0xC):
+            continue
+        try:
+            other = AI(d, p.loc)
+        except Exception:
+            continue
+        mind = lv.ptr(lv.ptr(p.loc, 0xC))
+        intel = lv.ptr(mind, 4) if mind else None
+        cur = lv.ptr(intel, 8) if intel else None
+        name = other.beh_names.get(cur)
+        if not name or not name.startswith('B'):
+            continue
+        sched = other.behaviours[int(name[1:])].schedule
+        radius = beh = guard = sleep = None
+        def kw(n, k):
+            return n.type == 0 and n.param == k
+        def walk(ns):
+            nonlocal radius, beh, guard, sleep
+            for n in ns:
+                c = n.children
+                if n.type == 4 and n.param in (18, 19, 20) and len(c) >= 2 and kw(c[0], 4):
+                    v = c[1]
+                    if v.type in (10, 11):
+                        radius = perso_dsg_value(d, p.loc, v.param)
+                    elif v.type == 12:
+                        radius = struct.unpack('<i', struct.pack('<I', v.param))[0]
+                    elif v.type == 13:
+                        radius = struct.unpack('<f', struct.pack('<I', v.param))[0]
+                if n.type == 1 and n.param == 3 and len(c) == 2 and c[0].type == 2 and c[0].param == 0xC and \
+                        len(c[0].children) == 2 and kw(c[0].children[0], 5) and c[0].children[1].type in (10, 11) and \
+                        c[1].type == 12 and c[1].param == 0:
+                    guard = c[0].children[1].param
+                if n.type == 4 and n.param == 237 and len(c) == 2 and kw(c[0], 5) and c[1].type == 32:
+                    beh = normal.get(c[1].ref)
+                if n.type == 5 and n.param == 29 and beh is not None and sleep is None and c and c[0].type == 12:
+                    sleep = c[0].param
+                walk(c)
+        walk(sched or [])
+        if radius and radius > 0 and beh is not None:
+            pos = tuple(p.world[3::4][:3])
+            out.append((pos, float(radius), beh, 0xFFFF if guard is None else guard, sleep or 0,
+                        d.perso_names(p.loc)[:3:2]))
+    return out
 
 
 def started_by_others(ai):
@@ -573,6 +649,10 @@ def export(ai, path):
     out += struct.pack('<HH', len(sphere_sets), 0)
     for zs in sphere_sets:
         out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f', *z) for z in zs)
+    triggers = proximity_triggers(ai)
+    out += struct.pack('<HH', len(triggers), 0)
+    for pos, radius, beh, guard, sleep_ms, _ in triggers:
+        out += struct.pack('<4fHHI', *pos, radius, beh, guard, sleep_ms)
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
@@ -582,4 +662,4 @@ def export(ai, path):
             'transitions': sum(len(r[4]) for r in st_rows),
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
             'strings': [cstr(r) for r in strings], 'cards': len(cards), 'root_states': sum(1 for _, n in root_index if n),
-            'sphere_sets': len(sphere_sets), 'unresolved': dict(unresolved), 'bytes': len(out)}
+            'sphere_sets': len(sphere_sets), 'triggers': len(triggers), 'unresolved': dict(unresolved), 'bytes': len(out)}

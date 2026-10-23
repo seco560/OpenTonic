@@ -75,6 +75,16 @@ typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[1
 #define TC_AI_MAX_SPHERES 8
 typedef struct tc_ai_sphere { tc_vec3 center; float radius; } tc_ai_sphere;
 typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX_SPHERES]; } tc_ai_sphere_set;
+/* v5: another perso's effect on this one, extracted from its script (ai.proximity_triggers): while this perso is within
+ * radius of position (3D, origins) and the guard dsgvar of this perso is 0, its normal behaviour becomes behaviour;
+ * then the trigger sleeps sleep_ms (0: until this perso has left the radius). Totalski's trees, cacti and standing
+ * icicles -> the skier's crash, B9. */
+typedef struct tc_ai_trigger {
+    tc_vec3 position;
+    float radius;
+    uint16_t behaviour, guard;
+    uint32_t sleep_ms;
+} tc_ai_trigger;
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
 
@@ -103,6 +113,8 @@ typedef struct tc_ai_model {
     tc_vec3 *root;
     uint16_t sphere_set_count;   /* v4 (0 before) */
     tc_ai_sphere_set *sphere_sets;
+    uint16_t trigger_count;      /* v5 (0 before) */
+    tc_ai_trigger *triggers;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
@@ -187,6 +199,8 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *model);
 void tc_ai_free(tc_ai_perso *p);
 /* One engine frame: buttons, reflex then normal intelligence, then the state's animation clock. */
 void tc_ai_step(tc_ai_perso *p, float dt);
+/* Another perso sets this one's normal behaviour (PROC_237): it starts from its beginning on the next step. */
+void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t behaviour);
 
 /* Raw dsgvar access for tests/debug UIs: value of dsgvar i of the perso as float (ints converted). */
 float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i);

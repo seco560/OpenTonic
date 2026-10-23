@@ -779,3 +779,97 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   it, the same as the port. FUN_004c3550 appends the force to a list, FUN_004c969c -> FUN_004c9560 integrates
   v += sum F / m dt (as flight), FUN_004ca140 returns its argument (the state's card), the cap FUN_004c3af0 is 3D and
   unconditional. No change: the difference has to be found against footage.
+
+### Prop collision: box and sphere collide elements (session 9, 2026-10-23)
+- **Object names:** the GPT's 3 object type name tables (family, model, instance; lists of {next, prev, head, ptr
+  name}) are indexed by the perso's std game block (+0 family, +4 model, +8 instance); the fix part links to the
+  level part through an unresolved pointer, found as the level entry whose prev points back (LevelData.object_names,
+  perso_names). Land: kitkatland (SDO_KKChemin, paths), landpont (bridges), gen_pierres (stones), grille (gates),
+  sud_ponlevi (drawbridge), escargot (Sluggy) ...
+- **Where props collide:** every static IPO already had its collide mesh (type 1 triangles; no IPO uses anything
+  else). Props are persos; their collision is the collide set of their physical objects (as IPOs), mostly **type 8
+  (axis-aligned box)** and **type 7 (sphere)** elements, which the exporter skipped. Element = {u32 n, ptr entries}
+  with the entries inline after it: box {u16 min vertex, u16 max vertex, ptr game material}, sphere {u16 centre
+  vertex, u16, f32 radius, ptr game material}; the collide object's vertices hold the corners / centre. Users: Land
+  kitkatland x16 (7.6 x 2.4 x 0.4 path pieces over a gap: before, the ground there was 11 units lower), landpont x15,
+  grille, leg_grille, sud_ponlevi, distrib, gen_pierres (r 1.9); sud0 sud_biblio, ponlevi, pierres; carota
+  leg_machpor; north grille, nord_pfmonaie, gen_cage. Land: persos with collision 7 -> 50.
+- **Export:** LevelData.collide_primitives turns them into triangles (box: 12; sphere: 80-face icosphere) in the same
+  collision list (.ttlv format unchanged; all 21 levels re-exported, the .ttai files still match). Prop collision is
+  posed at frame 0 of the perso's initial state, like the existing perso meshes: gates, drawbridges and moving
+  platforms are frozen there (closed gates stay closed).
+- **Not done:** persos' own collide sets (ZDR lists: gates, distrib, dalfou, leg_pale have ZDR boxes; the mover's
+  ZDM is swept against other persos in FUN_0043c830 -> FUN_0043c640, list types 1 and 3 from GAM_ZdxStuff); moving
+  props (the collision should follow the perso's animation / mechanics); collide element type 3 (2 in carota, 1 in
+  north, unknown).
+
+### Ski obstacles: trees, cacti, icicles crash the skier (session 10, 2026-10-23)
+- **No collision geometry:** Totalski's Tree (x41, BEN_newtree / SYM_sapin / SYM_Cactus), stalag (x22), Barrierre /
+  Barriere2 (x17) have no collide sets in their physical objects and no ZDx zones: the mechanics pass through them in
+  the original too. The crash is scripted by the obstacle.
+- **AI activation radius:** PROC_18 / 19 / 20 / 21 (shared handler FUN_00488580, switch on the procedure number;
+  case 10 = Proc10 confirms the numbering) call GAM_00424280(perso, a, b, r): std game +0x2A = a, +0x2B = b, +0x2C =
+  r^2 (GAM_004242d0; -1 stays -1 = always). PROC_18 (0, 0, r), 19 (0, 1, -1), 20 (0, 1, r), 21 (1, 1, -1), 22 sets
+  r only. GAM_0042b520 runs a perso's AI only when +0x2C is -1 or GAM_0042a680's squared distance between its origin
+  and the main actor's (DAT_008c1720's first perso; KW_5 = FUN_00497270 = the same) is below it. +0x2A/+0x2B not
+  traced.
+- **Tree schedule (B0):** Proc9(1); PROC_18(Me, dsg0 = 2, cacti 3, one sapin 4); If Equal(Dot(KW_5, dsg17), 0)
+  Then PROC_237(KW_5, skier B9); META_29(2000). Standing icicles (17, B3): the same with radius dsg2 = 2, then they
+  break (PROC_19, ChangeStateAndWait(2), PROC_257 re-init); hanging ones (stalagup, 5, B0) fall when the skier is
+  within dsg3 130-150 and shatter on contact (no crash). Barriers: PROC_20(Me, 5) then a break animation, no crash.
+- **The crash = skier B9:** if Counter34 (hit points) is 0, game over (315 / 299); else dsg19 = time, state 115, a
+  sound, ChangeStateAndWait(274) (55 frames at 30 = 1.8 s; its type 2 card has top speed +0x14 = 15, so the cap
+  brakes the skier), dsg17 = 1 (blink, SetTransparency 127), back to B3. Reflex R1 script 2 clears dsg17 after
+  TimeElapsed(dsg19, 3000).
+- **Port (.ttai v5):** ai.proximity_triggers finds that pattern in every level perso's starting schedule (radius
+  from PROC_18/19/20(Me, x), guard from If Equal(Dot(KW_5, dsg), 0), behaviour from PROC_237(KW_5, ...) mapped to the
+  player's model, sleep from the META_29 after it) and exports {position, radius, behaviour, guard, sleep}; Totalski
+  58 (41 trees and cacti, 17 icicles), every other level 0. tc_ed_ai checks them before the AI step (3D distance
+  between origins; sleep 0 = fire once, re-arm when the skier leaves the radius) and calls tc_ai_force_behaviour
+  (PROC_237). `make crashcheck`: start 12 uphill of a tree, crash at 1.6 s, 15 u/s in state 274, riding at 3.4 s,
+  blinking until 4.5 s.
+- **Not done:** the obstacles' own reactions (barriers breaking, icicles falling and shattering, the tree's state)
+  need their AI and animations running (persos); skymap's obstacles are a different design (mines on META_28 paths
+  forcing the skier's behaviour by direct perso reference, pillars without AI, fire jets): later, with the persos'
+  AI in general.
+- **skymap (parked, session 10 short pass):** the skier's AI is Totalski's (same B9 crash, flags). Its obstacles are
+  not the trigger pattern: mines (glac_mine x14) move on META_28 paths, and B4 does PROC_20(Me, 3) + PROC_237 with a
+  direct PERSO ref to the skier (plus reflex R0: explode when FUNC_14(skier) < 1.5); pillars (x17) have no AI, only
+  2 ZDE zones; fire jets / lightning cycle by script. The skier's reflex R1 script 2 (also in Totalski) crashes on
+  `CollectNearby(list, 6, MASK(0x10 | 0x40))` non-empty: CollectNearby = GAM_ZdxStuff_0041fa70 (decomp/
+  s10_collectnearby.txt) -> GAM_0041efe0(perso, 2, 6 - 1) = the skier's own zone #6 of zone list 2, tested against
+  other persos' zones by GAM_ZdxStuff_0041fb00 with the mask. So pillar / fire hits are zone-vs-zone (ZDx event
+  zones, per-state activation, mask bits): needs that subsystem (export every perso's zones + the list/mask
+  semantics of 0041fb00 / 0041efe0) - with the persos' AI work.
+
+### Level portals (red arches), first look - parked (session 10)
+- Portals = family **gen_arche** (Land: SDO_Arche1/2/5/6, SDO_ArcheRetourSUD; sud0 x20 HEG_Arche...; Totalski
+  GIZ_ArcheRetourneDansSud0; skymap NBD_ArcheGagneSkymap); **sprite_arche** = their effect sprites. No collide set.
+- The arch's script does not change level itself. B0: if Dot(info, dsg134) == 0: info.dsg99 = Me, info.dsg100 = 0,
+  info.dsg136 = own dsg5 (an int8 index: Land arches 5, 3, 1, 2), then PROC_237 / PROC_238 force the **game-info
+  perso's** (PERSO@0x948da, a perso-in-fix; the offset alone is ambiguous across files: resolve it through the node's
+  ref, not loc[1]) normal / reflex behaviours (0x68fff8 / 0x6b36c0) -> that perso's script does the transition
+  (likely PROC_29(level, n, 'position name', 'camera name'), as the skier's B22: PROC_29('sud0', 6,
+  'heg_positionedskymap', 'heg_positioncamskymap'), or ChangeLevel). Arch dsg0..2 are pointers (waypoints?), dsg5
+  index, dsg6 a float (73 / 237 / 78 / 257: maybe a heading).
+- **Blue portals (in-level):** B1 script 1 of the same model: when info.dsg103 == 1 ->
+  PROC_8(info, PositionOf(dsg0), Ed, PositionOf(dsg1), dsg3) = teleport Ed between the arch's two waypoints.
+- Next: dump the game-info perso's AI (find it via the PERSO node's resolved ref), read behaviours 0x68fff8 /
+  0x6b36c0 for the dsg136 -> (level, entry point) table and how Ed is detected (ZDx zones or distance), then: core
+  trigger "enter arch -> request level change (name, entry waypoint)", viewer: vignette 3 s + loading bar + "loading
+  <level>", load the level and place Ed at the named waypoint.
+- **Correction + the portal animation (session 10, end):** PERSO@0x948da in the arch's script is **Ed** (the fix
+  Ed; also the "hit points" Counter34 owner), not a separate game-info perso. The arch (B3: Proc9(1); PROC_18(Me, 20)
+  ... PROC_18(Me, 4) -> its AI wakes when Ed is within 4, the same activation-radius mechanism as Totalski's trees)
+  runs B0: Ed.dsg99 = the arch, Ed.dsg100 = 0, Ed.dsg136 = arch dsg5 (destination index), then PROC_237(Ed, **B66**)
+  and PROC_238(Ed, **R4**) (refs resolved through the nodes against Ed's model). Ed's B66 plays a lead-in by his
+  current state (ChangeStateAndWait 29 / 182 / 38 / 127, then state 0) and goes to **B68**: on the ground,
+  ChangeStateByDirection(dsg99 = the arch, offset (0, -4.5, 0), state 9 walk-start / 2 backward) - he walks to 4.5
+  in front of the arch -, TurnTowardOverFrames(arch, 1), dsg0 = 20 (the arch's B2 waits for Ed.dsg0 == 20 and then
+  drives the camera perso 0x225266: dsg44/89/90 = 1, dsg91 = 0, dsg92 = arch waypoint dsg2, dsg93 = position, dsg39
+  = 6), **ChangeStateAndWait(state 228) = the step-into-the-portal animation**, then B106 -> B102 (empty in Ed's
+  script: Ed waits). Holding Shoot skips to B106. So the level load itself is done elsewhere: next, find which perso
+  reads Ed.dsg136 / dsg0 == 20 and calls ChangeLevel / PROC_29 (candidates: the level's genLand POC_GenMap x34,
+  DFM_Save x23, World WLand). Plan: run Ed's B66 -> B68 for real (needs ChangeStateByDirection, TurnTowardOverFrames,
+  forced behaviour/reflex - tc_ai_force_behaviour exists), let state 228 play, then the loading screen
+  (vignette 3 s + bar + "loading <level>") and the new level with Ed at the entry waypoint.

@@ -29,7 +29,8 @@ GeometricObjectCollide (TT): u32 n_vertices, ptr vertices (f32[3]), ptr normals,
   i32 x2, u16, u16 n_parallel_boxes, f32 sphere_radius, f32 sphere_center[3].
   Collide element type 1 (indexed triangles): ptr game_material, u16 n_triangles, u16 n_mapping,
   ptr triangles (i16[3]), ptr mapping, ptr face_normals, ptr uvs, ptr ?, u16, i16 parallel_box.
-  Other types (raymap: 7 spheres, 8 aligned boxes) are not read. In every static IPO checked
+  Types 7 (spheres) and 8 (axis-aligned boxes): props only, read as triangles (LevelData.collide_primitives).
+  In every static IPO checked
   (bar, sud0) the collide object shares the visual LOD 0's vertex and triangle arrays (same
   pointers), and GameMaterial +0xC (collide material) is null, so world collision = visual mesh.
 VisualSet: u32 0, u16 n_lod, u16 type (0 = GeometricObject, 1 = patch), ptr lod_distances (f32[n]),
@@ -274,6 +275,43 @@ def forward_stride(anim):
             return 0.0
         ys.append(ry)
     return 2 * sum(ys) / len(ys) / len(poses)
+
+
+def box_triangles(lo, hi):
+    """12 outward-facing (counter-clockwise) triangles of the axis-aligned box lo..hi."""
+    x = (lo[0], hi[0]); y = (lo[1], hi[1]); z = (lo[2], hi[2])
+    c = lambda i, j, k: (x[i], y[j], z[k])
+    quads = [(c(0, 0, 0), c(0, 1, 0), c(1, 1, 0), c(1, 0, 0)),   # bottom (-z)
+             (c(0, 0, 1), c(1, 0, 1), c(1, 1, 1), c(0, 1, 1)),   # top (+z)
+             (c(0, 0, 0), c(1, 0, 0), c(1, 0, 1), c(0, 0, 1)),   # -y
+             (c(0, 1, 0), c(0, 1, 1), c(1, 1, 1), c(1, 1, 0)),   # +y
+             (c(0, 0, 0), c(0, 0, 1), c(0, 1, 1), c(0, 1, 0)),   # -x
+             (c(1, 0, 0), c(1, 1, 0), c(1, 1, 1), c(1, 0, 1))]   # +x
+    out = []
+    for a, b, cc, d in quads:
+        out += [(a, b, cc), (a, cc, d)]
+    return out
+
+
+def sphere_triangles(center, r):
+    """80 outward triangles of an icosphere (icosahedron subdivided once, vertices on the sphere)."""
+    import math
+    t = (1 + 5 ** 0.5) / 2
+    v = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+         (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    f = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6),
+         (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11), (6, 2, 10),
+         (8, 6, 7), (9, 8, 1)]
+    unit = lambda p: tuple(c / math.sqrt(sum(q * q for q in p)) for c in p)
+    mid = lambda a, b: unit(tuple((a[i] + b[i]) / 2 for i in range(3)))
+    v = [unit(p) for p in v]
+    tris = []
+    for a, b, c in f:
+        A, B, C = v[a], v[b], v[c]
+        ab, bc, ca = mid(A, B), mid(B, C), mid(C, A)
+        tris += [(A, ab, ca), (B, bc, ab), (C, ca, bc), (ab, bc, ca)]
+    place = lambda p: tuple(center[i] + r * p[i] for i in range(3))
+    return [tuple(place(p) for p in tri) for tri in tris]
 
 
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
@@ -607,6 +645,9 @@ class LevelData:
             tris, floors = [], []
             for i, t in enumerate(un(f'{ne}H', pt) if ne and pt else ()):
                 el = lv.ptr(lv.ptr(zdr, 0x1C), 4 * i)
+                if t in (7, 8) and el is not None:
+                    self.collide_primitives(el, t, verts, tris, floors)
+                    continue
                 if t != 1 or el is None:
                     self.collide_skipped[t] = self.collide_skipped.get(t, 0) + 1
                     continue
@@ -621,6 +662,39 @@ class LevelData:
             out = (verts, tris, floors) if tris else None
         self.collide_cache[po] = out
         return out
+
+    def collide_primitives(self, el, t, verts, tris, floors):
+        """Collide element type 7 (spheres) or 8 (axis-aligned boxes, in the object's axes) -> triangles appended to
+        verts / tris / floors. Element = {u32 n, ptr entries, entries...} (the entries follow inline): sphere entry
+        (12 bytes) {u16 centre vertex, u16, f32 radius, ptr game material}; box entry (8 bytes) {u16 min vertex, u16
+        max vertex, ptr game material}. Only props use them: Land's kitkatland paths and landpont bridges (boxes),
+        gen_pierres stones (spheres, r 1.9), gates (grille), drawbridges, carota's jaws ... Spheres become an
+        80-face icosphere (vertices on the sphere)."""
+        lv, un = self.lv, self.un
+        n, = un('I', el)
+        ents = lv.ptr(el, 4)
+        size = 12 if t == 7 else 8
+        for k in range(min(n, 64) if ents else 0):
+            if t == 8:
+                a, b = un('2H', ents, size * k)
+                gm = lv.ptr(ents, size * k + 4)
+                if max(a, b) >= len(verts):
+                    continue
+                lo, hi = verts[a], verts[b]
+                faces = box_triangles(lo, hi)
+            else:
+                c, = un('H', ents, size * k)
+                r, = un('f', ents, size * k + 4)
+                gm = lv.ptr(ents, size * k + 8)
+                if c >= len(verts) or not r > 0:
+                    continue
+                faces = sphere_triangles(verts[c], r)
+            floor = self.floor_material(gm)
+            for f in faces:
+                base = len(verts)
+                verts.extend(f)
+                tris.append((base, base + 1, base + 2))
+                floors.append(floor)
 
     def floor_material(self, gm):
         """GameMaterial -> (grip, rebound) from its mechanics material (+4; 0x1C bytes, 5 floats read
@@ -742,6 +816,45 @@ class LevelData:
         o = (o + 2 * nf * nch + 3) & ~3
         kfs = [un('4f10H', a3, o + 36 * i) for i in range(nkf)]
         return Anim(state_speed or speed, nf, vec, quat, hier, ntto, frames, chans, num_ntto, fkf, kfs)
+    def object_names(self):
+        """The GPT's 3 object type name tables (family, model, instance names), as lists indexed like the perso's
+        std game block (+0 family, +4 model, +8 instance). Each table is {first, last, n} of entries {next, prev,
+        head, ptr name}; the fix's entries come first and the link from the last fix entry to the level's first is
+        one of the unresolved fix -> level pointers, so the level part is found as the entry whose prev points back
+        at it (and shares its head pointer). Land: 52 families (gen_abeille, NewEd, Camera, ..., then the level's), 99 models, 243 instances."""
+        if hasattr(self, '_object_names'):
+            return self._object_names
+        lv, un = self.lv, self.un
+        g = (lv.gpt, 0)
+        off = 4 + 0x60 * un('I', g)[0] + 40
+        prev_of = {}
+        for where, dest in lv.pointers.items():
+            prev_of.setdefault(dest, []).append(where)
+        tables = []
+        for t in range(3):
+            count, = un('I', g, off + 12 * t + 8)
+            e, names = lv.ptr(g, off + 12 * t), []
+            while e is not None and len(names) < count:
+                q = lv.ptr(e, 12)
+                names.append(bytes(un('64B', q)).split(b'\0')[0].decode('latin-1') if q else '?')
+                nxt = lv.ptr(e)
+                if nxt is None:  # unresolved fix -> level link: the entry whose prev (+4) points here
+                    cands = [(s, o - 4) for s, o in prev_of.get(e, [])
+                             if o >= 4 and (s, o - 4) != e and lv.ptr((s, o - 4), 8) == lv.ptr(e, 8)]
+                    nxt = cands[0] if cands else None
+                e = nxt
+            tables.append(names)
+        self._object_names = tables
+        return tables
+
+    def perso_names(self, loc):
+        """(family, model, instance) names of the perso at loc ('' where unknown)."""
+        sg = self.lv.ptr(loc, 4)
+        if sg is None:
+            return ('', '', '')
+        tables = self.object_names()
+        return tuple(tables[t][k] if k < len(tables[t]) else '' for t, k in enumerate(self.un('3I', sg)))
+
     def persos(self):
         return [so.perso for so in self.walk(self.dynamic) if so.perso] if self.dynamic else []
 

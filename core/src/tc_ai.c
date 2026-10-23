@@ -40,7 +40,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
     version = rd_u32(&r);
-    if (version < 1 || version > 4) return TC_ERR_UNSUPPORTED_VERSION;
+    if (version < 1 || version > 5) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -175,6 +175,22 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
             }
         }
     }
+    if (version >= 5) {
+        m->trigger_count = rd_u16(&r);
+        (void)rd_u16(&r);
+        m->triggers = (tc_ai_trigger *)rd_array(&r, m->trigger_count, sizeof(tc_ai_trigger), 24);
+        for (i = 0; m->triggers && i < m->trigger_count; i++) {
+            tc_ai_trigger *t = &m->triggers[i];
+            t->position.x = rd_f32(&r);
+            t->position.y = rd_f32(&r);
+            t->position.z = rd_f32(&r);
+            t->radius = rd_f32(&r);
+            t->behaviour = rd_u16(&r);
+            t->guard = rd_u16(&r);
+            t->sleep_ms = rd_u32(&r);
+            if (t->behaviour >= m->normal_count) r.error = TC_ERR_TRUNCATED;
+        }
+    }
     for (i = 0; !r.error && m->states && i < m->state_count; i++) {
         if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
         if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
@@ -199,6 +215,7 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->cards);
     tc_free(m->root);
     tc_free(m->sphere_sets);
+    tc_free(m->triggers);
     tc_free(m->nodes);
     tc_free(m->scripts);
     tc_free(m->behaviours);
@@ -423,6 +440,10 @@ static void set_behaviour(tc_ai_perso *p, tc_ai_intel *in, uint32_t b) {
     in->behaviour = (uint16_t)b;
     in->schedule_pos = TC_AI_NONE;
     for (k = 0; k <= p->model->max_rules; k++) in->slots[k].node = TC_AI_NONE;
+}
+
+void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t b) {
+    if (b < p->model->normal_count && p->normal.behaviour != b) set_behaviour(p, &p->normal, b);
 }
 
 /* ChangeBehaviour / ChangeReflex (FUN_0048b7d0): restarting is only for the intelligence that is running. */

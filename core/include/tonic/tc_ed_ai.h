@@ -28,6 +28,9 @@ typedef struct tc_ed_ai {
     tc_mec_ski ski;
     tc_mec_walk walk;            /* card types 0 / 4 (ground, air) when the .ttai has the state's collision spheres */
     uint32_t contacts;           /* what the AI sees next frame (TC_AI_CONTACT_*) */
+    float time;                  /* seconds since init */
+    float *trigger_wake;         /* per model trigger (tc_ai_trigger): when it may fire again */
+    uint32_t triggers_fired;     /* debug count */
     /* Totalski / skymap: the skier starts in a behaviour that waits for Jump behind a text box (B2); with auto_start
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;

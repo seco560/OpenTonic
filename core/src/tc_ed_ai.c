@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <string.h>
 #include "tonic/tc_ed_ai.h"
+#include "tonic/tc_alloc.h"
 
 static bool same_name(const char *a, const char *b) {
     for (; *a && *b; a++, b++)
@@ -22,7 +23,17 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     tc_mec_walk_reset(&e->walk);
     e->contacts = 0;
     e->auto_start = false;
+    e->time = 0;
+    e->trigger_wake = NULL;
+    e->triggers_fired = 0;
     if (r != TC_OK) return r;
+    if (model->trigger_count) {
+        e->trigger_wake = (float *)tc_calloc(model->trigger_count, sizeof(float));
+        if (!e->trigger_wake) {
+            tc_ai_free(&e->ai);
+            return TC_ERR_OUT_OF_MEMORY;
+        }
+    }
     e->ai.level_name = level_name;
     e->auto_start = level_name && (same_name(level_name, "totalski") || same_name(level_name, "skymap"));
     for (i = 0; i < model->other_count; i++)
@@ -30,7 +41,32 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     return TC_OK;
 }
 
-void tc_ed_ai_free(tc_ed_ai *e) { tc_ai_free(&e->ai); }
+void tc_ed_ai_free(tc_ed_ai *e) {
+    tc_free(e->trigger_wake);
+    e->trigger_wake = NULL;
+    tc_ai_free(&e->ai);
+}
+
+/* The model's proximity triggers (other persos' scripts reduced to their effect on Ed, see tc_ai_trigger).
+ * trigger_wake: time the trigger may fire again; < 0 = fired with sleep 0, waiting for Ed to leave the radius. */
+static void run_triggers(tc_ed_ai *e) {
+    const tc_ai_model *m = e->ai.model;
+    uint16_t i;
+    for (i = 0; e->trigger_wake && i < m->trigger_count; i++) {
+        const tc_ai_trigger *t = &m->triggers[i];
+        bool inside = tc_v3_length_sq(tc_v3_sub(e->player->position, t->position)) < t->radius * t->radius;
+        if (e->trigger_wake[i] < 0) {
+            if (!inside) e->trigger_wake[i] = 0;
+            continue;
+        }
+        if (!inside || e->time < e->trigger_wake[i]) continue;
+        if (t->guard == TC_AI_NONE16 || tc_ai_dsgvar_float(&e->ai, t->guard) == 0) {
+            tc_ai_force_behaviour(&e->ai, t->behaviour);
+            e->triggers_fired++;
+        }
+        e->trigger_wake[i] = t->sleep_ms ? e->time + (float)t->sleep_ms / 1000 : -1;
+    }
+}
 
 static tc_vec3 local_to_global(float heading, tc_vec3 v) {
     float c = cosf(heading), s = sinf(heading);
@@ -159,6 +195,8 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     const tc_ai_card *card;
     uint32_t type;
 
+    e->time += dt;
+    run_triggers(e);
     if (e->auto_start && a->normal.behaviour == a->model->initial_normal) inputs |= 1u << TC_AI_IN_JUMP;
     else e->auto_start = false;
     a->inputs = inputs;

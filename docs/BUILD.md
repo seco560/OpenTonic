@@ -12,6 +12,15 @@ Copy the PC version's `GAMEDATA` folder (installed copy) to `files/sources/GAMED
 `icon_ED.ICO` to `files/sources/icon_ED.ICO`. The tools expect `files/sources/GAMEDATA/WORLD/LEVELS`,
 `.../WORLD/SOUND`, `Textures.cnt` and `Vignette.cnt` there.
 
+## Quick route
+After steps 1 and 2:
+```sh
+tools/build_all.sh            # steps 3-6: everything in files/out/ (existing outputs are skipped; --force redoes all,
+                              # --check also runs the core checks)
+tools/build_and_package.sh    # the same, then tools/make_app.sh: TonicViewer.app in ~/Applications
+```
+The steps below are what these scripts run, for doing parts by hand.
+
 ## 3. Textures and loading screens
 ```sh
 python3 -m tools.ttre cnt-extract files/sources/GAMEDATA/Textures.cnt files/out/Textures --png
@@ -27,7 +36,7 @@ for l in $(ls files/sources/GAMEDATA/WORLD/LEVELS | grep -v '\.'); do
   python3 -m tools.ttre level-ttai "$l" "files/out/ttlv/$l.ttai"   # Ed's AI (optional: without it, the simple controller)
 done
 ```
-Each line should end in `0 not found` (all textures resolved). Lightmapped levels (bar, death, PharmMap, pyr_fou,
+Each line should end in `0 not found` (all textures resolved; build_all.sh checks this). Lightmapped levels (bar, death, PharmMap, pyr_fou,
 SpyCarota, spynorth) also get a `<level>_lightmap.png` atlas next to their .ttlv. The format is documented at the top of
 `tools/ttre/ttlv.py`; re-run this step whenever the exporter changes. The .ttai (format in `tools/ttre/ai.py`) also
 writes `<level>_ai.txt` (node-indexed scripts, for debugging); .ttlv and .ttai of a
@@ -62,5 +71,8 @@ screen to play it (Esc skips).
   it bundles the converted assets).
 
 ## 8. Checks
-`make -C core check` (or `swift run -c release CorePlayCheck files/out/ttlv`): headless controller tests on
-every level (landing, wall runs without tunnelling, jump).
+- `make -C core check` (or `swift run -c release CorePlayCheck files/out/ttlv`): the simple controller on every level
+  (landing, wall runs without tunnelling, jump).
+- `make -C core mechcheck`: the game's ground/air mechanics on hand-made geometry (no game data needed).
+- `make -C core aicheck` (Ed's AI on bar; `AI_SCRIPT=fly|ski|wander`, see tests/aicheck.c) and
+  `make -C core crashcheck` (Totalski: the skier crashes into a tree).

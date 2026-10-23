@@ -248,6 +248,7 @@ int main(int argc, char **argv) {
     if (board_frames)
         printf("board clearance over %d frames near the snow: mean %.3f, min %.3f, %d frames more than 0.02 into it\n",
                board_frames, (double)(board_sum / (float)board_frames), (double)board_min, board_under);
+    if (model.trigger_count) printf("proximity triggers: %u, fired %u\n", model.trigger_count, ed.triggers_fired);
     printf("skipped primitives:");
     for (i = 0; i < 10 * TC_AI_UNKNOWN_STRIDE; i++)
         if (p->unknown[i]) printf(" %u_%u(%u)", i / TC_AI_UNKNOWN_STRIDE, i % TC_AI_UNKNOWN_STRIDE, p->unknown[i]);

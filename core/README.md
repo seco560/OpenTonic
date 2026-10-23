@@ -40,7 +40,8 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
   `make aicheck` runs Ed's AI headless on bar (`python3 -m tools.ttre level-ttai bar files/out/ttlv/bar.ttai`
   first); `AI_TRACE=<frame>` prints the statements executed from that frame on; `AI_SCRIPT=wander` is a 60 s
   collision stress run (other options in the header of tests/aicheck.c). `make mechcheck` checks the ground/air
-  mechanics (steps, walls, falling) on hand-made geometry, no game data needed.
+  mechanics (steps, walls, falling) on hand-made geometry, no game data needed; `make crashcheck` rides the Totalski
+  skier into a tree (the scripted obstacle crash).
   The test (not the library) uses POSIX `<dirent.h>` to list the level folder.
 
 ## Vita backend sketch (VitaSDK + vitaGL)
