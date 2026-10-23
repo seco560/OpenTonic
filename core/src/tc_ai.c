@@ -40,7 +40,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
     version = rd_u32(&r);
-    if (version < 1 || version > 3) return TC_ERR_UNSUPPORTED_VERSION;
+    if (version < 1 || version > 4) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -92,6 +92,9 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         if (version < 2) s->card = TC_AI_NONE16;
         s->ground = rd_f32(&r);
         s->drop = version >= 3 ? rd_f32(&r) : 0;
+        s->root_first = 0;
+        s->root_count = 0;
+        s->spheres = TC_AI_NONE16;
         s->transitions = (tc_ai_transition *)rd_array(&r, s->transition_count, sizeof(tc_ai_transition), 4);
         for (k = 0; s->transitions && k < s->transition_count; k++) {
             s->transitions[k].target = rd_u16(&r);
@@ -141,8 +144,41 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
             for (k = 0; k < c->word_count; k++) c->words[k] = rd_u32(&r);
         }
     }
-    for (i = 0; !r.error && m->states && i < m->state_count; i++)
+    if (version >= 4) {
+        m->root_count = rd_u32(&r);
+        m->root = (tc_vec3 *)rd_array(&r, m->root_count, sizeof(tc_vec3), 12);
+        for (i = 0; m->root && i < m->root_count; i++) {
+            m->root[i].x = rd_f32(&r);
+            m->root[i].y = rd_f32(&r);
+            m->root[i].z = rd_f32(&r);
+        }
+        for (i = 0; m->states && i < m->state_count; i++) {
+            tc_ai_state *s = &m->states[i];
+            s->root_first = rd_u32(&r);
+            s->root_count = rd_u16(&r);
+            s->spheres = rd_u16(&r);
+            if ((uint64_t)s->root_first + s->root_count > m->root_count) r.error = TC_ERR_TRUNCATED;
+        }
+        m->sphere_set_count = rd_u16(&r);
+        (void)rd_u16(&r);
+        m->sphere_sets = (tc_ai_sphere_set *)rd_array(&r, m->sphere_set_count, sizeof(tc_ai_sphere_set), 4);
+        for (i = 0; m->sphere_sets && i < m->sphere_set_count; i++) {
+            tc_ai_sphere_set *z = &m->sphere_sets[i];
+            z->count = rd_u16(&r);
+            (void)rd_u16(&r);
+            if (z->count > TC_AI_MAX_SPHERES) { r.error = TC_ERR_TRUNCATED; break; }
+            for (k = 0; k < z->count; k++) {
+                z->spheres[k].center.x = rd_f32(&r);
+                z->spheres[k].center.y = rd_f32(&r);
+                z->spheres[k].center.z = rd_f32(&r);
+                z->spheres[k].radius = rd_f32(&r);
+            }
+        }
+    }
+    for (i = 0; !r.error && m->states && i < m->state_count; i++) {
         if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
+        if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
+    }
     if (!r.error && m->node_count && m->nodes[m->node_count - 1].type != TC_AI_END) r.error = TC_ERR_TRUNCATED;
     if (r.error) {
         tc_result e = r.error;
@@ -161,6 +197,8 @@ void tc_ai_model_free(tc_ai_model *m) {
     for (i = 0; m->strings && i < m->string_count; i++) tc_free(m->strings[i]);
     for (i = 0; m->others && i < m->other_count; i++) free_dsg_def(&m->others[i].dsg);
     tc_free(m->cards);
+    tc_free(m->root);
+    tc_free(m->sphere_sets);
     tc_free(m->nodes);
     tc_free(m->scripts);
     tc_free(m->behaviours);

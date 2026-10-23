@@ -127,6 +127,8 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
    approximations and hand tuning (run_scale 2.0 -> 9.0 u/s, walk 3.5 u/s, jump impulse with tc_player's gravity
    gives ~5 units, likely too high) with the game's own rules. Check whether walking really is
    animation-driven (no move direction is set for it) or comes from the ID card.
+   **Status 2026-10-23 (session 7):** types 0/4 + the collide-and-move + root motion + Ed's ZDM spheres are ported
+   ("Ground and air (card types 0/4)" at the end); open: the jump's path, grip < 1 forces, the skier's sphere.
 2. ~~**Skiing (Totalski, skymap)**~~ done 2026-10-23: a separate skier perso + ID card type 2 (see "Skiing" at the
    end); flight (card type 5) too ("Flight").
 3. **Rest of the moveset through the AI:** Shoot (Q) / Lateral (C) / pogo / fly need their effects: channel
@@ -453,6 +455,9 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   references into an address range). Example: copy files/out/_decomp_artifacts/ghidra to a scratch dir, then
   `analyzeHeadless <copy> TonicTrouble -process -noanalysis -scriptPath tools/ghidra -postScript MkDis.java out.txt 00497970`.
   Table entry addresses: base + index * stride (tables listed above).
+  Added 2026-10-23: InsnGrep.java (out.txt pattern...: every instruction whose text contains a pattern; absolute
+  addresses print zero-padded, e.g. "0050e166") and CallArgs.java (out.txt target [n]: each call to target with
+  the n instructions before it, to read pushed constants). Session 7's raw decompiles: decomp/s7_*.txt.
 
 
 ## AI interpreter (phase C, 2026-10-22, session 5)
@@ -653,3 +658,124 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   slope and stopped sliding (collision: our capsule vs the exe's collide spheres / MEC_004bedd6 not decoded).
 - Not done: floor mat[0] is not exported (taken as 1, its value on the snow), contact type 3 and mode 20, rebound (mat[1]) on
   impacts, the camera's ski behaviour. The simple controller's sliding profile (I key) is unchanged.
+
+### Ground and air (card types 0/4), collisions, root motion: decoded and ported (session 7, 2026-10-23)
+- **Walking speed = root motion.** Each A3D frame's own vector (frame +2 -> vectors; level.py ignored it) is the
+  perso's displacement per animation frame in its axes (front = -Y): walk (1) (0, -0.08, 0), run (10) (0, -0.2, 0),
+  run (25) -0.26, sprint (96) -0.4, backward walk (2) +0.08, run start (158) 0 / -0.2 / -0.26 / -0.23 / -0.4, walk
+  start (9) ramps -0.04 .. -0.125; idle, take-off (39), landing (41): none; jump/fall (43/44): 0. x the frame rate:
+  walk 0.08 x 30 x Proc10 139 % = 3.34 u/s, run 0.2 x 45 = 9.0 u/s: exactly the speeds hand-tuned earlier, so
+  run_scale / walk_scale are gone (kept only as the fallback for .ttai v3). The frame quaternion beside it is the
+  identity for all of Ed's states. The code applying it was not found (not in PlayAnim.c 0x415500-0x416390; no
+  writer of the wanted motion +0x6C outside the handlers): the port feeds it as the request's wanted velocity.
+- **Ed's collision body = the ZDM spheres of his collide set** (perso +0x14 = {ZDD, ZDE, ZDM, ZDR lists, then
+  their activation lists}; ZDR is null for Ed). Zone list head {first, last, n}, entries {next, prev, head, ptr
+  GeometricObjectCollide}; sphere element (type 7): vertex = centre, radius at element +0xC. Activation lists have
+  one entry per state (+0x10 state index, +0xC -> list of {.., +0xC zone index}). Ed standing/walking: r 0.25 at
+  (0, 0, 0.25), 0.375 at (0, -0.1, 0.75), 0.53 at (0, -0.15, 1.28), 0.3 at (0, -0.3, 1.95) (model 2.17 tall; our old
+  capsule was 1.4); running/jumping add zone 9 (element type 5, not a sphere, skipped); 9 distinct sets; ski states
+  none. ZDD = one r 3 sphere 3 ahead, ZDE = 18 boxes (zone 5 = body box). **The skier (Totalski / skymap) has no
+  ZDM**: its collide set has a flag (GAM_00431720) and a radius at +0x30 (1.3) and the exe sweeps a single sphere
+  (FUN_0043d480 path, GAM_0042bc34); not ported (the skier still uses tc_player's capsule).
+- **Collide-and-move MEC_004be1bd** (flags 1 for Ed): up to 6 passes of {sweep the body from the start position
+  (dyn +0x294, fixed during the loop) to the target; no hit: done; else respond}. Still blocked after the 6th
+  response: back to the start with zero velocity and last frame's contacts (MEC_004bdeee / be074). Sweep FUN_0043bff0
+  -> contact record (0x7C): [0] 1 static / 2 perso, [1] own zone type (FUN_0043bf70: 1 for mechanics zones), [2] t
+  0..1, [3..5] normal, [6..8] point, +0x30 obstacle material, +0x4C own material, +0x78 moving shape, +0x7A contact
+  kind (FUN_00460230 callers: for the sphere-like shape 0 / 3 / 4, likely face / edge / vertex; 2 only for other
+  shapes). Two sweeps with zone masks 1 and ~1: a mask-1 hit counts only on floors with normal z >= 0.93
+  (DAT_004dc9bc); not ported (one sweep of all spheres).
+- **Classification MEC_004bc477** by n . up with the card (+0x1C/+0x20/+0x24/+0x28; no card: cos 45/60/120/135):
+  ground (1) / steep slope (2) -> MEC_004bb904; wall (4) -> MEC_004bbc4c; overhang (8) / ceiling (0x10) ->
+  MEC_004bc20a. Then the target moves out 0.01 along the normal (DAT_004d3010). Each response: impact = start +
+  (target - start) t, velocity v at the contact point (v + w x r, FUN_004c9c90), rest = (1 - t) dt, new target =
+  impact + v' rest. Ground/slope: if v . up <= 0.35 or the hit is not head-on (v . n / |v| >= -0.7071): slide (v
+  minus its normal part; on a steep slope also x f(|v|, 6), f(a, b) = (2ab - b^2) / a^2 for a > b (FUN_004c99af):
+  speeds along steep slopes tend to 12); head-on and rising: rebound v -= n (2 - r)(v . n), r = obstacle x own
+  material mat[1]. Ceiling: slide, or head-on: bounce with r = 0. Wall: step-up (below), else slide with x/y x
+  f(2 vx^2, 36) (the exe uses vx twice; z untouched), or head-on: rebound.
+- **Step-up MEC_004bb06e** (walls only): when last frame had ground (report & 3), card +8 (step height: Ed's ground
+  card 1, air cards 0) > 0, |n . up| <= card +0x2C (sin 7 deg) (or contact kind 2): put the body 0.15 beyond the
+  contact at the feet's height, card +8 higher, sweep it down; a floor within card +0x30 of flat (cos 20 deg) ->
+  the loop continues from there raised (start := top - offset + 0.01 n, target := top, v := offset / dt), report
+  0x41. Ed steps onto ledges up to 1 unit (mechcheck: 0.5 and 0.9 yes, 1.5 blocked).
+- **Integrator FUN_004aa6af** (types 0 and 4): grounded = (report | last frame's report) & 3. Forces (FUN_004c41c5):
+  gravity m g card +0x38; on the ground with grip >= 1 (floor mat[2] x own): no force and last frame's velocity is
+  dropped, so v = wanted (the request's motion, projected along the ground normal, FUN_004c1541); grip < 1: wanted x
+  grip^4 plus two forces not decoded. In the air the wanted motion is dropped unless the handler set +0xB8 = 8
+  (type 4 does). v = v_old + F dt / m + wanted; kinetic energy m v^2 / 2 < 0.025 -> 0, |v| capped at 100
+  (FUN_004c39f0). v = 0: no move (contacts kept). Then collide-and-move; ground lost this frame and the last but
+  present the one before -> re-snap (MEC_004bf9f0): sweep down card +0x34 (x 30 dt beyond 1/30 s; Ed 0.4 / 0.3),
+  normal within card +0x20 (cos 70) of up -> stand 0.01 / (n . up) above it if the way is free, report |= 1. On flat
+  ground the report alternates (no contact while walking, re-snap every other frame); the AI reads report | last
+  report (+0xC8), so OnGround stays true.
+- **Type 4 request handler FUN_004b0f2a**: +0xB8 = 8, clears the contact reports (an air card never counts as
+  grounded, the AI sees only this frame's contacts); modes 3/4 turn by proposal [0xD]; 7: velocity := 0, wanted :=
+  R(heading) x proposal [1..3] (ProposalVecA); 8: the same without the reset; 6/21: as 7 plus GAM_0042b5b0(0.1)
+  (probably the carrier's velocity); 9: R x proposal [4..6] (ProposalVecD). Default mode 0: nothing. The engine's
+  default request is mode 0 (GAM_0042a8a0 -> the state's card, State +0x30), and Ed's normal jump (B85:
+  ProposalVecA then ChangeState(43)) pushes no mode, so how the jump velocity reaches the integrator is still open;
+  the port applies ProposalVecA as mode 7 on the frame it is set (apex ~3.4 at 60 fps: 15.6 u/s against 9.81 x 3.5).
+- Constants: DAT_004d3000.. = 0.7071, -0.7071, 1, 0, 0.01, 2, -1, 0.35; 004d3050.. = 0.5, 0.025, 10000; 004d2ee8
+  1/30, 004d2eec 30; 004d30cc.. = 0, 1, 2. The exe file on disk is not readable as plain PE data at these
+  addresses (packed/protected); read constants through the Ghidra project (tools/ghidra/Raw.java).
+- **Port:** core/src/tc_mec_walk.c (tc_mec_sweep: swept spheres vs triangles, faces from both sides, edges and
+  corners as capsules, a touching sphere hits at t = 0 only when moving in; tc_mec_walk_step = the integrator, the
+  6-pass loop, responses, step-up, re-snap; a small depenetration before each move, not in the exe, for sphere sets
+  changing with the state). tc_ed_ai uses it for type 0/4 states that have spheres. **.ttai v4** appends the root
+  rows, per-state {root rows, sphere set} and the sphere sets (ai.root_motion, ai.zdm_sets); v4 = v3 + appended
+  tables, so the .ttlv pairing is unchanged. Tests: `make mechcheck` (no game data), `AI_SCRIPT=wander aicheck`
+  (60 s stress: all levels: no teleports; stalls only against walls / in corners; pyr_fou and spynorth start
+  facing a gap narrower than Ed's 1.06-wide torso sphere: blocked frames, as the exe would; BigBoss: a corner with
+  a wall leaning back (n.z 0.26) makes Ed slide up, lose ground and fall in a loop). 30/60/120/144 fps agree (run
+  9.0, walk 3.28, apex 2.7-3.0; 30 fps differs at walls).
+- **Open:** the jump's path (above); the two forces for grip < 1 (ice, FUN_004c41c5's undecoded part); the zone
+  masks of FUN_0043bff0; the skier's single-sphere collide set; dynamics +0x38C (when set, standing still keeps the
+  reports; the port always keeps them); air control (mode 9, ProposalVecD) and the AI's Velocity field under type 4;
+  whether the exe projects root motion onto the ground (the port does, as mode 12 does).
+
+### The skier's collision sphere, and the animation clock (session 8, 2026-10-23)
+- **Skier body:** collide set byte +0x36 (GAM_00431720; skier 1, Ed 0) switches the mechanics to one sphere
+  (GAM_0042bc34 -> FUN_0043d480 -> FUN_0043d400 -> FUN_0043d2f0 -> FUN_00464b80 -> FUN_004717d0): centred on the
+  perso's origin (the sweep runs between the two matrices' translations), radius = collide set +0x30 x 0.5
+  (DAT_004d2928; the skier's 1.3 is a diameter -> 0.65). His riding poses reach 0.611-0.646 below the origin over
+  all their frames, so the board rides 0.005-0.04 above the snow with no visual lift. The old port put the origin
+  on the snow (tc_player's upright capsule) and lifted the drawn model by the frame-0 drop along the tilted board
+  axis; on slopes the two disagreed and the board sank (user: "slightly clipping").
+- The sphere path's responses MEC_004bd297 / bc8cd / bcb80 / bd0b8 are bc477's family without the contact point's
+  angular velocity term (v + w x r): the same math as the port. The type 2 integrator (FUN_004ab91d) calls
+  MEC_004bedd6 with **no card** (default classes cos 45/60/120/135, no step-up, no softening) and flags 0x10, then,
+  when that move touched nothing and last frame had ground, MEC_004bf9f0(distance 0.7, min n . up 0.7).
+- **Port:** ai.zdm_sets exports {(0, 0, 0), 0.65} for every state of a perso with the flag (.ttai v4 unchanged in
+  layout; Totalski / skymap regenerated). tc_ed_ai's ski path: tc_mec_collide_move(card NULL) + tc_mec_resnap(0.7,
+  0.7) (both split out of tc_mec_walk_step), contacts from tc_mec_walk; tc_ed_ai_model_matrix draws at the origin
+  when the state has spheres. States with spheres and an undecoded card (the skier's 118/119 type 6 parked, 206 type
+  8 crash, 321 type 7 finish) run the type 0/4 path without a card so the body stays the same. aicheck prints the
+  board's clearance (snow along the board's down axis minus the pose's reach): ski script and 60 s wander on both
+  levels, 30-144 fps: min 0.015 (the designed gap), never into the snow; the old Totalski wander stall is gone; hard
+  head-on hits now stop the skier (floor rebound 0.8 slows slope impacts).
+- **Animation clock (user: animations "way too fast"):** GAM_PlayAnim_00415fb0 adds per engine frame
+  (DAT_008bd098 / 1000) x frame rate (+0x163) frames (exactly 1 frame instead when DAT_004ec6b8 is set; nothing
+  writes it directly). GAM_0041cc90: DAT_008bd098 = timer delta (TMR_Timer_00484fa0), DAT_008bd0dc = the same
+  clamped to 1..64 = the mechanics' milliseconds. So the exe's clock = real seconds x frame rate, as the port's
+  (tc_ai advance_state). Checks: the timeline is identical at 30/60/120/240 fps; state 43 (14 frames at 30) lasts
+  0.47 s against the 0.45 s rise of the data's jump (15.6 u/s against 9.81 x 3.5); walk/run cycles match their own
+  root motion (no foot sliding). Rates measured: idle 20 fps, walk 41 (30 x 139 %), run 45. The unexplained 0.25
+  for non-Ed persos (ANIM_TIME_SCALE) contradicts this and is worth revisiting.
+- **Walk/run rate, traced (user: Ed's walk and run look too fast).** B2 (node 872) / B88 (13226, 13260): below the
+  threshold dsg79 < dsg82 + dsg78 Ed walks with Proc10(dsg75 x dsg79 x 222), else runs with Proc10(dsg75 x dsg79 x
+  100); dsg79 = stick magnitude / 100, or with keys 1 (run) / 0.625 (SpeedUp held: walk); dsg75 = 1 out of zones (in
+  a zone: 1 - EnvHeight x 0.2 below 2, else 0.6: wading). So keyboard walk = 30 x 139 % = 41 fps, run = 45 (state
+  10's own +0x3B) x 100 %. GAM_0041ec90 (Proc10) multiplies the playing state's +0x3B; GAM_00437170 resets +0x163 to
+  it on a state change: as the port. DAT_004ec6b8 (1 frame per tick) is never written (dead switch). The timer
+  (FUN_004855a0) reads timeGetTime (ms) or a performance counter; the mechanics use the same delta as ms (clamped
+  1..64). Conclusion: Ed's rates equal the exe's for the same inputs; a remaining mismatch can only be checked
+  against footage of the original (ours: run 2.5 cycles = 5 steps per second, keyboard walk 1.7 cycles per second).
+- **Ski air gravity, re-checked (session 9; user: the skier "doesn't fly off properly").** FUN_004c4ecd (now in
+  decomp/s9_ski_forces.txt): gravity = mass x env g x card +0x34; x card +0x40 more when last frame's report is 0 and
+  the probe flag dyn +0x2F0 is clear; the probe (report 0 or 0x20, |v| > card +0x4C) casts from the origin along -z
+  and sets the flag on a hit within card +0x44 (2) at more than card +0x48 (cos 37 deg). Skier cards (124: top speed
+  70; the rest 50): +0x34 = 4, +0x40 = 2.5, so 9.81 x 4 = 39 u/s^2 near the snow and 98 u/s^2 more than 2 units above
+  it, the same as the port. FUN_004c3550 appends the force to a list, FUN_004c969c -> FUN_004c9560 integrates
+  v += sum F / m dt (as flight), FUN_004ca140 returns its argument (the state's card), the cap FUN_004c3af0 is 3D and
+  unconditional. No change: the difference has to be found against footage.

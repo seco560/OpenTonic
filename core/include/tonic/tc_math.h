@@ -34,6 +34,7 @@ static inline tc_vec3 tc_v3_cross(tc_vec3 a, tc_vec3 b) {
 static inline float tc_v3_length_sq(tc_vec3 a) { return tc_v3_dot(a, a); }
 static inline float tc_v3_length(tc_vec3 a) { return sqrtf(tc_v3_dot(a, a)); }
 static inline float tc_v3_distance(tc_vec3 a, tc_vec3 b) { return tc_v3_length(tc_v3_sub(a, b)); }
+static inline tc_vec3 tc_v3_normalize(tc_vec3 a) { float l = tc_v3_length(a); return l > 0 ? tc_v3_div(a, l) : a; }
 static inline tc_vec3 tc_v3_min(tc_vec3 a, tc_vec3 b) { return tc_v3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z)); }
 static inline tc_vec3 tc_v3_max(tc_vec3 a, tc_vec3 b) { return tc_v3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z)); }
 static inline float tc_v2_length(tc_vec2 a) { return sqrtf(a.x * a.x + a.y * a.y); }

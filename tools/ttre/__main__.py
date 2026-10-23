@@ -51,7 +51,8 @@ def level_cmd(cmd, argv):
         print(f"wrote {argv[1]} ({r['bytes']} bytes): {r['nodes']} nodes, {r['scripts']} scripts, behaviours "
               f"{r['behaviours']} (initial {r['initial']}), {r['dsgvars']} dsgvars, other persos {r['persos']}, {r['states']} states "
               f"(initial {r['initial_state']}, {r['transitions']} transitions; moving {r['moving']}), {len(r['buttons'])} buttons, "
-              f"strings {r['strings']}, unresolved {r['unresolved']}")
+              f"strings {r['strings']}, root motion {r['root_states']} states, sphere sets {r['sphere_sets']}, "
+              f"unresolved {r['unresolved']}")
         for off, mask, kind, lo, hi in r['buttons']:
             print(f'  button {off:#x}: {[n for i, n in enumerate(ai.INPUTS) if mask >> i & 1]} analog {kind} [{lo}, {hi}]')
     if cmd == 'level-ttlv':

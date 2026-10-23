@@ -199,7 +199,7 @@ def dump(ai, path, names=None):
 """
 import re
 
-TTAI_VERSION = 3
+TTAI_VERSION = 4
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
@@ -304,6 +304,65 @@ def pose_drops(d, perso, keys):
                     low = min(low, t[8] * v[0] + t[9] * v[1] + t[10] * v[2] + t[11])
         out[int(name[1:])] = -low
     return out
+
+
+def root_motion(d, states, keys):
+    """{animation key: [(x, y, z), ...] per frame}: the A3D frames' own vector (frame +2 -> vectors), the
+    displacement the perso makes per animation frame in its local axes (Ed's front = -Y). Walk (state 1)
+    (0, -0.08, 0), run (10) (0, -0.2, 0), backward walk (2) +0.08; take-off, landing, idle: none. Times the
+    animation's frame rate it gives the speeds hand-tuned earlier (walk 0.08 x 30 x 139 % = 3.3 u/s, run 0.2 x 45 =
+    9 u/s), so this is the ground speed of states whose AI sets no move direction. The frame quaternion next to it
+    is the identity for every state of Ed's (not exported). Frames without a vector (index out of range) are 0."""
+    lv, out = d.lv, {}
+    for k in set(keys) - {-1}:
+        a = d.read_a3d(lv.ptr(lv.ptr(states[k], 0xC), 0x28))
+        rows = [tuple(a.vec[f[1]]) if f[1] < len(a.vec) else (0.0, 0.0, 0.0) for f in a.frames]
+        if any(any(c != 0 for c in r) for r in rows):
+            out[k] = rows
+    return out
+
+
+def zdm_sets(d, perso, n_states):
+    """Ed's mechanics collision body per state: (list of distinct sphere sets [(cx, cy, cz, r), ...], per-state set
+    index or 0xFFFF). Perso +0x14 = collide set {ptr ZDD list, ptr ZDE list, ptr ZDM list, ptr ZDR list (0 for Ed),
+    then the activation lists of the same four}. A zone list = head {ptr first, ptr last, u32 n} of entries
+    {ptr next, ptr prev, ptr head, ptr GeometricObjectCollide}; an activation list has one entry per state
+    (+0x10 = state index, +0xC = head of {.., +0xC = zone index} entries). Zones are mostly one sphere (element type
+    7: vertex = centre, radius at element +0xC). Ed standing: r 0.25 at (0, 0, 0.25) (touches the origin), 0.375 at
+    (0, -0.1, 0.75), 0.53 at (0, -0.15, 1.28), 0.3 at (0, -0.3, 1.95); his model is 2.17 tall. Zone 9 (element
+    type 5, not a sphere) is skipped. A collide set with byte +0x36 set (the skier) has no ZDM: see below."""
+    lv, un = d.lv, d.un
+    cs = lv.ptr(perso, 0x14) if perso else None
+    if cs and un('B', cs, 0x36)[0]:
+        # Collide set byte +0x36 set (GAM_00431720; the skier): the mechanics sweep one sphere centred on the
+        # perso's origin (FUN_0043d480 -> FUN_004717d0) of radius +0x30 x 0.5 (DAT_004d2928; skier 1.3 -> 0.65),
+        # whatever the state. His riding poses reach 0.61-0.65 below the origin: the board rides on that sphere.
+        r = un('f', cs, 0x30)[0] * 0.5
+        return ([[(0.0, 0.0, 0.0, r)]], [0] * n_states) if r > 0 else ([], [0xFFFF] * n_states)
+    if not cs or not lv.ptr(cs, 8) or not lv.ptr(cs, 0x18):
+        return [], [0xFFFF] * n_states
+    zones, e = [], lv.ptr(lv.ptr(cs, 8))
+    while e and len(zones) < 256:
+        g = lv.ptr(e, 0xC)
+        sphere = None
+        if g and un('I', g, 0x14)[0] == 1 and lv.ptr(g, 0x18) and un('H', lv.ptr(g, 0x18))[0] == 7:
+            el = lv.ptr(lv.ptr(g, 0x1C))
+            sphere = un('3f', lv.ptr(g, 4)) + un('f', el, 0xC)
+        zones.append(sphere)
+        e = lv.ptr(e)
+    sets, per_state, e = {}, [0xFFFF] * n_states, lv.ptr(lv.ptr(cs, 0x18))
+    while e:
+        st, act = un('I', e, 0x10)[0], lv.ptr(e, 0xC)
+        z, f = [], lv.ptr(act) if act else None
+        while f and len(z) < 32:
+            i = un('I', f, 0xC)[0]
+            if i < len(zones) and zones[i]:
+                z.append(zones[i])
+            f = lv.ptr(f)
+        if st < n_states and z:
+            per_state[st] = sets.setdefault(tuple(z), len(sets))
+        e = lv.ptr(e)
+    return [list(s) for s in sets], per_state
 
 
 def started_by_others(ai):
@@ -434,6 +493,8 @@ def export(ai, path):
     strides = {k: forward_stride(d.read_a3d(lv.ptr(lv.ptr(ai.states[k], 0xC), 0x28))) for k in set(keys) - {-1}}
     st_rows, cards = [], {}
     drops = pose_drops(d, ai.perso, keys)
+    roots = root_motion(d, ai.states, keys)
+    sphere_sets, state_sets = zdm_sets(d, ai.perso, len(ai.states))
     for s in ai.states:
         c = lv.ptr(s, 0x30)
         card = cards.setdefault(c, len(cards)) if c and d.un('I', c)[0] in CARD_SIZES else 0xFFFF
@@ -501,6 +562,17 @@ def export(ai, path):
         t = d.un('I', c)[0]
         n = CARD_SIZES[t] // 4 - 1
         out += struct.pack('<II', t, n) + struct.pack(f'<{n}I', *d.un(f'{n}I', c, 4))
+    root_rows, root_index = [], []
+    for k in keys:
+        rows = roots.get(k, [])
+        root_index.append((len(root_rows), len(rows)))
+        root_rows += rows
+    out += struct.pack('<I', len(root_rows)) + b''.join(struct.pack('<3f', *r) for r in root_rows)
+    for (first, n), zs in zip(root_index, state_sets):
+        out += struct.pack('<IHH', first, n, zs)
+    out += struct.pack('<HH', len(sphere_sets), 0)
+    for zs in sphere_sets:
+        out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f', *z) for z in zs)
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
@@ -509,4 +581,5 @@ def export(ai, path):
             'dsgvars': n_dsg, 'persos': used, 'states': len(st_rows), 'initial_state': init_state,
             'transitions': sum(len(r[4]) for r in st_rows),
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
-            'strings': [cstr(r) for r in strings], 'cards': len(cards), 'unresolved': dict(unresolved), 'bytes': len(out)}
+            'strings': [cstr(r) for r in strings], 'cards': len(cards), 'root_states': sum(1 for _, n in root_index if n),
+            'sphere_sets': len(sphere_sets), 'unresolved': dict(unresolved), 'bytes': len(out)}

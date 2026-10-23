@@ -2,6 +2,9 @@
  * and <level>.ttai, feeds a scripted button sequence, prints every behaviour, reflex, state and mechanics-mode
  * change with Ed's position, then the primitives the interpreter skipped.
  * Usage: aicheck [out/ttlv] [level]  (default ../files/out/ttlv bar); AI_TRACE=<frame> prints executed nodes.
+ * AI_SCRIPT=fly | ski | wander picks another input script (wander: 60 s of running, turning and jumping, then a
+ * summary: distance, largest step, teleports, stalls, frames the collide loop gave up); AI_FPS=<n> sets the frame rate
+ * (default 60); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then.
  * Test-only stdio. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +57,11 @@ int main(int argc, char **argv) {
     uint32_t i, k, frame, last_changes = 0;
     uint16_t last_normal = 0xFFFE, last_reflex = 0xFFFE, last_wanted = 0xFFFF;
     int32_t last_mode = -2;
-    const float dt = 1.0f / 60;
+    int quiet = 0, respawns = 0, stalls = 0, board_frames = 0, board_under = 0;
+    float board_min = 1e9f, board_sum = 0;
+    float travelled = 0, max_step = 0, stalled_for = 0;
+    tc_vec3 before;
+    const float dt = 1.0f / (getenv("AI_FPS") ? (float)atof(getenv("AI_FPS")) : 60);
     const step base_script[] = {
         {1.0f, 0, 0, 0, "idle"},
         {2.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up (run)"},
@@ -93,6 +100,8 @@ int main(int argc, char **argv) {
         {7.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
         {12.0f, 0, 0, 0, "ride"},
     };
+    /* AI_SCRIPT=wander: 60 s of running with turns and jumps (collision stress test; prints a summary). */
+    step wander_script[48];
     const step *script = base_script;
     size_t steps = sizeof(base_script) / sizeof(base_script[0]);
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "fly") == 0) {
@@ -102,6 +111,22 @@ int main(int argc, char **argv) {
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "ski") == 0) {
         script = ski_script;
         steps = sizeof(ski_script) / sizeof(ski_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "wander") == 0) {
+        static const uint32_t pattern[6] = {1u << TC_AI_IN_UP, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_LEFT),
+                                            (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_JUMP), 1u << TC_AI_IN_UP,
+                                            (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_RIGHT),
+                                            (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_SPEEDUP)};
+        static const float lengths[6] = {2.0f, 0.45f, 0.3f, 1.5f, 0.7f, 1.2f};
+        float until = 1.0f;
+        wander_script[0] = (step){1.0f, 0, 0, 0, "idle"};
+        for (i = 1; i < 48; i++) {
+            until += lengths[i % 6];
+            wander_script[i] = (step){until, pattern[i % 6], 0, 0, "wander"};
+        }
+        script = wander_script;
+        steps = 48;
+        quiet = 1;
     }
 
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, level_name);
@@ -140,7 +165,51 @@ int main(int argc, char **argv) {
         if (tracing && frame >= (uint32_t)atoi(getenv("AI_TRACE"))) printf("frame %u\n", frame);
         /* camera 4.5 behind the start heading, following Ed's position (does not swing round) */
         cam = tc_v3_add(player.position, tc_v3(-4.5f * sinf(tc_heading_of(&start)), 4.5f * cosf(tc_heading_of(&start)), 1.5f));
+        before = player.position;
         tc_ed_ai_step(&ed, dt, script[k].inputs, script[k].sx, script[k].sy, cam);
+        {
+            float step_len = tc_v3_distance(before, player.position);
+            if (step_len > 5) {
+                respawns++;
+                printf("%6.2f  ! jump of %.2f from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f)\n", (double)t, (double)step_len,
+                       (double)before.x, (double)before.y, (double)before.z, (double)player.position.x,
+                       (double)player.position.y, (double)player.position.z);
+            } else {
+                travelled += step_len;
+                if (step_len > max_step) max_step = step_len;
+            }
+            if (quiet && (script[k].inputs & (1u << TC_AI_IN_UP)) && step_len < 0.3f * dt) {
+                stalled_for += dt;
+                if (stalled_for >= 2 && stalled_for - dt < 2) {
+                    stalls++;
+                    printf("%6.2f  ! stalled 2 s at (%.2f, %.2f, %.2f) state %u contacts %#x\n", (double)t,
+                           (double)player.position.x, (double)player.position.y, (double)player.position.z, p->state,
+                           ed.contacts);
+                }
+            } else {
+                stalled_for = 0;
+            }
+        }
+        if (ed.card_type == 2) { /* the board's clearance: snow along its down axis, minus the pose's reach */
+            tc_hit hit;
+            tc_vec3 down = tc_v3_scale(ed.ski.z, -1);
+            float drop = model.states[p->state].drop, gap;
+            if (tc_collision_raycast(&world, player.position, down, 3, &hit)) {
+                gap = hit.distance - drop;
+                board_frames++;
+                board_sum += gap;
+                if (gap < board_min) board_min = gap;
+                if (gap < -0.02f) board_under++;
+            }
+        }
+        if (getenv("AI_FROM") && t >= (float)atof(getenv("AI_FROM")) && t < (float)atof(getenv("AI_FROM")) + 0.25f) {
+            printf("%6.3f  state %u frame %.2f rate %u pos (%.3f, %.3f, %.3f) v (%.2f, %.2f, %.2f) contacts %#x passes %u ground n (%.2f, %.2f, %.2f) wall n (%.2f, %.2f, %.2f)\n",
+                   (double)t, p->state, (double)p->state_frame, p->frame_rate, (double)player.position.x, (double)player.position.y, (double)player.position.z,
+                   (double)player.velocity.x, (double)player.velocity.y, (double)player.velocity.z, ed.contacts, ed.walk.passes,
+                   (double)ed.walk.ground_normal.x, (double)ed.walk.ground_normal.y, (double)ed.walk.ground_normal.z,
+                   (double)ed.walk.wall_normal.x, (double)ed.walk.wall_normal.y, (double)ed.walk.wall_normal.z);
+        }
+        if (quiet) continue;
 
         if (p->normal.behaviour != last_normal || p->reflex.behaviour != last_reflex) {
             printf("%6.2f  behaviour %s  reflex %s\n", (double)t, beh_name(&model, p->normal.behaviour, b1),
@@ -172,6 +241,13 @@ int main(int argc, char **argv) {
             printf("\n");
         }
     }
+    if (quiet)
+        printf("wander: travelled %.1f, largest step %.3f, jumps %d, stalls %d, blocked frames %u, end (%.2f, %.2f, %.2f) state %u\n",
+               (double)travelled, (double)max_step, respawns, stalls, ed.walk.blocked, (double)player.position.x,
+               (double)player.position.y, (double)player.position.z, p->state);
+    if (board_frames)
+        printf("board clearance over %d frames near the snow: mean %.3f, min %.3f, %d frames more than 0.02 into it\n",
+               board_frames, (double)(board_sum / (float)board_frames), (double)board_min, board_under);
     printf("skipped primitives:");
     for (i = 0; i < 10 * TC_AI_UNKNOWN_STRIDE; i++)
         if (p->unknown[i]) printf(" %u_%u(%u)", i / TC_AI_UNKNOWN_STRIDE, i % TC_AI_UNKNOWN_STRIDE, p->unknown[i]);

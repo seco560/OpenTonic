@@ -3,7 +3,9 @@
 Plain C11 library with the platform-independent part of the port: the `.ttlv` loader (v1-v8),
 world collision (uniform grid, raycast, closest point), Ed's play-mode controller, the
 animation sampling helpers, the AI interpreter (`tc_ai.h`: runs Ed's own scripts from a
-`.ttai`, see docs/NOTES.md "AI interpreter") and `tc_ed_ai.h`, which drives Ed's controller with it. Every platform (macOS now, PS Vita and 3DS later) links the same code.
+`.ttai`, see docs/NOTES.md "AI interpreter"), the exe's mechanics (`tc_mec.h`: ground/air with the
+collide-and-move, flight, the skier's board; docs/NOTES.md "MEC physics" onward) and `tc_ed_ai.h`, which drives
+Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same code.
 
 ## Layering rules
 - **Core = no platform code.** Only the C standard library and `<math.h>`: no OS, file, GPU, audio
@@ -36,7 +38,9 @@ animation sampling helpers, the AI interpreter (`tc_ai.h`: runs Ed's own scripts
 - Any C compiler: `make` here builds `build/libtoniccore.a` and `build/playcheck` (`make check` runs
   it). Without make: `cc -std=c11 -O2 -Iinclude src/*.c tests/playcheck.c -lm -o playcheck`.
   `make aicheck` runs Ed's AI headless on bar (`python3 -m tools.ttre level-ttai bar files/out/ttlv/bar.ttai`
-  first); `AI_TRACE=<frame>` prints the statements executed from that frame on.
+  first); `AI_TRACE=<frame>` prints the statements executed from that frame on; `AI_SCRIPT=wander` is a 60 s
+  collision stress run (other options in the header of tests/aicheck.c). `make mechcheck` checks the ground/air
+  mechanics (steps, walls, falling) on hand-made geometry, no game data needed.
   The test (not the library) uses POSIX `<dirent.h>` to list the level folder.
 
 ## Vita backend sketch (VitaSDK + vitaGL)

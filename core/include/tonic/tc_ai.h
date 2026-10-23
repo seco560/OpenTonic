@@ -55,6 +55,11 @@ typedef struct tc_ai_state {
     float ground;                /* units per animation frame Ed walks forward on the ground (0 = in place) */
     uint16_t card;               /* mechanics ID card (State +0x30): index into model->cards, TC_AI_NONE16 none */
     float drop;                  /* how far the state's pose reaches below the perso's origin (v3; 0 before) */
+    /* v4: root motion, one row per animation frame in model->root (root_count 0 = none): the A3D frame's own vector,
+     * units per animation frame in the perso's axes (front = -Y). Times the frame rate = the ground speed. */
+    uint32_t root_first;
+    uint16_t root_count;
+    uint16_t spheres;            /* v4: mechanics collision spheres (ZDM): index into model->sphere_sets, or none */
     uint16_t transition_count, prohibited_count;
     tc_ai_transition *transitions; /* target -> state actually played first */
     uint16_t *prohibited;
@@ -66,6 +71,10 @@ typedef struct tc_ai_other { uint16_t id; uint8_t role; tc_ai_dsg_def dsg; } tc_
 /* A mechanics ID card (MEC hidcard): type 0-12 picks the engine's handler pair; words = the card after its type
  * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
 typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
+/* A state's mechanics collision body (the collide set's ZDM zones active in it): spheres in the perso's axes. */
+#define TC_AI_MAX_SPHERES 8
+typedef struct tc_ai_sphere { tc_vec3 center; float radius; } tc_ai_sphere;
+typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX_SPHERES]; } tc_ai_sphere_set;
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
 
@@ -90,6 +99,10 @@ typedef struct tc_ai_model {
     tc_ai_other *others;         /* other persos the scripts reference (role 1 = camera) */
     uint16_t card_count;         /* 0 in a version 1 file */
     tc_ai_card *cards;
+    uint32_t root_count;         /* v4 (0 before) */
+    tc_vec3 *root;
+    uint16_t sphere_set_count;   /* v4 (0 before) */
+    tc_ai_sphere_set *sphere_sets;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);

@@ -79,6 +79,56 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
 /* tc_player-style heading of the board's front (-y). */
 float tc_mec_ski_heading(const tc_mec_ski *s);
 
+/* ---- Types 0 and 4: walking, jumping, falling (Ed's ground and air cards) ----
+ * Integrator FUN_004aa6af (both types) with forces/grip FUN_004c41c5 and the energy cut-off FUN_004c39f0; request
+ * handlers FUN_004ae392 (type 0) and FUN_004b0f2a (type 4; it clears the contact report every frame, so an air
+ * card never counts as grounded); collide-and-move MEC_004be1bd with contact classification MEC_004bc477 and the
+ * responses MEC_004bb904 (ground, steep slope), MEC_004bbc4c (wall, with the step-up MEC_004bb06e), MEC_004bc20a
+ * (overhang, ceiling); ground re-snap MEC_004bf9f0. The body is the state's ZDM spheres (tc_ai_sphere_set), swept
+ * against the world's triangles. */
+
+/* Report bits (dynamics +0xC4; the AI's contact tests read them): as TC_AI_CONTACT_*, plus 0x40 = stepped up. */
+#define TC_MEC_STEPPED 0x40u
+
+typedef struct tc_mec_walk {
+    uint32_t report;             /* this frame's contacts (+0xC4) */
+    uint32_t report_prev;        /* last frame's (+0xC0) */
+    tc_vec3 ground_normal;       /* contact record +0xCC (ground, steep slope) */
+    tc_vec3 wall_normal;         /* contact record +0x148 (wall, overhang, ceiling) */
+    float ground_grip;           /* the ground contact's floor material mat[2] (1 = none) */
+    uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
+    uint32_t passes;             /* responses in the last frame's collide loop, debug */
+} tc_mec_walk;
+
+void tc_mec_walk_reset(tc_mec_walk *w);
+/* What the AI sees (+0xC8 = +0xC0 | +0xC4): contacts of this frame and the one before. */
+uint32_t tc_mec_walk_contacts(const tc_mec_walk *w);
+/* Request handler side for an air card (type 4, FUN_004b0f2a): forget the contacts. */
+void tc_mec_walk_air(tc_mec_walk *w);
+/* Earliest contact of the body (spheres in the perso's axes, turned by heading as tc_player) moving from -> to:
+ * t in 0..1, the contact normal (unit, away from the surface) and point. Triangles count from both sides; a
+ * sphere already touching a triangle hits it at t = 0 only when it moves into it. */
+typedef struct tc_mec_hit { float t; tc_vec3 normal, point; const tc_tri *tri; } tc_mec_hit;
+bool tc_mec_sweep(tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 from, tc_vec3 to,
+                  tc_mec_hit *hit);
+/* Collide-and-move (MEC_004be1bd; MEC_004bedd6 for the type 2 integrator, same loop): move by velocity x dt, up to 6
+ * sweep-and-respond passes, the report shifted (report_prev := report, report := this move's bits). card NULL = no
+ * card (the skier's integrator passes none): the default classes (cos 45 / 60 / 120 / 135 deg), no step-up, no
+ * softening on steep slopes and walls. Returns the bits. */
+uint32_t tc_mec_collide_move(tc_mec_walk *w, const tc_ai_card *card, tc_collision *world, const tc_ai_sphere_set *body,
+                             float heading, float dt, tc_vec3 *position, tc_vec3 *velocity);
+/* MEC_004bf9f0: ground within distance below with normal . up >= min_cos -> stand 0.01 above it (report |= ground). */
+bool tc_mec_resnap(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float heading, float distance,
+                   float min_cos, tc_vec3 *position);
+/* One frame of FUN_004aa6af. wanted = the request handlers' motion this frame (world velocity: root motion or a
+ * move direction; ignored in the air unless wanted_in_air, the type 4 handler's +0xB8 = 8); impulse != NULL: a
+ * velocity that replaces the old one (mode 7, the jump). Gravity = env x card +0x38 in the air or on grip < 1;
+ * on a grippy ground (grip 1) last frame's velocity is dropped and only wanted moves Ed. Then collide-and-move
+ * and, when the ground was lost two frames running, the re-snap within card +0x34. */
+void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc_collision *world,
+                      const tc_ai_sphere_set *body, float heading, tc_vec3 wanted, bool wanted_in_air,
+                      const tc_vec3 *impulse, float dt, tc_vec3 *position, tc_vec3 *velocity);
+
 #ifdef __cplusplus
 }
 #endif

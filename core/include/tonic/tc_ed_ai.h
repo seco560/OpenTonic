@@ -1,12 +1,11 @@
-/* Ed driven by his own AI: couples tc_ai (decisions, states) to tc_player (gravity, collisions). Each frame the
- * AI sees Ed's contacts, buttons and the camera, then its motion request becomes the physics' target:
- *   ground: forward at the playing state's walk stride x its frame rate (Ed's walk/run speed comes from the
- *           animation; the scripts only pick the state and its rate), or SetMoveDirection's vector;
- *   ProposalVecA: velocity impulse (local frame; the jump); the Velocity field: set velocity; StopMotion;
- *   turns (TurnBy / TurnBySpeed) change the heading; in the air the horizontal momentum is kept.
- * An approximation of the exe's MEC handlers, which are not decoded yet (docs/NOTES.md, "AI interpreter").
- * Exceptions: states whose ID card is type 5 (flight) or type 2 (the skier's board) run the exe's own mechanics
- * (tc_mec). */
+/* Ed driven by his own AI: couples tc_ai (decisions, states) to the mechanics. Each frame the AI sees Ed's contacts,
+ * buttons and the camera, then its motion requests go to the mechanics of the playing state's ID card:
+ *   types 0 / 4 (ground, air; tc_mec_walk, the exe's FUN_004aa6af with its collide-and-move): ground speed = the
+ *           state animation's root motion x its frame rate, or SetMoveDirection under mode 12; ProposalVecA = the
+ *           jump's velocity; turns change the heading; the body is the state's ZDM spheres (.ttai v4);
+ *   type 5 (flight) and type 2 (the skier's board): tc_mec_fly / tc_mec_ski moved by tc_player.
+ * Without the v4 data (older .ttai, or a state without spheres) the ground falls back to tc_player with the animation
+ * stride x run_scale / walk_scale (the hand tuning from before the mechanics were decoded). */
 #ifndef TONIC_TC_ED_AI_H
 #define TONIC_TC_ED_AI_H
 #include "tc_ai.h"
@@ -21,12 +20,14 @@ typedef struct tc_ed_ai {
     tc_player *player;           /* physics, owned by the caller */
     tc_ai_perso ai;
     int camera;                  /* index into ai.model->others of the camera perso, -1 none */
-    /* Hand tuning until the MEC handlers are decoded: factors on the animation-derived ground speed, for run cycles
-     * (> 4 u/s at their own frame rate: states 10, 25, 30, 96) and the rest (walks). Defaults 2 and 1. */
+    /* Fallback only (no v4 data): factors on the stride-derived ground speed, for run cycles (> 4 u/s at their own
+     * frame rate: states 10, 25, 30, 96) and the rest (walks). Defaults 2 and 1. */
     float run_scale, walk_scale;
     uint32_t card_type;          /* type of the playing state's ID card last frame (TC_AI_NONE16: none) */
     tc_mec_fly fly;
     tc_mec_ski ski;
+    tc_mec_walk walk;            /* card types 0 / 4 (ground, air) when the .ttai has the state's collision spheres */
+    uint32_t contacts;           /* what the AI sees next frame (TC_AI_CONTACT_*) */
     /* Totalski / skymap: the skier starts in a behaviour that waits for Jump behind a text box (B2); with auto_start
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;
