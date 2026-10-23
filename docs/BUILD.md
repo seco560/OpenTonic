@@ -6,6 +6,8 @@ Everything below runs from the repository root. Nothing generated here may be co
 ## 1. Requirements
 - macOS 14+, Xcode or the Swift toolchain (Swift 6), Python 3.
 - `brew install ffmpeg vgmstream` (music and the app icon).
+- Linux (and other SDL3 platforms): the SDL3 frontend in `sdl/`, see docs/SDL3.md for its packages. The
+  conversion steps below are the same; `tools/build_linux.sh` is the Linux quick route (`tools/build_all.sh` is macOS-only).
 
 ## 2. Game files
 Copy the PC version's `GAMEDATA` folder (installed copy) to `files/sources/GAMEDATA`, and the game's
@@ -58,12 +60,14 @@ cp tools/music.tsv files/out/audio/
 Copy the disc's `Videos` folder to `files/sources/Videos`, then `tools/make_intro.sh` (about a minute): the
 400x240 `EDPROL.AVI`, deblocked and upscaled to 1800x1080, with its soundtrack from sound bank 200
 (`English/BNK_200.BNM` -> `USDOLBY.APM`) muxed in, as `files/out/video/intro.mp4`. Press V on the level select
-screen to play it (Esc skips).
+screen to play it (Esc skips). The SDL build plays `files/out/video/intro.mpg` instead (MPEG-1 + MP2 at 800x480, for
+pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
 
 ## 6. App icon (optional)
 `tools/make_icon.sh` (writes `files/out/icon/TonicViewer.png`).
 
 ## 7. Run
+- Linux: `make -C sdl`, then `sdl/build/tonicviewer` (optionally a levels folder or a .ttlv; docs/SDL3.md).
 - `swift run -c release TonicViewer`, or open `Package.swift` in Xcode and run the TonicViewer scheme.
   The viewer finds `files/out/ttlv` by itself (working directory, or the checkout it was built from), so no
   copying into DerivedData is needed. A folder or .ttlv can also be passed as the first argument.

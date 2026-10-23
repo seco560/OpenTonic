@@ -1,103 +1,118 @@
 # SDL3 frontend (Linux, and anything else SDL runs on)
 
-Plan for a second platform layer next to the Swift one. The Swift/Metal app stays the primary macOS build;
-the SDL3 frontend is a separate C program over the same TonicCore, so nothing in `core/` or `Sources/` changes
-apart from the small shared-header step below.
+A second platform layer next to the Swift one, in `sdl/`. The Swift/Metal app stays the primary macOS build; the SDL3
+frontend is a separate C11 program over the same TonicCore. Nothing in `core/` or `Sources/` changed for it.
 
-## Current state (checked on Linux, gcc)
-- `make -C core all` builds cleanly with `-Wall -Wextra -Wpedantic`; `mechcheck` passes. The other checks
-  need converted game data but are plain C.
-- `tools/ttre` and `tools/audio_inventory.py` are stdlib-only Python. External tools: `ffmpeg`, `vgmstream-cli`
-  (both packaged on Linux).
-- macOS-only: `Sources/TonicViewer` (~1270 lines: AppKit, Metal/MetalKit, AVFoundation, simd),
-  `tools/make_app.sh` (`sips`, `iconutil`, `.app` bundle), and the `swift` prerequisite in `tools/build_all.sh`.
+## Building
+Linux packages (Ubuntu 24.04 / Mint 22 names; SDL3 itself isn't packaged there, so the Makefile builds it):
+```sh
+sudo apt install build-essential cmake git pkg-config glslang-tools \
+  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxkbcommon-dev libwayland-dev libdecor-0-dev \
+  libvulkan-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev
+make -C sdl            # -> sdl/build/tonicviewer
+```
+- SDL3: a system SDL3 >= 3.4 when `pkg-config` finds one; otherwise `make` clones the pinned `release-3.4.8` into
+  `sdl/build/SDL` and builds it statically into `sdl/build/sdl3` (git-ignored, done once). SDL picks its video/audio
+  backends from the headers present when it is configured: after installing more `-dev` packages, `make -C sdl
+  distclean` and rebuild. Its configure summary is at the end of the cmake output.
+- Shaders: GLSL in `sdl/shaders/`, compiled by `glslangValidator` to SPIR-V and embedded in the binary as C arrays
+  (`sdl/build/shaders/*.h`), so the binary needs no files next to it.
+- The core is built through its own Makefile (`make -C core lib`).
+
+## Converting the game files
+`tools/build_linux.sh` is the Linux counterpart of `tools/build_all.sh` (docs/BUILD.md steps 3-6, then `make -C sdl`;
+`--no-build` converts only, `--check` adds the core checks, `--force` redoes everything). It needs `python3`; music
+needs `vgmstream-cli`, which apt doesn't package: put the official prebuilt `vgmstream-cli` from
+https://github.com/vgmstream/vgmstream/releases (`vgmstream-linux.zip`) on the PATH or in `tools/bin/` (git-ignored;
+the script looks there). The app icon needs `ffmpeg` (`sudo apt install ffmpeg`); the intro movie needs both
+(`tools/make_intro.sh mpg`: `files/out/video/intro.mpg`, MPEG-1 video + MP2 audio at 800x480, ~130 MB, a minute or
+two). Linux filesystems are case-sensitive and the game install mixes case (`pharmmap`, `SpyCarota`, `Bnk_0.bnm`,
+`BNK_200.BNM`, and bank 200 names its stream `Usdolby.apm` while the file is `USDOLBY.APM`): the scripts find these
+case-insensitively; if a level fails with "not found", check letter case first.
+
+## Running
+`sdl/build/tonicviewer [levels folder | level.ttlv]`. Without an argument it looks for `files/out/ttlv` in the
+working directory, then relative to the binary in the checkout, then in the checkout it was built from. Converted data
+as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails), `audio/` (music) and `icon/` next to it.
+
+Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
+alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,
+and V plays the intro movie (Esc, Space or Enter skip). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
+MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 4).
+`TONIC_GPU_DEBUG=1` turns on the GPU backend's validation layers (when installed).
 
 ## Layout
 ```
 sdl/
-  Makefile          # builds core/ as a library, compiles shaders, links against SDL3
-  src/main.c        # window, event loop, mouse capture, key bindings     (main.swift, Input.swift)
-  src/camera.c      # free-fly / follow camera, projection                (Camera.swift)
-  src/renderer.c    # SDL_GPU device, pipelines, meshes, textures, draw   (Renderer.swift)
-  src/assets.c      # level/texture/lightmap loading via TonicCore + stb_image (Core.swift)
-  src/music.c       # SDL audio stream + stb_vorbis                       (Music.swift)
-  shaders/level.hlsl  # port of Sources/TonicViewer/Shaders.metal
-  third_party/      # stb_image.h, stb_vorbis.c (single-file, vendored)
+  Makefile
+  shaders/level_common.glsl  # Uniforms block shared by both stages
+  shaders/level.vert/.frag   # port of Sources/TonicViewer/Shaders.metal (.frag built twice: textured, -DFLAT)
+  shaders/ui.vert/.frag      # 2D quads: level picker, controls overlay
+  src/main.c     # window, screens, keys, title bar, controls overlay   (main.swift)
+  src/view.c     # level upload, play mode, draw order                  (Renderer.swift)
+  src/gpu.c      # SDL_GPU device, pipelines, samplers, uploads, quads, debug-font text
+  src/play.c     # level / AI model loading, collision + Ed's controller (Core.swift)
+  src/camera.c   # free-fly camera, projection                           (Camera.swift)
+  src/input.c    # key bindings as SDL scancodes                         (Input.swift)
+  src/music.c    # music.tsv lookup, looping WAV streamed from disk      (Music.swift)
+  src/picker.c   # level select grid                                     (LevelPicker.swift)
+  src/intro.c    # intro movie: pl_mpeg decode, audio-clocked frames     (IntroPlayer.swift)
+  src/util.c     # path helpers
+  third_party/pl_mpeg.h  # MPEG-1 / MP2 decoder, MIT, vendored (github.com/phoboslab/pl_mpeg c871f2b)
 ```
-Dependencies: SDL3 (system package or vendored), SDL_shadercross (build-time only, to compile HLSL to SPIR-V).
 
-## Milestones
-Each milestone should leave something runnable.
+## Porting notes
+- **Shaders.** GLSL rather than the HLSL + SDL_shadercross first planned: shadercross isn't packaged (it needs DXC),
+  glslang is. The GLSL states SDL_GPU's SPIR-V layout directly: vertex uniforms in set 1, fragment textures in set 2
+  (combined samplers), fragment uniforms in set 3, binding = slot. For other backends, the SPIR-V can go through
+  shadercross / SPIRV-Cross to MSL or DXIL later. **Keep `Shaders.metal` and `sdl/shaders/level.*` in sync by hand.**
 
-### 1. Window and core
-- SDL3 window, `SDL_GPUDevice` (Vulkan backend), clear to a colour, quit on close/Esc.
-- Link `core/build/libtoniccore.a`; load a `.ttlv` given on the command line (`tonicviewer-sdl files/out/ttlv/bar.ttlv`)
-  and print mesh/texture counts, the same way `core/tests/playcheck.c` does.
-- Assets path: command-line argument first, then `./files/out`, so there's no bundle lookup like the macOS app's.
+  | Metal | SDL_GPU (GLSL) |
+  |---|---|
+  | `[[attribute(n)]]`, `.uchar4Normalized` | `layout(location = n) in`, `SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM`; offsets from `offsetof(tc_vertex, ...)` |
+  | `Uniforms [[buffer(1)]]` (both stages) | `std140` block, set 1 / set 3 binding 0: uniform slot 0 of each stage |
+  | `DrawParams [[buffer(2)]]` / `flags [[buffer(2)]]` | vertex / fragment uniform slot 1 |
+  | `texture(0)`, `texture(1)` + samplers | `sampler2D` at set 2 bindings 0/1, bound as texture-sampler pairs (flat: the lightmap alone at 0) |
+  | `constexpr sampler lightmapSampler` | an `SDL_GPUSampler` (linear, clamp) made in C |
+  | `saturate`, `discard_fragment()` | `clamp(x, 0, 1)`, `discard` |
+- **Uniform layout.** The C structs in `src/view.c` mirror the GLSL `std140` blocks, with `_Static_assert`s on sizes
+  and offsets. The planned shared `core/include/tonic/tc_gpu.h` was dropped: the Metal structs lay out differently
+  (Swift's `SIMD3<Float>` is 16 bytes, so `ambient` sits at 80 there and at 76 in std140), so one C struct can't serve
+  both without changing the Metal side.
+- **Clip space.** SDL_GPU uses Metal's conventions (+Y up, depth 0..1; its Vulkan backend flips the viewport), so the
+  camera math in `Camera.swift` ports unchanged.
+- **Pipelines.** Four instead of three, because depth writes are pipeline state in SDL_GPU: textured, flat,
+  textured alpha-blended (no depth write), flat without depth write (untextured transparent surfaces, which the Metal
+  build draws with the flat pipeline under the no-write depth state). Same draw order: opaque, persos, Ed, then the
+  transparent surfaces collected on the way.
+- **Buffers.** All meshes of a level share one vertex and one index buffer (draws use first index + vertex offset),
+  instead of one buffer pair per mesh.
+- **Images.** SDL 3.4's built-in `SDL_LoadPNG`, so no stb_image. Textures are RGBA8 UNORM (not sRGB, as in the Metal
+  build) with generated mipmaps; the lightmap atlas has none.
+- **Music.** The tracks are WAV (docs/BUILD.md step 5), not Ogg, so no stb_vorbis either: the data chunk is streamed
+  from disk into an `SDL_AudioStream` and wraps at the end.
+- **Level picker.** Thumbnails and captions as textured quads; captions and the controls overlay use SDL's 8x8 debug
+  font, rendered into a surface by a software renderer and uploaded.
+- **Intro movie.** SDL has no video decoding, so the movie is MPEG-1 + MP2 for the single-header pl_mpeg rather than
+  the Swift build's HEVC .mp4. The soundtrack is the clock: decoded audio is kept ~0.25 s ahead in an
+  `SDL_AudioStream`, and a frame goes up (CPU YCbCr -> RGBA, one texture upload) once the device has played to its
+  time. Decoding costs ~6 ms per 800x480 frame on a Celeron J4125, so it stays on the main thread. The 2.25x
+  upscale of the 400x240 original happens offline (Lanczos + unsharp, as for the .mp4), the rest is the GPU's.
+- **Antialiasing (SDL build only, for now).** The Metal build renders at Retina resolution without MSAA, which hides
+  jaggies; at 1366x768 they show. The level renders into a multisampled target (4x by default) resolved into the
+  swapchain; the UI draws unsampled on top. The opaque textured pipeline uses alpha to coverage, and the shader
+  sharpens alpha-tested texels to about a pixel around the 0.5 threshold, so cutouts (foliage, fences, sprites)
+  get smooth edges too (`coverage` in the fragment `Flags` block; blended and flat draws keep the old path).
+  Changing the sample count rebuilds the four level pipelines.
+- **Texture prep.** Level textures get 16x anisotropic filtering (8x in the Metal build), and fully transparent
+  texels take their neighbours' colour before mipmapping (`bleed_alpha` in `src/gpu.c`): about one in ten cutout
+  textures has a contrasting colour under its transparency, which filtering and mipmaps would otherwise smear into
+  a fringe. ~1.6 ms per cutout texture at load.
 
-### 2. Shader port
-Port `Shaders.metal` to `shaders/level.hlsl`, entry points `level_vertex`, `level_fragment_textured`,
-`level_fragment_flat`. Compile at build time:
-`shadercross level.hlsl -s HLSL -d SPIRV -t vertex -e level_vertex -o level_vertex.spv` (and so on per entry point).
+## Not done yet
+- Gamepad support (the Swift app has none either).
+- `tools/make_app.sh` stays macOS-only. A Linux equivalent (if ever wanted) is `make -C sdl` plus copying
+  `files/out`. **Same rule as the app: never redistribute anything containing converted assets.**
 
-| Metal | HLSL / SDL_GPU |
-|---|---|
-| `[[attribute(n)]]` vertex struct | `TEXCOORDn` semantics; layout in C via `SDL_GPUVertexAttribute`, offsets 0/12/24/32/36/40/44, stride as in `Renderer.swift` |
-| `.uchar4Normalized` (colour sets) | `SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM` |
-| `Uniforms [[buffer(1)]]` (vertex + fragment) | `cbuffer` at `register(b0, space1)` (vertex) / `register(b0, space3)` (fragment); `SDL_PushGPUVertexUniformData` / `SDL_PushGPUFragmentUniformData` slot 0 |
-| `DrawParams [[buffer(2)]]` (vertex) | vertex uniform slot 1 (`b1, space1`) |
-| `flags [[buffer(2)]]` (fragment) | fragment uniform slot 1 (`b1, space3`) |
-| `texture(0)` + `sampler(0)`, `texture(1)` | `register(t0/s0, space2)`, `register(t1/s1, space2)`; bound as texture-sampler pairs |
-| `constexpr sampler lightmapSampler` | a real `SDL_GPUSampler` (linear, clamp to edge) created in C, paired with the lightmap |
-| `fract`, `mix`, `discard_fragment()` | `frac`, `lerp`, `discard` |
-| `m * v` | `mul(m, v)` with matrices declared `column_major` (matches the existing column-major matrix data) |
-
-Notes:
-- Depth range is 0..1 in both Metal and SDL_GPU, so the projection matrix carries over unchanged.
-- Keep both shaders in sync by hand (they're ~100 lines each). Put a header comment in each pointing to the other.
-- Uniform layout: `Uniforms` already follows 16-byte packing. Pad `DrawParams` to a multiple of 16.
-
-### 3. Shared uniform structs
-Add `core/include/tonic/tc_gpu.h` with plain C `Uniforms`/`DrawParams` structs and `_Static_assert`s on size
-and key offsets. The SDL frontend uses it directly; the Swift side may adopt it later through the TonicCore
-module (optional, not required for this work).
-
-### 4. Static level rendering
-- Upload vertex/index buffers and textures (PNG from `files/out/Textures` via stb_image), lightmap atlas
-  (`<level>_lightmap.png`).
-- Three `SDL_GPUGraphicsPipeline`s, as in `Renderer.swift`: textured, flat, and textured alpha-blended with depth
-  write off. Depth target `SDL_GPU_TEXTUREFORMAT_D32_FLOAT`.
-- Same draw order: opaque first, transparent surfaces collected and drawn last.
-- Free-fly camera with captured relative mouse (`SDL_SetWindowRelativeMouseMode`), WASD.
-
-Parity check: screenshot `bar` (lightmaps + fog) and one radiosity-lit level in both builds from the same
-camera position; they should match apart from filtering differences.
-
-### 5. Gameplay and controls
-- Play-as-Ed / free-fly toggle, Ed's AI toggle, persos, animation, billboards, UV scrolling: all driven by
-  TonicCore, so this is mostly porting the per-frame logic in `Renderer.swift`/`main.swift`.
-- Key bindings from `main.swift` (macOS keycodes) mapped to `SDL_Scancode`s: Esc, Tab, I, P, M, G, `[` `]`,
-  `-` `=`, `,` `.`, digits. Keep the same keys so both builds have the same controls.
-- Gamepad via `SDL_Gamepad` if Input.swift supports one.
-
-### 6. Music
-Ogg tracks from `files/out` (see `tools/music.tsv`) decoded with stb_vorbis into an `SDL_AudioStream`; mute
-toggle on M.
-
-### 7. Optional
-- Level picker: a simple in-game list (or Dear ImGui) instead of `LevelPicker.swift`. Until then, a CLI argument.
-- Intro movie: decode with libavcodec/libavformat, or skip it. Lowest priority.
-
-## Tooling changes
-- `tools/build_all.sh` stays macOS-only. Linux gets its own script (e.g. `tools/build_linux.sh`) that runs the
-  same conversion steps (textures, levels, music, intro) into `files/out`, checks for `python3`, `ffmpeg`,
-  `vgmstream-cli`, `shadercross` and `pkg-config --exists sdl3`, then builds `sdl/`.
-- Linux filesystems are case-sensitive and the game install mixes case (`pharmmap`, `SpyCarota`, `Bnk_0.bnm`,
-  `BNK_200.BNM`). If a level or bank fails to convert with "not found", check letter case first.
-- `tools/make_app.sh` stays macOS-only. A Linux equivalent (if ever wanted) is just `make -C sdl` plus
-  copying `files/out`. **Same rule as the app: never redistribute anything containing converted assets.**
-- `docs/BUILD.md`: add a Linux section with the `apt`/`dnf` package names (`libsdl3-dev`, `ffmpeg`, `vgmstream`).
-
-## Estimate
-Milestones 1–4: ~800–1000 lines of C plus the shader. That's the minimum useful result, a Linux level viewer.
-Milestones 5–6 bring it to feature parity with the Swift app except the intro and level picker.
+Parity check once data is converted: screenshot `bar` (lightmaps + fog) and one radiosity-lit level in both builds
+from the same camera position; they should match apart from filtering differences.

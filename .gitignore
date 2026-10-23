@@ -2,6 +2,7 @@
 /.build
 /Packages
 /core/build
+/sdl/build
 xcuserdata/
 DerivedData/
 .swiftpm/configuration/registries.json
@@ -13,3 +14,4 @@ DerivedData/
 /files/out
 /files/sources/*
 !/files/sources/README.md
+/tools/bin

@@ -22,6 +22,7 @@ pointer *value*; entries match the file's dwords in order (pointer k is the next
 to entry k). Level .gpt/.ptx have no relocation table: their pointers are plain addresses in
 the level's memory view (block bases from level.sna), resolved on demand (see Level.ptr).
 """
+import os
 import struct
 from dataclasses import dataclass, field
 
@@ -36,6 +37,24 @@ def decrypt(buf):
         out[i] = c ^ k[j]
         k[j] = (KEY[j] + c) & 0xFF
     return bytes(out)
+
+
+def find_file(path):
+    """The existing file that matches `path` ignoring case, component by component (the installed game mixes case,
+    e.g. LEVELS/Land/land.sna; macOS doesn't mind, Linux does). Unmatched paths come back as given, so open() reports
+    them."""
+    if os.path.exists(path):
+        return path
+    head, tail = os.path.split(path)
+    if head and not os.path.exists(head):
+        head = find_file(head)
+    try:
+        for entry in os.listdir(head or '.'):
+            if entry.lower() == tail.lower():
+                return os.path.join(head, entry)
+    except OSError:
+        pass
+    return os.path.join(head, tail)
 
 
 @dataclass
@@ -56,7 +75,7 @@ class Sna:
 
     @classmethod
     def load(cls, path):
-        d = decrypt(open(path, 'rb').read())
+        d = decrypt(open(find_file(path), 'rb').read())
         hl = d[0]
         s = cls(d, d[1:1 + hl])
         o = 1 + hl
@@ -77,7 +96,7 @@ class Sna:
     @classmethod
     def pointer_file(cls, path):
         """Load a .gpt/.ptx as a pseudo-snapshot with one block covering the whole file."""
-        d = decrypt(open(path, 'rb').read())
+        d = decrypt(open(find_file(path), 'rb').read())
         return cls(d, b'', [Block(-1, -1, 0, len(d), 0)])
 
     def block(self, module, bid):
@@ -86,7 +105,7 @@ class Sna:
 
 
 def load_relocations(path):
-    d = decrypt(open(path, 'rb').read())
+    d = decrypt(open(find_file(path), 'rb').read())
     count = d[0]
     o = 1
     lists = {}
