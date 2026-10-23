@@ -2,7 +2,7 @@
  * and <level>.ttai, feeds a scripted button sequence, prints every behaviour, reflex, state and mechanics-mode
  * change with Ed's position, then the primitives the interpreter skipped.
  * Usage: aicheck [out/ttlv] [level]  (default ../files/out/ttlv bar); AI_TRACE=<frame> prints executed nodes.
- * AI_SCRIPT=fly | ski | wander picks another input script (wander: 60 s of running, turning and jumping, then a
+ * AI_SCRIPT=fly | ski | pogo | wander picks another input script (wander: 60 s of running, turning and jumping, then a
  * summary: distance, largest step, teleports, stalls, frames the collide loop gave up); AI_FPS=<n> sets the frame rate
  * (default 60); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then.
  * Test-only stdio. */
@@ -89,6 +89,16 @@ int main(int argc, char **argv) {
         {7.0f, 1u << TC_AI_IN_DOWN, 0, 0, "hold down"},
         {10.0f, 0, 0, 0, "release"},
     };
+    /* AI_SCRIPT=pogo: jump, Action in the air (Ed's B89 -> B23 + R22 pogo), hold it, then bounce forward. */
+    const step pogo_script[] = {
+        {1.0f, 0, 0, 0, "idle"},
+        {1.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
+        {1.4f, 0, 0, 0, "release"},
+        {1.6f, 1u << TC_AI_IN_ACTION, 0, 0, "action in the air (pogo)"},
+        {4.0f, 1u << TC_AI_IN_ACTION, 0, 0, "hold action"},
+        {6.0f, (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_UP), 0, 0, "action + up"},
+        {8.0f, 0, 0, 0, "release"},
+    };
     /* AI_SCRIPT=ski (Totalski, skymap): the skier waits for Jump, then rides; carve, Action, jump. */
     const step ski_script[] = {
         {1.0f, 0, 0, 0, "wait"},
@@ -107,6 +117,10 @@ int main(int argc, char **argv) {
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "fly") == 0) {
         script = fly_script;
         steps = sizeof(fly_script) / sizeof(fly_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "pogo") == 0) {
+        script = pogo_script;
+        steps = sizeof(pogo_script) / sizeof(pogo_script[0]);
     }
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "ski") == 0) {
         script = ski_script;

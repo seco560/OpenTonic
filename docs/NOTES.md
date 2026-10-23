@@ -716,6 +716,11 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   default request is mode 0 (GAM_0042a8a0 -> the state's card, State +0x30), and Ed's normal jump (B85:
   ProposalVecA then ChangeState(43)) pushes no mode, so how the jump velocity reaches the integrator is still open;
   the port applies ProposalVecA as mode 7 on the frame it is set (apex ~3.4 at 60 fps: 15.6 u/s against 9.81 x 3.5).
+  An impulse away from the ground also clears the contact reports (as type 4 does), under any card: the pogo sets
+  its launch vector in state 59, a **type 0** card, and with last frame's ground report still counting, full grip
+  dropped the velocity the next frame and Ed hovered (regression from session 7, fixed 2026-10-23;
+  `AI_SCRIPT=pogo aicheck files/out/ttlv bar`: hops ~1.2 high at 5 u/s). Whether the exe does the same is part of
+  the open jump question.
 - Constants: DAT_004d3000.. = 0.7071, -0.7071, 1, 0, 0.01, 2, -1, 0.35; 004d3050.. = 0.5, 0.025, 10000; 004d2ee8
   1/30, 004d2eec 30; 004d30cc.. = 0, 1, 2. The exe file on disk is not readable as plain PE data at these
   addresses (packed/protected); read constants through the Ghidra project (tools/ghidra/Raw.java).

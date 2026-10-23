@@ -116,6 +116,10 @@ static void walk(tc_ed_ai *e, const tc_ai_card *card, const tc_ai_sphere_set *bo
     if (m->speed_set) {
         jump = local_to_global(p->heading, tc_v3(m->proposal[1], m->proposal[2], m->proposal[3]));
         impulse = &jump;
+        /* Taking off: an impulse away from the ground leaves it, as the type 4 handler's mode 7 does by clearing the
+         * contact reports. Under a ground card (the pogo's launch, state 59) the stale report would still count as
+         * ground next frame: full grip drops the velocity, the move is skipped and Ed hovers until the state ends. */
+        if (tc_v3_dot(jump, e->walk.ground_normal) > 0) tc_mec_walk_air(&e->walk);
     }
     if (m->stop) {
         p->velocity = tc_v3(0, 0, 0);
