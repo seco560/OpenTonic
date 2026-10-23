@@ -670,14 +670,35 @@ class LevelData:
             keys.append(first.setdefault(a3, i) if a3 else -1)
         return keys
 
+    def player(self):
+        """Location of the perso the player controls. Normally Ed = the first GPT perso-in-fix (family "NewEd").
+        Totalski and skymap instead hold a level perso of the same family with its own AI model that reads the
+        controls (the skier, ID card type 2 states); that one is the player there. Inferred from the data (the
+        exe's switch is not found yet; the fix Ed's placement there is the stale fix matrix): see docs/NOTES.md
+        "Skiing"."""
+        if not self.perso_in_fix or not self.perso_in_fix[0][0]:
+            return None
+        if not hasattr(self, '_player'):
+            from . import ai
+            lv, fix_ed = self.lv, self.perso_in_fix[0][0]
+            fam = lv.ptr(lv.ptr(fix_ed), 0x14)
+            self._player = fix_ed
+            for p in self.persos():
+                if p.loc != fix_ed and lv.ptr(lv.ptr(p.loc), 0x14) == fam and \
+                        any(n.type == 14 for n in ai.AI(self, p.loc).nodes()):
+                    self._player = p.loc
+                    break
+        return self._player
+
     def ed(self, state_anims=False):
-        """The player: the first GPT perso-in-fix (family "NewEd" in all 21 levels, 369 states).
+        """The player (see player(): Ed, the first GPT perso-in-fix, family "NewEd" in all 21 levels, 369 states;
+        the skier on Totalski / skymap).
         Returns (Perso, start 3x4 world matrix, [(name, Anim, loop)]) for ED_ANIMS, with every
         object those animations show loaded into perso.objects; None if absent. With state_anims, also every
         distinct state animation, named "s<k>" (k = state_anim_keys), at the A3D's own speed, loop False."""
-        if not self.perso_in_fix or not self.perso_in_fix[0][0]:
+        loc = self.player()
+        if loc is None:
             return None
-        loc = self.perso_in_fix[0][0]
         p = next((x for x in self.persos() if x.loc == loc), None)
         p3d = self.lv.ptr(loc)
         fam = self.lv.ptr(p3d, 0x14) if p3d else None

@@ -129,7 +129,10 @@ final class PlaySession {
     var position: SIMD3<Float> { SIMD3(player.pointee.position) }
     var heading: Float { player.pointee.heading }
     var horizontalSpeed: Float { tc_player_horizontal_speed(player) }
-    var modelMatrix: simd_float4x4 { float4x4(tc_player_model_matrix(player)) }
+    var modelMatrix: simd_float4x4 {
+        if useAI, let d = driver { return float4x4(tc_ed_ai_model_matrix(d)) } /* the skier's board tilts with the slope */
+        return float4x4(tc_player_model_matrix(player))
+    }
     /// Current animation name ("idle", "walk", ...), matching the .ttlv clip names.
     var animation: String { String(cString: tc_anim_state_name(player.pointee.animation)) }
 

@@ -9,4 +9,5 @@
 #include "tc_anim.h"
 #include "tc_ai.h"
 #include "tc_ed_ai.h"
+#include "tc_mec.h"
 #endif

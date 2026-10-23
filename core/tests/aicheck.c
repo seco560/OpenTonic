@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
     uint16_t last_normal = 0xFFFE, last_reflex = 0xFFFE, last_wanted = 0xFFFF;
     int32_t last_mode = -2;
     const float dt = 1.0f / 60;
-    const step script[] = {
+    const step base_script[] = {
         {1.0f, 0, 0, 0, "idle"},
         {2.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up (run)"},
         {3.0f, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_SPEEDUP), 0, 0, "add speedup (run -> walk)"},
@@ -70,6 +70,39 @@ int main(int argc, char **argv) {
         {10.1f, 1u << TC_AI_IN_SHOOT, 0, 0, "shoot"},
         {12.0f, 0, 0, 0, "release"},
     };
+    /* AI_SCRIPT=fly: jump, jump again in the air (Ed's B89 -> B26 flight), then steer. */
+    const step fly_script[] = {
+        {1.0f, 0, 0, 0, "idle"},
+        {1.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
+        {1.4f, 0, 0, 0, "release"},
+        {1.5f, 1u << TC_AI_IN_JUMP, 0, 0, "jump in the air (fly)"},
+        {2.5f, 0, 0, 0, "release"},
+        {5.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up"},
+        {6.0f, 1u << TC_AI_IN_LEFT, 0, 0, "hold left"},
+        {7.0f, 1u << TC_AI_IN_DOWN, 0, 0, "hold down"},
+        {10.0f, 0, 0, 0, "release"},
+    };
+    /* AI_SCRIPT=ski (Totalski, skymap): the skier waits for Jump, then rides; carve, Action, jump. */
+    const step ski_script[] = {
+        {1.0f, 0, 0, 0, "wait"},
+        {1.2f, 1u << TC_AI_IN_JUMP, 0, 0, "jump (start)"},
+        {4.0f, 0, 0, 0, "ride"},
+        {5.0f, 1u << TC_AI_IN_LEFT, 0, 0, "hold left"},
+        {6.0f, 1u << TC_AI_IN_RIGHT, 0, 0, "hold right"},
+        {7.0f, 1u << TC_AI_IN_ACTION, 0, 0, "hold action"},
+        {7.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
+        {12.0f, 0, 0, 0, "ride"},
+    };
+    const step *script = base_script;
+    size_t steps = sizeof(base_script) / sizeof(base_script[0]);
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "fly") == 0) {
+        script = fly_script;
+        steps = sizeof(fly_script) / sizeof(fly_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "ski") == 0) {
+        script = ski_script;
+        steps = sizeof(ski_script) / sizeof(ski_script[0]);
+    }
 
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, level_name);
     data = read_file(path, &size);
@@ -95,7 +128,7 @@ int main(int argc, char **argv) {
     p->trace = trace;
     tracing = getenv("AI_TRACE") != NULL;
 
-    for (frame = 0, k = 0; frame < (uint32_t)(script[sizeof(script) / sizeof(script[0]) - 1].until / dt); frame++) {
+    for (frame = 0, k = 0; frame < (uint32_t)(script[steps - 1].until / dt); frame++) {
         float t = frame * dt;
         tc_vec3 cam;
         while (t >= script[k].until) {
@@ -126,10 +159,18 @@ int main(int argc, char **argv) {
             printf("%6.2f  mech mode %d\n", (double)t, p->motion.mech_mode);
             last_mode = p->motion.mech_mode;
         }
-        if (frame % 30 == 29)
-            printf("%6.2f      pos (%.2f, %.2f, %.2f) v %.2f vz %.2f heading %.0f %s\n", (double)t, (double)player.position.x,
+        if (frame % 30 == 29) {
+            printf("%6.2f      pos (%.2f, %.2f, %.2f) v %.2f vz %.2f heading %.0f %s%s", (double)t, (double)player.position.x,
                    (double)player.position.y, (double)player.position.z, (double)tc_player_horizontal_speed(&player),
-                   (double)player.velocity.z, (double)(player.heading * 180 / TC_PI), player.grounded ? "ground" : "air");
+                   (double)player.velocity.z, (double)(player.heading * 180 / TC_PI), player.grounded ? "ground" : "air",
+                   player.against_wall ? " wall" : "");
+            if (ed.card_type == 2)
+                printf("  ski up (%.2f, %.2f, %.2f) grip %.2f%s", (double)ed.ski.z.x, (double)ed.ski.z.y, (double)ed.ski.z.z, (double)player.ground_grip,
+                       ed.ski.near_ground ? " near" : "");
+            if (ed.card_type == 5)
+                printf("  fly attack %.1f bank %.1f", (double)ed.fly.attack, (double)ed.fly.bank);
+            printf("\n");
+        }
     }
     printf("skipped primitives:");
     for (i = 0; i < 10 * TC_AI_UNKNOWN_STRIDE; i++)

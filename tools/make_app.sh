@@ -5,7 +5,8 @@
 # This on top of the fact that you'd be redistributing copyrighted Ubisoft assets (textures and music mainly)
 # if you were posting this anywhere.
 
-# Needs: files/out/ttlv, files/out/Textures, files/out/Vignette, files/out/audio (music + music.tsv), files/out/icon (tools/make_icon.sh).
+# Needs: files/out/ttlv, files/out/Textures, files/out/Vignette, files/out/audio (music + music.tsv), files/out/icon (tools/make_icon.sh);
+# optional: files/out/video/intro.mp4 (tools/make_intro.sh).
 # Usage (from the repo root): tools/make_app.sh [install dir, default ~/Applications]
 set -e
 DEST="${1:-$HOME/Applications}"
@@ -31,6 +32,8 @@ for m in files/out/audio/music/*.m4a; do
   [ -e "$m" ] && cp "$m" "$R/audio/music/"
 done
 sed 's/\.wav/.m4a/g' files/out/audio/music.tsv > "$R/audio/music.tsv"
+# Intro movie (tools/make_intro.sh), if built.
+if [ -e files/out/video/intro.mp4 ]; then mkdir -p "$R/video"; cp files/out/video/intro.mp4 "$R/video/"; fi
 
 # Icon: PNG -> .icns
 ICONSET="files/out/icon/TonicViewer.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"

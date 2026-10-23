@@ -53,12 +53,21 @@ typedef struct tc_ai_state {
     uint8_t repeats;             /* extra plays of the animation before the next state */
     uint16_t anim;               /* animation key: the .ttlv Ed animation named "s<anim>" */
     float ground;                /* units per animation frame Ed walks forward on the ground (0 = in place) */
+    uint16_t card;               /* mechanics ID card (State +0x30): index into model->cards, TC_AI_NONE16 none */
+    float drop;                  /* how far the state's pose reaches below the perso's origin (v3; 0 before) */
     uint16_t transition_count, prohibited_count;
     tc_ai_transition *transitions; /* target -> state actually played first */
     uint16_t *prohibited;
 } tc_ai_state;
 typedef struct tc_ai_button { uint16_t inputs; uint8_t analog; int16_t lo, hi; } tc_ai_button;
 typedef struct tc_ai_other { uint16_t id; uint8_t role; tc_ai_dsg_def dsg; } tc_ai_other;
+
+#define TC_AI_NONE16 0xFFFFu
+/* A mechanics ID card (MEC hidcard): type 0-12 picks the engine's handler pair; words = the card after its type
+ * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
+typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
+/* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
+float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
 
 typedef struct tc_ai_model {
     uint32_t node_count;
@@ -79,6 +88,8 @@ typedef struct tc_ai_model {
     tc_vec3 *vectors;
     uint16_t other_count;
     tc_ai_other *others;         /* other persos the scripts reference (role 1 = camera) */
+    uint16_t card_count;         /* 0 in a version 1 file */
+    tc_ai_card *cards;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
@@ -87,7 +98,11 @@ void tc_ai_model_free(tc_ai_model *model);
 /* What the AI asks the mechanics for this frame (the exe's "dynamics proposal"). The host's controller
  * decides how to honour it. */
 typedef struct tc_ai_motion {
-    int32_t mech_mode;           /* last SetMechMode* (the exe's mechanics handler slot), -1 none */
+    int32_t mech_mode;           /* last SetMechMode* (kept across frames), -1 none */
+    /* This frame's mechanics requests in order (the exe's queue at dynamics +8, 8 entries, emptied every frame):
+     * each SetMechMode* adds its mode; the card type's request handler runs once per entry. */
+    uint8_t mode_count;
+    int8_t modes[8];
     float proposal[32];          /* raw slots: [7..9] move direction (local), [10] speed, [0xB], [0x18] ... */
     float turn_speed;            /* radians per second around Z (TurnBy / TurnBySpeed / TurnToward), CCW */
     bool turning, stop, jump, velocity_set, axes_set;
@@ -115,6 +130,7 @@ typedef struct tc_ai_perso {
     tc_vec3 position, velocity;  /* feet, world */
     float heading;               /* as tc_player: local -Y points along (sin, -cos) */
     uint32_t contacts;           /* TC_AI_CONTACT_* */
+    float report_2bc, report_2c0; /* dynamics +0x2BC / +0x2C0 (FUNC 91 / 92): in flight the lagged attack / bank, rad */
     tc_vec3 *other_positions;    /* per model->others (the camera's eye for role 1) */
     const char *level_name;      /* LevelIs, compared case-insensitively ("bar") */
     uint32_t global_flags;       /* GlobalFlag?(n) (abilities?): bit n; all set by default */

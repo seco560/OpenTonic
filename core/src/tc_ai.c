@@ -24,15 +24,23 @@ static void rd_dsg_def(reader *r, tc_ai_dsg_def *d) {
     r->offset += have(r, (4 - d->size % 4) % 4) ? (4 - d->size % 4) % 4 : 0;
 }
 
+float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset) {
+    float f;
+    if (!c || offset < 4 || offset % 4 || offset / 4 - 1 >= c->word_count) return 0;
+    memcpy(&f, &c->words[offset / 4 - 1], 4);
+    return f;
+}
+
 static void free_dsg_def(tc_ai_dsg_def *d) { tc_free(d->vars); tc_free(d->initial); }
 
 tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     reader r = {data, size, 0, TC_OK};
-    uint32_t i, k;
+    uint32_t i, k, version;
     memset(m, 0, sizeof(*m));
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
-    if (rd_u32(&r) != 1) return TC_ERR_UNSUPPORTED_VERSION;
+    version = rd_u32(&r);
+    if (version < 1 || version > 3) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -80,8 +88,10 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         s->repeats = rd_u8(&r);
         (void)rd_u8(&r);
         s->anim = rd_u16(&r);
-        (void)rd_u16(&r);
+        s->card = rd_u16(&r);
+        if (version < 2) s->card = TC_AI_NONE16;
         s->ground = rd_f32(&r);
+        s->drop = version >= 3 ? rd_f32(&r) : 0;
         s->transitions = (tc_ai_transition *)rd_array(&r, s->transition_count, sizeof(tc_ai_transition), 4);
         for (k = 0; s->transitions && k < s->transition_count; k++) {
             s->transitions[k].target = rd_u16(&r);
@@ -119,6 +129,20 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         (void)rd_u8(&r);
         rd_dsg_def(&r, &m->others[i].dsg);
     }
+    if (version >= 2) {
+        m->card_count = rd_u16(&r);
+        (void)rd_u16(&r);
+        m->cards = (tc_ai_card *)rd_array(&r, m->card_count, sizeof(tc_ai_card), 8);
+        for (i = 0; m->cards && i < m->card_count; i++) {
+            tc_ai_card *c = &m->cards[i];
+            c->type = rd_u32(&r);
+            c->word_count = rd_u32(&r);
+            if (c->word_count > 19) { r.error = TC_ERR_TRUNCATED; break; }
+            for (k = 0; k < c->word_count; k++) c->words[k] = rd_u32(&r);
+        }
+    }
+    for (i = 0; !r.error && m->states && i < m->state_count; i++)
+        if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
     if (!r.error && m->node_count && m->nodes[m->node_count - 1].type != TC_AI_END) r.error = TC_ERR_TRUNCATED;
     if (r.error) {
         tc_result e = r.error;
@@ -136,6 +160,7 @@ void tc_ai_model_free(tc_ai_model *m) {
     }
     for (i = 0; m->strings && i < m->string_count; i++) tc_free(m->strings[i]);
     for (i = 0; m->others && i < m->other_count; i++) free_dsg_def(&m->others[i].dsg);
+    tc_free(m->cards);
     tc_free(m->nodes);
     tc_free(m->scripts);
     tc_free(m->behaviours);
@@ -617,7 +642,9 @@ static value function(run *r, uint32_t i) {
     case 100: return v_vec(local_to_global(p, argv3(r, i, 0)));
     case 101: return v_vec(global_to_local(p, argv3(r, i, 0)));
     case 50: { value v = v_int(-1); v.type = V_PERSO; return v; }
-    case 51: case 52: case 91: case 92: case 104: return v_float(0);
+    case 91: return v_float(p->report_2bc);
+    case 92: return v_float(p->report_2c0);
+    case 51: case 52: case 104: return v_float(0);
     default: unknown(r, i); return v_int(0);
     }
 }
@@ -677,7 +704,10 @@ static value eval(run *r, uint32_t i) {
 
 /* ---- statements ---- */
 
-static void set_mech_mode(tc_ai_perso *p, int mode) { p->motion.mech_mode = mode; }
+static void set_mech_mode(tc_ai_perso *p, int mode) {
+    p->motion.mech_mode = mode;
+    if (p->motion.mode_count < 8) p->motion.modes[p->motion.mode_count++] = (int8_t)mode; /* full: dropped, as FUN_0047a370 */
+}
 
 static uint32_t procedure(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
@@ -747,6 +777,7 @@ static uint32_t procedure(run *r, uint32_t i) {
         if (c == 246) a = p->dt > 0 ? a / p->dt : 0;
         p->motion.turn_speed = a;
         p->motion.turning = true;
+        pr[0xD] = a; /* AI_00492140: proposal +0x34, then mode 3 */
         set_mech_mode(p, 3);
         return 0;
     }

@@ -21,7 +21,7 @@ final class GameView: MTKView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
-            self?.setCaptured(false)
+            MainActor.assumeIsolated { self?.setCaptured(false) }  // queue: .main
         }
     }
 
@@ -117,7 +117,7 @@ final class GameView: MTKView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var renderer: Renderer?
     private var gameView: GameView?
@@ -181,11 +181,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scroll.documentView = picker
         scroll.contentView.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main) { [weak picker, weak scroll] _ in
-            if let picker, let scroll { picker.relayout(width: scroll.contentView.bounds.width) }
+            MainActor.assumeIsolated {  // queue: .main
+                if let picker, let scroll { picker.relayout(width: scroll.contentView.bounds.width) }
+            }
         }
         picker.relayout(width: scroll.contentView.bounds.width)
-        // Container so the "?" button floats in the top-right corner above the scrolling grid.
-        let container = NSView(frame: window.contentLayoutRect)
+        // Container so the "?" button floats in the top-right corner above the scrolling grid; it also takes V (intro).
+        let container = PickerContainer(frame: window.contentLayoutRect)
+        container.onIntro = { [weak self] in self?.playIntro() }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
@@ -198,7 +201,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         help.autoresizingMask = [.minXMargin, .minYMargin]
         container.addSubview(help)
         window.contentView = container
-        window.title = "TonicViewer"
+        window.makeFirstResponder(container)
+        window.title = "TonicViewer  ·  V: intro movie"
+    }
+
+    /// The intro movie, from the level select screen (V). files/out/video/intro.mp4 next to the ttlv folder.
+    @MainActor func playIntro() {
+        let url = levelFolder.deletingLastPathComponent().appendingPathComponent("video/intro.mp4")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            let alert = NSAlert()
+            alert.messageText = "No intro movie"
+            alert.informativeText = "\(url.path) is missing. Build it from the disc's Videos/EDPROL.AVI (docs/BUILD.md, \"Intro video\")."
+            alert.runModal()
+            return
+        }
+        Music.shared.stop()
+        let view = IntroView(frame: window.contentLayoutRect, url: url) { [weak self] in self?.showPicker() }
+        window.contentView = view
+        window.makeFirstResponder(view)
+        window.title = "TonicViewer — intro  ·  Esc skips"
+        view.start()
     }
 
     @objc func showControls() {
@@ -226,6 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         (current speed, gamma, field of view, lighting variant and play mode are shown in the title bar)
 
         Music:  M mute / unmute  (level → track table: out/audio/music.tsv)
+        Intro movie:  V on the level select screen (Esc skips)
         Level select:  ⌘L  ·  Controls:  ⌘/  ·  Full screen:  ⌃⌘F  ·  Quit:  ⌘Q
         """
         alert.runModal()

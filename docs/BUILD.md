@@ -45,6 +45,12 @@ cp tools/music.tsv files/out/audio/
 ```
 (Converting to .m4a is optional; if you do, rename the entries in `files/out/audio/music.tsv` too.)
 
+## 5b. Intro movie (optional)
+Copy the disc's `Videos` folder to `files/sources/Videos`, then `tools/make_intro.sh` (about a minute): the
+400x240 `EDPROL.AVI`, deblocked and upscaled to 1800x1080, with its soundtrack from sound bank 200
+(`English/BNK_200.BNM` -> `USDOLBY.APM`) muxed in, as `files/out/video/intro.mp4`. Press V on the level select
+screen to play it (Esc skips).
+
 ## 6. App icon (optional)
 `tools/make_icon.sh` (writes `files/out/icon/TonicViewer.png`).
 

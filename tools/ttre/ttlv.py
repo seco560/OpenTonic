@@ -250,11 +250,12 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
             f.write(atlas.png())
         atlas_rel = os.path.relpath(atlas_path, out_dir).replace(os.sep, '/')
     blobs, n_parts, ed_blob = [], 0, None
-    ed_loc = data.perso_in_fix[0][0] if data.perso_in_fix else None
+    ed_loc = data.player()
+    fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
     for p in data.persos() if persos else ():
         a = p.anim
-        if not a or not p.objects:
-            continue
+        if not a or not p.objects or (p.loc == fix_ed and ed_loc != fix_ed):
+            continue  # (the fix Ed is left out where another perso is the player: unplaced there)
         if p.loc == ed_loc:
             ed_blob = len(blobs)
         k = max(1, round(60 / a.fps)) if a.n_frames > 1 else 1

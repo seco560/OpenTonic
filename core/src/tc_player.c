@@ -22,6 +22,9 @@ void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float head
     p->start_heading = heading;
     p->position = tc_v3_add(start, tc_v3(0, 0, 0.3f)); /* GPT placements sit a little into the floor */
     p->against_wall = false;
+    p->slide_on_ground = false;
+    p->ground_normal = tc_v3(0, 0, 1);
+    p->wall_normal = tc_v3(1, 0, 0);
     p->heading = heading;
     reset_motion(p);
     // Speeds are guesswork: the AI sets them, not the ID cards.
@@ -95,14 +98,23 @@ static void resolve_tri(const tc_tri *t, void *user) {
     dist = sqrtf(d2);
     n = tc_v3_div(diff, dist);
     pen = r - dist;
-    if (n.z >= x->cos_slope) {
+    if (n.z >= x->cos_slope && p->slide_on_ground) {
+        float vn = tc_v3_dot(p->velocity, n);
+        p->position = tc_v3_add(p->position, tc_v3_scale(n, pen));
+        if (vn < 0) p->velocity = tc_v3_sub(p->velocity, tc_v3_scale(n, vn));
+        p->grounded = true;
+        p->ground_normal = n;
+        p->ground_grip = fminf(p->ground_grip, t->floor.grip);
+    } else if (n.z >= x->cos_slope) {
         p->position.z += fminf(pen / n.z, r); /* ground: straight up, no sliding down slopes */
         if (p->velocity.z < 0) p->velocity.z = 0;
         p->grounded = true;
+        p->ground_normal = n;
         p->ground_grip = fminf(p->ground_grip, t->floor.grip);
     } else {
         float vn;
         p->against_wall = true;
+        p->wall_normal = n;
         p->position = tc_v3_add(p->position, tc_v3_scale(n, pen));
         vn = tc_v3_dot(p->velocity, n);
         if (vn < 0) p->velocity = tc_v3_sub(p->velocity, tc_v3_scale(n, vn)); /* slide along walls */
@@ -245,6 +257,30 @@ void tc_player_drive(tc_player *p, float dt, tc_vec2 target_velocity) {
     while (remaining > 1e-6f) {
         float h = fminf(remaining, 1.0f / 120);
         substep(p, h, target_velocity, NULL, false);
+        remaining -= h;
+    }
+    if (p->position.z < p->world->bounds_min.z - 20) tc_player_respawn(p);
+}
+
+void tc_player_move(tc_player *p, float dt, tc_vec3 velocity) {
+    float remaining = fminf(dt, 0.25f);
+    p->velocity = velocity;
+    /* Contacts count over the whole frame: the velocity changes once per frame, so the contact that stops a fall
+     * happens in the first substep only. */
+    p->grounded = false;
+    p->against_wall = false;
+    p->ground_grip = 1;
+    while (remaining > 1e-6f) {
+        float h = fminf(remaining, 1.0f / 120), plen;
+        tc_vec3 d = tc_v3_scale(p->velocity, h);
+        int pieces, i;
+        plen = ceilf(tc_v3_length(d) / (p->radius * 0.5f));
+        pieces = plen > 1 ? (plen < 1e6f ? (int)plen : 1000000) : 1;
+        for (i = 0; i < pieces; i++) {
+            p->position = tc_v3_add(p->position, tc_v3_div(d, (float)pieces));
+            resolve(p);
+        }
+        p->air_time = p->grounded ? 0 : p->air_time + h;
         remaining -= h;
     }
     if (p->position.z < p->world->bounds_min.z - 20) tc_player_respawn(p);

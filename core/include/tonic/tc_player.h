@@ -46,6 +46,11 @@ typedef struct tc_player {
     float rise_gravity_scale, fall_gravity_scale, takeoff_time;
     bool use_floor_grip;   /* scale ground steering by the floor's grip^4 (off in the sliding profile) */
     float ground_grip;     /* lowest grip among the ground contacts of the last substep (1 = none) */
+    tc_vec3 ground_normal; /* normal of the last ground contact */
+    tc_vec3 wall_normal;   /* normal of the last wall contact */
+    /* Ground contacts push out along the normal and only remove the velocity into the surface (so the body keeps
+     * sliding along slopes), instead of pushing straight up and stopping the fall. For tc_mec's sliding mechanics. */
+    bool slide_on_ground;
 
     tc_anim_state animation;  /* chosen from the movement state */
     float animation_time;     /* seconds since `animation` started */
@@ -68,6 +73,9 @@ void tc_player_step(tc_player *p, float dt, const tc_player_input *input);
  * towards target_velocity with the usual ground/air acceleration, the heading is left alone, no jump input
  * (set velocity.z yourself), gravity and collisions as in tc_player_step. No animation update. */
 void tc_player_drive(tc_player *p, float dt, tc_vec2 target_velocity);
+/* Move by velocity x dt with collisions only (no gravity, steering or ground snap): for mechanics that compute the
+ * velocity themselves (tc_mec). Contacts and wall sliding as in tc_player_step. */
+void tc_player_move(tc_player *p, float dt, tc_vec3 velocity);
 float tc_player_horizontal_speed(const tc_player *p);
 /* Ed -> world: translate to the feet, turn by heading (Z up). */
 tc_mat4 tc_player_model_matrix(const tc_player *p);

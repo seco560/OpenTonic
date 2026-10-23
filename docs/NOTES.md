@@ -70,7 +70,18 @@
 - Open: the engine's sampling between integer frames; scroll sign from the renderer (where TextureInfo +0x14 is consumed); scroll_on values other than 0/1; morphs; state transitions.
 
 ## Intro video (user priority: later, but keep in mind)
-- `EDPROL.AVI`: Indeo 4 (IV41), **400×240**, 25 fps, 5:41. **The file has no audio track**, so the soundtrack must come from the game's sound banks.
+- `EDPROL.AVI`: Indeo 4 (IV41), **400×240**, 25 fps, 5:41 (the story prologue: spaceship, tonic, Grögh, "The
+  Ultimate Mission", Ed in the snow; the only video on the disc). **The file has no audio track.**
+- **Soundtrack found (2026-10-23):** menu action LaunchIntro (GAM_00412a40 table -> FUN_00412860 -> GAM_00410ca0)
+  stops the 3D sound and runs the player thread (0x4863f0), which loads binary sound bank [0x4fe9f0] = **200**
+  (_SND_fn_bLoadBinaryBank), plays its event 0 (_SND_fn_pGetBinEvent(0xC80000) -> SND_sound3d_00404db0) and picks
+  each video frame from the sound's play position (0x405080), so the audio is the master clock; the end of the sound
+  ends the movie. Bank 200 = `SOUND/English/BNK_200.BNM` (168 bytes, upper-case, so tools/audio_inventory.py missed
+  it until its glob was made case-insensitive) -> external stream **USDOLBY.APM**, stereo 22050 Hz, 5:42.3.
+  LaunchCredits (FUN_00412870) is a separate action (not a video).
+- **In the viewer (2026-10-23):** `tools/make_intro.sh` -> files/out/video/intro.mp4 (deblock + light denoise +
+  Lanczos to 1800x1080, HEVC, soundtrack as AAC; classical filters, no ML upscaler installed); V on the level select
+  screen plays it at 5:3, 80% of the largest fit, centred on black (user: it is 240p underneath; IntroView.screenFraction) (Sources/TonicViewer/IntroPlayer.swift), Esc / Space / Return skip.
 - Disc and installed copies are byte-identical.
 - FFmpeg decodes it natively. TonicTroubleFix ships an Indeo-free intro path, worth checking how it handles sound.
 - Upscaling plan:
@@ -107,7 +118,8 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
 
 **Queue, in order (agreed 2026-10-22):**
 1. **Decompile the MEC physics** (the big next step; expect a long session): the mechanics handler table of
-   GAM_0042a7e0 (26 slots; the AI picks one with SetMechMode*, Ed uses modes 3 turn, 12 move, 10, 9 ballistic jump,
+   GAM_0042a7e0 (**corrected 2026-10-23: 13 pairs indexed by ID card type, the AI mode is an argument; see "MEC
+   physics" at the end**; Ed uses modes 3 turn, 12 move, 10, 9 ballistic jump,
    1/2/4/7/21), how the dynamics proposal (dynamics +0x314: [0] |v|, [1..3] wanted speed vector from ProposalVecA,
    [4..6] steered by ProposalVecD, [7..9]+[10] SetMoveDirection, [0xB], [0x18]) becomes velocity, Ed's ID card
    (gravity per state, ground/slope/wall angles; State +0x2C read as null, the offset is probably wrong) and the
@@ -115,9 +127,8 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
    approximations and hand tuning (run_scale 2.0 -> 9.0 u/s, walk 3.5 u/s, jump impulse with tc_player's gravity
    gives ~5 units, likely too high) with the game's own rules. Check whether walking really is
    animation-driven (no move direction is set for it) or comes from the ID card.
-2. **Skiing (Totalski, skymap):** the sliding profile's 10 degree ground limit makes the slopes "air", so the AI
-   plays falling. Probably solved by item 1 (slope contact class, ski mechanics mode); check the
-   LevelIs("totalski") branches in Ed's scripts.
+2. ~~**Skiing (Totalski, skymap)**~~ done 2026-10-23: a separate skier perso + ID card type 2 (see "Skiing" at the
+   end); flight (card type 5) too ("Flight").
 3. **Rest of the moveset through the AI:** Shoot (Q) / Lateral (C) / pogo / fly need their effects: channel
    hide/show (PROC_120/121, props like the stick), meta-actions other than ChangeStateAndWait (11, 12, 19, 21, 40
    finish at once now), collision probes (PathBlocked? is always false), touched objects, zones. Unimplemented
@@ -130,9 +141,13 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
 **Project direction (agreed with the user, 2026-10-22):**
 - **Two apps, one repo for now.** TonicViewer stays a self-contained, macOS-native app: the inspection and debug tool
   (free-fly, AI traces, collision/contact views, later physics debug views). The game ("Tonic Trouble Recomp") is
-  a separate app in the same repo. Name caveat: it is a reimplementation running the original data and AI scripts
-  (OpenMW/ScummVM style), not a static recompilation of the exe; keep that clear in the docs. Split into separate
-  repos (core as submodule/package) only once the core API is stable (after the MEC physics). A move to a layout
+  a separate app in the same repo, named **OpenTonic** (user, 2026-10-22): an engine reimplementation running the
+  original data and AI scripts (OpenMW/ScummVM style), not a static recompilation or a matching decomp. Our code is
+  ours (clean room: study the exe, write fresh code); the game data stays Ubisoft's and is never shipped (the player
+  supplies the disc). README line: "runs the original game's data; requires your own copy of the game". Split into separate
+  repos only once the core API is stable (after the MEC physics). Planned split (user, 2026-10-22): **TonicCore**
+  (the C core plus the tools: converter, exporters, Ghidra helpers), **TonicViewer**, **OpenTonic**; the two apps
+  consume TonicCore. A move to a layout
   like `core/`, `viewer/`, `game/`, `tools/` is cheap and can happen any time.
 - **Layering (the "higher-level approach" = this layering, not another language; all C11):**
   1. core (shared): loaders, collision, AI interpreter, animation sampling, physics. No platform code.
@@ -524,3 +539,117 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   - **Known gaps:** Totalski/skymap: the sliding profile's 10° ground limit makes the slopes count as air, so the
     AI falls (skiing needs its own pass); no gamepad stick yet (stick inputs are 0: keyboard behaviour); channel
     hide/show, transparency, sounds not shown; camera perso's own AI does not run.
+
+## MEC physics (session 6, 2026-10-23)
+- **Raw decompiles from sessions 2-4 saved** (they only lived in /tmp) to `files/out/_decomp_artifacts/decomp/`
+  (git-ignored): mec_module.txt (all 106 MEC funcs 0x4b92fd-0x4c11e7), dnm_handlers.txt (0x4a71e0-0x4ae392: the
+  mode-switch base, 12 of the 26 table entries), mec_hidcard.txt, collide_0043bff0.txt, dnm_helpers_c41.txt
+  (forces/grip 0x4c41c5, 0x4c39f0, 0x4c37af), mec_env.txt, gam_dispatch.txt + gam_dyn_helpers.txt (this session).
+  Coverage of the DNM+MEC range 0x4a7000-0x4c1300: 149 of 201 functions, 68 of 106 KB. Ghidra signatures are often
+  wrong (param counts differ between caller and callee): check the asm before trusting argument order.
+- **Handler table corrected:** GAM_0042a7e0 fills 0x8C2240 with **13 pairs {fn0, fn1}, indexed by the ID card type**
+  (MEC_004b9466 = card type), not 26 mode slots: 0 {4aa6af, 4ae392}, 1 {4abbb8, 4af8f0}, 2 {4ab91d, 4b00bf},
+  3 {4b2900, 4b3810}, 4 {4aa6af, 4b0f2a}, 5 {4ac0da, 4aea7c}, 6 {4aca45, 4b11ea}, 7 {4acb49, 4b17d1},
+  8 {4ac62b, 4af04e}, 9 {4ad386, 4b239c}, 10 {4adfc3, 4b252e}, 11 {4adb4d, 4b2793}, 12 {4a9d20, 4ae392}.
+  Every fn0 is decompiled; every fn1 except 4ae392 is not. Ed only needs types 0 and 4 (TODO: 4b0f2a, 657 B).
+- **Per-frame driver** (GAM_0042b520 -> GAM_0042b2b0, per perso): dynamics +8 = a **request queue** (u8 count, max 8;
+  modes at +4 + 4k, ID cards at +0x24 + 4k). The AI's SetMechMode* (AI_004920a0) pushes {mode, the current
+  state's card (State +0x30)}; with an empty queue the engine pushes a default entry for the state's card. A card
+  type change runs FUN_004a7459 (mode switch init; current type kept at +0x11C). Then for each entry:
+  GAM_0042aff0 -> fn1(card type)(..., mode): **fn1 switches on the AI mode** and turns the proposal (+0x314) into the
+  wanted motion at +0x6C of its output (4ae392: mode 3/4 turn clamped by card +0x18, 5/0x12 turn toward angle,
+  0xC move direction x speed clamped by card +0x14, rotated by FUN_004b7c56, slope-projected when grounded; default
+  sets +0xB8 = 0). Finally GAM_0042b0e0 -> fn0(last card's type) = the integrator; it then copies report bits
+  +0xC8 = +0xC0 | +0xC4 and the speed/position snapshots (+0x25C, +0x294). Dynamics +0x10 = the activation radius
+  (GAM_0042a720: skip if no camera/active perso within it).
+- **Type-0/4 integrator 4aa6af (structure):** mass from the card (+0x98); forces + grip into F (FUN_004c41c5);
+  v = v_old + F dt / m + wanted; FUN_004c39f0(v, mass); FUN_004c37af integrates the new position; collide-and-move
+  MEC_004be1bd (translating) or MEC_004bedd6 (rotation only); on losing ground contact, the ground re-snap
+  MEC_004bf9f0 with card +0x20 / +0x34; carried by a parent perso (platforms) via SPO_00482ed0/FUN_004a8388; writes
+  the position (+0x54..+0x6C: xyz + yaw angle about an axis) into the SuperObject matrix.
+- **Open:** where walking speed comes from when the AI pushes no move direction (root motion: candidates are the
+  A3D frame root vector that raymap ignores, or dynamics +0x2B0..+0x2CC that GAM_0042ab20 sets).
+
+### Flight = ID card type 5, decoded and ported (2026-10-23)
+- **Trigger (Ed's scripts):** in the air (B89) Jump -> B26 + reflex R15 (flight); Action -> B23 + R22 (pogo). B26 ->
+  state 54, B46 -> 185 -> 183, B45 = the flight loop. R15 ends it: OnGround -> B62 (landing), not moving 0.2 in 2 s ->
+  B62, wall/steep slope -> bump state 268. Flight states 54/183/185/268 (and 346) use **type 5 cards** (Ed's main one
+  0x3c379c: mass 80, polar set 2, lags 0.1/0.3/2 s, thrust 2000, wing area 5.5, attack -4..12 deg, bank +-85 deg, bank
+  factor 0, top speed 20, launch speed 10, roll sign byte 1).
+- **B45's controls:** Up/Down = SetMechMode1/2 with proposal [0x18] (4 per request, or 0.06 x stick), Left/Right =
+  SetMechMode3/4 with [0xB]; without input it trims: modes 3/4 bring Report2C0 (lagged bank) to 0, modes 1/2 hold
+  Report2BC (lagged attack, rad) at 0.05 = ~3 deg, the best-glide angle of the polar. Up dives, Down flares.
+- **Request handler FUN_004aea7c** (per queued request): attack (+0x2B0, deg) -/+ [0x18] for modes 1/2, bank (+0x2B4)
+  -/+ [0xB] for 3/4, other modes: bank x card +0x3C; mode 10 thrust target = card +0x24; mode 21 adds a force
+  [1..3] x mass / dt (velocity change [1..3]); clamps from the card; then first-order lags (FUN_004c9afb:
+  x += (target - x) / tau x dt) into +0x2BC (attack, rad), +0x2C0 (bank, rad), +0x2C4 (thrust); builds the frame
+  along the velocity (FUN_004a9993: x = velocity, z = up in the vertical plane, y = left) and rolls it about x by
+  the lagged bank (FUN_004a9588 axis-angle; M x Rx).
+- **Integrator FUN_004ac0da:** forces (FUN_004c478d): gravity (0, 0, -mass x env g); lift = rho |v|^2 S CL(attack)
+  along the rolled z; drag = lift / (L/D)(attack) against the velocity; no lift beyond the vertical (|v.z| > 0.9).
+  rho = mechanical environment word 5 (1). v += sum F / mass x dt (FUN_004c9560), capped at card +0x44, position
+  += v dt, collide (MEC_004be1bd flags 0x10), orientation to the SuperObject (FUN_004c8dfc). The thrust value is not
+  used by any force decoded so far.
+- **Polars** (FUN_004cac3c by card +8): set 2 (Ed) = CL FUN_004caa9b = 0.0693 a + 0.18 for a in -10..15 deg (else 0),
+  L/D FUN_004caae9 = 11 outside 0..15, 11 a + 11 to 1 deg, sqrt(4 - (3 - a)^2) + 22 to 3 deg (24), then
+  -1.08 a + 27.24. Set 1 = same CL, L/D x 0.1; sets 0 and 3 = constants DAT_004e7834..40 (not read).
+- **Switching cards (GAM_0042ab20):** into type 5: velocity = card +0x48 along the facing (-Y), controls reset;
+  out of type 5: velocity 0, heading from the flight frame.
+- **Port:** core/src/tc_mec.c (tc_mec_fly_*), driven by tc_ed_ai when the playing state's card is type 5;
+  tc_ai_motion.modes[] = this frame's request queue (each SetMechMode* appends, as the exe's dynamics +8);
+  tc_player_move = collision-only move (contacts accumulate over the frame). **.ttai v2** carries the ID cards
+  (per-state index + card table). `AI_SCRIPT=fly ./core/build/aicheck files/out/ttlv Land`: launch 10 u/s, trims,
+  dives, banks left/right, flares to ~19 u/s, lands on terrain (R15 -> B62).
+- Not done: Ed's model is not pitched/rolled with the flight frame (the viewer only takes the heading; the script's
+  DynAxis0..2 remap of the model axes is also unused), the camera does not follow flight specially, type-5 states
+  other than Ed's not checked.
+- `level-ai` listings now name behaviours (B<k>/R<k>) and buttons (btn(jump), btn(up y-110..-30) ...).
+
+### Skiing (Totalski, skymap): card type 2 + the skier perso, ported (2026-10-23)
+- **Not a level flag:** each level holds a second perso of Ed's family (NewEd, same 369 states) with a
+  **level-specific AI model**: bar 15 + 4 behaviours (probably a cutscene double), Totalski / skymap 23 + 5 (the
+  skier; Totalski dyn perso 0x275f3, model 0x19e93d; skymap 0x30c27, 0x145ded). It reads Left/Right (and the stick
+  x axis), Jump, Action; its init writes the fix Ed's counter 66 and dsgvars (probably to park him). Listing:
+  files/out/ai/ed2_Totalski.txt (scratch script: dump the non-fix NewEd perso's AI).
+- **Physics = ID card type 2** on the ski states (115, 124, 217/220, 278; 119 = type 6, 206 = type 8, 321 = type 7,
+  299 = the fall card): mass 150, then 0/1 flags, 50..85, 6000|50, 1000, 90, 0.2, 350|260, 100|6000|0, 4|1, 0.6, 0.5,
+  2.5|6, 2|0, 0.798635 (cos 37 deg), 0.001. Handler pair {0x4ab91d integrator (decompiled, dnm_handlers.txt),
+  0x4b00bf request handler (3.6 KB, not yet)}. The floor material grip 0 / rebound 0.8 of the ski slopes is
+  probably read here.
+- **Takeover (found 2026-10-23):** the skier's own initial behaviour B0 is empty. A level trigger perso deactivates
+  the fix Ed (PROC_6, same code as PROC_5 ActivatePerso?) and sets the skier's behaviours with **PROC_237 / PROC_238**
+  (set another perso's normal / reflex behaviour, 0x48b730 / 0x48b800): Totalski 0x60ae7 (first schedule), skymap
+  0x6bc43 (B2) -> skier B2 + R0. B2 waits for Jump (push-off state 117), then B3 = riding (states 124/123; Action
+  -> 115 = card with top speed 50; Jump -> 125). Not the main actor (0x8C1744 is the level's MS_World perso),
+  not GameAction2 (GAM_00429070 = timer reset). Exporter: `LevelData.player()` = the skier when a level perso of
+  Ed's family has AI reading buttons (only Totalski / skymap; the other doubles in bar, SpyCarota, mammyon,
+  pharmmap, pyr_fou, spynorth read none), `ai.started_by_others()` = the start behaviours; the .ttlv's Ed is the
+  skier there (start = his level matrix) and the unplaced fix Ed is left out of the persos.
+- **Type 2 request handler FUN_004b00bf** (per request): steering = proposal [0xD] for modes 3/4 (TurnBy writes it:
+  AI_00492140 stores +0x34 and queues mode 3); mode 10: push = y x [2] + move direction [7..9] x [1], jump = z x [3]
+  (and the report is cleared); mode 20 turn toward [7..9] (unused by the skier). In the air (no contact, no probe
+  hit): steering x card +0x3C (0.5), weathervane off; on the ground steering and edge grip x the floor's mat[0].
+  Angular velocity = z x steering x card +0x24 + card +0x28 x (v_planar cross y) (weathervane: the front -y swings
+  into the travel direction), set fresh each frame (not integrated from a torque). Edge grip force = -card +0x2C x
+  (v_planar . x) x. On faces steeper than 60 deg the forces are flattened against them.
+- **Forces FUN_004c4ecd:** gravity m g x card +0x34 (4), x card +0x40 (2.5) more in the air; on contact the surface
+  takes the normal part of the weight, friction -m grip^2 / dt x v (grip 1 stops dead in one frame, snow 0 none);
+  without contact a probe along -z (card +0x44 = 2, within card +0x48 = 37 deg) aligns the board to the ground below
+  and, when riding upside down (z . down > 0.65), holds it on with card +0x30. z turns towards the surface normal by
+  card +0x38 (0.6) of the angle per frame (0.05 in the air). Steep (normal z < cos 70 deg): forces projected.
+- **Then** v += F / m dt, |v| capped at card +0x14 (FUN_004c3af0), orientation by omega, move with collisions
+  (MEC_004bedd6), re-snap 0.7 when ground was lost (MEC_004bf9f0), full orientation to the SuperObject
+  (FUN_004c8860).
+- **Port:** core/src/tc_mec.c tc_mec_ski_*, driven by tc_ed_ai for type 2 states; tc_player.slide_on_ground (ground
+  contacts push along the normal and keep the tangential speed), ground_normal / wall_normal.
+  `AI_SCRIPT=ski ./core/build/aicheck files/out/ttlv Totalski`: waits, pushes off, ~20 u/s after 3 s on the first
+  slope, carves left / right, jumps, 40-64 u/s further down; skymap similar.
+- **Ground clipping fixed (user report):** the riding poses reach 0.56-0.67 below the skier's origin (the board;
+  standing poses 0), so with the origin on the snow the board sank in, more at the downhill end with the board
+  drawn level. .ttai v3 stores each state's drop (lowest point of its first frame below the origin;
+  ai.pose_drops); tc_ed_ai_model_matrix draws type 2 states with the board's full orientation, lifted by the drop
+  along its up axis (the viewer uses it). Flight still draws with the heading only.
+- Known (user, 2026-10-23): it rides but feels janky and unstable next to the original; Ed once got stuck on a
+  slope and stopped sliding (collision: our capsule vs the exe's collide spheres / MEC_004bedd6 not decoded).
+- Not done: floor mat[0] is not exported (taken as 1, its value on the snow), contact type 3 and mode 20, rebound (mat[1]) on
+  impacts, the camera's ski behaviour. The simple controller's sliding profile (I key) is unchanged.

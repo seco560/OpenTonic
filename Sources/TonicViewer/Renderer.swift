@@ -7,7 +7,7 @@ import TonicCore
 /// (native Retina resolution); aspect changes widen the view horizontally (Hor+).
 /// Animation runs on one clock (`animationTime`, paused with P): perso parts take their channel's
 /// baked transform for the current sample, materials scroll UVs and step animated textures.
-final class Renderer: NSObject, MTKViewDelegate {
+@MainActor final class Renderer: NSObject, MTKViewDelegate {
     private struct GPUMesh {
         var vertices: MTLBuffer
         var indices: MTLBuffer

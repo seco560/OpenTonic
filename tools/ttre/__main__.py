@@ -36,7 +36,7 @@ def level_cmd(cmd, argv):
     if cmd == 'level-ai':
         import collections
         from . import ai
-        a = ai.AI(data, data.perso_in_fix[0][0])
+        a = ai.AI(data, data.player())
         ai.dump(a, argv[1])
         use = collections.Counter((ai.KINDS[n.type], n.param) for n in a.nodes() if n.type in ai.KINDS)
         with open(os.path.splitext(argv[1])[0] + '_usage.tsv', 'w') as f:
@@ -47,7 +47,7 @@ def level_cmd(cmd, argv):
               f'{len(use)} distinct primitives')
     if cmd == 'level-ttai':
         from . import ai
-        r = ai.export(ai.AI(data, data.perso_in_fix[0][0]), argv[1])
+        r = ai.export(ai.AI(data, data.player()), argv[1])
         print(f"wrote {argv[1]} ({r['bytes']} bytes): {r['nodes']} nodes, {r['scripts']} scripts, behaviours "
               f"{r['behaviours']} (initial {r['initial']}), {r['dsgvars']} dsgvars, other persos {r['persos']}, {r['states']} states "
               f"(initial {r['initial_state']}, {r['transitions']} transitions; moving {r['moving']}), {len(r['buttons'])} buttons, "

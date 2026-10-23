@@ -61,11 +61,14 @@ class AI:
         self.states = data.family_states(fam) if fam else []
         self.state_index = {s: i for i, s in enumerate(self.states)}
         self.behaviours = []
+        self.beh_names = {}  # behaviour location -> 'B<k>' / 'R<k>' (listing labels)
+        self.buttons = None  # Buttons, built from the first button node the listing meets
         for off, reflex in ((0, False), (4, True)):
             lst = lv.ptr(self.model, off) if self.model else None
             arr = lv.ptr(lst) if lst else None
             n = data.un('I', lst, 4)[0] if lst else 0
             for i in range(n if arr else 0):
+                self.beh_names[(arr[0], arr[1] + 12 * i)] = f'{"R" if reflex else "B"}{i}'
                 sc, sched = lv.ptr(arr, 12 * i), lv.ptr(arr, 12 * i + 4)
                 ns = data.un('I', arr, 12 * i + 8)[0]
                 scripts = [self.script(lv.ptr(sc, 4 * k)) for k in range(ns if sc else 0)]
@@ -114,6 +117,18 @@ def label(ai, n, names):
     if n.ref is not None:
         if n.ref in ai.state_index:
             return f'state#{ai.state_index[n.ref]}'
+        if n.type == 32 and n.ref in ai.beh_names:
+            return ai.beh_names[n.ref]
+        if n.type == 20:
+            raw = n.ref[0].data[n.ref[1]:n.ref[1] + 64].split(b'\0')[0]
+            return repr(raw.decode('latin-1'))
+        if n.type == 14:
+            if ai.buttons is None:
+                ai.buttons = Buttons(ai.d, n.ref)
+            mask, kind, lo, hi = ai.buttons.leaves(n.ref[1])
+            keys = '|'.join(k for i, k in enumerate(INPUTS) if mask >> i & 1)
+            analog = f'{["", "angle", "magnitude", "x", "y"][kind]}{lo}..{hi}' if kind else ''
+            return f'btn({" ".join(x for x in (keys, analog) if x) or hex(n.ref[1])})'
         return f'{NODE_TYPES.get(n.type, "T%d" % n.type)}@{n.ref[1]:#x}'
     return f'{NODE_TYPES.get(n.type, "T%d" % n.type)}({n.param:#x})'
 
@@ -169,6 +184,9 @@ def dump(ai, path, names=None):
       animation: the .ttlv's Ed animation "s<anim>"), u16 0, f32 ground (units per animation frame Ed moves forward
       while the animation plays on the ground: level.forward_stride of looping states, 0 = in place),
       n_transitions x { u16 target, u16 via }, n_prohibited x u16 state }
+      (v3: f32 drop after ground: how far the state's pose reaches below the perso's origin, units, >= 0; measured on
+      the first animation frame. The skier's riding states: 0.63, the board under his feet; standing states 0.)
+      v2: the u16 after anim = the state's mechanics ID card (State +0x30) as an index into the card table, 0xFFFF none
   u16 n_buttons, u16 0, n x { u16 inputs (mask of TC_AI_IN_*), u8 analog (0 none, 1 stick angle, 2 stick
       magnitude, 3 stick x, 4 stick y), u8 0, i16 lo, i16 hi (stick range, -100..100, that counts as held) }
   u16 n_strings, n x { u16 len, bytes }
@@ -176,10 +194,15 @@ def dump(ai, path, names=None):
   u16 n_persos, u16 0, n x { u16 id (as in perso nodes), u8 role (1 = perso-in-fix 1, the camera; 2 = perso-in-fix 2;
       0 other), u8 0, dsgvar block }: the other persos the scripts reference (Dot(perso, dsgvar) reads and writes
       their dsgvars; their own AI does not run)
+  v2: u16 n_cards, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw:
+      mostly f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
 """
 import re
 
-TTAI_VERSION = 1
+TTAI_VERSION = 3
+# ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
+CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
+              11: 0x34, 12: 0x18}
 NODE_END = 8
 # Virtual inputs (bit numbers), named after the game's input entries (fix: "<Name>_Key" / "<Name>_Pad").
 INPUTS = ['left', 'right', 'up', 'down', 'speedup', 'jump', 'lateral', 'action', 'shoot', 'camera']
@@ -260,6 +283,52 @@ class Buttons:
         return tuple(acc)
 
 
+def pose_drops(d, perso, keys):
+    """{animation key: how far its first frame reaches below the perso's origin (>= 0)} for the player's state
+    animations (LevelData.ed: the player's objects)."""
+    from .level import mat_mul
+    ed = d.ed(state_anims=True) if perso == d.player() else None
+    if not ed:
+        return {}
+    p, _, anims = ed
+    out = {}
+    for name, a, _ in anims:
+        if not (name.startswith('s') and name[1:].isdigit()):
+            continue
+        low = 0.0
+        for o, m in a.pose(0):
+            if o in p.objects:
+                geo, scale = p.objects[o]
+                t = mat_mul(m, scale)
+                for v in geo.vertices:
+                    low = min(low, t[8] * v[0] + t[9] * v[1] + t[10] * v[2] + t[11])
+        out[int(name[1:])] = -low
+    return out
+
+
+def started_by_others(ai):
+    """(normal, reflex) behaviour locations another perso puts this perso in when it takes over from the fix Ed, or
+    None each: a schedule that deactivates the fix Ed (PROC_6) and sets this perso's behaviours with PROC_237 /
+    PROC_238 (set the normal / reflex behaviour of a perso; the last call wins). Totalski's start trigger (perso
+    0x60ae7, its first schedule) and skymap's (0x6bc43, B2) send the skier to its riding start this way; the
+    skier's own initial behaviour B0 is empty."""
+    d, found = ai.d, [None, None]
+    fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
+    if ai.perso == fix_ed:
+        return found
+    for p in d.persos():
+        if p.loc == ai.perso:
+            continue
+        for b in AI(d, p.loc).behaviours:
+            calls = [n for n in b.schedule or [] if n.type == 4 and len(n.children) >= 1]
+            if not any(n.param == 6 and n.children[0].ref == fix_ed for n in calls):
+                continue
+            for n in calls:
+                if n.param in (237, 238) and len(n.children) == 2 and n.children[0].ref == ai.perso:
+                    found[n.param - 237] = n.children[1].ref
+    return found
+
+
 def export(ai, path):
     """Write the perso's AI as .ttai (format above). Returns a summary dict."""
     d, lv = ai.d, ai.lv
@@ -336,6 +405,9 @@ def export(ai, path):
         intel = lv.ptr(mind, off)
         cur = lv.ptr(intel, 8) if intel else None
         initial.append(beh_index.get(cur, 0xFFFF) & 0xFFFF)
+    for k, ref in enumerate(started_by_others(ai)):
+        if ref in beh_index:
+            initial[k] = beh_index[ref] & 0xFFFF
 
     def dsg_block(perso):
         # mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def {ptr default buffer,
@@ -360,8 +432,11 @@ def export(ai, path):
     from .level import forward_stride
     keys = d.state_anim_keys(ai.states)
     strides = {k: forward_stride(d.read_a3d(lv.ptr(lv.ptr(ai.states[k], 0xC), 0x28))) for k in set(keys) - {-1}}
-    st_rows = []
+    st_rows, cards = [], {}
+    drops = pose_drops(d, ai.perso, keys)
     for s in ai.states:
+        c = lv.ptr(s, 0x30)
+        card = cards.setdefault(c, len(cards)) if c and d.un('I', c)[0] in CARD_SIZES else 0xFFFF
         nxt = lv.ptr(s, 0x28)
         ar = lv.ptr(s, 0xC)
         n_frames = d.un('H', ar, 4)[0] if ar else 0
@@ -382,7 +457,7 @@ def export(ai, path):
             e = lv.ptr(e)
         k, me = keys[len(st_rows)], len(st_rows)
         ground = strides.get(k, 0.0) if ai.state_index.get(nxt, -1) == me else 0.0  # looping cycles only
-        st_rows.append((ai.state_index.get(nxt, -1), n_frames, speed, flags, trans, prohib, repeats, k & 0xFFFF, ground))
+        st_rows.append((ai.state_index.get(nxt, -1), n_frames, speed, flags, trans, prohib, repeats, k & 0xFFFF, ground, card, drops.get(k, 0.0)))
     p3d = lv.ptr(ai.perso)
     init_state = ai.state_index.get(lv.ptr(p3d, 0), 0) if p3d else 0
 
@@ -397,8 +472,9 @@ def export(ai, path):
     out += struct.pack('<HH', *initial)
     out += own_dsg
     out += struct.pack('<HH', len(st_rows), init_state)
-    for nxt, nf, speed, flags, trans, prohib, repeats, anim, ground in st_rows:
-        out += struct.pack('<hHBBHHBBHHf', nxt, nf, speed, flags, len(trans), len(prohib), repeats, 0, anim, 0, ground)
+    for nxt, nf, speed, flags, trans, prohib, repeats, anim, ground, card, drop in st_rows:
+        out += struct.pack('<hHBBHHBBHHff', nxt, nf, speed, flags, len(trans), len(prohib), repeats, 0, anim, card, ground,
+                           drop)
         out += b''.join(struct.pack('<HH', *t) for t in trans) + b''.join(struct.pack('<H', p) for p in prohib)
     out += struct.pack('<HH', len(buttons), 0)
     button_rows = []
@@ -420,6 +496,11 @@ def export(ai, path):
     for k in used:
         role = fix.index(by_id[k]) if by_id[k] in fix[1:3] else 0
         out += struct.pack('<HBB', k, role, 0) + dsg_block(by_id[k])[0]
+    out += struct.pack('<HH', len(cards), 0)
+    for c in cards:
+        t = d.un('I', c)[0]
+        n = CARD_SIZES[t] // 4 - 1
+        out += struct.pack('<II', t, n) + struct.pack(f'<{n}I', *d.un(f'{n}I', c, 4))
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
@@ -428,4 +509,4 @@ def export(ai, path):
             'dsgvars': n_dsg, 'persos': used, 'states': len(st_rows), 'initial_state': init_state,
             'transitions': sum(len(r[4]) for r in st_rows),
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
-            'strings': [cstr(r) for r in strings], 'unresolved': dict(unresolved), 'bytes': len(out)}
+            'strings': [cstr(r) for r in strings], 'cards': len(cards), 'unresolved': dict(unresolved), 'bytes': len(out)}

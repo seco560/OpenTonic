@@ -21,7 +21,8 @@ def info(bank, sub):
 
 def main(min_seconds=20.0):
     rows = []
-    for bank in sorted(glob.glob(f'{SOUND}/*.bnm') + glob.glob(f'{SOUND}/English/*.bnm')):
+    # case-insensitive: the intro's bank is English/BNK_200.BNM
+    for bank in sorted(glob.glob(f'{SOUND}/*.[bB][nN][mM]') + glob.glob(f'{SOUND}/English/*.[bB][nN][mM]')):
         first = info(bank, 1)
         if not first:
             continue
