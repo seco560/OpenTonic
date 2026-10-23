@@ -2,6 +2,7 @@
 #include "tonic/tc_level.h"
 #include "tonic/tc_alloc.h"
 #include "tc_reader.h"
+#include <ctype.h>
 #include <string.h>
 
 static void rd_mat34(reader *r, tc_mat34 *m) {
@@ -262,4 +263,16 @@ const char *tc_result_string(tc_result r) {
     case TC_ERR_OUT_OF_MEMORY: return "out of memory";
     }
     return "unknown error";
+}
+
+int tc_level_is_cutscene(const char *name) {
+    static const char *const cutscenes[] = {"bar", "death", "mammyon", "outro", "pharmmap", "pyr_fou", "spycarota",
+                                            "spynorth"};
+    size_t i;
+    for (i = 0; name && i < sizeof(cutscenes) / sizeof(cutscenes[0]); i++) {
+        const char *a = name, *b = cutscenes[i];
+        while (*a && tolower((unsigned char)*a) == *b) a++, b++;
+        if (*a == 0 && *b == 0) return 1;
+    }
+    return 0;
 }

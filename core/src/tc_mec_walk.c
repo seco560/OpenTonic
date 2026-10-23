@@ -377,8 +377,14 @@ void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc
             force = tc_v3(0, 0, 0);
             if (!impulse) v_old = tc_v3(0, 0, 0);
         } else {
-            /* The exe adds two more forces here (slope and friction, code not decoded) */
-            wanted = tc_v3_scale(wanted, grip * grip * grip * grip);
+            /* Ice: the ground takes the weight's part into it (the slope part stays), the wanted motion is scaled by
+             * grip^4 and friction -m grip^4 / dt x v brakes last frame's velocity, so each frame
+             * v = (1 - grip^4) v_old + slope dt + grip^4 wanted: Ed eases towards the wanted speed (grip 1: at once).
+             * grip^4 is the exe's share per 1/30 s frame, converted to dt. */
+            float g4 = tc_mec_per_frame(grip * grip * grip * grip, dt);
+            force = tc_v3_sub(force, tc_v3_scale(w->ground_normal, tc_v3_dot(force, w->ground_normal)));
+            force = tc_v3_add(force, tc_v3_scale(v_old, -mass * g4 / dt));
+            wanted = tc_v3_scale(wanted, g4);
         }
     }
     v = tc_v3_add(tc_v3_add(v_old, tc_v3_scale(force, dt / mass)), wanted);

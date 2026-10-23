@@ -49,11 +49,10 @@ sdl/
   shaders/level.vert/.frag   # port of Sources/TonicViewer/Shaders.metal (.frag built twice: textured, -DFLAT)
   shaders/ui.vert/.frag      # 2D quads: level picker, controls overlay
   src/main.c     # window, screens, keys, title bar, controls overlay   (main.swift)
-  src/view.c     # level upload, play mode, draw order                  (Renderer.swift)
+  src/view.c     # mesh table + texture upload, uniforms, draws the core's list (Renderer.swift)
   src/gpu.c      # SDL_GPU device, pipelines, samplers, uploads, quads, debug-font text
-  src/play.c     # level / AI model loading, collision + Ed's controller (Core.swift)
-  src/camera.c   # free-fly camera, projection                           (Camera.swift)
-  src/input.c    # key bindings as SDL scancodes                         (Input.swift)
+  src/play.c     # .ttlv file reading                                    (Core.swift's Level)
+  src/input.c    # key bindings: SDL scancodes -> tc_view_action           (Input.swift)
   src/music.c    # music.tsv lookup, looping WAV streamed from disk      (Music.swift)
   src/picker.c   # level select grid                                     (LevelPicker.swift)
   src/intro.c    # intro movie: pl_mpeg decode, audio-clocked frames     (IntroPlayer.swift)

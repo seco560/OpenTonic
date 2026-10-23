@@ -10,6 +10,7 @@
 Level commands read from GAMEDATA/WORLD/LEVELS textures from files/out/Textures (so, generate textures before the levels)
 """
 import os
+import struct
 import sys
 
 from . import cnt, gf
@@ -53,6 +54,32 @@ def level_cmd(cmd, argv):
               f"(initial {r['initial_state']}, {r['transitions']} transitions; moving {r['moving']}), {len(r['buttons'])} buttons, "
               f"strings {r['strings']}, root motion {r['root_states']} states, sphere sets {r['sphere_sets']}, "
               f"unresolved {r['unresolved']}")
+        names = [n.decode('latin-1') for n in r['portal_names']]
+        ops = {ai.POP_GUARD: 'guard', ai.POP_SET: 'set', ai.POP_FORCE: 'force', ai.POP_FORCE_REFLEX: 'force-reflex',
+               ai.POP_COVER: 'cover', ai.POP_WAIT: 'wait', ai.POP_TELEPORT: 'teleport', ai.POP_CAMERA: 'camera',
+               ai.POP_LEVEL: 'level'}
+        def show(op):
+            o, kind, a, b, c, v = op
+            if o == ai.POP_SET:
+                return f'set dsg{a}=' + (f'{struct.unpack("<i", struct.pack("<I", b))[0]}', f'{v[0]:g}', 'self')[kind]
+            if o == ai.POP_GUARD:
+                return f'guard dsg{a}=={b}'
+            if o in (ai.POP_FORCE, ai.POP_FORCE_REFLEX):
+                return f'{"B" if o == ai.POP_FORCE else "R"}{a}'
+            if o == ai.POP_WAIT:
+                return f'wait {b}ms'
+            if o in (ai.POP_TELEPORT, ai.POP_CAMERA):
+                return f'{ops[o]} ({v[0]:.1f}, {v[1]:.1f}, {v[2]:.1f})'
+            if o == ai.POP_LEVEL:
+                at = f' at {names[c]} / {names[a]}' if c != 0xFFFFFFFF else ''
+                return f'LEVEL {names[b]}{at}'
+            return ops[o]
+        print(f"  portals {len(r['portals'])}, places {r['places']}" +
+              (f", missing effect textures {r['missing_effects']}" if r['missing_effects'] else ''))
+        for pos, radius, _, _, fire, fire_dsg, fire_value, cap, fire_ops, (fam, inst) in r['portals']:
+            when = f'dsg{fire_dsg}=={fire_value}' if fire == 0 else 'covered'
+            print(f"    {inst} @({pos[0]:.0f}, {pos[1]:.0f}, {pos[2]:.0f}) r {radius:g}: "
+                  f"{'; '.join(show(o) for o in cap)}  |  on {when}: {'; '.join(show(o) for o in fire_ops)}")
         for off, mask, kind, lo, hi in r['buttons']:
             print(f'  button {off:#x}: {[n for i, n in enumerate(ai.INPUTS) if mask >> i & 1]} analog {kind} [{lo}, {hi}]')
     if cmd == 'level-ttlv':

@@ -33,6 +33,87 @@ float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset) {
 
 static void free_dsg_def(tc_ai_dsg_def *d) { tc_free(d->vars); tc_free(d->initial); }
 
+static tc_vec3 rd_vec3(reader *r) {
+    tc_vec3 v;
+    v.x = rd_f32(r);
+    v.y = rd_f32(r);
+    v.z = rd_f32(r);
+    return v;
+}
+
+/* v6: portals, names, places, screen transitions (tools/ttre/ai.py). */
+static void load_v6(reader *r, tc_ai_model *m) {
+    uint32_t i, k;
+    m->portal_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->portals = (tc_ai_portal *)rd_array(r, m->portal_count, sizeof(tc_ai_portal), 64);
+    for (i = 0; m->portals && i < m->portal_count; i++) {
+        tc_ai_portal *p = &m->portals[i];
+        uint32_t n;
+        p->position = rd_vec3(r);
+        p->radius = rd_f32(r);
+        for (k = 0; k < 9; k++) p->rows[k] = rd_f32(r);
+        p->perso = rd_u16(r);
+        p->fire = rd_u8(r);
+        (void)rd_u8(r);
+        p->fire_dsg = rd_u16(r);
+        (void)rd_u16(r);
+        p->fire_value = rd_i32(r);
+        p->capture_count = rd_u16(r);
+        p->fire_count = rd_u16(r);
+        n = (uint32_t)p->capture_count + p->fire_count;
+        p->ops = (tc_ai_portal_op *)rd_array(r, n, sizeof(tc_ai_portal_op), 24);
+        for (k = 0; p->ops && k < n; k++) {
+            tc_ai_portal_op *o = &p->ops[k];
+            o->op = rd_u8(r);
+            o->kind = rd_u8(r);
+            o->a = rd_u16(r);
+            o->b = rd_u32(r);
+            o->c = rd_u32(r);
+            o->v = rd_vec3(r);
+        }
+    }
+    m->name_count = rd_u16(r);
+    m->names = (char **)rd_array(r, m->name_count, sizeof(char *), 2);
+    for (i = 0; m->names && i < m->name_count; i++) m->names[i] = rd_string(r);
+    for (i = 0; !r->error && m->portals && i < m->portal_count; i++) {
+        const tc_ai_portal *p = &m->portals[i];
+        for (k = 0; k < (uint32_t)p->capture_count + p->fire_count; k++) {
+            const tc_ai_portal_op *o = &p->ops[k];
+            if (o->op == TC_AI_POP_LEVEL &&
+                (o->b >= m->name_count || (o->c != TC_AI_NONE && (o->c >= m->name_count || o->a >= m->name_count))))
+                r->error = TC_ERR_TRUNCATED;
+        }
+    }
+    m->place_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->places = (tc_ai_place *)rd_array(r, m->place_count, sizeof(tc_ai_place), 18);
+    for (i = 0; m->places && i < m->place_count; i++) {
+        m->places[i].name = rd_string(r);
+        m->places[i].position = rd_vec3(r);
+        m->places[i].heading = rd_f32(r);
+    }
+    m->transitions.cover_threshold = rd_u16(r);
+    m->transitions.cover_range = rd_u16(r);
+    m->transitions.reveal_threshold = rd_u16(r);
+    m->transitions.reveal_range = rd_u16(r);
+    for (i = 0; i < 4; i++) {
+        tc_ai_effect *e = &m->transitions.effects[i];
+        e->variant_count = rd_u16(r);
+        (void)rd_u16(r);
+        for (k = 0; k < 9; k++) e->fields[k] = rd_f32(r);
+        e->variants = (char **)rd_array(r, e->variant_count, sizeof(char *), 2);
+        for (k = 0; e->variants && k < e->variant_count; k++) e->variants[k] = rd_string(r);
+    }
+    m->has_transitions = !r->error;
+}
+
+static void free_strings(char **s, uint32_t n) {
+    uint32_t i;
+    for (i = 0; s && i < n; i++) tc_free(s[i]);
+    tc_free(s);
+}
+
 tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     reader r = {data, size, 0, TC_OK};
     uint32_t i, k, version;
@@ -40,7 +121,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
     version = rd_u32(&r);
-    if (version < 1 || version > 5) return TC_ERR_UNSUPPORTED_VERSION;
+    if (version < 1 || version > 6) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -191,6 +272,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
             if (t->behaviour >= m->normal_count) r.error = TC_ERR_TRUNCATED;
         }
     }
+    if (version >= 6) load_v6(&r, m);
     for (i = 0; !r.error && m->states && i < m->state_count; i++) {
         if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
         if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
@@ -216,6 +298,12 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->root);
     tc_free(m->sphere_sets);
     tc_free(m->triggers);
+    for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);
+    tc_free(m->portals);
+    free_strings(m->names, m->name_count);
+    for (i = 0; m->places && i < m->place_count; i++) tc_free(m->places[i].name);
+    tc_free(m->places);
+    for (i = 0; i < 4; i++) free_strings(m->transitions.effects[i].variants, m->transitions.effects[i].variant_count);
     tc_free(m->nodes);
     tc_free(m->scripts);
     tc_free(m->behaviours);

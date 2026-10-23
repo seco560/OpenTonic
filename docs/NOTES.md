@@ -233,6 +233,9 @@ headless tests, and ask before large explorations.
   47_3, 21_2, 9_8, 89_1): 50_2 Doc's Cave, 74_1 Canyon, 42_5 Vegetable HQ, 77_1 Pressure Cooker, 47_3 Glacier Cocktail,
   21_2 North Plain, 9_8 South Plain, 8_6 Pyramid, 76_1 Grögh HQ, 80_1 Ski Slope, 89_1 Bonus (Crazy Town); 66_30 no album match.
   Level pairings inferred from names: bar/cock01 = Glacier Cocktail?, pyr_fou = Pyramid?, BigBoss = Grögh HQ?, rest by name.
+- User-confirmed (2026-10-24): **cutscene-only levels** = bar, death, mammyon, outro, pharmmap, pyr_fou, SpyCarota,
+  spynorth (`tc_level_is_cutscene`; both level pickers list them last under "Cutscenes", still explorable). marmite
+  (Pressure Cooker) is playable.
 - User-confirmed (2026-10-19): cock01 = Glacier Cocktail; the bar/pyr_fou/BigBoss guesses are correct. Levels without
   their own track reuse other levels' music in the game; until the sound events are decoded they play North Plain.
   The picker plays `menu` (Bnk_66_30, unconfirmed guess). Canonical copy of the table: `tools/music.tsv`
@@ -701,8 +704,18 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   0x41. Ed steps onto ledges up to 1 unit (mechcheck: 0.5 and 0.9 yes, 1.5 blocked).
 - **Integrator FUN_004aa6af** (types 0 and 4): grounded = (report | last frame's report) & 3. Forces (FUN_004c41c5):
   gravity m g card +0x38; on the ground with grip >= 1 (floor mat[2] x own): no force and last frame's velocity is
-  dropped, so v = wanted (the request's motion, projected along the ground normal, FUN_004c1541); grip < 1: wanted x
-  grip^4 plus two forces not decoded. In the air the wanted motion is dropped unless the handler set +0xB8 = 8
+  dropped, so v = wanted (the request's motion, projected along the ground normal, FUN_004c1541); grip < 1 (decoded
+  2026-10-24 from the listing, the decompile drops this inline code): F loses its part along the contact normal
+  (+0xCC +0xC: the ground takes it, the slope part stays), wanted x grip^4, and friction F += -m grip^4 / dt x v (v =
+  dynamics +0x38, last frame's), so v = (1 - grip^4) v_old + slope dt + grip^4 wanted: Ed eases towards the wanted
+  speed per frame. Before this the port added grip^4 x wanted on
+  top of v_old every frame with no brake: on cock01's ice Ed gained ~70 u/s per second up to the 100 cap.
+- **Per-frame fractions -> any frame rate** (2026-10-24): the exe applies some shares once per mechanics frame (ice
+  friction grip^4, the skier's friction grip^2, the board turning 0.6 / 0.05 of the way to the ground), so at a
+  higher frame rate they act more often. Its mechanics frame is taken as 1/30 s (the re-snap's 30 dt, the 1/30 and
+  30 constants), and `tc_mec_per_frame(k, dt)` = 1 - (1 - k)^(dt x 30) gives the same share per 1/30 s while the
+  port still steps every displayed frame (120 fps on the Mac). Ice at grip 0.4 after 1 s of running: 4.9 / 4.8 / 4.8
+  u/s at 30 / 60 / 120 fps (was 4.9 / 7.1 / 8.6). Use it for any new per-frame share found in the exe. In the air the wanted motion is dropped unless the handler set +0xB8 = 8
   (type 4 does). v = v_old + F dt / m + wanted; kinetic energy m v^2 / 2 < 0.025 -> 0, |v| capped at 100
   (FUN_004c39f0). v = 0: no move (contacts kept). Then collide-and-move; ground lost this frame and the last but
   present the one before -> re-snap (MEC_004bf9f0): sweep down card +0x34 (x 30 dt beyond 1/30 s; Ed 0.4 / 0.3),
@@ -734,7 +747,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   facing a gap narrower than Ed's 1.06-wide torso sphere: blocked frames, as the exe would; BigBoss: a corner with
   a wall leaning back (n.z 0.26) makes Ed slide up, lose ground and fall in a loop). 30/60/120/144 fps agree (run
   9.0, walk 3.28, apex 2.7-3.0; 30 fps differs at walls).
-- **Open:** the jump's path (above); the two forces for grip < 1 (ice, FUN_004c41c5's undecoded part); the zone
+- **Open:** the jump's path (above); the zone
   masks of FUN_0043bff0; the skier's single-sphere collide set; dynamics +0x38C (when set, standing still keeps the
   reports; the port always keeps them); air control (mode 9, ProposalVecD) and the AI's Velocity field under type 4;
   whether the exe projects root motion onto the ground (the port does, as mode 12 does).
@@ -848,6 +861,9 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   semantics of 0041fb00 / 0041efe0) - with the persos' AI work.
 
 ### Level portals (red arches), first look - parked (session 10)
+- **2026-10-24: decoded further, see docs/PORTALS.md** (the plan). Corrections to the guesses below: Ed.dsg136 is the
+  arrival heading (PROC_242), Land's arches teleport within Land (PROC_8), real level changes are sud0's arches
+  (ChangeLevel) and the exits back to sud0 (PROC_29 with named places); the transition screens are fix data.
 - Portals = family **gen_arche** (Land: SDO_Arche1/2/5/6, SDO_ArcheRetourSUD; sud0 x20 HEG_Arche...; Totalski
   GIZ_ArcheRetourneDansSud0; skymap NBD_ArcheGagneSkymap); **sprite_arche** = their effect sprites. No collide set.
 - The arch's script does not change level itself. B0: if Dot(info, dsg134) == 0: info.dsg99 = Me, info.dsg100 = 0,

@@ -3,6 +3,7 @@
  * Usage: tonicviewer [levels folder | level.ttlv] */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include "input.h"
 #include "intro.h"
 #include "music.h"
 #include "picker.h"
@@ -63,29 +64,15 @@ typedef struct app {
 
 /* ---- title bar ---- */
 
-/* Live viewer settings appended to the level's title. */
+/* Live viewer settings appended to the level's title (the core's readout, plus the antialiasing). */
 static void update_title(app *a) {
     view *v = a->view;
     if (!v) return;
-    char s[1024];
-    char ai[96] = "";
-    SDL_snprintf(s, sizeof s, "%s  \xc2\xb7  view: anim %.2f\xc3\x97, gamma %.2f, FOV %.0f\xc2\xb0", a->title_base,
-                 v->animation_speed, v->gamma, v->cam.vertical_fov * 180 / TC_PI);
-    size_t n = SDL_strlen(s);
-    if (a->g.msaa > 1) n += SDL_snprintf(s + n, sizeof s - n, ", AA %dx", a->g.msaa);
-    else n += SDL_snprintf(s + n, sizeof s - n, ", AA off");
-    if (v->light_set_count > 1)
-        n += SDL_snprintf(s + n, sizeof s - n, ", lighting %u/%u", v->light_set + 1, v->light_set_count);
-    if (n < sizeof s && v->has_fog) n += SDL_snprintf(s + n, sizeof s - n, v->fog_enabled ? ", fog on (G)" : ", fog off (G)");
-    if (n < sizeof s && v->playing) n += SDL_snprintf(s + n, sizeof s - n, "  \xc2\xb7  PLAYING as Ed (Tab: free-fly)");
-    if (n < sizeof s && v->playing && view_has_ai(v)) {
-        if (v->player->use_ai) {
-            play_ai_status(v->player, ai, sizeof ai);
-            n += SDL_snprintf(s + n, sizeof s - n, "  \xc2\xb7  AI %s (I: simple controller)", ai);
-        } else {
-            n += SDL_snprintf(s + n, sizeof s - n, "  \xc2\xb7  simple controller (I: Ed's AI)");
-        }
-    }
+    char aa[16], status[512], s[1024];
+    if (a->g.msaa > 1) SDL_snprintf(aa, sizeof aa, ", AA %dx", a->g.msaa);
+    else SDL_snprintf(aa, sizeof aa, ", AA off");
+    tc_viewer_status(&v->viewer, aa, status, sizeof status);
+    SDL_snprintf(s, sizeof s, "%s  \xc2\xb7  %s", a->title_base, status);
     if (SDL_strcmp(s, a->title) != 0) {
         SDL_strlcpy(a->title, s, sizeof a->title);
         SDL_SetWindowTitle(a->window, a->title);
@@ -168,16 +155,17 @@ static bool open_level(app *a, const char *path) {
     char *audio = audio_dir(a);
     if (audio) music_play(v->level.name, audio);
     SDL_free(audio);
-    const view_stats *s = &v->stats;
+    const tc_view_stats *s = &v->viewer.stats;
+    uint32_t textures = v->texture_count - v->missing_textures;
     SDL_snprintf(a->title_base, sizeof a->title_base,
                  "TonicViewer \xe2\x80\x94 %s  \xc2\xb7  %u meshes, %u animated objects, %u tris, %u textures (%u missing)"
                  "  \xc2\xb7  P pause  \xc2\xb7  Ctrl+L level select%s",
-                 v->level.name, s->meshes, s->persos, s->triangles, s->textures, s->missing_textures,
-                 v->player ? "  \xc2\xb7  Tab: play as Ed" : "");
+                 v->level.name, s->meshes, s->persos, s->triangles, textures, v->missing_textures,
+                 tc_viewer_can_play(&v->viewer) ? "  \xc2\xb7  Tab: play as Ed" : "");
     a->title[0] = 0;
     update_title(a);  /* play mode is on from the start when the level has Ed */
     SDL_Log("Loaded %s: %u meshes, %u persos (%u parts), %u triangles, %u textures, %u missing", v->level.name, s->meshes,
-            s->persos, s->parts, s->triangles, s->textures, s->missing_textures);
+            s->persos, s->parts, s->triangles, textures, v->missing_textures);
     return true;
 }
 
@@ -221,56 +209,47 @@ static void finish_intro(app *a) {
 /* ---- input ---- */
 
 static void level_key(app *a, const SDL_KeyboardEvent *k) {
-    view *v = a->view;
+    tc_viewer *v = &a->view->viewer;
     SDL_Scancode sc = k->scancode;
     if (sc == SDL_SCANCODE_ESCAPE) { set_captured(a, false); return; }
     if (sc == SDL_SCANCODE_LEFTBRACKET || sc == SDL_SCANCODE_RIGHTBRACKET) {  /* [ / ]: animation speed */
-        if (k->repeat) return;
-        static const float steps[] = {0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 0.75f, 1, 1.5f, 2};
-        const int count = (int)SDL_arraysize(steps);
-        int i = 5;
-        for (int s = 0; s < count; s++) if (steps[s] >= v->animation_speed - 0.001f) { i = s; break; }
-        i += sc == SDL_SCANCODE_RIGHTBRACKET ? 1 : -1;
-        v->animation_speed = steps[SDL_clamp(i, 0, count - 1)];
-        update_title(a);
+        if (!k->repeat) { tc_viewer_step_speed(v, sc == SDL_SCANCODE_RIGHTBRACKET ? 1 : -1); update_title(a); }
         return;
     }
     /* 1-9: baked lighting set (day/night variants, only some levels); - / =: display gamma. */
     if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
-        uint32_t n = (uint32_t)(sc - SDL_SCANCODE_1);
-        if (n < v->light_set_count) v->light_set = n;
+        tc_viewer_set_light_set(v, (uint32_t)(sc - SDL_SCANCODE_1));
         update_title(a);
         return;
     }
     if (sc == SDL_SCANCODE_MINUS || sc == SDL_SCANCODE_EQUALS || sc == SDL_SCANCODE_KP_MINUS || sc == SDL_SCANCODE_KP_PLUS) {
-        bool up = sc == SDL_SCANCODE_EQUALS || sc == SDL_SCANCODE_KP_PLUS;
-        v->gamma = SDL_clamp(v->gamma * (up ? 1.1f : 1 / 1.1f), 0.5f, 2.5f);
+        tc_viewer_step_gamma(v, sc == SDL_SCANCODE_EQUALS || sc == SDL_SCANCODE_KP_PLUS);
         update_title(a);
         return;
     }
     if (sc == SDL_SCANCODE_I) {  /* I: Ed's AI / simple controller */
-        if (!k->repeat) { view_toggle_ai(v); update_title(a); }
+        if (!k->repeat) { tc_viewer_toggle_ai(v); update_title(a); }
         return;
     }
     if (sc == SDL_SCANCODE_TAB) {  /* Tab: play as Ed / free-fly */
-        if (!k->repeat) { view_toggle_play(v); update_title(a); }
+        if (!k->repeat) { tc_viewer_toggle_play(v); update_title(a); }
         return;
     }
     if (sc == SDL_SCANCODE_COMMA || sc == SDL_SCANCODE_PERIOD) {  /* , / .: field of view (vertical, 5 degree steps) */
-        float deg = SDL_roundf(v->cam.vertical_fov * 180 / TC_PI) + (sc == SDL_SCANCODE_PERIOD ? 5 : -5);
-        v->cam.vertical_fov = SDL_clamp(deg, 30.0f, 100.0f) * TC_PI / 180;
+        tc_viewer_step_fov(v, sc == SDL_SCANCODE_PERIOD ? 1 : -1);
         update_title(a);
         return;
     }
     if (sc == SDL_SCANCODE_G) {  /* G: level fog on/off */
-        if (!k->repeat) { v->fog_enabled = !v->fog_enabled; update_title(a); }
+        if (!k->repeat) { tc_viewer_toggle_fog(v); update_title(a); }
         return;
     }
     if (sc == SDL_SCANCODE_P) {  /* P: pause/resume animation */
-        if (!k->repeat) v->paused = !v->paused;
+        if (!k->repeat) tc_viewer_toggle_pause(v);
         return;
     }
-    input_key(&v->in, sc, true);
+    int action = input_action(sc);
+    if (action >= 0) tc_viewer_set_action(v, (tc_view_action)action, true);
 }
 
 static void picker_key(app *a, const SDL_KeyboardEvent *k) {
@@ -343,14 +322,17 @@ static void handle(app *a, const SDL_Event *e) {
     case SDL_EVENT_QUIT: a->quit = true; break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         set_captured(a, false);
-        if (a->view) a->view->in.held = 0;
+        if (a->view) tc_viewer_release_all(&a->view->viewer);
         break;
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
         if (a->picker_open) a->picker.scale = SDL_GetWindowDisplayScale(a->window);
         break;
     case SDL_EVENT_KEY_DOWN: key_down(a, &e->key); break;
     case SDL_EVENT_KEY_UP:
-        if (a->view) input_key(&a->view->in, e->key.scancode, false);
+        if (a->view) {
+            int action = input_action(e->key.scancode);
+            if (action >= 0) tc_viewer_set_action(&a->view->viewer, (tc_view_action)action, false);
+        }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
         if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro) break;
@@ -366,8 +348,7 @@ static void handle(app *a, const SDL_Event *e) {
         break;
     case SDL_EVENT_MOUSE_MOTION:
         if (a->view && a->captured) {
-            a->view->in.mouse_dx += e->motion.xrel;
-            a->view->in.mouse_dy += e->motion.yrel;
+            tc_viewer_mouse_look(&a->view->viewer, e->motion.xrel, e->motion.yrel);
         } else if (a->picker_open && !a->intro) {
             picker_set_hover(&a->picker, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y));
         }
@@ -375,10 +356,7 @@ static void handle(app *a, const SDL_Event *e) {
     case SDL_EVENT_MOUSE_WHEEL: {
         float y = e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e->wheel.y : e->wheel.y;
         if (a->view) {
-            view *v = a->view;
-            float step = SDL_powf(1.1f, y);
-            if (v->playing) v->orbit_distance = SDL_clamp(v->orbit_distance / step, 1.5f, 25.0f);  /* camera zoom */
-            else v->in.base_speed = SDL_clamp(v->in.base_speed * step, 0.5f, 500.0f);           /* fly speed */
+            tc_viewer_wheel(&a->view->viewer, y);  /* camera zoom in play mode, fly speed in free-fly */
         } else if (a->picker_open && !a->intro) {
             picker_scroll(&a->picker, -y * 80 * a->picker.scale);
         }
@@ -514,9 +492,9 @@ int main(int argc, char **argv) {
         last = now;
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
         if (a.view) {
-            view_update(a.view, dt);
+            tc_viewer_update(&a.view->viewer, dt);
             /* Refresh the AI's behaviour/state in the title while playing. */
-            if (a.view->playing && view_has_ai(a.view) && a.view->player->use_ai && now - a.last_title_ns > 250000000) {
+            if (tc_viewer_ai_active(&a.view->viewer) && now - a.last_title_ns > 250000000) {
                 a.last_title_ns = now;
                 update_title(&a);
             }

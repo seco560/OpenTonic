@@ -7,6 +7,11 @@ tc_mec_env tc_mec_env_default(void) {
     return e;
 }
 
+float tc_mec_per_frame(float k, float dt) {
+    if (!(k > 0 && k < 1) || !(dt > 0)) return k;
+    return 1 - powf(1 - k, dt / TC_MEC_FRAME);
+}
+
 /* ---- Type 5: flight ----
  * Card fields used (Ed's 0x3c379c): +4 mass 80, +8 polar set 2, +0x10/+0x14/+0x18 lag times of attack / bank /
  * thrust 0.1 / 0.3 / 2 s, +0x24 thrust 2000, +0x28 wing area 5.5, +0x2C/+0x30 attack range 12 / -4 degrees,
@@ -197,22 +202,22 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
         }
     } else {
         tc_vec3 n = c->ground ? c->ground_normal : c->wall_normal;
-        float grip = c->ground ? c->ground_grip : 1, g2 = fminf(fmaxf(grip * grip, 0), 1);
+        float grip = c->ground ? c->ground_grip : 1, g2 = tc_mec_per_frame(fminf(fmaxf(grip * grip, 0), 1), dt);
         if (tc_v3_dot(n, s->z) > 0.5f || tc_v3_dot(n, up) > 0.5f) target = n;
         f = tc_v3_sub(f, tc_v3_scale(n, tc_v3_dot(n, gravity)));      /* the surface carries the weight */
-        f = tc_v3_add(f, tc_v3_scale(velocity, -mass * g2 / dt));   /* friction: grip 1 stops dead, snow 0 none */
+        f = tc_v3_add(f, tc_v3_scale(velocity, -mass * g2 / dt));   /* friction per 1/30 s: grip 1 stops dead, snow 0 none */
     }
     if ((c->ground && c->ground_normal.z < SKI_STEEP) || (!c->ground && c->wall && c->wall_normal.z < SKI_STEEP)) {
         f = without(f, c->ground ? c->ground_normal : c->wall_normal);
         s->near_ground = false;
     }
-    /* turn z towards the surface (or up in the air), a fraction per frame */
+    /* turn z towards the surface (or up in the air), a fraction per 1/30 s */
     if (tc_v3_dot(velocity, velocity) > min_speed * min_speed) {
         axis = tc_v3_cross(s->z, target);
         d = tc_v3_length(axis);
         if (d > 1e-6f) {
             angle = acosf(fminf(fmaxf(tc_v3_dot(s->z, target), -1), 1));
-            s->omega = tc_v3_add(s->omega, tc_v3_scale(tc_v3_div(axis, d), angle * align / dt));
+            s->omega = tc_v3_add(s->omega, tc_v3_scale(tc_v3_div(axis, d), angle * tc_mec_per_frame(align, dt) / dt));
         }
     }
     velocity = tc_v3_add(velocity, tc_v3_scale(tc_v3_add(f, s->force), dt / mass));

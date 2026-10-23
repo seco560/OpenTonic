@@ -1,10 +1,15 @@
 import AppKit
 import MetalKit
+import TonicCore
 
 /// TonicViewer: level viewer and barebones collision tester; prototype / MVP of a native macOS port.
 final class GameView: MTKView {
     var renderer: Renderer?
+    private let bindings = KeyBindings()
     override var acceptsFirstResponder: Bool { true }
+
+    /// The core's viewer state of the open level (tc_viewer.h).
+    private var viewer: UnsafeMutablePointer<tc_viewer>? { renderer?.viewer?.raw }
 
     /// Mouse-look capture (viewer convenience, not part of the original controls):
     /// click to capture, move to look, Esc to release.
@@ -28,92 +33,79 @@ final class GameView: MTKView {
     override func mouseDown(with event: NSEvent) { setCaptured(true) }
 
     override func mouseMoved(with event: NSEvent) {
-        if captured { renderer?.input.mouseDelta += SIMD2(Float(event.deltaX), Float(event.deltaY)) }
+        if captured, let v = viewer { tc_viewer_mouse_look(v, Float(event.deltaX), Float(event.deltaY)) }
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard let r = renderer else { return }
-        let step = pow(1.1, Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.1 : 1))
-        if r.playing {
-            r.orbitDistance = max(1.5, min(25, r.orbitDistance / step))  // play mode: camera zoom
-        } else {
-            r.input.baseSpeed = max(0.5, min(500, r.input.baseSpeed * step))  // free-fly: fly speed
-        }
+        guard let v = viewer else { return }
+        // Play mode: camera zoom; free-fly: fly speed.
+        tc_viewer_wheel(v, Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.1 : 1))
     }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { setCaptured(false); return }  // Esc
-        if event.keyCode == 33 || event.keyCode == 30, !event.isARepeat, let r = renderer {  // [ / ]: animation speed
-            let steps: [Float] = [0.25, 1.0 / 3, 0.5, 2.0 / 3, 0.75, 1, 1.5, 2]
-            let i = steps.firstIndex { $0 >= r.animationSpeed - 0.001 } ?? 5
-            r.animationSpeed = steps[max(0, min(steps.count - 1, i + (event.keyCode == 30 ? 1 : -1)))]
-            updateTitle()
-            return
-        }
-        // 1-9: baked lighting set (day/night variants, only some levels); - / =: display gamma.
-        let digits: [UInt16: UInt32] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
-        if let n = digits[event.keyCode], let r = renderer {
-            if n < r.lightSetCount { r.lightSet = n }
-            updateTitle()
-            return
-        }
-        if event.keyCode == 27 || event.keyCode == 24, let r = renderer {
-            r.gamma = max(0.5, min(2.5, r.gamma * (event.keyCode == 24 ? 1.1 : 1 / 1.1)))
-            updateTitle()
-            return
-        }
-        if event.keyCode == 34 {  // I: Ed's AI / simple controller
-            if !event.isARepeat, let r = renderer { r.toggleAI(); updateTitle() }
-            return
-        }
-        if event.keyCode == 48 {  // Tab: play as Ed / free-fly
-            if !event.isARepeat, let r = renderer { r.togglePlay(); updateTitle() }
-            return
-        }
-        if event.keyCode == 43 || event.keyCode == 47, let r = renderer {  // , / .: field of view (vertical, 5° steps)
-            let deg = (r.camera.verticalFOV * 180 / .pi).rounded() + (event.keyCode == 47 ? 5 : -5)
-            r.camera.verticalFOV = max(30, min(100, deg)) * .pi / 180
-            updateTitle()
-            return
-        }
         if event.keyCode == 46, !event.isARepeat {  // M: mute/unmute level music
             Music.shared.muted.toggle()
             return
         }
-        if event.keyCode == 5, !event.isARepeat, let r = renderer {  // G: level fog on/off
-            r.fogEnabled.toggle()
+        guard let v = viewer else { super.keyDown(with: event); return }
+        if event.keyCode == 33 || event.keyCode == 30 {  // [ / ]: animation speed
+            if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
+            return
+        }
+        // 1-9: baked lighting set (day/night variants, only some levels); - / =: display gamma.
+        let digits: [UInt16: UInt32] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
+        if let n = digits[event.keyCode] {
+            tc_viewer_set_light_set(v, n)
             updateTitle()
             return
         }
-        if event.keyCode == 35 {  // P: pause/resume animation
-            if !event.isARepeat, let r = renderer { r.paused.toggle() }
+        if event.keyCode == 27 || event.keyCode == 24 {
+            tc_viewer_step_gamma(v, event.keyCode == 24)
+            updateTitle()
             return
         }
-        if renderer?.input.key(event.keyCode, down: true) != true { super.keyDown(with: event) }
+        if event.keyCode == 34 {  // I: Ed's AI / simple controller
+            if !event.isARepeat { tc_viewer_toggle_ai(v); updateTitle() }
+            return
+        }
+        if event.keyCode == 48 {  // Tab: play as Ed / free-fly
+            if !event.isARepeat { tc_viewer_toggle_play(v); updateTitle() }
+            return
+        }
+        if event.keyCode == 43 || event.keyCode == 47 {  // , / .: field of view (vertical, 5° steps)
+            tc_viewer_step_fov(v, event.keyCode == 47 ? 1 : -1)
+            updateTitle()
+            return
+        }
+        if event.keyCode == 5 {  // G: level fog on/off
+            if !event.isARepeat { tc_viewer_toggle_fog(v); updateTitle() }
+            return
+        }
+        if event.keyCode == 35 {  // P: pause/resume animation
+            if !event.isARepeat { tc_viewer_toggle_pause(v) }
+            return
+        }
+        if let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, true) } else { super.keyDown(with: event) }
     }
 
     /// Live viewer settings appended to the window title.
     func updateTitle() {
-        guard let r = renderer, let w = window else { return }
+        guard let viewer = renderer?.viewer, let w = window else { return }
         let base = w.title.components(separatedBy: "  ·  view:").first ?? w.title
-        var s = String(format: "  ·  view: anim %.2f×, gamma %.2f, FOV %.0f°", r.animationSpeed, r.gamma, r.camera.verticalFOV * 180 / .pi)
-        if r.lightSetCount > 1 { s += ", lighting \(r.lightSet + 1)/\(r.lightSetCount)" }
-        if r.fog != nil { s += r.fogEnabled ? ", fog on (G)" : ", fog off (G)" }
-        if r.playing { s += "  ·  PLAYING as Ed (Tab: free-fly)" }
-        if r.playing, let p = r.player, p.hasAI { s += p.useAI ? "  ·  AI \(p.aiStatus) (I: simple controller)" : "  ·  simple controller (I: Ed's AI)" }
-        w.title = base + s
+        w.title = base + "  ·  " + viewer.status
     }
 
     override func keyUp(with event: NSEvent) {
-        if renderer?.input.key(event.keyCode, down: false) != true { super.keyUp(with: event) }
+        if let v = viewer, let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, false) } else { super.keyUp(with: event) }
     }
 
     override func flagsChanged(with event: NSEvent) {
-        _ = renderer?.input.key(event.keyCode, down: event.modifierFlags.contains(.shift))
+        if let v = viewer, let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, event.modifierFlags.contains(.shift)) }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        renderer?.input.mouseDelta += SIMD2(Float(event.deltaX), Float(event.deltaY))
+        if let v = viewer { tc_viewer_mouse_look(v, Float(event.deltaX), Float(event.deltaY)) }
     }
 }
 
@@ -261,7 +253,7 @@ final class GameView: MTKView {
         let view = GameView(frame: window.contentLayoutRect, device: MTLCreateSystemDefaultDevice())
         do {
             let r = try Renderer(view: view)
-            r.load(try Level(url: url))
+            r.load(try Viewer(level: Level(url: url)))
             renderer = r
         } catch {
             let alert = NSAlert()
@@ -275,16 +267,16 @@ final class GameView: MTKView {
         gameView = view
         window.contentView = view
         window.makeFirstResponder(view)
-        let s = renderer!.stats
-        window.title = "TonicViewer — \(url.deletingPathExtension().lastPathComponent)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(s.textures) textures (\(s.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(renderer!.player != nil ? "  ·  Tab: play as Ed" : "")"
+        let r = renderer!, viewer = r.viewer!, s = viewer.stats
+        window.title = "TonicViewer — \(viewer.level.name)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(r.textureCount) textures (\(r.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(viewer.canPlay ? "  ·  Tab: play as Ed" : "")"
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()
         titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in
             MainActor.assumeIsolated {
-                if let v = view, let r = v.renderer, r.playing, r.player?.useAI == true { v.updateTitle() }
+                if let v = view, v.renderer?.viewer?.aiActive == true { v.updateTitle() }
             }
         }
-        print("Loaded \(url.lastPathComponent): \(s.meshes) meshes, \(s.persos) persos (\(s.parts) parts), \(s.triangles) triangles, \(s.textures) textures, \(s.missingTextures) missing")
+        print("Loaded \(url.lastPathComponent): \(s.meshes) meshes, \(s.persos) persos (\(s.parts) parts), \(s.triangles) triangles, \(r.textureCount) textures, \(r.missingTextures) missing")
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }

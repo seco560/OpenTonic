@@ -4,6 +4,7 @@
 #   make aicheck    -> run Ed's AI headless on bar (needs ../files/out/ttlv/bar.ttai)
 #   make mechcheck  -> type 0/4 mechanics on hand-made geometry (no game data needed)
 #   make crashcheck -> Totalski: the skier rides into a tree and crashes (needs ../files/out/ttlv/Totalski.*)
+#   make viewcheck  -> the viewer module (tc_viewer) headless on bar: scripted keys, draw lists, title readout
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 CC ?= cc
 AR ?= ar
@@ -14,7 +15,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck
 lib: $(BUILD)/libtoniccore.a
 
 $(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard src/*.h) | $(BUILD)
@@ -35,6 +36,9 @@ $(BUILD)/mechcheck: tests/mechcheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/crashcheck: tests/crashcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
+$(BUILD)/viewcheck: tests/viewcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -50,7 +54,10 @@ mechcheck: $(BUILD)/mechcheck
 crashcheck: $(BUILD)/crashcheck
 	$(BUILD)/crashcheck ../files/out/ttlv
 
+viewcheck: $(BUILD)/viewcheck
+	$(BUILD)/viewcheck ../files/out/ttlv bar
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck clean
+.PHONY: all lib check aicheck mechcheck crashcheck viewcheck clean

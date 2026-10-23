@@ -85,6 +85,44 @@ typedef struct tc_ai_trigger {
     uint16_t behaviour, guard;
     uint32_t sleep_ms;
 } tc_ai_trigger;
+/* .ttai v6: a portal (docs/PORTALS.md): a level perso that moves the player elsewhere, reduced by the converter to
+ * op lists (tools/ttre/ai.py portals()). Capture ops run once when the player comes within radius (after any GUARD
+ * ops hold); fire ops when `fire` holds: 0 = the player's dsgvar fire_dsg == fire_value (Ed's B106 sets dsg103 once
+ * the cover is done), 1 = the screen is covered. */
+enum {
+    TC_AI_POP_GUARD = 1,   /* the player's dsgvar a == (int)b, else no capture */
+    TC_AI_POP_SET,         /* the player's dsgvar a := kind 0 (int)b, 1 v.x, 2 this portal's perso */
+    TC_AI_POP_FORCE,       /* the player's normal behaviour := a */
+    TC_AI_POP_FORCE_REFLEX,/* the player's reflex := a */
+    TC_AI_POP_COVER,       /* start the cover transition (GameAction2) */
+    TC_AI_POP_WAIT,        /* wait b ms (META_29) */
+    TC_AI_POP_TELEPORT,    /* the player to v (PROC_8) */
+    TC_AI_POP_CAMERA,      /* the camera to v (PROC_8) */
+    TC_AI_POP_LEVEL        /* change level to names[b]; c != NONE: arrive at place names[c], camera at names[a] (PROC_29) */
+};
+typedef struct tc_ai_portal_op { uint8_t op, kind; uint16_t a; uint32_t b, c; tc_vec3 v; } tc_ai_portal_op;
+typedef struct tc_ai_portal {
+    tc_vec3 position;
+    float radius;
+    float rows[9];               /* the portal's axes, row-major (its local -Y faces the way in) */
+    uint16_t perso;              /* as perso nodes (level perso k + 1) */
+    uint8_t fire;
+    uint16_t fire_dsg;
+    int32_t fire_value;
+    uint16_t capture_count, fire_count;
+    tc_ai_portal_op *ops;        /* capture_count capture ops, then fire_count fire ops */
+} tc_ai_portal;
+/* A level perso by instance name (lowercase): PROC_29 arrivals ("heg_positionedland"). */
+typedef struct tc_ai_place { char *name; tc_vec3 position; float heading; } tc_ai_place;
+/* One screen transition effect (fix.gpt 0x12a8): fields = effect +0x10..+0x30 (A, the mask wipe: start, end, current,
+ * speed; B, the spinning logo: radius start, end, current, speed, current speed, acceleration, angle start, current
+ * angle, spin); variants = texture paths relative to the .ttai, one picked at random. */
+typedef struct tc_ai_effect { float fields[9]; uint16_t variant_count; char **variants; } tc_ai_effect;
+typedef struct tc_ai_transitions {
+    uint16_t cover_threshold, cover_range, reveal_threshold, reveal_range; /* r in [0, range]: r > threshold -> B */
+    tc_ai_effect effects[4];     /* cover A, cover B, reveal A, reveal B */
+} tc_ai_transitions;
+
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
 
@@ -115,6 +153,14 @@ typedef struct tc_ai_model {
     tc_ai_sphere_set *sphere_sets;
     uint16_t trigger_count;      /* v5 (0 before) */
     tc_ai_trigger *triggers;
+    uint16_t portal_count;       /* v6 (0 before) */
+    tc_ai_portal *portals;
+    uint16_t name_count;         /* v6: level and place names the portal ops refer to */
+    char **names;
+    uint16_t place_count;        /* v6 */
+    tc_ai_place *places;
+    bool has_transitions;        /* v6 */
+    tc_ai_transitions transitions;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);

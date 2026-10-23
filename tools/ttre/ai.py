@@ -194,16 +194,28 @@ def dump(ai, path, names=None):
   u16 n_persos, u16 0, n x { u16 id (as in perso nodes), u8 role (1 = perso-in-fix 1, the camera; 2 = perso-in-fix 2;
       0 other), u8 0, dsgvar block }: the other persos the scripts reference (Dot(perso, dsgvar) reads and writes
       their dsgvars; their own AI does not run)
+  v6 (appended after the v5 trigger table): portals, places, screen transitions (docs/PORTALS.md):
+      u16 n_portals, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major as stored), u16 perso
+          (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the screen is covered),
+          u8 0, u16 fire_dsg, u16 0, i32 fire_value, u16 n_capture, u16 n_fire, (n_capture + n_fire) x op
+          { u8 op, u8 kind, u16 a, u32 b, u32 c, f32 v[3] } } (ops: ai.POP_*, see portals())
+      u16 n_names, n x { u16 len, bytes }: level and place names the ops refer to (lowercase)
+      u16 n_places, u16 0, n x { u16 len, name bytes (lowercase), f32 position[3], f32 heading }: every level perso
+          by instance name, for PROC_29 arrivals into this level (other levels' scripts name them)
+      transitions: u16 cover threshold, u16 cover range, u16 reveal threshold, u16 reveal range (random r in
+          [0, range]: r > threshold -> effect B), 4 x { u16 n_variants, u16 0, f32 fields[9] (effect +0x10..+0x30),
+          n_variants x { u16 len, texture path relative to the .ttai } } for cover A, cover B, reveal A, reveal B
   v2: u16 n_cards, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw:
       mostly f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
 """
 import re
 
-TTAI_VERSION = 5
+TTAI_VERSION = 6
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
 NODE_END = 8
+TEX_ROOT = 'files/out/Textures'  # the effect textures of the screen transitions
 # Virtual inputs (bit numbers), named after the game's input entries (fix: "<Name>_Key" / "<Name>_Pad").
 INPUTS = ['left', 'right', 'up', 'down', 'speedup', 'jump', 'lateral', 'action', 'shoot', 'camera']
 KEY_INPUT = {0xcb: 0, 0xcd: 1, 0xc8: 2, 0xd0: 3, 0x2a: 4, 0x2c: 5, 0x38: 6, 0x1d: 7, 0x39: 8, 0x52: 9}  # DIK codes
@@ -441,6 +453,278 @@ def proximity_triggers(ai):
     return out
 
 
+def perso_dsg(d, perso, k):
+    """Typed value of a perso's dsgvar k (its current buffer): ('int', v), ('float', v), ('vec', (x, y, z)) for vectors
+    and waypoints (type 8: {u32, f32 position[3], f32 radius, ...}), ('perso', loc), or None. Widths as tc_ai.c
+    dsg_width: types 0-2 one byte (0/1 signed), 3-4 two (3 signed), 7 f32, 12 vec3, the rest 4."""
+    lv, un = d.lv, d.un
+    mind = lv.ptr(lv.ptr(perso, 0xC)) if lv.ptr(perso, 0xC) else None
+    dm = lv.ptr(mind, 0xC) if mind else None
+    dfn = lv.ptr(lv.ptr(dm)) if dm and lv.ptr(dm) else None
+    if not dfn:
+        return None
+    infos, (size, count) = lv.ptr(dfn, 4), un('2I', dfn, 8)
+    cur = lv.ptr(dm, 8) or lv.ptr(dm, 4) or lv.ptr(dfn)
+    if k >= count or not infos or not cur:
+        return None
+    off, typ = un('2I', infos, 16 * k)
+    if typ in (0, 1):
+        return ('int', un('b', cur, off)[0])
+    if typ == 2:
+        return ('int', un('B', cur, off)[0])
+    if typ in (3, 4):
+        return ('int', un('h' if typ == 3 else 'H', cur, off)[0])
+    if typ == 7:
+        return ('float', un('f', cur, off)[0])
+    if typ == 12:
+        return ('vec', un('3f', cur, off))
+    if typ == 8:
+        wp = lv.ptr(cur, off)
+        return ('vec', un('3f', wp, 4)) if wp else None
+    if typ == 10:
+        return ('perso', lv.ptr(cur, off))
+    return ('int', un('i', cur, off)[0])
+
+
+# Portal ops (reader: core/src/tc_ai.c, TC_AI_POP_*). Fixed 24-byte records { u8 op, u8 kind, u16 a, u32 b, u32 c,
+# f32 v[3] }.
+POP_GUARD, POP_SET, POP_FORCE, POP_FORCE_REFLEX, POP_COVER, POP_WAIT, POP_TELEPORT, POP_CAMERA, POP_LEVEL = range(1, 10)
+
+
+def portals(ai, strings):
+    """Level persos that move the player elsewhere: the arches (gen_arche: blue in-level teleports, red level changes)
+    and the zone teleports (genplainenord / gencanyon ...). They never move Ed themselves; their scripts do, in order:
+      capture (Ed within the perso's activation radius, PROC_18(Me, r), or an explicit Less(FUNC_4(Ed), dsg) test;
+               optionally only while Equal(Dot(Ed, dsg<k>), v)): writes Ed's dsgvars (dsg99 = Me, dsg136 = arrival
+               heading, ...), forces his normal / reflex behaviour (PROC_237 / PROC_238: the walk into the arch B66,
+               or the wait B15), maybe starts the cover transition (GameAction2);
+      fire     (If Equal(Dot(Ed, dsg103), 1) - Ed's B106 sets it once the cover is done -, or If GameState63):
+               more dsgvar writes and forcing, waits (META_29), then PROC_8 (teleport Ed and the camera to two
+               positions), ChangeLevel(name) or PROC_29(name, n, place, camera place).
+    Each perso's scripts are evaluated statically against its own dsgvars (the If chains on them pick one branch; an
+    undecidable condition takes the branch with the capture, which opens the collectible gates) and flattened into
+    op lists. Returns [(position, radius, 3x3 rows, perso id, fire kind, fire dsg, fire value, capture ops, fire ops,
+    (family, instance))]; strings: dict name -> index, extended here. Persos whose effect does not fit are skipped
+    (GenTransitionSubMap's zone test COND_13, Doc's cutscenes, the game-over screen ...)."""
+    d, lv = ai.d, ai.lv
+    fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
+    if ai.perso != fix_ed:
+        return []
+    persos = {p.loc: k + 1 for k, p in enumerate(d.persos())}
+    normal = {ref: int(n[1:]) for ref, n in ai.beh_names.items() if n.startswith('B')}
+    reflex = {ref: int(n[1:]) for ref, n in ai.beh_names.items() if n.startswith('R')}
+
+    def cstr(loc):
+        b = loc[0].data[loc[1]:loc[1] + 256]
+        return b.split(b'\0')[0]
+
+    def sid(s):
+        return strings.setdefault(s.lower(), len(strings))
+
+    def is_ed(n):
+        return n.type == 24 and n.ref == fix_ed
+
+    def ed_dsg(n):
+        """Dot(Ed, dsg<k>) -> k, else None."""
+        c = n.children
+        if n.type == 2 and n.param == 12 and len(c) == 2 and is_ed(c[0]) and c[1].type in (10, 11):
+            return c[1].param
+        return None
+
+    out = []
+    for p in d.persos():
+        if p.loc == ai.perso or not lv.ptr(p.loc, 0xC):
+            continue
+        try:
+            other = AI(d, p.loc)
+        except Exception:
+            continue
+        pos = tuple(p.world[3::4][:3])
+        env = {}
+
+        def value(n):
+            """Static value of an expression: ('int'|'float', v), ('vec', xyz), ('self',), or None."""
+            t, c = n.type, n.children
+            if t == 12:
+                return ('int', struct.unpack('<i', struct.pack('<I', n.param))[0])
+            if t == 13:
+                return ('float', struct.unpack('<f', struct.pack('<I', n.param))[0])
+            if t in (10, 11):
+                return env.get(n.param) or perso_dsg(d, p.loc, n.param)
+            if t == 0 and n.param == 4:
+                return ('self',)
+            if t == 3 and n.param == 0 and not c:
+                return ('vec', pos)
+            if t == 3 and n.param == 3 and c:
+                v = value(c[0])
+                return v if v and v[0] == 'vec' else ('vec', pos) if v == ('self',) else None
+            return None
+
+        def decide(cond):
+            """True / False for a condition on this perso's own dsgvars, None when it depends on anything else."""
+            c = cond.children
+            if cond.type == 1 and cond.param == 3 and len(c) == 2 and ed_dsg(c[0]) is None:
+                a, b = value(c[0]), value(c[1])
+                if a and b and a[0] in ('int', 'float') and b[0] in ('int', 'float'):
+                    return a[1] == b[1]
+            return None
+
+        def contains(stmts, pred):
+            return any(pred(n) or contains(n.children, pred) for n in stmts)
+
+        def is_capture(n):
+            return n.type == 4 and n.param == 237 and len(n.children) == 2 and is_ed(n.children[0])
+
+        def is_action(n):
+            return n.type == 4 and n.param in (7, 8, 29)
+
+        def flatten(stmts):
+            """Ops of a statement list; static Ifs resolved."""
+            ops, i = [], 0
+            while i < len(stmts):
+                n, c = stmts[i], stmts[i].children
+                if n.type == 0 and n.param == 0:  # If cond / Then ... / Else ...
+                    then = stmts[i + 1] if i + 1 < len(stmts) and stmts[i + 1].type == 0 and stmts[i + 1].param == 1 else None
+                    other_b = stmts[i + 2] if then and i + 2 < len(stmts) and stmts[i + 2].type == 0 and stmts[i + 2].param == 2 else None
+                    ok = decide(c[0]) if c else None
+                    if ok is None:  # undecidable: the branch with the capture or the action (collectible gates)
+                        ok = not (other_b and contains(other_b.children, lambda x: is_capture(x) or is_action(x)))
+                    branch = then if ok else other_b
+                    if branch:
+                        ops += flatten(branch.children)
+                    i += 1 + (then is not None) + (other_b is not None)
+                    continue
+                if n.type == 2 and n.param == 11 and len(c) == 2:  # Assign
+                    k = ed_dsg(c[0])
+                    v = value(c[1])
+                    if k is not None and v:
+                        if v[0] == 'int':
+                            ops.append((POP_SET, 0, k, v[1] & 0xFFFFFFFF, 0, (0, 0, 0)))
+                        elif v[0] == 'float':
+                            ops.append((POP_SET, 1, k, 0, 0, (v[1], 0, 0)))
+                        elif v[0] == 'self':
+                            ops.append((POP_SET, 2, k, 0, 0, (0, 0, 0)))
+                    elif c[0].type in (10, 11) and v:
+                        env[c[0].param] = v
+                elif n.type == 4 and n.param in (237, 238) and len(c) == 2 and is_ed(c[0]):
+                    b = (normal if n.param == 237 else reflex).get(c[1].ref)
+                    if b is not None:
+                        ops.append((POP_FORCE if n.param == 237 else POP_FORCE_REFLEX, 0, b, 0, 0, (0, 0, 0)))
+                elif n.type == 4 and n.param == 2:
+                    ops.append((POP_COVER, 0, 0, 0, 0, (0, 0, 0)))
+                elif n.type == 5 and n.param == 29 and c and c[0].type == 12:
+                    ops.append((POP_WAIT, 0, 0, c[0].param, 0, (0, 0, 0)))
+                elif n.type == 4 and n.param == 8 and len(c) >= 4 and is_ed(c[0]):
+                    a, b = value(c[1]), value(c[3])
+                    if a and a[0] == 'vec':
+                        ops.append((POP_TELEPORT, 0, 0, 0, 0, a[1]))
+                    if b and b[0] == 'vec':
+                        ops.append((POP_CAMERA, 0, 0, 0, 0, b[1]))
+                elif n.type == 4 and n.param == 7 and c and c[0].type == 20 and c[0].ref:
+                    ops.append((POP_LEVEL, 0, 0xFFFF, sid(cstr(c[0].ref)), 0xFFFFFFFF, (0, 0, 0)))
+                elif n.type == 4 and n.param == 29 and len(c) >= 4 and all(x.type == 20 and x.ref for x in (c[0], c[2], c[3])):
+                    ops.append((POP_LEVEL, 0, sid(cstr(c[3].ref)), sid(cstr(c[0].ref)), sid(cstr(c[2].ref)), (0, 0, 0)))
+                i += 1
+            return ops
+
+        def blocks():
+            """(guard condition or None, statements) for every top-level statement list and If-Then of the scripts."""
+            for b in other.behaviours:
+                for s in b.scripts + ([b.schedule] if b.schedule else []):
+                    def rec(stmts, cond):
+                        yield cond, stmts
+                        for k, n in enumerate(stmts):
+                            if n.type == 0 and n.param == 0 and k + 1 < len(stmts) and stmts[k + 1].param == 1 and n.children:
+                                yield from rec(stmts[k + 1].children, n.children[0])
+                                if k + 2 < len(stmts) and stmts[k + 2].type == 0 and stmts[k + 2].param == 2:
+                                    yield from rec(stmts[k + 2].children, None)  # Else: unguarded
+                    yield from rec(s, None)
+
+        capture = fire = None
+        radius = None
+        for cond, stmts in blocks():
+            if capture is None and any(is_capture(n) for n in stmts):
+                capture = (cond, stmts)
+            if fire is None and cond is not None and contains(stmts, is_action):
+                k = ed_dsg(cond.children[0]) if cond.type == 1 and cond.param == 3 and cond.children else None
+                if k is not None and value(cond.children[1]) and value(cond.children[1])[0] == 'int':
+                    fire = (0, k, value(cond.children[1])[1], stmts)
+                elif cond.type == 1 and cond.param == 63:
+                    fire = (1, 0, 0, stmts)
+            for n in stmts:
+                if n.type == 4 and n.param in (18, 19, 20) and len(n.children) >= 2 and n.children[0].type == 0 \
+                        and n.children[0].param == 4:
+                    r = value(n.children[1])
+                    if r and r[0] in ('int', 'float') and r[1] > 0:
+                        radius = r[1] if radius is None else min(radius, r[1])
+        if capture is None or fire is None:
+            continue
+        guard, cap_ops = capture[0], []
+        if guard is not None and guard.type == 1 and guard.param == 5 and len(guard.children) == 2:
+            a, b = guard.children  # Less(FUNC_4(Ed), dsg): within a distance of Ed
+            if a.type == 3 and a.param == 4 and a.children and is_ed(a.children[0]):
+                r = value(b)
+                radius = r[1] if r and r[0] in ('int', 'float') else radius
+        elif guard is not None and guard.type == 1 and guard.param == 3 and guard.children:
+            k = ed_dsg(guard.children[0])
+            v = value(guard.children[1])
+            if k is not None and v and v[0] == 'int':
+                cap_ops.append((POP_GUARD, 0, k, v[1] & 0xFFFFFFFF, 0, (0, 0, 0)))
+            elif decide(guard) is False:
+                continue
+        cap_ops += flatten(capture[1])
+        fire_ops = flatten(fire[3])
+        if not radius or not any(op[0] in (POP_TELEPORT, POP_LEVEL) for op in fire_ops):
+            continue
+        # A portal sends Ed into the walk-in (B66, which ends in the cover) or starts the cover itself. Not portals:
+        # GenTransitionSubMap's zone test (COND_13), the fall-off-the-map ChangeMapDebut/Fin, canyon's retry warp.
+        walk_in = normal.get(next((r for r, n in ai.beh_names.items() if n == 'B66'), None))
+        if not any(op[0] == POP_COVER or (op[0] == POP_FORCE and op[2] == walk_in) for op in cap_ops):
+            continue
+        rows = (p.world[0:3], p.world[4:7], p.world[8:11])
+        out.append((pos, float(radius), rows, persos[p.loc], fire[0], fire[1], fire[2], cap_ops, fire_ops,
+                    d.perso_names(p.loc)[:3:2]))
+    return out
+
+
+def places(d):
+    """Every level perso by instance name, for PROC_29 arrivals ('heg_positionedland' = where Ed appears, '..cam..'
+    the camera): [(lowercase name, position, heading)], heading as tc_heading_of (where local -Y points)."""
+    import math
+    out = []
+    for p in d.persos():
+        name = d.perso_names(p.loc)[2]
+        if name:
+            m = p.world
+            out.append((name.lower(), tuple(m[3::4][:3]), math.atan2(-m[1], m[5])))
+    return out
+
+
+def transition_config(d):
+    """The screen transitions (docs/PORTALS.md): the 0x30-byte block FUN_004cb350 reads from fix.gpt at 0x12a8 into
+    DAT_0051b040: {u32 flags, RND channel, kind, threshold, range, ptr effect A, ptr effect B} for the cover, then
+    {kind, threshold, range, effect A, effect B} for the reveal. Effect = {ptr variant list, ?, u32 count, ptr sprite,
+    f32 +0x10..+0x30 (A: start, end, current, speed; B: radius start, end, current, speed, current speed, acceleration,
+    angle start, current angle, spin)}; variant = {ptr next, ?, ?, ptr texture file name}.
+    Returns ((cover threshold, range), (reveal threshold, range), [cover A, cover B, reveal A, reveal B] as
+    (fields[9], [texture names]))."""
+    lv, g = d.lv, d.lv.fix_gpt
+    base = 0x12A8
+    un = lambda o: struct.unpack_from('<I', g.data, base + o)[0]
+    effects = []
+    for off in (0x14, 0x18, 0x28, 0x2C):
+        e = lv.ptr((g, base + off))
+        if e is None:
+            raise ValueError('fix.gpt transition block not found at 0x12a8')
+        n = d.un('I', e, 8)[0]
+        names, node = [], lv.ptr(e, 0)
+        for _ in range(n):
+            names.append(node[0].data[lv.ptr(node, 0xC)[1]:].split(b'\0')[0].decode('latin-1').replace('\\', '/'))
+            node = lv.ptr(node, 0)
+        effects.append((d.un('9f', e, 0x10), names))
+    return (un(0xC), un(0x10)), (un(0x20), un(0x24)), effects
+
+
 def started_by_others(ai):
     """(normal, reflex) behaviour locations another perso puts this perso in when it takes over from the fix Ed, or
     None each: a schedule that deactivates the fix Ed (PROC_6) and sets this perso's behaviours with PROC_237 /
@@ -653,6 +937,36 @@ def export(ai, path):
     out += struct.pack('<HH', len(triggers), 0)
     for pos, radius, beh, guard, sleep_ms, _ in triggers:
         out += struct.pack('<4fHHI', *pos, radius, beh, guard, sleep_ms)
+    names = {}
+    gates = portals(ai, names)
+    out += struct.pack('<HH', len(gates), 0)
+    for pos, radius, rows, perso, fire, fire_dsg, fire_value, cap, fire_ops, _ in gates:
+        out += struct.pack('<4f9fHBBHHi', *pos, radius, *[x for r in rows for x in r], perso, fire, 0, fire_dsg, 0,
+                           struct.unpack('<i', struct.pack('<I', fire_value & 0xFFFFFFFF))[0])
+        out += struct.pack('<HH', len(cap), len(fire_ops))
+        for op, kind, a, b, c, v in cap + fire_ops:
+            out += struct.pack('<BBHII3f', op, kind, a, b & 0xFFFFFFFF, c & 0xFFFFFFFF, *v)
+    place_rows = places(d)
+    out += struct.pack('<H', len(names))
+    for n in names:
+        out += struct.pack('<H', len(n)) + n
+    out += struct.pack('<HH', len(place_rows), 0)
+    for n, pos, h in place_rows:
+        b = n.encode('latin-1')
+        out += struct.pack('<H', len(b)) + b + struct.pack('<4f', *pos, h)
+    from . import export as tex_export
+    tex_idx = tex_export.texture_index(TEX_ROOT)
+    (cov_t, cov_r), (rev_t, rev_r), effects = transition_config(d)
+    out += struct.pack('<4H', cov_t, cov_r, rev_t, rev_r)
+    missing_fx = []
+    for fields, variants in effects:
+        out += struct.pack('<HH9f', len(variants), 0, *fields)
+        for v in variants:
+            png = tex_idx.get(os.path.splitext(v)[0].lower())
+            if png is None:
+                missing_fx.append(v)
+            rel = os.path.relpath(png, os.path.dirname(os.path.abspath(path))).replace(os.sep, '/') if png else ''
+            out += struct.pack('<H', len(rel)) + rel.encode()
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
@@ -662,4 +976,5 @@ def export(ai, path):
             'transitions': sum(len(r[4]) for r in st_rows),
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
             'strings': [cstr(r) for r in strings], 'cards': len(cards), 'root_states': sum(1 for _, n in root_index if n),
-            'sphere_sets': len(sphere_sets), 'triggers': len(triggers), 'unresolved': dict(unresolved), 'bytes': len(out)}
+            'sphere_sets': len(sphere_sets), 'triggers': len(triggers), 'portals': gates, 'portal_names': list(names),
+            'places': len(place_rows), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': len(out)}

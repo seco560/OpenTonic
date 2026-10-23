@@ -120,6 +120,11 @@ void tc_level_free(tc_level *level);
 /* Axis-aligned bounds of the static meshes' vertices (zero when there are none). */
 void tc_level_bounds(const tc_level *level, tc_vec3 *lo, tc_vec3 *hi);
 
+/* Whether a level (file name without extension, any case: "bar") is one of the game's cutscene-only levels: bar,
+ * death, mammyon, outro, pharmmap, pyr_fou, SpyCarota, spynorth (per the user). They stay explorable; level
+ * pickers list them after the playable ones. */
+int tc_level_is_cutscene(const char *name);
+
 /* Index of Ed's animation called `name`, or -1. */
 int tc_ed_find_anim(const tc_ed *ed, const char *name);
 

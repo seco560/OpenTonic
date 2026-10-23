@@ -24,6 +24,14 @@ extern "C" {
 typedef struct tc_mec_env { float gravity, density; } tc_mec_env;
 tc_mec_env tc_mec_env_default(void);
 
+/* The exe applies some fractions once per mechanics frame (friction, the board turning towards the ground): a fixed
+ * share k of the way each frame, so their effect over a second depends on the frame rate. Its mechanics frame is
+ * 1/30 s (the re-snap scales by 30 dt past it; 1/30 and 30 sit with the mechanics constants). The port steps once per
+ * displayed frame, so such a k is converted to the frame's dt: 1 - (1 - k)^(dt / TC_MEC_FRAME), the same share per
+ * 1/30 s at any frame rate. k outside (0, 1) is returned as is (0: nothing, 1: all at once). */
+#define TC_MEC_FRAME (1.0f / 30)
+float tc_mec_per_frame(float k, float dt);
+
 /* Type 5 control state (dynamics +0x2B0..+0x2C4). */
 typedef struct tc_mec_fly {
     float attack;                /* +0x2B0 angle of attack, degrees: Up (mode 1) lowers it, Down (2) raises it */

@@ -21,11 +21,15 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
 1. **File reading:** read the `.ttlv` into memory and call `tc_level_load(&level, bytes, size)`.
    Texture paths in `level.textures` are relative to the `.ttlv` folder; load the PNGs yourself.
 2. **Allocator (optional):** `tc_set_allocator()` before loading, to use a console heap.
-3. **Renderer:** draw from the loaded structs. `tc_vertex` is a packed 44-byte vertex (pos, normal,
+3. **Renderer:** the simplest route is `tc_viewer.h` (cameras, play mode, settings, title readout): upload its
+   mesh table once (`tc_viewer_mesh`), then each frame `tc_viewer_update`, `tc_viewer_frame` (pack into your
+   uniforms) and draw `tc_viewer_draws` (matrix, texture, flags; transparent draws last). Both viewers do this.
+   Or draw from the loaded structs yourself. `tc_vertex` is a packed 44-byte vertex (pos, normal,
    uv, 3 rgba8 baked-light sets) that can go to a vertex buffer as is. Persos: `tc_sample_at_time`
    + `tc_channel_matrix`; Ed: `tc_phase_advance` + `tc_sample_at_phase` + `tc_player_model_matrix`.
    Matrices are column-major `tc_mat4` (GL/Metal layout).
-4. **Input mapping:** each frame, turn pad/keys into a `tc_player_input` (camera-relative world XY
+4. **Input mapping:** with `tc_viewer`, map keys to `tc_view_action`s (`tc_viewer_set_action`) and pass mouse
+   deltas; it drives Ed. Without it: each frame, turn pad/keys into a `tc_player_input` (camera-relative world XY
    move of length <= 1, run, jump held) and call `tc_player_step(&player, dt, &input)` on a
    `tc_player` created with `tc_player_init` over a `tc_collision` built from `level.collision`.
    With Ed's AI instead: load the level's `.ttai` with `tc_ai_model_load`, `tc_ed_ai_init` over that
@@ -41,7 +45,8 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
   first); `AI_TRACE=<frame>` prints the statements executed from that frame on; `AI_SCRIPT=wander` is a 60 s
   collision stress run (other options in the header of tests/aicheck.c). `make mechcheck` checks the ground/air
   mechanics (steps, walls, falling) on hand-made geometry, no game data needed; `make crashcheck` rides the Totalski
-  skier into a tree (the scripted obstacle crash).
+  skier into a tree (the scripted obstacle crash). `make viewcheck` runs `tc_viewer` headless on bar
+  (scripted keys: AI, free-fly and drop, simple controller, settings; every frame's draw list validated).
   The test (not the library) uses POSIX `<dirent.h>` to list the level folder.
 
 ## Vita backend sketch (VitaSDK + vitaGL)

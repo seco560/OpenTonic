@@ -1,10 +1,13 @@
 # Moving the shared viewer logic into TonicCore (plan)
 
-Status: planned, not started. To be done from a Mac, where both frontends build: the Swift/Metal app
-(`Sources/TonicViewer`) and the SDL3 one (`sdl/`, docs/SDL3.md; it compiles on macOS via the pinned SDL3, but
-**does not run there yet**: it only ships SPIR-V shaders and SDL_GPU on macOS is Metal, which wants MSL. Either add
-MSL built from the SPIR-V with `spirv-cross --msl` (Homebrew) and request `SDL_GPU_SHADERFORMAT_MSL` too in
-`sdl/src/gpu.c`, or test the SDL side of the refactor back on Linux).
+Status: steps 1-4 done (2026-10-24): `core/include/tonic/tc_viewer.h` + `core/src/tc_viewer.c`, `make -C core
+viewcheck`, both frontends switched (`Camera.swift` and `sdl/src/camera.c` removed). The Swift app builds; the SDL
+sources compile against SDL3 on macOS (not linked: no glslang there). Left: step 5 (parity, run by the user: Swift on
+the Mac, SDL on Linux). Differences from the sketch below: `tc_viewer` is a public struct (read its fields; change
+them through the functions); `fly_speed` instead of base speed; `tc_viewer_status(v, extra, buf, size)` takes the
+frontend's extra settings (SDL: `", AA 4x"`) to put after the FOV; `ai_result` reports a `.ttai` that didn't load;
+`tc_viewer_player`, `tc_viewer_can_play`, `tc_viewer_has_ai`, `tc_viewer_ai_active` (for the title refresh). The AI
+status uses `→` in both builds now (SDL had `->`).
 
 ## Why
 Both frontends carry the same non-platform logic, ported line by line from Swift to C: the free-fly and orbit

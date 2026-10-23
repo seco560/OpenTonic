@@ -1,6 +1,7 @@
 /* Grid of converted levels (*.ttlv in one folder), each shown with its loading-screen image from
  * out/Vignette/Level/<Name>.png when available (matched case-insensitively). Port of LevelPicker.swift, drawn with
- * the 2D quad pipeline: click a tile, or move with the arrow keys and press Enter. All sizes in pixels. */
+ * the 2D quad pipeline: click a tile, or move with the arrow keys and press Enter. All sizes in pixels.
+ * Two sections under headings: "Levels", then the game's cutscene-only levels (tc_level_is_cutscene). */
 #ifndef TV_PICKER_H
 #define TV_PICKER_H
 #include "gpu.h"
@@ -17,6 +18,9 @@ typedef struct picker {
     gpu *g;
     picker_entry *entries;
     int count;
+    int first_cutscene;       /* entries [first_cutscene, count) are cutscene levels */
+    SDL_GPUTexture *heading[2];  /* "Levels", "Cutscenes" (NULL: section empty) */
+    int heading_w[2], heading_h[2];
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* pixels */
     int hover, selected;      /* -1 = none */
