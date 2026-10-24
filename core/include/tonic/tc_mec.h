@@ -20,9 +20,15 @@
 extern "C" {
 #endif
 
-/* Mechanical environment of the sector (sector data +4 -> {gravity, direction, ...}); bar and Totalski: 9.81, 1. */
-typedef struct tc_mec_env { float gravity, density; } tc_mec_env;
+/* Mechanical environment (MecEnv, docs/NOTES.md "Swimming"): gravity and the fluid's density (+0x14): air 1.3 (every
+ * level), water 1000 (below a sector's water surface). */
+typedef struct tc_mec_env { float gravity, density, drag; } tc_mec_env;
 tc_mec_env tc_mec_env_default(void);
+/* The environment at p (FUN_00451b90 with the .ttai v8 water planes): among the planes one of whose sector boxes
+ * holds p, the one nearest p in height; p below it: its environment and the depth (> 0, the scripts' EnvHeight), else
+ * the air and 0 (the exe writes the depth only below a surface). The nearest-in-height rule stands in for the
+ * engine's choice of the perso's sector, where sector boxes overlap (sud0's top pool above the falls' foot). */
+float tc_mec_env_at(const tc_ai_model *m, tc_vec3 p, tc_mec_env *env);
 
 /* The exe applies some fractions once per mechanics frame (friction, the board turning towards the ground): a fixed
  * share k of the way each frame, so their effect over a second depends on the frame rate. Its mechanics frame is
@@ -40,19 +46,56 @@ typedef struct tc_mec_fly {
     float attack_lagged;         /* +0x2BC attack, rad, after a first-order lag (FUNC_91 Report2BC) */
     float bank_lagged;           /* +0x2C0 bank, rad, lagged (FUNC_92 Report2C0); the frame rolls by this */
     float thrust_lagged;         /* +0x2C4 */
+    /* The flight frame (dynamics +0x14, FUN_004a9993 in the request handler): x along the velocity, y to the left,
+     * z up in the vertical plane through x, then rolled about x by bank_lagged. The forces act in it and the model is
+     * drawn from it (tc_mec_fly_model_axes). Kept while the speed is too low to build one. */
+    tc_vec3 frame_x, frame_y, frame_z;
+    tc_vec3 pending_dv;          /* mode 21's velocity change: a force in the exe's force list, applied by the integrator */
 } tc_mec_fly;
 
 /* Switching to a type 5 card (GAM_0042ab20): controls reset, the velocity becomes card +0x48 (Ed: 10) along the
  * facing direction. forward = Ed's front in world space (unit). */
 void tc_mec_fly_enter(tc_mec_fly *f, const tc_ai_card *card, tc_vec3 forward, tc_vec3 *velocity);
 /* One request (FUN_004aea7c): mode = the AI's SetMechMode (0 = the engine's default request); proposal = the
- * AI's proposal slots ([0xB] bank step, [0x18] attack step, [1..3] mode 21's velocity change). */
+ * AI's proposal slots ([0xB] bank step, [0x18] attack step, [1..3] mode 21's velocity change); velocity = the
+ * perso's (read only: the frame is built along it). */
 void tc_mec_fly_request(tc_mec_fly *f, const tc_ai_card *card, int mode, const float *proposal, float dt,
-                        tc_vec3 *velocity);
+                        const tc_vec3 *velocity);
 /* The integrator's dynamics (FUN_004ac0da up to the collision step): gravity, lift and drag in the frame along the
  * velocity rolled by bank_lagged, new velocity capped at card +0x44. Returns the new velocity; the caller moves
  * the perso by velocity x dt with collisions. */
-tc_vec3 tc_mec_fly_velocity(const tc_mec_fly *f, const tc_ai_card *card, tc_mec_env env, tc_vec3 velocity, float dt);
+tc_vec3 tc_mec_fly_velocity(tc_mec_fly *f, const tc_ai_card *card, tc_mec_env env, tc_vec3 velocity, float dt);
+/* The model's axes in flight (FUN_004c8dfc, the integrator's last step), world space: with the card's roll byte
+ * (+0x4C; Ed's: 1) model x = frame y, model y = frame z, model z = frame x: the head leads, the back faces the
+ * frame's up (Ed's script sets his sight axis to +Z in flight, B26); without it the same from the frame levelled
+ * (its z turned onto world up). */
+void tc_mec_fly_model_axes(const tc_mec_fly *f, const tc_ai_card *card, tc_vec3 *x, tc_vec3 *y, tc_vec3 *z);
+
+/* ---- Type 1: swimming (Ed's states 6, 7, 8, 16, 17, 20-24, 36, 37, 151, 152, 211-214) ----
+ * A body in a fluid (docs/NOTES.md "Swimming"): weight, buoyancy by the immersed volume, quadratic drag, and a thrust
+ * the AI aims with a direction. Request handler FUN_004af8f0, integrator FUN_004abbb8 with forces FUN_004c4af0. */
+typedef struct tc_mec_swim {
+    float polar;                 /* +0x2B0 degrees from +Z (0 up, 90 level, 180 down) */
+    float heading;               /* +0x2B4 degrees; the direction is (cos h sin p, sin h sin p, cos p) */
+    float thrust;                /* +0x2B8 grows by proposal [0] per request, reset when the lag catches up (strokes) */
+    float polar_lagged;          /* +0x2BC rad */
+    float heading_lagged;        /* +0x2C0 rad */
+    float thrust_lagged;         /* +0x2C4 */
+    tc_vec3 thrust_force;        /* this step's thrust (the request's entry in the exe's force list) */
+} tc_mec_swim;
+/* Entering a type 1 card (GAM_0042ab20): heading = the perso's facing (yaw - pi / 2 in the exe's terms), polar 0
+ * (clamped to the card's range at the first request: an idle swimmer is upright). heading = tc_player's. */
+void tc_mec_swim_enter(tc_mec_swim *s, float heading);
+/* One request: mode 0 decays the polar angle (x card +0x38), 1 / 2 polar + / - proposal [0x18], 3 / 4
+ * heading +/- [0xB], 10 thrust += [0], 0x14 polar / heading from the direction [7..9] and thrust += [0]. */
+void tc_mec_swim_request(tc_mec_swim *s, const tc_ai_card *card, int mode, const float *proposal, float dt);
+/* The forces and the new velocity: the environment and depth at the probe 0.5 x body size below position (*depth =
+ * the scripts' EnvHeight while swimming), weight, buoyancy rho g V, drag -rho Cd s^2 min(|v|, 10) v, the thrust. */
+tc_vec3 tc_mec_swim_velocity(tc_mec_swim *s, const tc_ai_card *card, const tc_ai_model *m, tc_vec3 position,
+                             tc_vec3 velocity, float dt, float *depth);
+/* The model's axes (FUN_004c91d2 = the frame Rz(heading + pi / 2) Rx(polar + offset)): z along the swim direction (the
+ * head), y the back (up when level), x the left. */
+void tc_mec_swim_model_axes(const tc_mec_swim *s, const tc_ai_card *card, tc_vec3 *x, tc_vec3 *y, tc_vec3 *z);
 
 /* ---- Type 2: sliding (the skier) ---- */
 
@@ -106,6 +149,9 @@ typedef struct tc_mec_walk {
     float ground_grip;           /* the ground contact's floor material mat[2] (1 = none) */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
+    /* Without a card: the steep-slope limit (n . up) instead of the default cos 60; 0 = default. The skier sets cos 70,
+     * the ski forces' own steep limit (stopgap, docs/NOTES.md "Sliding stages"). */
+    float slope_cos;
 } tc_mec_walk;
 
 void tc_mec_walk_reset(tc_mec_walk *w);

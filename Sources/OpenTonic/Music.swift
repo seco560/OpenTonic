@@ -9,7 +9,12 @@ final class Music {
 
     private var player: AVAudioPlayer?
     private(set) var current: String?
-    var muted = false { didSet { player?.volume = muted ? 0 : 1 } }
+    var muted = false {  // M: the sound effects follow
+        didSet {
+            player?.volume = muted ? 0 : 1
+            Sfx.shared.muted = muted
+        }
+    }
 
     /// Plays the track mapped to `level` (looping), or stops if there is none. `audioDir` = out/audio.
     /// The level picker uses the entry named "menu". A track that is already playing just continues.

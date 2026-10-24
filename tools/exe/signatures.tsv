@@ -1,0 +1,175 @@
+# Function prototypes for TonicTrouble.exe (types from tools/exe/types.h), applied by tools/ghidra/ApplyTypes.java.
+# address<TAB>C prototype<TAB>note (becomes the function's comment). All __cdecl. Argument counts checked against
+# the asm (tools/ghidra/ArgCheck.java: callers' ADD ESP; the card-type handlers through the 0x8C2240 call sites in
+# GAM_0042b0e0: 7, GAM_0042aff0: 6). The prototype's name replaces Ghidra's default / module name (FUN_x, MEC_x,
+# GAM_PlayAnim_x); hand names (tools/exe/names.tsv) are kept. Names keep the address so docs/NOTES.md greps work.
+#
+# Per-frame dispatch (docs/NOTES.md "MEC physics": request queue, handler pairs)
+0042b520	void GAM_PersoFrame_0042b520(SuperObject *so, char run_mechanics)	per perso and frame: AI unless out of its activation radius (std_game +0x2C), then the mechanics
+0042b2b0	void GAM_MecFrame_0042b2b0(SuperObject *so)	mechanics of one perso: default request, card type switch, each queued request (fn1), then the last card's integrator (fn0)
+0042aff0	void GAM_MecRequest_0042aff0(SuperObject *so, u32 mode, IdCard *card)	one queued request: card type switch (GAM_0042ab20), then the type's request handler
+0042b0e0	void GAM_MecIntegrate_0042b0e0(SuperObject *so, IdCard *card)	the card type's integrator; then report_seen = report_prev | report and the snapshots
+0042ab20	void GAM_MecCardSwitch_0042ab20(SuperObject *so, u32 old_type, Dynamics *dyn, IdCard *card)	entering / leaving card types 1 and 5 (flight controls, launch velocity)
+004a7459	void DNM_CardTypeInit_004a7459(Dynamics *dyn, SuperObject *so, SuperObject *carrier, IdCard *card)	runs when the card type changes (GAM_0042b2b0)
+0042a8a0	IdCard *GAM_PlayingCard_0042a8a0(SuperObject *so)	the playing state's card (p3d->state, GAM_00437810): the default request
+0042bbec	void GAM_DynFlag38d_0042bbec(SuperObject *so)	dynamics +0x38D from two flags of the dynam (GAM_00432010 / 00432020)
+00431e20	void *GEN_Get8_00431e20(void *p)	return *(p + 8): a generic getter (80 callers in many modules, e.g. on a StdGame in GAM_SectInfo_0042c250); on a dynam: its RequestQueue
+00431ca0	u32 GAM_DynamCardType_00431ca0(Dynam *dynam)
+00431cb0	void GAM_DynamSetCardType_00431cb0(Dynam *dynam, u32 type)
+00432030	float GEN_GetFloat10_00432030(void *p)	return *(float *)(p + 0x10): generic (also on waypoint data, META_GoToWaypointCont_0049fc50); on a dynam: the activation radius
+0047a290	u32 REQ_Mode_0047a290(RequestQueue *q, u8 i)	-1 when out of range
+0047a2c0	IdCard *REQ_Card_0047a2c0(RequestQueue *q, u8 i)
+0047a370	u32 REQ_Push_0047a370(RequestQueue *q, u32 mode, IdCard *card)	AI_004920a0 (SetMechMode*): append, max 8
+#
+# Animation clock (NOTES "The skier's collision sphere, and the animation clock")
+00415c00	u32 GAM_PlayAnim_Update_00415c00(SuperObject *so)	state changes, repeats, next state; then plays the frame
+00415fb0	void GAM_PlayAnim_Advance_00415fb0(SuperObject *so)	frame += timer ms / 1000 x p3d->frame_rate
+#
+# Card type handler pairs (table 0x8C2240, GAM_0042a7e0): fn0 integrators
+004aa6af	Dynamics *DNM_IntegrateWalk_004aa6af(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCardWalk *card, float dt)	types 0 and 4 (NOTES "Ground and air")
+004abbb8	Dynamics *DNM_IntegrateSwim_004abbb8(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 1: swimming (NOTES "Swimming")
+004ab91d	Dynamics *DNM_IntegrateSki_004ab91d(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCardSki *card, float dt)	type 2 (NOTES "Skiing")
+004b2900	Dynamics *DNM_IntegrateType3_004b2900(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 3
+004ac0da	Dynamics *DNM_IntegrateFly_004ac0da(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCardFly *card, float dt)	type 5 (NOTES "Flight")
+004aca45	Dynamics *DNM_IntegrateType6_004aca45(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 6
+004acb49	Dynamics *DNM_IntegrateType7_004acb49(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 7
+004ac62b	Dynamics *DNM_IntegrateType8_004ac62b(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 8
+004ad386	Dynamics *DNM_IntegrateType9_004ad386(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 9
+004adfc3	Dynamics *DNM_IntegrateType10_004adfc3(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 10
+004adb4d	Dynamics *DNM_IntegrateType11_004adb4d(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 11
+004a9d20	Dynamics *DNM_IntegrateType12_004a9d20(Dynamics *dyn, SuperObject *so, SuperObject *carrier, SuperObject *sector, DynamWork *work, IdCard *card, float dt)	type 12
+#
+# fn1 request handlers (per queued request: mode + proposal -> work->wanted, dyn->handler_mode)
+004ae392	Dynamics *DNM_RequestWalk_004ae392(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCardWalk *card, float dt, u32 mode)	types 0 and 12. card: type 0 layout; for type 12 (the else branch) the fields sit 4 bytes lower, so card->min_turn there is type 12's max_speed etc.
+004af8f0	Dynamics *DNM_RequestSwim_004af8f0(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 1
+004b00bf	Dynamics *DNM_RequestSki_004b00bf(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCardSki *card, float dt, u32 mode)	type 2
+004b3810	Dynamics *DNM_RequestType3_004b3810(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 3
+004b0f2a	Dynamics *DNM_RequestAir_004b0f2a(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCardWalk *card, float dt, u32 mode)	type 4
+004aea7c	Dynamics *DNM_RequestFly_004aea7c(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCardFly *card, float dt, u32 mode)	type 5
+004b11ea	Dynamics *DNM_RequestType6_004b11ea(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 6
+004b17d1	Dynamics *DNM_RequestType7_004b17d1(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 7
+004af04e	Dynamics *DNM_RequestType8_004af04e(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 8
+004b239c	Dynamics *DNM_RequestType9_004b239c(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 9
+004b252e	Dynamics *DNM_RequestType10_004b252e(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 10
+004b2793	Dynamics *DNM_RequestType11_004b2793(Dynamics *dyn, SuperObject *so, DynamWork *work, IdCard *card, float dt, u32 mode)	type 11
+#
+# Collide and move (NOTES "Ground and air"). card: read with the type 0/4 layout (classes, step height), may be NULL.
+004be1bd	u32 MEC_CollideMove_004be1bd(Dynamics *dyn, SuperObject *so, SuperObject *carrier, MecEnv *env, IdCardWalk *card, u32 flags, Motion *velocity, Motion *target, float dt)	up to 6 sweep + respond passes from dyn->position_snap; the integrators call it when the step turns (velocity.angle != 0). Returns dyn->report
+004bedd6	u32 MEC_CollideMoveNoTurn_004bedd6(Dynamics *dyn, SuperObject *so, SuperObject *carrier, MecEnv *env, IdCardWalk *card, u32 flags, Motion *velocity, Motion *target, float dt)	as MEC_004be1bd for a step without rotation (the type 0/4 integrator picks it when velocity.angle == 0; the skier's sphere move)
+004bc477	u32 MEC_Classify_004bc477(Dynamics *dyn, SuperObject *so, IdCardWalk *card, ContactRecord *hit, Vec3 *up, float step_height, Motion *velocity, Motion *target, u32 flags, float dt)	n . up against the card's cosines -> ground / slope / wall / overhang / ceiling response; keeps the record in dyn->ground / dyn->wall; target += 0.01 n
+004bd297	u32 MEC_ClassifySphere_004bd297(Dynamics *dyn, SuperObject *so, IdCardWalk *card, ContactRecord *hit, Vec3 *up, float step_height, Motion *velocity, Motion *target, u32 flags, float dt)	MEC_004bc477 for the single-sphere path (no w x r term)
+004bb904	u8 MEC_RespondGround_004bb904(Dynamics *dyn, SuperObject *so, ContactRecord *hit, Vec3 *up, Vec3 *normal, float step_height, float n_dot_up, u8 steep, Motion *velocity, Motion *target, float dt)	ground / steep slope: slide or rebound; 0 = failed (report 0x20)
+004bbc4c	u32 MEC_RespondWall_004bbc4c(Dynamics *dyn, SuperObject *so, ContactRecord *hit, Vec3 *up, Vec3 *normal, float step_height, float step_wall_sin, float step_floor_cos, float n_dot_up, u8 has_card, Motion *velocity, Motion *target, float dt, u32 flags)	wall: step-up (MEC_004bb06e), else slide or rebound
+004bb06e	u8 MEC_StepUp_004bb06e(ContactRecord *out, Vec3 *contact_point, Dynamics *dyn, SuperObject *so, Motion *start, Motion *target, Vec3 *up, float step_height, float step_floor_cos, float dt, Motion *start_out, Motion *target_out, Motion *velocity_out, u32 flags)	the body raised by up x step_height beyond the contact, swept down (FUN_0043bff0 into out); a floor within step_floor_cos: start_out / target_out := on top, velocity_out := offset / dt. MEC_004bbc4c passes start = start_out = &dyn->position_snap, target = target_out. Tried only when last frame had ground, the hit's own_zone_type == 1 and step_height > 0 (or flags & 0x40), and the wall is near vertical (|n . up| <= step_wall_sin) or the contact kind is 2 (args: asm of the call in MEC_004bbc4c)
+004bc20a	u8 MEC_RespondCeiling_004bc20a(Dynamics *dyn, SuperObject *so, ContactRecord *hit, Vec3 *up, Vec3 *normal, float step_height, float n_dot_up, Motion *velocity, Motion *target, float dt)	overhang / ceiling: slide, or head-on bounce with r = 0
+004bf9f0	void MEC_Resnap_004bf9f0(Dynamics *dyn, SuperObject *so, Motion *position, Vec3 *up, float min_n_dot_up, float distance, u8 unk_7, u32 flags)	ground re-snap: sweep down distance along -up, stand on a floor within min_n_dot_up
+004c0f7f	MecEnv *MEC_EnvAt_004c0f7f(Dynamics *dyn, Vec3 *down, SuperObject *sector, float *depth, void *out_5)	the mechanical environment at dyn->position_snap in the sector (FUN_00451b90: water surfaces above -> the sector's environment of that index); *depth below the surface
+004ba9c2	float MEC_CardLaunchSpeed_004ba9c2(IdCard *card)	type 5: card->fly.launch_speed (+0x48); the only card accessor with a caller (GAM_0042ab20)
+004b9466	u32 MEC_CardType_004b9466(IdCard *card)	-1 when not a card (FUN_004b7cf6)
+004b948a	float MEC_CardMass_004b948a(IdCard *card)	types 0, 4, 7..10: +4
+#
+# Forces and integration helpers
+004c41c5	u8 DNM_WalkForces_004c41c5(Dynamics *dyn, MecEnv *env, IdCardWalk *card, Motion *wanted, float dt, Force *force, u8 *out_pulled)	weight; ground grip (>= 1: v := wanted; < 1: friction, wanted x grip^4); returns 1 when grounded with no force; out_pulled: the perso-contact pull applied (-> collide flag 0x40)
+004c39f0	void DNM_ClampVelocity_004c39f0(Motion *v, float mass)	m v^2 / 2 < 0.025 -> 0; |v| <= 100
+004c37af	Dynamics *DNM_IntegratePosition_004c37af(Dynamics *dyn, Motion *velocity, Motion *position, float dt)	position = dyn->position + velocity dt (FUN_004c3670 linear, FUN_004c36e7 angle)
+004c4ecd	u32 DNM_SkiForces_004c4ecd(Dynamics *dyn, SuperObject *so, MecEnv *env, ForceList *forces, IdCardSki *card, float dt, Motion *wanted)	NOTES "Skiing": gravity, surface, friction, probe, alignment; 0 = stop the step
+004c478d	u32 DNM_FlyForces_004c478d(Dynamics *dyn, SuperObject *so, float attack, MecEnv *env, ForceList *forces, IdCard *card, SuperObject *sector)	NOTES "Flight": gravity, lift, drag into forces; 0 = stop the step (args from the asm of the one call, in FUN_004ac0da)
+004c9a20	IdCardFly *MEC_AsFlyCard_004c9a20(IdCard *card)	returns card; called only by the type 5 code (FUN_004ac0da, 004aea7c, 004c478d)
+004ca140	IdCardSki *MEC_AsSkiCard_004ca140(IdCard *card)	returns card; called only by the type 2 code (FUN_004b00bf, 004c4ecd, 004c3af0)
+004c3af0	Vec3 *DNM_SkiCapSpeed_004c3af0(Dynamics *dyn, Vec3 *velocity, IdCardSki *card)	|v| <= card->max_speed; flattened against steep contacts
+004c9c90	void VEC_VelocityAtPoint_004c9c90(Vec3 *out, Vec3 *v, float *angle_axis, Vec3 *point, Vec3 *centre)	out = v + (angle x axis) x (point - centre)
+004c99af	float DNM_Soften_004c99af(float a, float b)	(2ab - b^2) / a^2 for a > b > 0, else 1
+004b7c56	void DNM_RotateByHeading_004b7c56(Vec3 *out, Vec3 *in, float *angle_axis)	FUN_004b7121(angle_axis, in, out)
+#
+# Small helpers (asm read: tools/ghidra/ArgCheck.java + listing). FUN_00451780 / 00451790 are generic "+0" / "+4" getters
+# used on many structs (SuperObject type / data, dynam, list nodes), hence void *; typing them stops the decompiler from
+# merging the pushes of the next call into them.
+00451780	void *GEN_Get0_00451780(void *p)	return *(p + 0): SuperObject type, dynam->dynamics, ...
+00451790	void *GEN_Get4_00451790(void *p)	return *(p + 4): SuperObject data, dynam->work, sector_info->sector, State of a p3d, ...
+00482ed0	u8 SPO_NotNull_00482ed0(SuperObject *so)	so != NULL
+00482fb0	Matrix *SPO_WorldMatrix_00482fb0(SuperObject *so)	so->matrix_world
+0047afd0	void MTH_SetType_0047afd0(Matrix *m, u32 type)	type := (type & 0x100) | type (asm)
+0047c410	void MTH_GetTranslation_0047c410(Matrix *m, Vec3 *out)	type & 0x80: m->pos; (type & 0xF) == 2: 0; else FUN_0047e100(out, (char *)m + 2)
+00437810	IdCard *GAM_StateGetCard_00437810(State *state)	state->card
+# read 2026-10-24 (step 2)
+004c27f8	void DNM_VelocityBetween_004c27f8(Motion *out, Motion *a, Motion *b, float dt)	the motion from a to b in dt (linear (b - a) / dt, angle by FUN_004b6d50); the type 0/4 integrator: folded -> tilted position
+004a83d2	void DNM_FollowCarrier_004a83d2(Dynamics *dyn, SuperObject *so, SuperObject *carrier, MecEnv *env, IdCardWalk *card, Motion *out, float dt)	moves the perso with its carrier (FUN_004a7c25) and collides that move (reports restored); out = the carried velocity (0 when blocked)
+004a8388	u8 DNM_LeftCarrier_004a8388(Dynamics *dyn, SuperObject *so, SuperObject *carrier, Motion *position, Motion *velocity, Motion *carried, Vec3 *up)	1 = no longer on the carrier (none, or FUN_004c2ba0(position, so, carrier, up, 0.2) fails): the integrator detaches
+00483430	void SPO_SetParent_00483430(SuperObject *so, SuperObject *parent)	unlink from siblings and parent, SPO_00482f20(parent, so), FUN_004833d0(so); the type 0/4 integrator: onto dyn->other.obstacle
+00421180	u8 GAM_00421180(SuperObject *so)	byte +0xC of GAM_004316d0(1, perso collset); the type 0/4 integrator skips the move when standing still and its bits say so
+0042bc92	u8 GAM_0042bc92(SuperObject *so)	GAM_00423df0(std_game) of the first perso ancestor; 3 = (the type 0/4 integrator detaches differently)
+0047bc80	void MTH_SetRotation_0047bc80(Matrix *m, Vec3 *x, Vec3 *y, Vec3 *z)	the rotation columns (+0x10 / +0x1C / +0x28); type & 0x40 (scale): transform = rot x scale (asm)
+0047c3d0	void MTH_SetTranslation_0047c3d0(Matrix *m, Vec3 *pos)	type & 0x80: m->pos, else the compact form at +2 (FUN_0047e150); type |= 0x10 (asm)
+0042aee0	void GAM_DynamHistVelocity_0042aee0(Dynam *dynam, Motion *velocity)	shifts the dynam's 8-entry velocity history (GAM_00431cc0 / 00431ce0) and stores velocity->v at 0 (GAM_0042b0e0: dyn->velocity_snap)
+0042af40	void GAM_DynamHistPosition_0042af40(Dynam *dynam, Motion *position)	the same for positions (GAM_00431da0 / 00431dc0; dyn->position_snap)
+0042afa0	void GAM_DynamHistDt_0042afa0(Dynam *dynam, float dt)	the same for the step's dt (GAM_00431d40 / 00431d60)
+#
+# AI interpreter (docs/NOTES.md "AI interpreter"; the primitives themselves come from tools/exe/tables.tsv)
+0042b260	void GAM_RunAI_0042b260(SuperObject *so)	the reflex intelligence (AI_00487510), then, unless it ran a meta-action, the normal one (AI_004874d0)
+0048eb20	u8 AI_RunIntelligence_0048eb20(SuperObject *me, Intelligence *intel)	rules (AI_0048eba0) then the schedule (AI_0048ec60) until no behaviour change; returns whether a meta-action ran
+0048ec60	u8 AI_RunSchedule_0048ec60(SuperObject *me, Intelligence *intel)	from intel->schedule_pos (restarts at the end node), result flags
+0048e930	AINode *AI_EvalNode_0048e930(SuperObject *me, AINode *node, AIValue *result)	g_ai_node_handlers[node->type]: evaluates one node and its arguments, returns the next node
+0048e730	AINode *AI_SkipNode_0048e730(AINode *node)	the node after node's subtree
+0048e690	void AI_SetFlags_0048e690(u8 flags)	the result flags of the running procedure / meta-action
+0048e6f0	u8 AI_Flags_0048e6f0(void)
+0048df80	void AI_Error_0048df80(u32 code, u32 arg)	10 = unknown field, 0x18 = no action slot
+004927b0	AIEvalFn AI_KeywordFn_004927b0(u32 index)	g_ai_keywords[index]
+004927d0	AICondFn AI_ConditionFn_004927d0(u32 index)	g_ai_conditions[index].fn
+004927f0	AIEvalFn AI_FunctionFn_004927f0(u32 index)	g_ai_functions[index].fn
+00492800	AIEvalFn AI_OperatorFn_00492800(u32 index)	g_ai_operators[index]
+004923b0	AIProcFn AI_ProcedureFn_004923b0(u32 index)	g_ai_procedures[index].fn
+00492820	AIProcFn AI_MetaStartFn_00492820(u32 index)	g_ai_meta_actions[index].start
+00492830	AIMetaContFn AI_MetaContFn_00492830(u32 index)	g_ai_meta_actions[index].cont
+004971f0	u32 AI_FieldKind_004971f0(u32 index)	g_ai_fields[index].kind
+00497200	AIFieldGetFn AI_FieldGetter_00497200(u32 index)	g_ai_fields[index].get
+004971d0	void *AI_ValueKindAfterGet_004971d0(u32 kind)	g_ai_value_kinds[kind].after_get
+00492750	u8 AI_GetField_00492750(u32 index, SuperObject *me, AIValue *result)	clears result, calls the getter, then the kind's after_get when it returned 1
+0048e760	AINode *AI_MetaStart_0048e760(SuperObject *me, AINode *args, u32 index, AIValue *result)	start, then one continuation; result := {its status, type 0x15}
+0048e7b0	u8 AI_MetaContinue_0048e7b0(SuperObject *me, u32 index)	1 running, 4 done
+004914f0	u8 AI_FindAction_004914f0(Intelligence *intel, u8 script, AINode *node)	slot of the running meta-action of (script, node), 4 = none
+00491560	u8 AI_FreeAction_00491560(Intelligence *intel)	a free slot, 4 = none
+0048fa20	void AI_GetDsgVar_0048fa20(u32 index, u32 arg2, Mind *mind, AIValue *result)	AI_0048fa60(mind->dsg->current + info.offset, arg2, info.type, result)
+004920a0	void AI_QueueMechRequest_004920a0(SuperObject *so, Dynam *dynam, u32 mode)	SetMechMode*: queue {mode, the playing state's card} (REQ_Push)
+#
+# Collision sweeps and zones (NOTES "Ground and air", "The skier's collision sphere", "Ski obstacles")
+0043bff0	u32 MEC_SweepZones_0043bff0(ContactRecord *out, SuperObject *so, Matrix *start, Matrix *end)	the perso's ZDM zones from start to end against the world and other persos (two passes, masks 1 and ~1); 1 = hit, out = the first contact
+0043d480	u32 MEC_SweepSphere_0043d480(ContactRecord *out, SuperObject *so, Matrix *start, Matrix *end, float diameter, undefined4 a6)	the single-sphere path (collide set single_sphere): radius diameter x 0.5 at the origin
+0042bc34	u8 GAM_SingleSphere_0042bc34(SuperObject *so, float *diameter)	1 when the perso's collide set sweeps one sphere; *diameter = its +0x30
+00431720	u8 GAM_CollSetSingleSphere_00431720(CollSet *cs)	cs->single_sphere
+00431730	u8 GAM_CollSetFloorOk_00431730(CollSet *cs)	cs->floor_ok
+0041efe0	void *GAM_Zone_0041efe0(SuperObject *so, u32 list, u32 index)	zone index of the collide set's zone list list
+0041fa70	void GAM_CollectNearby_0041fa70(SuperObject *so, u8 mode, u8 zone, u32 mask, u16 *count, void *list)	CollectNearby: mode 0 = the perso's own zone #zone (1-based) against other persos' zones (GAM_ZdxStuff_0041fb00 with the mask); else GAM_ZdxStuff_0041fc60
+0041fb00	void GAM_ZdxStuff_0041fb00(SuperObject *so, void *zone, Matrix *world, u32 mask, void *list, u32 capacity, u16 *found)	(args from the one call in GAM_CollectNearby_0041fa70)
+00460210	void MEC_HitsReset_00460210(void)	before a sweep: forget the hits
+004602c0	u8 MEC_HitsNearest_004602c0(SweepHit *out)	after a sweep: the nearest hit, 0 = none
+0043c830	void MEC_SweepPass_0043c830(SuperObject *sector, SuperObject *so, Matrix *start, Matrix *end, u32 mask)	the perso's ZDM zones (mask: 1 floors, ~1 the rest) against the sector's geometry and other persos (FUN_0043c640)
+#
+# Swimming, type 7, water zones (2026-10-24, docs/NOTES.md "Swimming")
+004c9a10	IdCard *MEC_AsSwimCard_004c9a10(IdCard *card)	returns card; called only by the type 1 code
+004ca150	IdCard *MEC_AsType7Card_004ca150(IdCard *card)	returns card; the type 7 request handler's cast
+004c4af0	u32 DNM_SwimForces_004c4af0(Dynamics *dyn, SuperObject *so, undefined4 a3, float *rotation, ForceList *forces, IdCard *card, SuperObject *sector, float dt)	weight, buoyancy rho g V(depth at a probe 0.5 x size below), drag -rho Cd s^2 min(|v|, 10) v; dyn->env_depth := the depth
+004c831a	void DNM_Type7Forces_004c831a(Dynamics *dyn, SuperObject *so, MecEnv *env, IdCard *card, float dt, Motion *velocity)	pending velocity; gravity factor 0: the velocity kept, or (unk_70 >= 0) pulled towards the plane; else a height spring (FUN_004c32f6)
+004c1ef0	Motion *DNM_AddMotion_004c1ef0(Motion *out, Motion *a, Motion *b)	out = a + b (the rotations composed, FUN_004b73db)
+00451b90	MecEnv *MEC_EnvLookup_00451b90(Vec3 *down, Vec3 *point, SuperObject *sector, float *depth)	the sector's water surfaces in order while point is below them -> the environment of that index; *depth below the last
+0045d880	float SRF_DepthBelow_0045d880(Vec3 *point, void *surface)	surface's +0x5C matrix z - point z
+00437900	void GAM_UpdateWaterZones_00437900(SuperObject *so)	zone 0 := the water flag (MecEnv +0x28) at the origin; each sample point of the playing state (State +0x34) := the flag at it
+004378a0	u8 GAM_ZoneValue_004378a0(SuperObject *so, u32 kind, i32 *value)	kind 0: p3d->zone0; 1..6: the playing state's sample point of that kind; 0 = no such point
+004c0fb5	i32 MEC_CombineZones_004c0fb5(SuperObject *so, u32 *report)	report = &dyn->handler_mode_prev: updates the zones, dyn->zone_combined = the value kinds 1..6 share, 3 if they differ, kind 0's without points
+00491e40	u32 *AI_DynReport_00491e40(SuperObject *so)	&dyn->handler_mode_prev (the report block), 0 without dynamics
+00497690	u8 AI_IsFalling_00497690(SuperObject *so)	COND 69: a type 4 / 10 card, no contacts, velocity z <= 0
+004976f0	u8 AI_InWater_004976f0(SuperObject *so)	COND 70: zone_combined 1, or 3 with point 3 or 4 in water
+00497770	u8 AI_HeadOut_00497770(SuperObject *so)	COND 71: in water, point 1 out
+004977b0	u8 AI_Submerged_004977b0(SuperObject *so)	COND 72: in water, point 1 in (or none)
+004977f0	u8 AI_ZoneTest_004977f0(SuperObject *so)	COND 73: not in water, or point 2 out (without point 2: not submerged)
+00497840	u8 AI_NotInAnyZone_00497840(SuperObject *so)	COND 74: no zone kind 0..6 in water
+#
+# ZDx zones (2026-10-24, docs/NOTES.md "ZDx zones"). Lists: 0 ZDD (collset +0), 1 ZDM (+8), 2 ZDE (+4), 3 ZDR (+0xC)
+00431520	ListHead *GAM_ZoneList_00431520(u8 list, SuperObject *so)	the collide set's zone list number list (0 ZDD, 1 ZDM, 2 ZDE, 3 ZDR)
+004316d0	void *GAM_ActiveZones_004316d0(u32 list, CollSet *cs)	the list's activation entry for the playing state (zone index entries)
+0041f280	void *GAM_PersoActiveZones_0041f280(u32 list, SuperObject *so)	GAM_ActiveZones_004316d0(list, perso collset)
+0041f590	u16 GAM_ZoneIndex_0041f590(ZoneIndexEntry *e)	e->zone
+0041f5a0	GeoCollide *GAM_ZoneGeo_0041f5a0(u32 list, u16 index, SuperObject *so)	zone index of the list: its geometry
+0041f210	u8 GAM_ZoneContains_0041f210(GeoCollide *zone, Matrix *zone_matrix, SuperObject *b)	b's origin, taken into the zone's frame, inside the zone (FUN_00462f60)
+00462f60	u8 GEO_PointInZone_00462f60(Vec3 *point, GeoCollide *zone)	point inside the zone's elements (spheres / boxes)
+00420280	u8 GAM_ZoneHolds_00420280(SuperObject *a, u32 mode, u32 zone, SuperObject *b)	COND 13 (mode 0) / 14 (1): b's origin inside a's ZDD zone number zone (1-based; mode 1: a zone on a channel object)
+004202c0	u8 GAM_AnyZoneHolds_004202c0(SuperObject *a, SuperObject *b)	COND 15: inside any active ZDD zone of a, or a zone on a's channel objects (kinds 0xB / 0x14)

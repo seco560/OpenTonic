@@ -15,6 +15,8 @@ extern "C" {
 #define TC_FLAG_ALPHA_TEST (1u << 0)
 #define TC_FLAG_TRANSPARENT (1u << 1)
 #define TC_FLAG_BILLBOARD (1u << 2)  /* v7 sprites: vertex = centre, normal.xy = corner offset (camera plane) */
+#define TC_FLAG_WATER (1u << 3)      /* set by tc_viewer on draws: a water material (a triangle flat at a .ttai v8 water
+                                        plane): the renderers add the sheen to its upward faces (NOTES "Water surfaces") */
 #define TC_HIDDEN 0xFFFFu /* "shown object" value of a hidden channel */
 
 typedef enum tc_result {

@@ -35,6 +35,42 @@ static void check(int ok, const char *what) {
     if (!ok) failures++;
 }
 
+/* Swimming (card type 1): a water plane at z 0 over a big box; Ed's main swim card with the given mass. mode / speed /
+ * dir: the request each frame (speed = proposal [0], dir = proposal [7..9]). Returns the end position; *v the velocity. */
+static float swim_lo, swim_hi, swim_mean; /* z over the last 10 s of a swim() */
+
+static tc_vec3 swim(float mass, float z, float seconds, int mode, float speed, tc_vec3 dir, float fps, tc_vec3 *v,
+                    tc_mec_swim *s) {
+    static tc_vec3 boxes[2] = {{-100, -100, -100}, {100, 100, 100}};
+    tc_ai_water water = {0, 9.81f, 1000, 1, 1, boxes};
+    tc_ai_model m;
+    float f[17] = {990, 0, 0.1f, 0.1f, 0.1f, 0.1f, 2.5f, 2.5f, 2000, 1, 1, 0, 10, 0.99f, 160, 1, 0}, prop[32] = {0}, depth;
+    tc_ai_card card;
+    tc_vec3 p = tc_v3(0, 0, z);
+    int i;
+    f[0] = mass;
+    card = card_of(1, f, 17);
+    memset(&m, 0, sizeof(m));
+    m.water_count = 1;
+    m.water = &water;
+    prop[0] = speed;
+    prop[7] = dir.x, prop[8] = dir.y, prop[9] = dir.z;
+    tc_mec_swim_enter(s, TC_PI / 2); /* facing +x */
+    *v = tc_v3(0, 0, 0);
+    swim_lo = 1e9f, swim_hi = -1e9f, swim_mean = 0;
+    for (i = 0; i < (int)(seconds * fps); i++) {
+        tc_mec_swim_request(s, &card, mode, prop, 1 / fps);
+        *v = tc_mec_swim_velocity(s, &card, &m, p, *v, 1 / fps, &depth);
+        p = tc_v3_add(p, tc_v3_scale(*v, 1 / fps));
+        if (i >= (int)((seconds - 10) * fps)) {
+            swim_lo = fminf(swim_lo, p.z);
+            swim_hi = fmaxf(swim_hi, p.z);
+            swim_mean += p.z / (10 * fps);
+        }
+    }
+    return p;
+}
+
 /* Run along +x at 9 u/s for `seconds` (heading pi/2: Ed's front, local -Y, along +x). */
 static tc_vec3 run(tc_collision *w, const tc_ai_card *card, const tc_ai_sphere_set *body, tc_vec3 start, float seconds,
                    tc_mec_walk *mw) {
@@ -111,6 +147,34 @@ int main(void) {
     snprintf(what, sizeof(what), "fall 5 on the fall card: lands after %.2f s (0.58), z %.3f", (double)t, (double)p.z);
     check(t > 0.5f && t < 0.66f && p.z >= 0 && p.z < 0.05f, what);
     tc_collision_free(&w);
+
+    /* Swimming: Ed's 990 card floats up and settles with 0.99 of a unit of volume under (origin -0.49); 1100 sinks at
+     * the drag's terminal speed sqrt(100 g / 1000) = 0.99; above the water the body falls; a thrust along +x moves him
+     * there with the head (model z) along it. The same at 30 and 144 fps. */
+    {
+        static const float rates[2] = {30, 144};
+        int k;
+        for (k = 0; k < 2; k++) {
+            tc_mec_swim sw;
+            tc_vec3 x, y, z, sv, sp;
+            float r = rates[k];
+            swim(990, -3, 30, 0, 0, tc_v3(0, 0, 0), r, &sv, &sw);
+            snprintf(what, sizeof(what), "swim %g fps: 990 floats up from -3 and bobs at the surface: z %.3f .. %.3f, "
+                     "mean %.3f (-0.49)", (double)r, (double)swim_lo, (double)swim_hi, (double)swim_mean);
+            check(swim_mean > -0.53f && swim_mean < -0.45f && swim_lo > -0.7f && swim_hi < -0.3f, what);
+            sp = swim(1100, -20, 20, 0, 0, tc_v3(0, 0, 0), r, &sv, &sw);
+            snprintf(what, sizeof(what), "swim %g fps: 1100 sinks, speed %.3f (0.99)", (double)r, (double)-sv.z);
+            check(sp.z < -30 && -sv.z > 0.95f && -sv.z < 1.03f, what);
+            sp = swim(990, 5, 0.5f, 0, 0, tc_v3(0, 0, 0), r, &sv, &sw);
+            snprintf(what, sizeof(what), "swim %g fps: in the air it falls, vz %.2f after 0.5 s (-4.9)", (double)r, (double)sv.z);
+            check(sv.z < -4.7f && sv.z > -5.0f, what);
+            sp = swim(990, -2, 5, 20, 2000, tc_v3(1, 0, 0), r, &sv, &sw);
+            tc_mec_swim_model_axes(&sw, &(tc_ai_card){0}, &x, &y, &z);
+            snprintf(what, sizeof(what), "swim %g fps: thrust along +x: x %.1f, polar %.0f deg, head (%.2f, %.2f, %.2f), back z %.2f",
+                     (double)r, (double)sp.x, (double)sw.polar, (double)z.x, (double)z.y, (double)z.z, (double)y.z);
+            check(sp.x > 1 && fabsf(sp.y) < 0.01f && sw.polar > 89 && sw.polar < 91 && z.x > 0.99f && y.z > 0.99f, what);
+        }
+    }
 
     printf(failures ? "%d check(s) failed\n" : "all checks passed\n", failures);
     return failures != 0;

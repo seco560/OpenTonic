@@ -59,6 +59,7 @@ int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t verte
         if (!(len > 1e-8f) || !isfinite(len)) continue;
         t = &col->tris[n++];
         t->a = a; t->b = b; t->c = c;
+        t->source = i / 3;
         t->normal = tc_v3_div(nrm, len);
         t->lo = tc_v3_min(a, tc_v3_min(b, c));
         t->hi = tc_v3_max(a, tc_v3_max(b, c));

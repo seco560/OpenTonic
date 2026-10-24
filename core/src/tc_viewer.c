@@ -344,6 +344,30 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         for (i = 0; i < l->ed.part_count; i++) v->meshes[n++] = &l->ed.parts[i].mesh;
 
     v->play = play_create(v, desc);
+    if (ai_model(v) && ai_model(v)->water_count && l->mesh_count) {
+        /* Water materials: static meshes (the .ttlv groups them by material) with a triangle lying flat (within 5 cm)
+         * at a water plane's height, centred inside one of its sector boxes. The renderers add the sheen to their
+         * upward-facing fragments only (the falls and pool sides share the rainbow material). */
+        const tc_ai_model *am = ai_model(v);
+        v->mesh_water = (uint8_t *)tc_calloc(l->mesh_count, 1);
+        for (i = 0; v->mesh_water && i < l->mesh_count; i++) {
+            const tc_mesh *m = &l->meshes[i];
+            uint32_t k, w, b;
+            for (k = 0; k + 2 < m->index_count && !v->mesh_water[i]; k += 3) {
+                const float *q0 = m->vertices[m->indices[k]].position, *q1 = m->vertices[m->indices[k + 1]].position,
+                            *q2 = m->vertices[m->indices[k + 2]].position;
+                tc_vec3 c = tc_v3((q0[0] + q1[0] + q2[0]) / 3, (q0[1] + q1[1] + q2[1]) / 3, (q0[2] + q1[2] + q2[2]) / 3);
+                for (w = 0; w < am->water_count && !v->mesh_water[i]; w++) {
+                    const tc_ai_water *wp = &am->water[w];
+                    if (fabsf(q0[2] - wp->z) > 0.05f || fabsf(q1[2] - wp->z) > 0.05f || fabsf(q2[2] - wp->z) > 0.05f) continue;
+                    for (b = 0; b < wp->box_count; b++) {
+                        const tc_vec3 *bx = &wp->boxes[2 * b];
+                        if (c.x >= bx[0].x && c.y >= bx[0].y && c.x <= bx[1].x && c.y <= bx[1].y) { v->mesh_water[i] = 1; break; }
+                    }
+                }
+            }
+        }
+    }
     v->ed_clip = ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
     if (ai_model(v) && !collect_effects(v, ai_model(v))) {
@@ -370,6 +394,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free((void *)v->effects);
     tc_free(v->carry);
     tc_free((void *)v->meshes);
+    tc_free(v->mesh_water);
     tc_free(v->draws);
     tc_free(v->blended);
     memset(v, 0, sizeof(*v));
@@ -638,13 +663,6 @@ void tc_viewer_wheel(tc_viewer *v, float notches) {
     else v->fly_speed = fmaxf(0.5f, fminf(500, v->fly_speed * step));                       /* fly speed */
 }
 
-/* "-", "B<n>" (normal behaviour) or "R<n>" (reflex). */
-static void behaviour_name(char *out, size_t n, uint16_t b, uint16_t normal_count) {
-    if (b == 0xFFFF) snprintf(out, n, "-");
-    else if (b < normal_count) snprintf(out, n, "B%u", (unsigned)b);
-    else snprintf(out, n, "R%u", (unsigned)(b - normal_count));
-}
-
 size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t size) {
     size_t n = 0;
     int w;
@@ -655,24 +673,12 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
                      n < size ? size - n : 0, __VA_ARGS__);                  \
         if (w > 0) n += (size_t)w;                                           \
     } while (0)
-    APPEND("view: anim %.2f\xc3\x97, gamma %.2f, FOV %.0f\xc2\xb0%s", (double)v->animation_speed, (double)v->gamma,
+    APPEND("anim %.2f\xc3\x97, gamma %.2f, FOV %.0f\xc2\xb0%s", (double)v->animation_speed, (double)v->gamma,
            (double)(v->camera.vertical_fov * 180 / TC_PI), extra ? extra : "");
-    if (v->light_set_count > 1) APPEND(", lighting %u/%u", (unsigned)v->light_set + 1, (unsigned)v->light_set_count);
-    if (v->has_fog) APPEND("%s", v->fog_enabled ? ", fog on (G)" : ", fog off (G)");
-    if (v->playing) APPEND("%s", "  \xc2\xb7  PLAYING as Ed (Tab: free-fly)");
-    if (v->playing && tc_viewer_has_ai(v)) {
-        if (v->play->use_ai) {
-            const tc_ai_perso *a = &v->play->driver.ai;
-            char normal[16], reflex[16], next[16] = "";
-            behaviour_name(normal, sizeof(normal), a->normal.behaviour, a->model->normal_count);
-            behaviour_name(reflex, sizeof(reflex), a->reflex.behaviour, a->model->normal_count);
-            if (a->state != a->wanted_state) snprintf(next, sizeof(next), "\xe2\x86\x92%u", (unsigned)a->state);
-            APPEND("  \xc2\xb7  AI %s %s state %u%s (I: simple controller)", normal, reflex, (unsigned)a->wanted_state,
-                   next);
-        } else {
-            APPEND("%s", "  \xc2\xb7  simple controller (I: Ed's AI)");
-        }
-    }
+    if (v->light_set_count > 1) APPEND(", light %u/%u", (unsigned)v->light_set + 1, (unsigned)v->light_set_count);
+    if (v->has_fog) APPEND("%s", v->fog_enabled ? ", fog on" : ", fog off");
+    if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
+    if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
 #undef APPEND
     return n;
 }
@@ -727,7 +733,7 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     }
     d->mesh = mesh;
     d->texture = texture_at(v, &m->surface, v->animation_time);
-    d->flags = m->surface.flags;
+    d->flags = m->surface.flags | (v->mesh_water && mesh < v->level->mesh_count && v->mesh_water[mesh] ? TC_FLAG_WATER : 0);
     d->model = *model;
 }
 

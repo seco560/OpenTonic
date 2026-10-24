@@ -83,6 +83,27 @@ static float3 fogged(float3 rgb, VertexOut in, constant Uniforms &u) {
     return mix(rgb, u.fogColor.rgb, f);
 }
 
+// Water sheen (TC_FLAG_WATER, docs/NOTES.md "Water surfaces"): on the upward faces of a water material, a Fresnel
+// reflection of the sky and the light's highlight (the material's specular is 0.9), over slowly moving ripples.
+// Returns rgb to add and the alpha the surface should at least have.
+float4 water_sheen(VertexOut in, constant Uniforms &u) {
+    float3 n = normalize(in.normal);
+    if (n.z < 0.9) return float4(0.0);
+    float2 p = in.world.xy;
+    float t = u.time;
+    float2 r = float2(sin(p.x * 0.9 + t * 1.3) + sin(p.y * 1.7 - t * 0.9) * 0.6,
+                      cos(p.y * 1.1 + t * 1.1) + cos((p.x + p.y) * 0.7 - t * 1.6) * 0.6);
+    n = normalize(float3(r * 0.06, 1.0));
+    float3 v = normalize(u.eye.xyz - in.world);
+    // Seen from below (the eye under the surface): no sheen and the texture's own alpha, so the world above shows.
+    if (v.z <= 0.0) return float4(0.0);
+    float fresnel = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, v)), 5.0);
+    float3 sky = float3(0.62, 0.74, 0.86);
+    float3 h = normalize(v + normalize(u.lightDirection));
+    float spec = pow(saturate(dot(n, h)), 80.0) * 0.9;
+    return float4(sky * fresnel * 0.8 + float3(spec), saturate(0.35 + fresnel));
+}
+
 // f.x: TC_FLAG_*; f.y: drawn with alpha to coverage (the opaque pipeline with MSAA on, as the SDL build).
 fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],
                                         texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],
@@ -102,7 +123,13 @@ fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Unif
     } else if ((f.x & 1u) && c.a < 0.5) {
         discard_fragment();
     }
-    return float4(fogged(pow(saturate(c.rgb * light(in, u, lightmap)), float3(1.0 / u.gamma)), in, u), a);
+    float3 rgb = c.rgb * light(in, u, lightmap);
+    if (f.x & 8u) {
+        float4 w = water_sheen(in, u);
+        rgb += w.rgb;
+        if (f.y == 0u) a = max(a, w.a);
+    }
+    return float4(fogged(pow(saturate(rgb), float3(1.0 / u.gamma)), in, u), a);
 }
 
 fragment float4 level_fragment_flat(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],

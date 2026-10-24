@@ -20,6 +20,7 @@ typedef struct tc_tri {
     tc_vec3 normal; /* unit, from counter-clockwise winding */
     tc_vec3 lo, hi;
     tc_floor floor;
+    uint32_t source; /* the triangle's index in the input (degenerate ones are dropped): per-triangle tables (.ttai v10) */
 } tc_tri;
 
 typedef struct tc_collision {

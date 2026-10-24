@@ -121,7 +121,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
     version = rd_u32(&r);
-    if (version < 1 || version > 7) return TC_ERR_UNSUPPORTED_VERSION;
+    if (version < 1 || version > 11) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -287,6 +287,82 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
             if ((uint64_t)m->states[i].sound_first + m->states[i].sound_count > m->sound_count) r.error = TC_ERR_TRUNCATED;
         }
     }
+    if (version >= 8) {
+        m->water_count = rd_u16(&r);
+        (void)rd_u16(&r);
+        m->water = (tc_ai_water *)rd_array(&r, m->water_count, sizeof(tc_ai_water), 20);
+        for (i = 0; m->water && i < m->water_count; i++) {
+            tc_ai_water *w = &m->water[i];
+            w->z = rd_f32(&r);
+            w->gravity = rd_f32(&r);
+            w->density = rd_f32(&r);
+            w->drag = rd_f32(&r);
+            w->box_count = rd_u16(&r);
+            (void)rd_u16(&r);
+            w->boxes = (tc_vec3 *)rd_array(&r, (size_t)w->box_count * 2, sizeof(tc_vec3), 12);
+            for (k = 0; w->boxes && k < (uint32_t)w->box_count * 2; k++) {
+                w->boxes[k].x = rd_f32(&r);
+                w->boxes[k].y = rd_f32(&r);
+                w->boxes[k].z = rd_f32(&r);
+            }
+        }
+    }
+    for (i = 0; m->states && i < m->state_count; i++) m->states[i].water_points = TC_AI_NONE16;
+    if (version >= 8) {
+        m->water_point_set_count = rd_u16(&r);
+        (void)rd_u16(&r);
+        m->water_point_sets = (tc_ai_water_points *)rd_array(&r, m->water_point_set_count, sizeof(tc_ai_water_points), 4);
+        for (i = 0; m->water_point_sets && i < m->water_point_set_count; i++) {
+            tc_ai_water_points *w = &m->water_point_sets[i];
+            uint8_t n = (uint8_t)rd_u16(&r);
+            (void)rd_u16(&r);
+            for (k = 0; k < n; k++) {
+                uint8_t kind = (uint8_t)rd_u32(&r);
+                tc_vec3 v = rd_vec3(&r);
+                if (w->count < TC_AI_MAX_WATER_POINTS) w->kind[w->count] = kind, w->point[w->count++] = v;
+            }
+        }
+        for (i = 0; m->states && i < m->state_count; i++) {
+            m->states[i].water_points = rd_u16(&r);
+            if (m->states[i].water_points != TC_AI_NONE16 && m->states[i].water_points >= m->water_point_set_count)
+                r.error = TC_ERR_TRUNCATED;
+        }
+    }
+    if (version >= 9) {
+        uint16_t n = rd_u16(&r);
+        (void)rd_u16(&r);
+        if (n != m->portal_count) r.error = TC_ERR_TRUNCATED;
+        for (i = 0; !r.error && m->portals && i < n; i++) {
+            tc_ai_portal *p = &m->portals[i];
+            uint16_t prims = rd_u16(&r);
+            (void)rd_u16(&r);
+            if (!prims) continue;
+            for (k = 0; k < 12; k++) p->zone_inverse[k] = rd_f32(&r);
+            for (k = 0; k < prims; k++) {
+                tc_ai_zone_prim z;
+                z.kind = rd_u32(&r);
+                z.a = rd_vec3(&r);
+                z.b = rd_vec3(&r);
+                if (p->zone_count < TC_AI_MAX_ZONE_PRIMS) p->zone[p->zone_count++] = z;
+            }
+        }
+    }
+    if (version >= 10) {
+        m->floor_sound_count = rd_u32(&r);
+        m->floor_sounds = (uint8_t *)rd_array(&r, m->floor_sound_count, 1, 1);
+        for (i = 0; m->floor_sounds && i < m->floor_sound_count; i++) m->floor_sounds[i] = rd_u8(&r);
+        for (i = m->floor_sound_count; i % 4; i++) (void)rd_u8(&r);
+    }
+    if (version >= 11) {
+        m->dry_box_count = rd_u16(&r);
+        (void)rd_u16(&r);
+        m->dry_boxes = (tc_vec3 *)rd_array(&r, (size_t)m->dry_box_count * 2, sizeof(tc_vec3), 12);
+        for (i = 0; m->dry_boxes && i < (uint32_t)m->dry_box_count * 2; i++) {
+            m->dry_boxes[i].x = rd_f32(&r);
+            m->dry_boxes[i].y = rd_f32(&r);
+            m->dry_boxes[i].z = rd_f32(&r);
+        }
+    }
     for (i = 0; !r.error && m->states && i < m->state_count; i++) {
         if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
         if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
@@ -313,6 +389,11 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->sphere_sets);
     tc_free(m->triggers);
     tc_free(m->sounds);
+    for (i = 0; m->water && i < m->water_count; i++) tc_free(m->water[i].boxes);
+    tc_free(m->water);
+    tc_free(m->dry_boxes);
+    tc_free(m->water_point_sets);
+    tc_free(m->floor_sounds);
     for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);
     tc_free(m->portals);
     free_strings(m->names, m->name_count);
@@ -765,6 +846,12 @@ static bool same_name(const char *a, const char *b) {
     return *a == *b;
 }
 
+/* FUN_004976f0 (COND 70): in water */
+static bool in_water(const tc_ai_perso *p) {
+    if (p->zone_combined == 1) return true;
+    return p->zone_combined == 3 && (p->zone[3] == 1 || p->zone[4] == 1);
+}
+
 static bool condition(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     uint32_t c = N(r, i)->param;
@@ -803,11 +890,21 @@ static bool condition(run *r, uint32_t i) {
                same_name(p->model->strings[s], p->level_name);
     }
     case 65: { value v = arg(r, i, 0); return v.type == V_PERSO ? v.i >= 0 && v.i != (int32_t)TC_AI_NONE : truthy(v); }
-    case 73: case 74: return true; /* ZoneTest (true while COND_70 is false), NotInAnyZone: no zones yet */
+    /* The water zones (docs/NOTES.md "Swimming"): FUN_004976f0 (70) in water: all sample points in it, or mixed with
+     * point 3 or 4 in it; 71 the head (point 1) out; 72 point 1 in (or none); 73 FUN_004977f0; 74 no point in water. */
+    case 70: return in_water(p);
+    case 71: return in_water(p) && p->zone[1] == 0;
+    case 72: return in_water(p) && p->zone[1] != 0;
+    case 73: return !in_water(p) || (p->zone[2] >= 0 ? p->zone[2] != 1 : !(p->zone[1] != 0));
+    case 74: { int k; for (k = 0; k < 7; k++) if (p->zone[k] == 1) return false; return true; }
+    case 69: { /* FUN_00497690: falling: a type 4 or 10 card, no contacts, not rising */
+        const tc_ai_state *st = &p->model->states[p->state];
+        uint32_t type = st->card != TC_AI_NONE16 ? p->model->cards[st->card].type : TC_AI_NONE16;
+        return (type == 4 || type == 10) && p->contacts == 0 && p->velocity.z <= 0;
+    }
     case 90: { uint32_t n = (uint32_t)as_int(arg(r, i, 0)); return n < 32 ? (p->global_flags >> n) & 1 : (p->global_flags & n) != 0; }
     case 63: return p->screen_covered; /* GameState63 = GAM_004290a0: the cover transition has finished */
     case 30: case 37: case 38: case 44: case 45: case 46: case 47: case 59: case 64:
-    case 69: case 70: case 71: case 72:
         return false;    /* collision probes, zones, materials, touched objects, game state: not modelled yet */
     default: unknown(r, i); return false;
     }
@@ -845,10 +942,25 @@ static value function(run *r, uint32_t i) {
     case 99: { tc_vec3 v = argv3(r, i, 0); float l = tc_v3_length(v); return v_vec(l > 0 ? tc_v3_div(v, l) : v); }
     case 100: return v_vec(local_to_global(p, argv3(r, i, 0)));
     case 101: return v_vec(global_to_local(p, argv3(r, i, 0)));
+    /* FUNC_VecLengthEtc_0049ab10 cases 0x66 / 0x67: a point through the perso's world matrix (FUN_0047b2f0) or its
+     * inverse. Ed's underwater reflex R8 leaves the water when FUNC_102((0, 1, -1)) rises 0.55 above the surface. */
+    case 102: {
+        tc_vec3 v = argv3(r, i, 0);
+        if (!p->has_axes) return v_vec(tc_v3_add(p->position, local_to_global(p, v)));
+        return v_vec(tc_v3_add(p->position, tc_v3_add(tc_v3_add(tc_v3_scale(p->axes[0], v.x), tc_v3_scale(p->axes[1], v.y)),
+                                                        tc_v3_scale(p->axes[2], v.z))));
+    }
+    case 103: {
+        tc_vec3 d = tc_v3_sub(argv3(r, i, 0), p->position);
+        if (!p->has_axes) return v_vec(global_to_local(p, d));
+        return v_vec(tc_v3(tc_v3_dot(d, p->axes[0]), tc_v3_dot(d, p->axes[1]), tc_v3_dot(d, p->axes[2])));
+    }
     case 50: { value v = v_int(-1); v.type = V_PERSO; return v; }
     case 91: return v_float(p->report_2bc);
     case 92: return v_float(p->report_2c0);
-    case 51: case 52: case 104: return v_float(0);
+    case 51: return v_float(p->env_depth);
+    case 52: return v_float(p->position.z + p->env_depth);
+    case 104: return v_float(0);
     default: unknown(r, i); return v_int(0);
     }
 }

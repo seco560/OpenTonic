@@ -1,0 +1,18 @@
+# Dispatch tables of TonicTrouble.exe whose entries all share one prototype, applied by tools/ghidra/ApplyTypes.java.
+# name kind<TAB>base<TAB>count<TAB>stride<TAB>offset of the function pointer in an entry<TAB>prototype ({name} = the
+# entry's name)<TAB>kind in tools/exe/ai_names.tsv (names <KIND>_<Name>_<addr>; a target shared by several indices:
+# <KIND>_<Name of the lowest>Etc_<addr>; unnamed: <KIND><index>_<addr>)<TAB>name suffix
+# Prototypes from the call sites (asm, 2026-10-24): AI_EvalNode_0048e930 calls node handlers (me, node, result); the
+# keyword / condition / operator / function node handlers call table[param](me, node + 1, result) (a condition gets
+# an int *); procedures and meta-action starts (me, node + 1); meta continuations (me); field getters (me, out).
+# Counts: the gap to the next table (meta-actions: 43, a string follows). Only targets named FUN_x / AI_x (or not yet functions) are retyped and renamed;
+# others (folded stubs shared with other code, e.g. SND_00404930) only get a comment.
+NODE	004e43f8	41	4	0	AINode *{name}(SuperObject *me, AINode *node, AIValue *result)	NODE
+KW	004e6378	10	4	0	AINode *{name}(SuperObject *me, AINode *args, AIValue *result)	KW
+COND	004e63a0	111	8	0	AINode *{name}(SuperObject *me, AINode *args, i32 *result)	COND
+FUNC	004e6718	165	8	0	AINode *{name}(SuperObject *me, AINode *args, AIValue *result)	FUNC
+OP	004e6c40	28	4	0	AINode *{name}(SuperObject *me, AINode *args, AIValue *result)	OP
+PROC	004e5a48	294	8	0	AINode *{name}(SuperObject *me, AINode *args)	PROC
+META	004e6cb0	43	16	0	AINode *{name}(SuperObject *me, AINode *args)	META
+METACONT	004e6cb0	43	16	4	u8 {name}(SuperObject *me)	META	Cont
+FIELD	004e6fa0	15	12	4	u8 {name}(SuperObject *me, AIValue *out)	FIELD	Get

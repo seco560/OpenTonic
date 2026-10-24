@@ -37,6 +37,13 @@ typedef struct tc_ed_ai {
     float run_scale, walk_scale;
     uint32_t card_type;          /* type of the playing state's ID card last frame (TC_AI_NONE16: none) */
     tc_mec_fly fly;
+    tc_mec_swim swim;            /* card type 1 */
+    float env_depth;             /* below a water surface (the scripts' EnvHeight), from last frame's mechanics */
+    /* ski_unpin (a stopgap): seconds without progress, from where; time since a wall touched and its normal; the
+     * rescues in a row at one spot and where the last was */
+    float ski_pinned, ski_wall_age;
+    tc_vec3 ski_anchor, ski_wall_normal, ski_rescue_at;
+    int ski_rescues;
     tc_mec_ski ski;
     tc_mec_walk walk;            /* card types 0 / 4 (ground, air) when the .ttai has the state's collision spheres */
     uint32_t contacts;           /* what the AI sees next frame (TC_AI_CONTACT_*) */
@@ -73,7 +80,8 @@ void tc_ed_ai_run_portals(tc_ed_ai *e, float dt);
 uint16_t tc_ed_ai_anim(const tc_ed_ai *e);
 /* Where to draw the model: tc_player_model_matrix, except on the skier's board (card type 2): the board's full
  * orientation (tilted with the slope), lifted along its up axis by the pose's drop, so the board rests on the
- * contact point instead of sinking into the snow. */
+ * contact point instead of sinking into the snow; in flight (card type 5) the flight frame and swimming (type 1) the
+ * swim frame, head first (tc_mec_fly_model_axes / tc_mec_swim_model_axes). */
 tc_mat4 tc_ed_ai_model_matrix(const tc_ed_ai *e);
 float tc_ed_ai_frame(const tc_ed_ai *e);
 bool tc_ed_ai_loops(const tc_ed_ai *e);

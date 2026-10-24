@@ -269,7 +269,7 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
     if (c >= card_f(x->card, 0x1C, 0.70710677f)) {
         respond_ground(x, h, false);
         bits = TC_AI_CONTACT_GROUND;
-    } else if (c >= card_f(x->card, 0x20, 0.5f)) {
+    } else if (c >= (x->card || !(x->w->slope_cos > 0) ? card_f(x->card, 0x20, 0.5f) : x->w->slope_cos)) {
         respond_ground(x, h, x->card != NULL);
         bits = TC_AI_CONTACT_SLOPE;
     } else if (c >= card_f(x->card, 0x24, -0.5f)) {

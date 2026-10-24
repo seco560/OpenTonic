@@ -210,12 +210,25 @@ def dump(ai, path, names=None):
       { u16 frame, u16 event (global sound event = Bnk_0 event index) }: the type-0 events of the states' animations;
       then per state { u32 first row, u16 n_rows, u16 0 }. Sound event nodes (type 34, PlaySound3D's argument) hold the
       event index too.
+  v8 (after the v7 sounds): water (water_planes, docs/NOTES.md "Swimming"): u16 n, u16 0, n x { f32 z, f32 gravity,
+      f32 density, f32 drag coefficient (the environment below the surface), u16 n_boxes, u16 0, n_boxes x { f32 min[3],
+      f32 max[3] } (the bounding boxes of the sectors that list the surface) }; then the water sample points
+      (water_points): u16 n_sets, u16 0, n_sets x { u16 n, u16 0, n x { u32 kind 1-6, f32 point[3] (the perso's axes) } },
+      per state u16 set (0xFFFF none)
+  v9 (after the v8 water points): the portals' zones (portal_zones, docs/NOTES.md "ZDx zones"): per portal (as the v6
+      list) u16 n_prims, u16 0, then if n_prims: f32 inverse[12] (the perso's world matrix inverted, row-major 3x4) and
+      n_prims x { u32 kind (7 sphere: a = centre, b.x = radius; 8 box: a = min, b = max), f32 a[3], f32 b[3] } in the
+      perso's axes: the capture is "the player's origin inside" (COND_13) instead of the radius
+  v10 (after the v9 zones): the floors' sound types (docs/NOTES.md "Footsteps"): u32 n (= the .ttlv's collision
+      triangles), n x u8 (GameMaterial +8 of the triangle's material, 0xFF none), padded to 4 bytes
+  v11 (after the v10 floor sounds): the dry sectors' boxes (dry_boxes; none in a level without water): u16 n, u16 0,
+      n x { f32 min[3], f32 max[3] }: a point inside one, smaller than every water box holding the point, is dry
   v2: u16 n_cards, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw:
       mostly f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
 """
 import re
 
-TTAI_VERSION = 7
+TTAI_VERSION = 11
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
@@ -337,6 +350,170 @@ def root_motion(d, states, keys):
         if any(any(c != 0 for c in r) for r in rows):
             out[k] = rows
     return out
+
+
+def zdd_zone(d, loc, k):
+    """A perso's ZDD zone k (0-based; collide set +0, the exe's list 0) as [(7, centre, (r, 0, 0)) | (8, min, max)] in
+    the perso's axes, or None (no such zone, or one with other element types: triangle zones are not exported)."""
+    lv, un = d.lv, d.un
+    cs = lv.ptr(loc, 0x14)
+    head = lv.ptr(cs) if cs else None
+    e = lv.ptr(head) if head else None
+    for _ in range(k):
+        e = lv.ptr(e) if e else None
+    g = lv.ptr(e, 0xC) if e else None
+    if not g:
+        return None
+    verts, types, els, prims = lv.ptr(g, 4), lv.ptr(g, 0x18), lv.ptr(g, 0x1C), []
+    for i in range(un('I', g, 0x14)[0]):
+        t, el = un('H', types, 2 * i)[0], lv.ptr(els, 4 * i)
+        n, entries = un('I', el)[0], lv.ptr(el, 4)
+        if t == 7:
+            for j in range(n):
+                prims.append((7, un('3f', verts, 12 * un('H', entries, 12 * j)[0]), (un('f', entries, 12 * j + 4)[0], 0, 0)))
+        elif t == 8:
+            for j in range(n):
+                lo, hi = un('2H', entries, 8 * j)
+                prims.append((8, un('3f', verts, 12 * lo), un('3f', verts, 12 * hi)))
+        else:
+            return None
+    return prims or None
+
+
+def portal_zones(ai, gates):
+    """Per portal (as portals() returns them): (inverse world 3x4, ZDD zone primitives) when its perso's scripts test
+    the player with COND_13(Me, k, player) (GAM_ZoneHolds_00420280: the player's origin inside ZDD zone k, 1-based),
+    else None. Totalski's holes: a 110 x 130 slab 4..12 below the opening, not the radius-8 stand-in."""
+    d = ai.d
+    persos = d.persos()
+    players = {ai.perso} | ({d.perso_in_fix[0][0]} if d.perso_in_fix else set())
+    found = {}
+
+    def walk(nodes):
+        for n in nodes:
+            c = n.children
+            if (n.type == 1 and n.param == 13 and len(c) == 3 and c[0].type == 0 and c[0].param == 4 and c[1].type == 12
+                    and ((c[2].type == 24 and c[2].ref in players) or (c[2].type == 0 and c[2].param == 5))):
+                yield c[1].param
+            yield from walk(c)
+
+    out = []
+    for g in gates:
+        p = persos[g[3] - 1]
+        if p.loc not in found:
+            ks = set()
+            try:
+                other = AI(d, p.loc)
+                for b in other.behaviours:
+                    for sc in b.scripts + ([b.schedule] if b.schedule else []):
+                        ks.update(walk(sc))
+            except Exception:
+                pass
+            found[p.loc] = min(ks) if len(ks) == 1 else None
+        k = found[p.loc]
+        prims = zdd_zone(d, p.loc, k - 1) if k else None
+        out.append((mat_inverse(p.world), prims) if prims else None)
+    return out
+
+
+def mat_inverse(m):
+    """Row-major 3x4 (x' = M x + t) -> its inverse, row-major 3x4."""
+    a, b, c, tx, d_, e, f, ty, g, h, i, tz = m
+    det = a * (e * i - f * h) - b * (d_ * i - f * g) + c * (d_ * h - e * g)
+    r = [(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det,
+         (f * g - d_ * i) / det, (a * i - c * g) / det, (c * d_ - a * f) / det,
+         (d_ * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d_) / det]
+    t = [-(r[3 * k] * tx + r[3 * k + 1] * ty + r[3 * k + 2] * tz) for k in range(3)]
+    return (r[0], r[1], r[2], t[0], r[3], r[4], r[5], t[1], r[6], r[7], r[8], t[2])
+
+
+def water_points(d, states):
+    """Per state its water sample points (State +0x34: a list of {next, .., +0xC point (the perso's axes), +0x18 kind
+    1-6, +0x1C value}; GAM_00437900 sets each value to the water flag of the environment there, the AI's zone
+    conditions read them): (distinct point sets [[(kind, (x, y, z))]], per-state set index or 0xFFFF). Ed: standing
+    z 2.0 / 1.7 / 0.8 / 0.55 / 0.35 / 0.1 (head to feet), swimming 1.4 .. -0.2."""
+    lv, un = d.lv, d.un
+    sets, index = {}, []
+    for st in states:
+        head = lv.ptr(st, 0x34)
+        e, pts = (lv.ptr(head) if head else None), []
+        while e and len(pts) < 8:
+            pts.append((un('I', e, 0x18)[0], un('3f', e, 0xC)))
+            e = lv.ptr(e)
+        index.append(sets.setdefault(tuple(pts), len(sets)) if pts else 0xFFFF)
+    return [list(p) for p in sets], index
+
+
+def sector_box(d, so):
+    """The bounding box (min xyz, max xyz) of a sector's static geometry (empty: min > max)."""
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for o in d.walk(so):
+        if o.kind != 'ipo' or not o.lods:
+            continue
+        m = o.world
+        for v in o.lods[0].vertices:
+            w = [m[4 * i] * v[0] + m[4 * i + 1] * v[1] + m[4 * i + 2] * v[2] + m[4 * i + 3] for i in range(3)]
+            lo = [min(a, b) for a, b in zip(lo, w)]
+            hi = [max(a, b) for a, b in zip(hi, w)]
+    return lo, hi
+
+
+def dry_boxes(d):
+    """The boxes of the sectors that list no water surface and reach beyond the water boxes they overlap (v11). The exe
+    looks the environment up in the perso's own sector; the port has no sectors: a point in such a box smaller than the
+    water boxes holding it stays dry (sud0: the way into Doc's cave, under the river's surface height)."""
+    lv, un, out = d.lv, d.un, []
+    water = [b for _, _, boxes in water_planes(d) for b in boxes]
+    inside = lambda a, b: all(b[0][k] - 1 <= a[0][k] and a[1][k] <= b[1][k] + 1 for k in range(3))
+    for so in d.walk():
+        if so.kind != 'sector':
+            continue
+        data = lv.ptr(so.loc, 4)
+        if data and lv.ptr(data, 0x10) and un('I', data, 0x18)[0]:
+            continue
+        lo, hi = sector_box(d, so)
+        box = (tuple(lo), tuple(hi))
+        # a sector wholly inside a water box is a piece of that water's area (sud0: rocks in the river), not a
+        # neighbour overlapping its edge: kept wet (the C check under the visible water lost 11 of 63 otherwise)
+        if lo[0] <= hi[0] and not any(inside(box, w) for w in water):
+            out.append(box)
+    return out
+
+
+def water_planes(d):
+    """The level's water surfaces as the mechanics see them (docs/NOTES.md "Swimming"): [(z, (gravity, density, drag),
+    [(min xyz, max xyz) per sector])]. Sector data +4 lists the sector's mechanical environments, +0x10 its surfaces; the
+    env lookup FUN_00451b90 takes environment k + 1 below the k-th surface (in list order), whose height is its +0x5C
+    matrix's z (FUN_0045d880). MecEnv: +0 g, +0x10 drag coefficient, +0x14 density. The exe asks the perso's sector;
+    the port has no sectors, so each surface carries the bounding boxes of the static geometry of the sectors listing it
+    (sud0: the river 15 sectors, the falls' foot, the top pool ...)."""
+    lv, un = d.lv, d.un
+    planes = {}  # surface -> [z, env, boxes]
+    for so in d.walk():
+        if so.kind != 'sector':
+            continue
+        data = lv.ptr(so.loc, 4)
+        if not data:
+            continue
+        envs, node = [], lv.ptr(data, 4)
+        while node and len(envs) < 16:
+            e = lv.ptr(node)
+            envs.append(lv.ptr(e) if e else None)
+            node = lv.ptr(node, 4)
+        srf, n, k = lv.ptr(data, 0x10), un('I', data, 0x18)[0], 0
+        while srf and k < min(n, 16):
+            sp = lv.ptr(srf)
+            env = envs[k + 1] if k + 1 < len(envs) else None
+            if sp and env:
+                lo, hi = sector_box(d, so)
+                p = planes.setdefault(sp, [un('I21f', (sp[0], sp[1] + 0x5C))[3], None, []])
+                g, drag, density = un('f', env)[0], un('f', env, 0x10)[0], un('f', env, 0x14)[0]
+                p[1] = p[1] or (g, density, drag)
+                if lo[0] <= hi[0]:
+                    p[2].append((tuple(lo), tuple(hi)))
+            srf = lv.ptr(srf, 4)
+            k += 1
+    return [(z, env, boxes) for z, env, boxes in planes.values() if boxes]
 
 
 def zdm_sets(d, perso, n_states):
@@ -695,8 +872,8 @@ def portals(ai, strings):
 def ski_portals(ai, strings):
     """Totalski and skymap, played as the skier: a stand-in for the game's finish (there the arches capture the skier by a
     zone test and his own scripts walk him in, B7, and change level, B22, after the finish markers' cutscene-like
-    sequence). The holes (SYM_GenTrou) work as in the game, their zone test taken as a radius of 8 (its size is not
-    decoded): they set the skier's respawn point and fall flag, his own scripts do the rest. The arch named *Retry teleports the skier back to the start of the run (cover, reveal); the others
+    sequence). The holes (SYM_GenTrou) work as in the game, their zone test (COND_13) exported as their ZDD box
+    (portal_zones; the radius 8 is only the fallback): they set the skier's respawn point and fall flag, his own scripts do the rest. The arch named *Retry teleports the skier back to the start of the run (cover, reveal); the others
     lead to sud0 at the place the skier's B22 names for this level. Same records as portals()."""
     d, lv = ai.d, ai.lv
     persos = {p.loc: k + 1 for k, p in enumerate(d.persos())}
@@ -713,11 +890,15 @@ def ski_portals(ai, strings):
         if model == 'SYM_GenTrou':
             # A hole (its zone test, COND_13): the skier's respawn point := its own dsg0, dsg22 := 0, dsg29 := 1 (fell in);
             # his reflexes R1 / R3 then cover the screen and B10 respawns him there (SetPositionFrom(KW_5, dsg30)).
-            spot = perso_dsg(d, p.loc, 0)
+            # Also dsg31 := own dsg1 (a second point next to the respawn one); dsg32 := own dsg2 (a perso) is not
+            # expressible as a portal op. The capture is the hole's ZDD zone (portal_zones), the radius only a fallback.
+            spot, look = perso_dsg(d, p.loc, 0), perso_dsg(d, p.loc, 1)
             if spot and spot[0] == 'vec':
                 rows = (p.world[0:3], p.world[4:7], p.world[8:11])
-                ops = [(POP_SET, 3, 30, 0, 0, tuple(spot[1])), (POP_SET, 0, 22, 0, 0, (0, 0, 0)),
-                       (POP_SET, 0, 29, 1, 0, (0, 0, 0))]
+                ops = [(POP_SET, 3, 30, 0, 0, tuple(spot[1])), (POP_SET, 0, 22, 0, 0, (0, 0, 0))]
+                if look and look[0] == 'vec':
+                    ops.append((POP_SET, 3, 31, 0, 0, tuple(look[1])))
+                ops.append((POP_SET, 0, 29, 1, 0, (0, 0, 0)))
                 out.append((tuple(p.world[3::4][:3]), 8.0, rows, persos[p.loc], 2, 0, 0, ops, [], (fam, inst)))
             continue
         if model in ('SYM_GenHurryUp', 'SYM_Gen_Ressort'):
@@ -1062,6 +1243,29 @@ def export(ai, path):
         sound_rows += sorted(rows)
     out += struct.pack('<I', len(sound_rows)) + b''.join(struct.pack('<HH', f, e) for f, e in sound_rows)
     out += b''.join(struct.pack('<IHH', first, n, 0) for first, n in sound_index)
+    water = water_planes(d)
+    out += struct.pack('<HH', len(water), 0)
+    for z, env, boxes in water:
+        out += struct.pack('<4fHH', z, *env, len(boxes), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in boxes)
+    point_sets, point_index = water_points(d, ai.states)
+    out += struct.pack('<HH', len(point_sets), 0)
+    for pts in point_sets:
+        out += struct.pack('<HH', len(pts), 0) + b''.join(struct.pack('<I3f', k, *v) for k, v in pts)
+    out += b''.join(struct.pack('<H', i) for i in point_index)
+    zones = portal_zones(ai, gates)
+    out += struct.pack('<HH', len(zones), 0)
+    for z in zones:
+        if not z:
+            out += struct.pack('<HH', 0, 0)
+            continue
+        inv, prims = z
+        out += struct.pack('<HH12f', len(prims), 0, *inv)
+        out += b''.join(struct.pack('<I3f3f', k, *a, *b) for k, a, b in prims)
+    fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
+    _, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True)  # as ttlv.py writes the triangles
+    out += struct.pack('<I', len(sounds)) + bytes(sounds) + b'\0' * (-len(sounds) % 4)
+    dry = dry_boxes(d) if water else []
+    out += struct.pack('<HH', len(dry), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in dry)
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
@@ -1072,4 +1276,4 @@ def export(ai, path):
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
             'strings': [cstr(r) for r in strings], 'cards': len(cards), 'root_states': sum(1 for _, n in root_index if n),
             'sphere_sets': len(sphere_sets), 'triggers': len(triggers), 'portals': gates, 'portal_names': list(names),
-            'places': len(place_rows), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': len(out)}
+            'places': len(place_rows), 'water': len(water), 'zones': sum(1 for z in zones if z), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': len(out)}

@@ -5,7 +5,7 @@ import AVFoundation
 /// events started each frame (tc_viewer_sounds). A loop has one voice: retriggered while it plays (the animations restart
 /// flight and sliding every cycle) it goes on, until a stop event names it. Other sounds overlap, each to its end (the
 /// portal's step-in boofs once per part of Ed going in). How the engine shares voices is not decoded yet. Muted with
-/// the music (M).
+/// the music (M), the sounds already playing too.
 final class Sfx {
     nonisolated(unsafe) static let shared = Sfx()
 
@@ -14,6 +14,12 @@ final class Sfx {
     private var data: [String: Data] = [:]      // file -> wav bytes, read once
     private var loops: [Int: AVAudioPlayer] = [:]  // event index -> its looping voice
     private var playing: [AVAudioPlayer] = []      // one-shot sounds, until they end
+    private var volumes: [ObjectIdentifier: Float] = [:]  // each voice's event volume, for unmuting
+    var muted = false {
+        didSet {
+            for p in Array(loops.values) + playing { p.volume = muted ? 0 : volumes[ObjectIdentifier(p)] ?? 1 }
+        }
+    }
     private var folder: URL?
 
     /// Reads the event table from `audioDir`/sfx (once per folder).
@@ -35,16 +41,24 @@ final class Sfx {
             let k = Int(i)
             guard let e = events[k] else { continue }
             if e.what == "stop" {
-                if let target = e.stops { loops.removeValue(forKey: target)?.stop() }
+                if let target = e.stops, let p = loops.removeValue(forKey: target) {
+                    p.stop()
+                    volumes[ObjectIdentifier(p)] = nil
+                }
                 continue
             }
             if e.what == "loop", loops[k]?.isPlaying == true { continue }
-            playing.removeAll { !$0.isPlaying }
+            playing.removeAll { p in
+                if p.isPlaying { return false }
+                volumes[ObjectIdentifier(p)] = nil
+                return true
+            }
             guard !e.file.isEmpty, let folder,
                   let bytes = data[e.file] ?? (try? Data(contentsOf: folder.appendingPathComponent(e.file))) else { continue }
             data[e.file] = bytes
             guard let p = try? AVAudioPlayer(data: bytes) else { continue }
-            p.volume = Music.shared.muted ? 0 : e.volume
+            p.volume = muted ? 0 : e.volume
+            volumes[ObjectIdentifier(p)] = e.volume
             if e.what == "loop" {
                 p.numberOfLoops = -1
                 loops[k] = p
@@ -61,5 +75,6 @@ final class Sfx {
         playing.forEach { $0.stop() }
         loops = [:]
         playing = []
+        volumes = [:]
     }
 }

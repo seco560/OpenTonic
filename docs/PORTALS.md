@@ -174,8 +174,8 @@ the portal fires (its dsgvar condition set as Ed's B106 would). Capture-only por
 I at the finish, walk into the arch straight ahead (sud0) or the one on the right (back to the start).
 
 ### Totalski's holes (2026-10-25): as in the game
-The 11 `SYM_GenTrou` persos are capture-only portals (fire 2) on the skier, their zone test (COND_13) taken as a
-radius of 8: they set his respawn point dsg30 := their own dsg0 (a vector), dsg22 := 0 and dsg29 := 1 (fell in). His
+The 11 `SYM_GenTrou` persos are capture-only portals (fire 2) on the skier, their zone test (COND_13) exported as their
+ZDD box since .ttai v9 (docs/NOTES.md "ZDx zones"; before: a radius of 8): they set his respawn point dsg30 := their own dsg0 (a vector), dsg22 := 0 and dsg29 := 1 (fell in). His
 own reflexes then start the cover (R3: GameAction2; no hit points left: B15 / B17 game over), and B10 respawns him once
 the screen is covered (`SetPositionFrom(KW_5, dsg30)`, states 309 / 363, back to riding). Core: KW_5 (the main actor)
 = the player, PROC_27 SetPositionFrom on the player (only moves over 2 units: Ed's B62 nudges him 0.85 down for a pose,

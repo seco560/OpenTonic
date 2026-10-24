@@ -153,6 +153,7 @@ typedef struct tc_viewer {
 
     /* Mesh table and this frame's draw list. */
     const tc_mesh **meshes;
+    uint8_t *mesh_water;          /* per static mesh: 1 = a water surface (TC_FLAG_WATER on its draws) */
     uint32_t mesh_count, perso_first, ed_first;
     tc_view_draw *draws, *blended;
     uint32_t draw_cap, blended_cap;
@@ -212,10 +213,10 @@ bool tc_viewer_ai_active(const tc_viewer *v);  /* playing with the AI: its statu
 /* Ed's physics state, NULL without a play session. */
 const tc_player *tc_viewer_player(const tc_viewer *v);
 
-/* The live settings readout (UTF-8) both title bars show:
- * "view: anim 1.00×, gamma 1.00, FOV 55°<extra>[, lighting 1/2][, fog on (G)][  ·  PLAYING as Ed (Tab: free-fly)]
- *  [  ·  AI B<n> R<n> state <n>[→<n>] (I: simple controller)]". extra (NULL = none) is the frontend's own settings,
- * e.g. ", AA 4x". Returns the length snprintf would have written. */
+/* The adjustable settings both title bars show (UTF-8):
+ * "anim 1.00×, gamma 1.00, FOV 55°<extra>[, light 1/2][, fog on|off][, free-fly][, simple controller]" (the modes only
+ * when not the default: playing as Ed with his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
+ * Returns the length snprintf would have written. */
 size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t size);
 
 #ifdef __cplusplus

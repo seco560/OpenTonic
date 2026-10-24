@@ -132,7 +132,7 @@ static void show_picker(app *a) {
             return;
         }
     }
-    set_title(a, "Open Tonic  \xc2\xb7  pick a level (click, or arrow keys + Enter)  \xc2\xb7  F1: controls");
+    set_title(a, "Open Tonic");
 }
 
 /* false (with a message box) when the level can't be loaded; the current screen stays. */
@@ -157,11 +157,7 @@ static bool open_level(app *a, const char *path) {
     SDL_free(audio);
     const tc_view_stats *s = &v->viewer.stats;
     uint32_t textures = v->texture_count - v->missing_textures;
-    SDL_snprintf(a->title_base, sizeof a->title_base,
-                 "Open Tonic \xe2\x80\x94 %s  \xc2\xb7  %u meshes, %u animated objects, %u tris, %u textures (%u missing)"
-                 "  \xc2\xb7  P pause  \xc2\xb7  Ctrl+L level select%s",
-                 v->level.name, s->meshes, s->persos, s->triangles, textures, v->missing_textures,
-                 tc_viewer_can_play(&v->viewer) ? "  \xc2\xb7  Tab: play as Ed" : "");
+    SDL_snprintf(a->title_base, sizeof a->title_base, "Open Tonic \xe2\x80\x94 %s", v->level.name);
     a->title[0] = 0;
     update_title(a);  /* play mode is on from the start when the level has Ed */
     SDL_Log("Loaded %s: %u meshes, %u persos (%u parts), %u triangles, %u textures, %u missing", v->level.name, s->meshes,
@@ -195,7 +191,7 @@ static void play_intro(app *a) {
         return;
     }
     a->help = false;
-    set_title(a, "Open Tonic \xe2\x80\x94 intro  \xc2\xb7  Esc skips");
+    set_title(a, "Open Tonic \xe2\x80\x94 intro");
 }
 
 /* At the end, or skipped: the ski slope, as the original game starts it (the level select if it isn't converted). */

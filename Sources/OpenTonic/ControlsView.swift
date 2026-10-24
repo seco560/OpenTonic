@@ -52,7 +52,7 @@ final class ControlsView: NSView {
         [k("Caps", 1.75), k("A", 1, .move, "left"), k("S", 1, .move, "back"), k("D", 1, .move, "right"), k("F", 1, .fly, "down"),
          k("G", 1, .view, "fog"), k("H"), k("J"), k("K"), k("L"), k(";"), k("'"), k("Return", 1.75)],
         [k("Shift", 2.25, .ed, "walk / fast"), k("Z"), k("X"), k("C", 1, .ed, "side-step"), k("V", 1, .app, "intro*"), k("B"), k("N"),
-         k("M", 1, .app, "music"), k(",", 1, .view, "FOV -"), k(".", 1, .view, "FOV +"), k("/"), k("Shift", 2.25, .ed, "walk / fast")],
+         k("M", 1, .app, "mute"), k(",", 1, .view, "FOV -"), k(".", 1, .view, "FOV +"), k("/"), k("Shift", 2.25, .ed, "walk / fast")],
         [k("Ctrl", 1.25), k("Opt", 1.25), k("Cmd", 1.5, .app, "see below"), k("Space", 5, .ed, "jump"), k("Cmd", 1.5, .app, "see below"),
          k("Opt", 1.25), k("", 0.4), k("←", 1, .camera, "look"), k("↑", 1, .camera, "look up"), k("↓", 1, .camera, "look dn"),
          k("→", 1, .camera, "look")],

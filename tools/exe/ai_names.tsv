@@ -193,5 +193,31 @@ PROC	85	CollectNearby85	0x489a70	0x55
 PROC	86	CollectNearby86	0x489a70	0x56: func_0x0041fff0
 PROC	154	ShowText?	0x48af30	0x9A
 PROC	155	ClearText	0x48af30	GAM_00418cb0(slot 0..19)
+PROC	237	ForceBehaviour	0x48b730	(perso, behaviour): set another perso's normal behaviour (NOTES "Skiing": the skier takeover; portals)
+PROC	238	ForceReflex	0x48b800	(perso, reflex): set another perso's reflex
+PROC	242	SetHeading	0x48ba00	(deg): rotation about Z = deg x pi / 180 - pi / 2 (docs/PORTALS.md)
 PROC	291	Mode291	0x48cc20	0x123: func_0x0042cf00(0, perso, n) + GAM_00414xxx per n (0-3); camera/inventory mode?
 PROC	292	Mode292	0x48cc20	0x124: func_0x0042cf00(1, perso, n) (0-2)
+NODE	0	Keyword	0x48e5b0	node handlers: table 0x4E43F8 (41 x 4 B) by node type, called by AI_EvalNode_0048e930(me, node, result); keyword table fn(me, node + 1, result)
+NODE	1	Condition	0x48e5e0	condition fn(me, node + 1, &int); result := {int != 0, type 6}
+NODE	2	Operator	0x48e660
+NODE	3	Function	0x48e630
+NODE	4	Procedure	0x48e6a0	procedure fn(me, node + 1); result := {flags & ~4, type 0x15}
+NODE	5	MetaAction	0x48e7d0	starts or continues the meta-action through the intelligence's action table
+NODE	8	End	0x48e4c0	result := {0x10, type 0x15}
+NODE	9	Field	0x48e130	AI_00492750(index, me, result)
+NODE	10	DsgVarB	0x48e1a0	= node 11's handler
+NODE	11	DsgVar	0x48e160	AI_0048fa20(index, 0, mind, result)
+NODE	12	Int	0x48e1c0	result := {param, type 6}
+NODE	13	Real	0x48e2c0	result := {param, type 8}
+NODE	14	Button	0x48e1e0
+NODE	15	ConstVector	0x48e370
+NODE	16	Vector	0x48e2e0
+NODE	17	Mask	0x48e420
+NODE	20	String	0x48e440
+NODE	24	Perso	0x48e280
+NODE	25	State	0x48e2a0
+NODE	32	Behaviour	0x48e500
+NODE	33	Channel	0x48e3e0
+FUNC	102	LocalToGlobalPoint	0x49ab10	the perso world matrix with its translation (FUN_0047b2f0)
+FUNC	103	GlobalToLocalPoint	0x49ab10	the inverse

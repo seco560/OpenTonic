@@ -44,6 +44,28 @@ vec3 fogged(vec3 rgb) {
     return mix(rgb, u.fogColor.rgb, t);
 }
 
+#ifndef FLAT
+// Water sheen (TC_FLAG_WATER; water_sheen in Shaders.metal): upward faces of a water material get a Fresnel sky
+// reflection and the light's highlight over moving ripples. rgb to add, the alpha the surface should at least have.
+vec4 water_sheen() {
+    vec3 n = normalize(vNormal);
+    if (n.z < 0.9) return vec4(0.0);
+    vec2 p = vWorld.xy;
+    float t = u.time;
+    vec2 r = vec2(sin(p.x * 0.9 + t * 1.3) + sin(p.y * 1.7 - t * 0.9) * 0.6,
+                  cos(p.y * 1.1 + t * 1.1) + cos((p.x + p.y) * 0.7 - t * 1.6) * 0.6);
+    n = normalize(vec3(r * 0.06, 1.0));
+    vec3 v = normalize(u.eye.xyz - vWorld);
+    // Seen from below (the eye under the surface): no sheen and the texture's own alpha, so the world above shows.
+    if (v.z <= 0.0) return vec4(0.0);
+    float fresnel = 0.04 + 0.96 * pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 5.0);
+    vec3 sky = vec3(0.62, 0.74, 0.86);
+    vec3 h = normalize(v + normalize(u.lightDirection));
+    float spec = pow(clamp(dot(n, h), 0.0, 1.0), 80.0) * 0.9;
+    return vec4(sky * fresnel * 0.8 + vec3(spec), clamp(0.35 + fresnel, 0.0, 1.0));
+}
+#endif
+
 void main() {
 #ifdef FLAT
     outColor = vec4(fogged(pow(clamp(vec3(0.7) * light(), 0.0, 1.0), vec3(1.0 / u.gamma))), 1.0);
@@ -62,6 +84,12 @@ void main() {
     } else if ((f.flags & 1u) != 0u && c.a < 0.5) {
         discard;
     }
-    outColor = vec4(fogged(pow(clamp(c.rgb * light(), 0.0, 1.0), vec3(1.0 / u.gamma))), a);
+    vec3 rgb = c.rgb * light();
+    if ((f.flags & 8u) != 0u) {
+        vec4 w = water_sheen();
+        rgb += w.rgb;
+        if (f.coverage == 0u) a = max(a, w.a);
+    }
+    outColor = vec4(fogged(pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / u.gamma))), a);
 #endif
 }

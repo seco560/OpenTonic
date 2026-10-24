@@ -2,7 +2,9 @@
  * faked: the screen counts as covered 1.6 s after each cover request (effect A's length).
  *   sud0, ZOR_ArcheCocktail (red): walk-in (B66 -> B68 -> state 228), cover, then a level request for "bar";
  *   Land, SDO_Arche2 (blue walk-in): teleport to its waypoint, then the step-out (state 229);
- *   north, KEV_SousMap1a2 (blue zone teleport): cover at once, no walk-in, teleport.
+ *   north, KEV_SousMap1a2 (blue zone teleport): cover at once, no walk-in, teleport;
+ *   Totalski, the SYM_GenTrou holes (.ttai v9 zones, COND_13): inside a hole's zone box the skier falls in (dsg29 := 1),
+ *   5 above the box he does not.
  * Usage: portalcheck [out/ttlv]. Test-only stdio. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -130,6 +132,68 @@ static int run(const char *dir, const char *name, int op, const char *level, int
     return 1;
 }
 
+/* Totalski's holes: for each portal with a zone that sets the skier's fall flag dsg29, the skier at the centre of its
+ * first box (taken out of the perso's axes) is captured, 5 above the box he is not (7 of the 11 boxes hold the
+ * perso's own origin, so that is no test). Returns holes tested, -1 on
+ * a load error; *inside / *outside count the expected outcomes. */
+static int holes(const char *dir, int *inside, int *outside) {
+    char path[1024];
+    size_t size;
+    uint8_t *data;
+    tc_level lv;
+    tc_collision world;
+    tc_ai_model model;
+    tc_player player;
+    tc_ed_ai ed;
+    int n = 0;
+    uint16_t i, k;
+    *inside = *outside = 0;
+    snprintf(path, sizeof(path), "%s/Totalski.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) return -1;
+    free(data);
+    snprintf(path, sizeof(path), "%s/Totalski.ttai", dir);
+    if (!(data = read_file(path, &size)) || tc_ai_model_load(&model, data, size) != TC_OK) return -1;
+    free(data);
+    if (tc_collision_init(&world, lv.collision, 3 * lv.collision_triangle_count, lv.collision_floors) != 0) return -1;
+    tc_player_init(&player, &world, tc_v3(lv.ed.start.m[3], lv.ed.start.m[7], lv.ed.start.m[11]), 0);
+    if (tc_ed_ai_init(&ed, &model, &player, "Totalski") != TC_OK) return -1;
+    for (i = 0; i < model.portal_count; i++) {
+        const tc_ai_portal *g = &model.portals[i];
+        const float *m = g->zone_inverse;
+        bool hole = false;
+        float det, r[9];
+        tc_vec3 c, w, t;
+        for (k = 0; k < g->capture_count; k++)
+            if (g->ops[k].op == TC_AI_POP_SET && g->ops[k].a == 29) hole = true;
+        if (!hole || !g->zone_count || g->zone[0].kind != 8) continue;
+        n++;
+        /* the inverse of the inverse: forward = R^-1 (q - t) */
+        det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) + m[2] * (m[4] * m[9] - m[5] * m[8]);
+        r[0] = (m[5] * m[10] - m[6] * m[9]) / det, r[1] = (m[2] * m[9] - m[1] * m[10]) / det, r[2] = (m[1] * m[6] - m[2] * m[5]) / det;
+        r[3] = (m[6] * m[8] - m[4] * m[10]) / det, r[4] = (m[0] * m[10] - m[2] * m[8]) / det, r[5] = (m[2] * m[4] - m[0] * m[6]) / det;
+        r[6] = (m[4] * m[9] - m[5] * m[8]) / det, r[7] = (m[1] * m[8] - m[0] * m[9]) / det, r[8] = (m[0] * m[5] - m[1] * m[4]) / det;
+        for (k = 0; k < 2; k++) {
+            c = tc_v3_scale(tc_v3_add(g->zone[0].a, g->zone[0].b), 0.5f);
+            if (k == 1) c.z = g->zone[0].b.z + 5;
+            t = tc_v3(c.x - m[3], c.y - m[7], c.z - m[11]);
+            w = tc_v3(r[0] * t.x + r[1] * t.y + r[2] * t.z, r[3] * t.x + r[4] * t.y + r[5] * t.z,
+                      r[6] * t.x + r[7] * t.y + r[8] * t.z);
+            tc_ai_dsgvar_set_int(&ed.ai, 29, 0);
+            player.position = w;
+            ed.portal = -1;
+            ed.portal_armed[i] = 1;
+            tc_ed_ai_run_portals(&ed, 1.0f / 60);
+            if (k == 0 && (int)tc_ai_dsgvar_float(&ed.ai, 29) == 1) (*inside)++;
+            if (k == 1 && (int)tc_ai_dsgvar_float(&ed.ai, 29) == 0) (*outside)++;
+        }
+    }
+    tc_ed_ai_free(&ed);
+    tc_ai_model_free(&model);
+    tc_collision_free(&world);
+    tc_level_free(&lv);
+    return n;
+}
+
 static int failures;
 static void check(int ok, const char *what) {
     printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);
@@ -151,6 +215,13 @@ int main(int argc, char **argv) {
     if (run(dir, "north", TC_AI_POP_TELEPORT, NULL, 2, &r)) {
         check(r.captured && !r.saw_228 && r.covers >= 1 && r.teleport_at >= 0, "north zone portal: cover, no walk-in, teleport");
     } else failures++;
+    {
+        int inside, outside, n = holes(dir, &inside, &outside);
+        char what[160];
+        snprintf(what, sizeof(what), "Totalski holes (zones): %d of %d capture inside their box, %d of %d not 5 above "
+                 "it", inside, n, outside, n);
+        check(n > 0 && inside == n && outside == n, what);
+    }
     printf(failures ? "FAIL\n" : "ok\n");
     return failures != 0;
 }

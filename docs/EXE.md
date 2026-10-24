@@ -55,6 +55,7 @@ Built from Ubisoft's CPA tree (`X:\Cpa\Tempgrp\<MODULE>\...`, `D:\cpa\Main2_0\Sr
    - Coverage: 2,493 / 3,718 functions (67%).
    - Evidence: direct `__FILE__` refs, exports, or lying between two functions of the same module (MSVC links each .obj contiguously).
 3. `tools/exe/names.tsv` holds hand-assigned names and is committed. `tools/ghidra/ApplyNames.java` applies manual and auto names to the persistent project in `out/ghidra/`.
+4. Types: `tools/exe/types.h`, `signatures.tsv` and `globals.tsv`, applied by `tools/ghidra/ApplyTypes.java`. `tools/ghidra/ArgCheck.java` reads argument counts from the asm. See docs/TYPES.md.
 
 Rebuild:
 ```

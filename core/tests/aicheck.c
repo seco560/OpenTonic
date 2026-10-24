@@ -2,9 +2,10 @@
  * and <level>.ttai, feeds a scripted button sequence, prints every behaviour, reflex, state and mechanics-mode
  * change with Ed's position, then the primitives the interpreter skipped.
  * Usage: aicheck [out/ttlv] [level]  (default ../files/out/ttlv bar); AI_TRACE=<frame> prints executed nodes.
- * AI_SCRIPT=fly | ski | pogo | wander picks another input script (wander: 60 s of running, turning and jumping, then a
+ * AI_SCRIPT=fly | ski | pogo | swim | wander picks another input script (wander: 60 s of running, turning and jumping, then a
  * summary: distance, largest step, teleports, stalls, frames the collide loop gave up); AI_FPS=<n> sets the frame rate
- * (default 60); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then.
+ * (default 60); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then;
+ * AI_START=x,y,z starts Ed there (AI_SCRIPT=swim with a point in sud0's river).
  * Test-only stdio. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +59,8 @@ int main(int argc, char **argv) {
     uint16_t last_normal = 0xFFFE, last_reflex = 0xFFFE, last_wanted = 0xFFFF;
     int32_t last_mode = -2;
     int quiet = 0, respawns = 0, stalls = 0, board_frames = 0, board_under = 0;
-    float board_min = 1e9f, board_sum = 0;
+    float board_min = 1e9f, board_sum = 0, fly_head = 0, fly_off = 0;
+    int fly_frames = 0, steps_generic = 0, steps_by[24] = {0};
     float travelled = 0, max_step = 0, stalled_for = 0;
     tc_vec3 before;
     const float dt = 1.0f / (getenv("AI_FPS") ? (float)atof(getenv("AI_FPS")) : 60);
@@ -78,6 +80,19 @@ int main(int argc, char **argv) {
         {12.0f, 0, 0, 0, "release"},
     };
     /* AI_SCRIPT=fly: jump, jump again in the air (Ed's B89 -> B26 flight), then steer. */
+    /* AI_SCRIPT=swim (with AI_START in water): float, then swim forward, turn, dive (Down), stop. */
+    const step swim_script[] = {
+        {3.0f, 0, 0, 0, "idle (in the water)"},
+        {7.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up (swim forward)"},
+        {8.5f, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_LEFT), 0, 0, "hold up + left"},
+        {10.0f, 1u << TC_AI_IN_JUMP, 0, 0, "hold jump"},
+        {13.0f, 0, 0, 0, "release"},
+        {16.0f, 1u << TC_AI_IN_ACTION, 0, 0, "hold action (dive?)"},
+        {19.0f, (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_UP), 0, 0, "hold action + up"},
+        {21.0f, 1u << TC_AI_IN_DOWN, 0, 0, "hold down"},
+        {23.0f, 1u << TC_AI_IN_SPEEDUP, 0, 0, "hold speedup"},
+        {26.0f, 0, 0, 0, "release"},
+    };
     const step fly_script[] = {
         {1.0f, 0, 0, 0, "idle"},
         {1.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
@@ -117,6 +132,10 @@ int main(int argc, char **argv) {
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "fly") == 0) {
         script = fly_script;
         steps = sizeof(fly_script) / sizeof(fly_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "swim") == 0) {
+        script = swim_script;
+        steps = sizeof(swim_script) / sizeof(swim_script[0]);
     }
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "pogo") == 0) {
         script = pogo_script;
@@ -160,7 +179,12 @@ int main(int argc, char **argv) {
            model.state_count, model.button_count, model.other_count);
     if (tc_collision_init(&world, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) return 1;
     start = level.ed.start;
+    if (getenv("AI_START")) { /* x,y,z: start there instead (e.g. in the water) */
+        float x, y, z;
+        if (sscanf(getenv("AI_START"), "%f,%f,%f", &x, &y, &z) == 3) start.m[3] = x, start.m[7] = y, start.m[11] = z;
+    }
     tc_player_init(&player, &world, tc_v3(start.m[3], start.m[7], start.m[11]), tc_heading_of(&start));
+    if (model.water_count) printf("water: %u surfaces\n", model.water_count);
     tc_player_apply_floors(&player); /* as the viewer does (sliding profile on zero-grip levels) */
     if (tc_ed_ai_init(&ed, &model, &player, level_name) != TC_OK) { fprintf(stderr, "init failed\n"); return 1; }
     p = &ed.ai;
@@ -223,6 +247,10 @@ int main(int argc, char **argv) {
                    (double)ed.walk.ground_normal.x, (double)ed.walk.ground_normal.y, (double)ed.walk.ground_normal.z,
                    (double)ed.walk.wall_normal.x, (double)ed.walk.wall_normal.y, (double)ed.walk.wall_normal.z);
         }
+        for (i = 0; i < p->sound_count; i++) { /* footsteps: the generic step, or by floor sound type */
+            if (p->sounds[i] == TC_AI_FOOTSTEP_EVENT) steps_generic++;
+            else if (p->sounds[i] > TC_AI_STEP_SOUND && p->sounds[i] < TC_AI_STEP_SOUND + 24) steps_by[p->sounds[i] - TC_AI_STEP_SOUND]++;
+        }
         if (quiet) continue;
 
         if (p->normal.behaviour != last_normal || p->reflex.behaviour != last_reflex) {
@@ -242,6 +270,18 @@ int main(int argc, char **argv) {
             printf("%6.2f  mech mode %d\n", (double)t, p->motion.mech_mode);
             last_mode = p->motion.mech_mode;
         }
+        if (ed.card_type == 5 && tc_v3_length(player.velocity) > 1 && !player.grounded && !player.against_wall) {
+            /* the drawn flight pose: head (model z) along the velocity, axes a proper rotation */
+            tc_mat4 mm = tc_ed_ai_model_matrix(&ed);
+            tc_vec3 mx = tc_v3(mm.m[0], mm.m[1], mm.m[2]), my = tc_v3(mm.m[4], mm.m[5], mm.m[6]);
+            tc_vec3 mz = tc_v3(mm.m[8], mm.m[9], mm.m[10]), vd = tc_v3_div(player.velocity, tc_v3_length(player.velocity));
+            float head = acosf(fminf(1, fmaxf(-1, tc_v3_dot(mz, vd)))) * 180 / TC_PI;
+            float off = fabsf(tc_v3_dot(tc_v3_cross(mx, my), mz) - 1) + fabsf(tc_v3_dot(mx, my)) + fabsf(tc_v3_dot(my, mz)) +
+                        fabsf(tc_v3_dot(mx, mz)) + fabsf(tc_v3_length(mx) - 1) + fabsf(tc_v3_length(my) - 1);
+            fly_frames++;
+            if (head > fly_head) fly_head = head;
+            if (off > fly_off) fly_off = off;
+        }
         if (frame % 30 == 29) {
             printf("%6.2f      pos (%.2f, %.2f, %.2f) v %.2f vz %.2f heading %.0f %s%s", (double)t, (double)player.position.x,
                    (double)player.position.y, (double)player.position.z, (double)tc_player_horizontal_speed(&player),
@@ -252,6 +292,10 @@ int main(int argc, char **argv) {
                        ed.ski.near_ground ? " near" : "");
             if (ed.card_type == 5)
                 printf("  fly attack %.1f bank %.1f", (double)ed.fly.attack, (double)ed.fly.bank);
+            if (ed.card_type == 1)
+                printf("  swim polar %.0f heading %.0f thrust %.0f", (double)ed.swim.polar, (double)ed.swim.heading,
+                       (double)ed.swim.thrust_lagged);
+            if (ed.env_depth > 0) printf("  depth %.2f", (double)ed.env_depth);
             printf("\n");
         }
     }
@@ -262,6 +306,19 @@ int main(int argc, char **argv) {
     if (board_frames)
         printf("board clearance over %d frames near the snow: mean %.3f, min %.3f, %d frames more than 0.02 into it\n",
                board_frames, (double)(board_sum / (float)board_frames), (double)board_min, board_under);
+    {
+        int any = steps_generic;
+        for (i = 0; i < 24; i++) any += steps_by[i];
+        if (any) {
+            printf("footsteps: %d generic", steps_generic);
+            for (i = 0; i < 24; i++) if (steps_by[i]) printf(", %d of floor sound %d", steps_by[i], (int)i);
+            printf("\n");
+        }
+    }
+    if (fly_frames)
+        printf("flight pose over %d frames in the air: head vs velocity at most %.1f deg (the frame is built from the\n"
+               "  velocity before the step), axes off a rotation by at most %.5f\n", fly_frames, (double)fly_head,
+               (double)fly_off);
     if (model.trigger_count) printf("proximity triggers: %u, fired %u\n", model.trigger_count, ed.triggers_fired);
     printf("skipped primitives:");
     for (i = 0; i < 10 * TC_AI_UNKNOWN_STRIDE; i++)

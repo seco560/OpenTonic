@@ -45,7 +45,7 @@ static void frame(tc_viewer *v, float dt) {
     for (i = 0; i < count && !bad; i++) {
         const tc_mesh *m = tc_viewer_mesh(v, d[i].mesh);
         int transparent = (d[i].flags & TC_FLAG_TRANSPARENT) != 0;
-        if (!m || m->index_count == 0 || d[i].flags != m->surface.flags || transparent != (i >= opaque)) bad = 1;
+        if (!m || m->index_count == 0 || (d[i].flags & ~TC_FLAG_WATER) != m->surface.flags || transparent != (i >= opaque)) bad = 1;
         if (d[i].texture < -1 || d[i].texture >= (int32_t)v->level->texture_count) bad = 1;
     }
     if (!(f.view_projection.m[0] == f.view_projection.m[0])) bad = 1; /* NaN */
@@ -111,6 +111,13 @@ static void portal_scenario(const char *dir) {
     desc.carry = NULL;
     desc.seed = 1;
     if (!g || tc_viewer_init(&v, &desc) != TC_OK) { check(0, "sud0: the Cocktail arch and a viewer"); return; }
+    {
+        uint32_t n = 0, m;
+        char what[96];
+        for (m = 0; v.mesh_water && m < sud0.mesh_count; m++) n += v.mesh_water[m];
+        snprintf(what, sizeof(what), "sud0: %u water materials found (the sheen, TC_FLAG_WATER)", n);
+        check(n > 0, what);
+    }
     front = tc_v3_normalize(tc_v3(-g->rows[1], -g->rows[4], 0));
     tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(g->position, tc_v3_scale(front, 8)),
                        atan2f(-front.x, front.y));

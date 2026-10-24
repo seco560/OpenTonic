@@ -26,6 +26,7 @@ SOUND = 'files/sources/GAMEDATA/WORLD/SOUND'
 EVENT_BASE = 0x9bdfe0c  # where the snapshot's Bnk_0 event 0 lived: pointer = base + 0x20 x index
 FOOTSTEPS = 0x00390000
 GENERIC_STEP = 0x0039001c  # Edpasgen.wav
+STEP_SOUND = 256  # the core's events for the material steps (TC_AI_STEP_SOUND + floor sound type)
 
 
 def read_bank(path):
@@ -91,6 +92,18 @@ def main(out_dir='files/out/audio/sfx'):
                                check=True, capture_output=True)
                 extracted[file] = True
         rows.append((k, 'loop' if k in loops else 'play', file, (res[2] if res else 127) / 127, ''))
+    # The footstep switch's sounds (docs/NOTES.md "Footsteps"): step id 0x390002 + v for the floor's sound type v
+    # (GameMaterial +8; 1 EsEarthS .. 20 EsSnow, 21 EsIce, 23 EsCarpet), reported by the core as event 256 + v.
+    for v in range(1, 24):
+        res = resources.get(FOOTSTEPS + 2 + v)
+        file = ''
+        if res and res[1] == 1 and res[0] in streams:
+            file = os.path.splitext(res[3].lower())[0] + '.wav'
+            if file not in extracted:
+                subprocess.run(['vgmstream-cli', '-s', str(streams[res[0]]), '-o', os.path.join(out_dir, file), bank],
+                               check=True, capture_output=True)
+                extracted[file] = True
+        rows.append((STEP_SOUND + v, 'play', file, (res[2] if res else 127) / 127, ''))
     with open(os.path.join(out_dir, 'events.tsv'), 'w') as f:
         f.write('# index\tplay|loop|stop\tfile\tvolume\tstops  (tools/ttre/sfx.py: Bnk_0 events = the global sound events)\n')
         for k, what, file, vol, stops in rows:

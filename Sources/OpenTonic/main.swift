@@ -120,7 +120,7 @@ final class GameView: MTKView {
             if !event.isARepeat { NSApp.sendAction(#selector(AppDelegate.showControls), to: nil, from: self) }
             return
         }
-        if event.keyCode == 46, !event.isARepeat {  // M: mute/unmute level music
+        if event.keyCode == 46, !event.isARepeat {  // M: mute/unmute music and sound effects
             Music.shared.muted.toggle()
             return
         }
@@ -176,7 +176,7 @@ final class GameView: MTKView {
     /// Live viewer settings appended to the window title.
     func updateTitle() {
         guard let viewer = renderer?.viewer, let w = window else { return }
-        let base = w.title.components(separatedBy: "  ·  view:").first ?? w.title
+        let base = w.title.components(separatedBy: "  ·  ").first ?? w.title
         let aa = renderer.map { $0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off" } ?? ""
         w.title = base + "  ·  " + viewer.status(extra: aa)
     }
@@ -282,7 +282,7 @@ final class GameView: MTKView {
         container.addSubview(help)
         window.contentView = container
         window.makeFirstResponder(container)
-        window.title = "Open Tonic  ·  V: intro movie"
+        window.title = "Open Tonic"
     }
 
     /// The intro movie, from the level select screen (V). files/out/video/intro.mp4 next to the ttlv folder.
@@ -300,7 +300,7 @@ final class GameView: MTKView {
         let view = IntroView(frame: window.contentLayoutRect, url: url) { [weak self] in self?.startAfterIntro() }
         window.contentView = view
         window.makeFirstResponder(view)
-        window.title = "Open Tonic — intro  ·  Esc skips"
+        window.title = "Open Tonic — intro"
         view.start()
     }
 
@@ -371,7 +371,7 @@ final class GameView: MTKView {
         window.makeFirstResponder(view)
         if wasCaptured { view.setCaptured(true) }
         let r = renderer!, viewer = r.viewer!, s = viewer.stats
-        window.title = "Open Tonic — \(viewer.level.name)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(r.textureCount) textures (\(r.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(viewer.canPlay ? "  ·  Tab: play as Ed" : "")"
+        window.title = "Open Tonic — \(viewer.level.name)"
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()
         titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in

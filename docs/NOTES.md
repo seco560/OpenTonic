@@ -252,7 +252,7 @@ headless tests, and ask before large explorations.
   stop, volume); .ttai v7 adds each state's animation sound rows and turns T34 nodes into event indices; tc_ai queues
   the events whose frame the animation clock passes and PlaySound3D's (tc_ai_perso.sounds), tc_viewer_sounds hands them
   to the frontend; the Mac app plays them (Sfx.swift, AVAudioPlayer, muted with M). Not positional yet (3D), no
-  per-material footsteps, other persos' sounds not played.
+  per-material footsteps (done 2026-10-24: "Footsteps by floor material"), other persos' sounds not played.
 
 ## Audio (2026-10-19)
 - All audio lives in Ubisoft sound banks `WORLD/SOUND/Bnk_*.bnm` (+ `English/` voice banks). vgmstream reads them (brew `vgmstream`).
@@ -604,7 +604,8 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   (GAM_0042a720: skip if no camera/active perso within it).
 - **Type-0/4 integrator 4aa6af (structure):** mass from the card (+0x98); forces + grip into F (FUN_004c41c5);
   v = v_old + F dt / m + wanted; FUN_004c39f0(v, mass); FUN_004c37af integrates the new position; collide-and-move
-  MEC_004be1bd (translating) or MEC_004bedd6 (rotation only); on losing ground contact, the ground re-snap
+  MEC_004be1bd when the step turns (velocity angle != 0), else MEC_004bedd6 (no turn; corrected 2026-10-24 from the
+  typed decompile: before this line had them the other way round); on losing ground contact, the ground re-snap
   MEC_004bf9f0 with card +0x20 / +0x34; carried by a parent perso (platforms) via SPO_00482ed0/FUN_004a8388; writes
   the position (+0x54..+0x6C: xyz + yaw angle about an axis) into the SuperObject matrix.
 - **Open:** where walking speed comes from when the AI pushes no move direction (root motion: candidates are the
@@ -643,6 +644,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
 - Not done: Ed's model is not pitched/rolled with the flight frame (the viewer only takes the heading; the script's
   DynAxis0..2 remap of the model axes is also unused), the camera does not follow flight specially, type-5 states
   other than Ed's not checked.
+  **Update 2026-10-24 (typed decompiles): the model pose is now ported, see "Flight, read with types" at the end.**
 - `level-ai` listings now name behaviours (B<k>/R<k>) and buttons (btn(jump), btn(up y-110..-30) ...).
 
 ### Skiing (Totalski, skymap): card type 2 + the skier perso, ported (2026-10-23)
@@ -938,3 +940,294 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   DFM_Save x23, World WLand). Plan: run Ed's B66 -> B68 for real (needs ChangeStateByDirection, TurnTowardOverFrames,
   forced behaviour/reflex - tc_ai_force_behaviour exists), let state 228 play, then the loading screen
   (vignette 3 s + bar + "loading <level>") and the new level with Ed at the entry waypoint.
+
+### Typing pass, step 1 (2026-10-24): the Ghidra project is typed (docs/TYPES.md)
+- **Done:** tools/exe/types.h (46 types: the perso chain, Perso3dData, StdGame, State / transitions / AnimRef,
+  Mind / Intelligence / DsgMem, Dynam / Dynamics / DynamWork / RequestQueue, ContactRecord, MecMaterial, MecEnv,
+  Proposal, the type 0/4, 2 and 5 ID cards, the handler table), checked by tools/exe/types_check.c (clang i386) and
+  again inside Ghidra before anything is applied; 80 prototypes (tools/exe/signatures.tsv, every argument count read
+  from the asm with tools/ghidra/ArgCheck.java), 17 globals (tools/exe/globals.tsv, float constants only labelled when
+  memory holds the expected value: all of the notes' constants did). Typed decompiles:
+  files/out/_decomp_artifacts/typed/<addr>_<name>.c. Backup of the untyped project: ghidra_backup_2026-10-24_pre_types.
+- **Function names now carry their meaning and keep the address** (MEC_004be1bd -> MEC_CollideMove_004be1bd,
+  FUN_004aa6af -> DNM_IntegrateWalk_004aa6af ...): grep by address still finds them. The raw decompiles in decomp/
+  keep the old names.
+- **Corrections found while typing:**
+  - perso +8 is a wrapper, not the dynamics: Dynam {+0 Dynamics *, +4 DynamWork * (per-frame workspace: +0x6C the
+    wanted motion, +0x12C the force list of types 2 / 5), +8 RequestQueue *, +0x10 activation radius, +0x11C current
+    card type}. "Dynamics +8 = request queue", "+0x10 activation radius" and "+0x11C" above are dynam offsets.
+  - The handler call sites (asm): integrator(dyn, so, carrier, sector SuperObject, work, card, dt), request
+    handler(dyn, so, work, card, dt, mode). The integrators' 4th argument is the perso's current sector (sector_info
+    +4); the environment is looked up in it.
+  - MEC_004be1bd = the move with a turn, MEC_004bedd6 = without (see the corrected line above).
+  - Dynamics +0x08 = a Vec3, +0x14 = a 3x3 frame (identity at init; the flight integrator uses it), not three
+    quaternions. Dynamics +0xB0..+0x2AF is one block (init FUN_004c1c00): handler modes, reports, three contact
+    records (+0xCC ground, +0x148 wall, +0x1C4 perso contacts: report bit 0x10000), the velocity / position
+    snapshots. Contact record +0x68 = the obstacle's SuperObject, +0x6C its dynamics, +0x70 / +0x74 the two game
+    materials, +0x24 an edge vector (kind 2 only).
+  - The type 5 and type 2 code never reads its card directly: FUN_004c9a20 / FUN_004ca140 return their argument and are
+    called only by the type 5 / type 2 code (the source's casts; now MEC_AsFlyCard / MEC_AsSkiCard). The flight
+    integrator collides with card NULL, flags 0x10.
+  - AnimationReference +0xC is u32 n_events (level.py's raymap f32[3] there is wrong; ai.py already read it right).
+  - Dynamics +0x2B0 (flight controls) is shared by card types 1 and 5.
+  - The dynam keeps 8-entry histories of the step's velocity, position and dt (GAM_0042aee0 / af40 / afa0).
+- **Not typed yet (step 2):** the step-up MEC_004bb06e (14 arguments, its call site in the decompile shows 13), the
+  card accessors MEC_004b9530..004baa14, the AI dispatch handlers, collide sets and zones, sound, transitions, the
+  engine globals.
+
+### Typing pass, step 2 (2026-10-24): AI interpreter, zones, sweeps, card layouts
+- **AI interpreter typed** (types.h AINode / AIValue / AIBehaviour / AIAction / DsgMem ...; tools/exe/tables.tsv gives
+  every dispatch table one prototype; names from tools/exe/ai_names.tsv). Asm-checked call shapes:
+  AI_EvalNode_0048e930(me, node, result) = g_ai_node_handlers[node->type] (41 node types; 247 callers: every
+  primitive evaluates its arguments with it); keyword / condition / operator / function primitives
+  fn(me, node + 1, result) (conditions get an int *), procedures and meta-action starts fn(me, node + 1), meta
+  continuations cont(me) (1 running, 4 done), field getters get(me, out). `me` is the perso's SuperObject. Tables
+  (counts = gaps): 294 procedures, 10 keywords, 111 conditions, 165 functions, 28 operators, **43** meta-actions (a
+  string follows, not 47), 15 fields, value kinds at 0x4E7058 {value type, after_get, before_set}. 295 distinct
+  implementations typed and named <KIND>_<Name>_<addr> (shared ones ...Etc_; unnamed <KIND>_<index>_), in
+  files/out/_decomp_artifacts/typed/ai/. AINode +4 (u16) caches the offset to the next sibling; a behaviour's
+  schedule is one more indirection (as ai.py found); the action table is {entries (0x50), u8 capacity, u8 used};
+  AI_GetDsgVar_0048fa20 reads mind->dsg->current + def[0]->infos[i].offset. New names: PROC 237 ForceBehaviour,
+  238 ForceReflex, 242 SetHeading (ai.py matches primitives by number, not name).
+- **Card accessors MEC_004b9530..004baa14 are dead code**: no caller and no pointer to them anywhere in memory, except
+  MEC_004ba9c2 (launch speed, GAM_0042ab20). They still give the cross-type layout (types.h, ID cards comment): ski
+  +0x10 / +0x18 = min / max turn as walk's; gravity factor 0/4 +0x38 = type 7 +0x1C = type 10 +8.
+- **Step-up MEC_StepUp_004bb06e** (14 args from the asm): tried only when last frame had ground, the hit's own zone
+  type is 1 (mechanics zone) and step_height > 0 (or collide flag 0x40), and the wall is near vertical or the contact
+  kind is 2.
+- **Sweeps:** MEC_SweepZones_0043bff0 = two MEC_SweepPass_0043c830(sector, so, start, end, mask) passes (masks 1 and
+  ~1), each read with MEC_HitsNearest_004602c0 into a 0x30-byte SweepHit; a floor-pass hit counts only with normal.z
+  >= 0.93 and, on a perso, only when that perso's collide set byte +0x37 (floor_ok) is set.
+- **Zones typed:** collide set = 4 zone lists (ZDD, ZDE, ZDM, ZDR) + 4 activation lists, zone entries -> GeoCollide,
+  activation {zones, state}; collide elements (triangles / spheres / boxes) as the exporter reads them.
+- **Matrix type bits** (asm): 0x80 = the full layout (else a compact form at +2), 0x10 translation, 0x40 scale.
+- **Platforms:** DNM_FollowCarrier_004a83d2 moves the perso with its carrier and collides that move;
+  DNM_LeftCarrier_004a8388 tells when it left it (0.2); SPO_SetParent_00483430 re-parents.
+- Backup of the step-1 project: ghidra_backup_2026-10-24_step1.
+
+### Flight, read with types (2026-10-24, typing step 3)
+- **The physics equals the port.** Checked line by line in DNM_RequestFly_004aea7c, DNM_IntegrateFly_004ac0da and
+  DNM_FlyForces_004c478d: modes 1-4 / 10 / 21 / default, the clamps, the lags (deg -> rad, DAT_004d2f20), the thrust
+  cut at 0.7 x card thrust, lift rho |v|^2 S CL(attack) with the commanded attack (degrees, not the lagged one; the
+  lagged attack and bank are only reported to the scripts and roll the frame), drag lift / (L/D), no lift beyond
+  |x.z| 0.9, v += sum F / m dt, then the top speed. The frame FUN_004a9993 = Rz(heading + pi / 2) Rx(acos v.z) with
+  its columns reordered = (v, horizontal left, up in the vertical plane): exactly the port's.
+- **Differences found and fixed in the port (core/src/tc_mec.c):** the forces act in the frame the request handler
+  builds and stores (dynamics +0x14, `dyn->rotation`), not one rebuilt from the integrated velocity; mode 21's velocity
+  change goes through the force list (applied in the integrator), so it no longer tilts the frame built in the same
+  request. Below |v|^2 = 1e-4 the frame is kept (the exe rebuilds it from the model's axes and rolls it again).
+  Flight trajectories in `AI_SCRIPT=fly aicheck` are unchanged (that script does not use mode 21).
+- **The model pose in flight (FUN_004c8dfc, the integrator's last step), now ported:** with the card's roll byte
+  (+0x4C; Ed's card 1) the SuperObject's rotation columns = (frame y, frame z, frame x): model z (the head) along the
+  velocity, model y (Ed's back; his front is -Y) along the rolled frame's up, i.e. a head-first, belly-down glide
+  that banks with the turn. Without the roll byte the same from the frame levelled (its z turned onto world up,
+  FUN_004b7a22; not used by Ed). Ed's flight start B26 agrees: it sets DynAxis0 (the sight axis, dynam +0xF8, read by
+  GAM_00431ef0 for the AI / camera) to +Z, from (0, -1, 0) on foot. The DNM 3x3 helpers are row-major with vectors as
+  columns (FUN_004a8aed set, FUN_004a8a74 get; asm). tc_ed_ai_model_matrix draws it (the viewer uses it); aicheck's
+  fly script prints the check: head within 1.6 / 0.8 / 0.4 deg of the velocity at 30 / 60 / 144 fps in the air, axes
+  an exact rotation. **Needs a look in the app**: if the flight animations were authored lying down, this would stand
+  Ed upright instead (the exe's code says they are not).
+- Still not done: the flight collision body (the exe sweeps the state's ZDM spheres in this tilted pose, card NULL,
+  flags 0x10; the port uses tc_player's upright capsule), FUN_004c3dc3 after a hit (the post-collision velocity when
+  before . after > DAT_004d3070, else the velocity from before the collision), the camera in flight.
+
+### Swimming and water, decoded with types (2026-10-24, typing step 3)
+- **Water = a second mechanical environment below a sector's water surfaces.** Sector data +4 lists the sector's
+  environments, +0x10 its water surfaces (session 3's "surface list"). FUN_00451b90 (the env lookup, also inside the
+  swim forces) walks the surfaces in order while the point is below them: FUN_0045d880(point, surface) = surface
+  +0x5C matrix's z - point z (a horizontal plane at the surface height, unbounded within the sectors that list it),
+  > 0 = below; the env is the sector's environment number (surfaces passed), the last depth goes to dynamics +0x2E0
+  (= the scripts' EnvHeight, FUNC 51; EnvHeightAbove FUNC 52 = it + own z). Values: the fix's air 0x36b51c {g 9.81, up
+  (0, 0, 1), +0x10 drag coefficient 1, +0x14 density 1.3} in every level; water (sud0 0x36b60c, Land 0x36b714, ...)
+  the same with density 1000 and +0x28 = 1. sud0: 21 sectors with a surface (river -5.2, falls foot -77.53, top pool
+  5.25, 0.32 / 0.38).
+- **Correction: air density is 1.3, not 1** (the notes counted the words wrong): the flight lift and drag are 1.3 x the
+  port's until now. Fixed (tc_mec_env_default); `AI_SCRIPT=fly aicheck`: the glide sinks slower (vz -4.3 instead of
+  -4.7 u/s at 2 s) and lands 0.05 s later.
+- **Swimming = ID card type 1** (Ed's states 6, 7, 8, 16, 17, 20-24, 36, 37, 151, 152, 211-214; masses 900-1100
+  against water's 1000: buoyancy decides). Card (0x48): +4 mass, +0x10 / +0x14 / +0x18 lags (polar angle, heading,
+  thrust), +0x28 body size s (1), +0x2C volume factor c (1), +0x34 depth d over which the volume ramps (10 / 3), +0x38
+  polar-angle decay in mode 0 (0.99), +0x3C / +0x40 polar angle max / min (deg; main card 160 / 1), +0x44 polar offset
+  (deg). FUN_004c9a10 is the type 1 cast (returns its argument; only the type 1 code calls it).
+- **Request handler DNM_RequestType1_004af8f0** (handler mode 7): the control slots hold a direction in spherical
+  angles: "attack" = polar angle from +Z in degrees (0 up, 90 level, 180 down), "bank" = heading in degrees. Mode 0:
+  polar x card +0x38; 1 / 2: polar +/- proposal [0x18]; 3 / 4: heading +/- [0xB]; 10: thrust += proposal [0]; 0x14:
+  polar and heading from proposal [7..9] (normalised; acos(z), the xy angle), thrust += proposal [0]. Clamp polar to
+  [card +0x40, +0x3C]; lag polar (+ the offset) / heading / thrust (FUN_004c9afb, card +0x10 / +0x14 / +0x18);
+  thrust := 0 when its lagged value passes 0.7 x proposal [0]. Frame: dyn->rotation = Rz(heading_lagged + pi / 2)
+  Rx(polar_lagged) (FUN_004b6d50). Force: thrust_lagged x (cos h sin p, sin h sin p, cos p).
+- **Forces FUN_004c4af0** (from the integrator DNM_IntegrateType1_004abbb8): the env lookup at (snapshot x, y,
+  position z - 0.5 s) gives the environment and depth D (dynamics +0x2E0 := D), D' = D - 0.5 s. Weight -m g; buoyancy
+  +rho g V with V = 0 for D' <= -0.5 s, (0.5 s + D') s^2 for |D'| < 0.5 s, then s^3 rising linearly to s^3 c at D' =
+  card +0x34 and s^3 c beyond; drag -rho Cd s^2 min(|v|, 10) v while D' >= -0.5 s (Cd = env +0x10). Then v += sum F /
+  m dt (with the thrust), the position, the orientation from dyn->rotation, collide-and-move with no card and no env
+  (flags 0x10); after a hit the angles are re-read from the new frame (FUN_004a98a0) and written back to the control
+  slots; FUN_004c91d2 writes the pose (not read yet).
+- So with s = c = 1 Ed floats with net (1000 - m) g / m: the 990 card rises at ~0.1 m/s^2 from depth, settles where
+  V = m / rho (about 0.49 above the probe), i.e. bobbing at the surface; the 900 cards lift him out faster, the 1100
+  one (state 151) sinks.
+- **The scripts' "in water" is the water zones, not the depth.** GAM_UpdateWaterZones_00437900 (from
+  MEC_CombineZones_004c0fb5, at the end of every integrator) stores the environment's water flag (MecEnv +0x28) at the
+  origin (zone kind 0, Perso3dData +0x1A8) and at each **sample point of the playing state** (State +0x34: entries
+  {.., +0xC point in the perso's axes, +0x18 kind 1-6, +0x1C value}; Ed standing: z 2.0 / 1.7 / 0.8 / 0.55 / 0.35 /
+  0.1, swimming 1.4 .. -0.2, flying along the tilted body); dynamics +0x2EC = the value kinds 1..6 share, 3 when they
+  differ, kind 0's without points. COND 70 InWater = combined 1, or 3 with point 3 or 4 in water; 71 = in water with
+  point 1 (the head) out; 72 = in water with point 1 in; 73 ZoneTest = not in water, or point 2 out (without one: not
+  72); 74 NotInAnyZone = no kind in water; 69 = falling (card type 4 / 10, no contacts, velocity z <= 0). Ed's water
+  reflex R3 / R14 and behaviours B2-B10 run on these. EnvHeightAbove only places the splash perso.
+- **Card type 7 (surface swimming 5 / 18 / 19, also the portal walk-in 228, the skier's finish 321): kinematic.**
+  Request handler DNM_RequestType7_004b17d1 = the walk handler (card +0xC / +0x14 speed range, +0x10 / +0x18 turn
+  range); the integrator sub-steps (5 ms with dynamics flag 0x20000) DNM_Type7Forces_004c831a: with the card's gravity
+  factor (+0x1C) 0, as on all of Ed's type 7 cards, the velocity is kept and the request's motion added (constant
+  height); dynamics +0x70 >= 0 (no move request) pulls towards a plane (+0x74 normal, +0x8C stiffness, +0x90 offset);
+  other factors use a height spring (FUN_004c32f6, card +0x20 / +0x24: 630 / 981 on Ed's cards, not read).
+- **Ported (2026-10-24):** .ttai **v8** appends the water planes (ai.water_planes: z, the environment below, the
+  bounding boxes of the sectors listing the surface) and the per-state water sample points (ai.water_points); all 21
+  game levels regenerated (the glTF test levels stay v7). Core: tc_mec_env_at (the plane among those whose boxes hold
+  the point that is nearest in height: stands in for the engine's sector choice where boxes overlap, e.g. sud0's top
+  pool above the falls' foot), tc_mec_swim_* (type 1: handler, forces, pose), the kinematic type 7 path in tc_ed_ai,
+  the zones before every AI step (tc_ed_ai water_zones), EnvHeight / EnvHeightAbove (FUNC 51 / 52), COND 69-74; the
+  swim and flight poses draw head first. Air density 1.3 everywhere (was 1).
+- **Checks:** `make mechcheck` (no data): the 990 card floats up and bobs at the surface (z -0.60 .. -0.44), 1100 sinks
+  at the drag's terminal 0.99 u/s, a thrust along +x swims there head first; the same at 30 and 144 fps.
+  `AI_START=-8.6,24.6,-6 AI_SCRIPT=swim aicheck files/out/ttlv sud0` (the river, 6 deep): Ed drops in, his water
+  reflex takes over (B4 / R14, state 7, type 1), he comes up and treads water at the surface; Up: state 5 (type 7),
+  swims at ~4 u/s along the surface, stops at the bank, turns with Left; Jump leaps out and back in. wander: bar /
+  Totalski unchanged, Land / north within noise, sud0 different (Ed now enters the river).
+- **Not done / approximations:** the type 1 post-collision angle re-read; type 7's carried velocity (dropped) and plane
+  spring; the water flag of every exported plane is taken as 1 (true for all seen); Land's LAND_MORT liquid is also a
+  water environment (+0x2C 255.0 there: meaning unknown, nothing in the AI reads it); diving / surfacing transitions
+  are whatever Ed's scripts do with the zones (checked only by the aicheck run above); the swim collision body (the
+  exe sweeps no card, flags 0x10 / 4; the port uses tc_player's capsule).
+
+### ZDx zones, read with types (2026-10-24, typing step 3; COND_13 for portals ported, see the last bullet)
+- **List numbering** (GAM_ZoneList_00431520): 0 = ZDD (collide set +0), 1 = ZDM (+8), 2 = ZDE (+4), 3 = ZDR (+0xC);
+  ai.py's order of the pointers is right, the exe's index differs. GAM_ActiveZones_004316d0(list, collset) = the list's
+  activation entry for the playing state; its zone index entries (+0xC) pick zones (GAM_ZoneGeo_0041f5a0 -> the zone
+  entry's GeoCollide). The skier's CollectNearby(list, 6, mask) tests his **ZDE** zone 6 (not ZDM).
+- **COND 13 / 14 / 15 (the zone tests: ski holes SYM_GenTrou, GenTransitionSubMap teleports, ...):** handler
+  COND_13Etc_00497d70 (13..17 by the node's own index). 13 (a, zone k, b): b's origin inside zone k (1-based) of a's
+  **ZDD** list (GAM_ZoneHolds_00420280 mode 0); 14: the same with a zone carried by one of a's channel objects (p3d
+  +0x164 list, kinds 0xB / 0x14); 15 (a, b): inside any active ZDD zone of a or of its channel objects
+  (GAM_AnyZoneHolds_004202c0); 16 / 17: AI_00490250 (not read). The test (GAM_ZoneContains_0041f210): b's origin
+  through the inverse of the zone's matrix (a's world matrix), then GEO_PointInZone_00462f60: triangle zones by
+  counting crossings of a ray along +z (odd = inside, FUN_00468070), sphere zones (type 7) and boxes directly.
+- **Ported for portals (2026-10-24): .ttai v9.** ai.portal_zones: a portal whose perso's scripts test the player with
+  COND_13(Me, k, player) carries its ZDD zone k (spheres / boxes in the perso's axes; triangle zones are not exported)
+  and the inverse of its world matrix; tc_ed_ai's portal_inside() captures (and re-arms) on "the player's origin inside
+  the zone" instead of the radius, which stays the fallback. Totalski: 13 of 22 portals (the 11 holes, the 2 finish
+  arches); Land / sud0 / north: none, unchanged. The holes' real zones are boxes up to 290 x 130, from below the opening
+  to as much as 23 above it (7 of the 11 hold their own origin), not the radius-8 stand-in; the hole script also sets
+  the skier's dsg31 := its dsg1 (a second point beside the respawn spot; now an op) and dsg32 := its dsg2 (a perso: not
+  expressible as an op). `make portalcheck`: every hole captures at its box centre and not 5 above it.
+  Not ported: COND 14 / 15 (zones on channel objects, any active zone), moving zone persos (posed at frame 0),
+  GenTransitionSubMap (its scripts are still skipped by portals()).
+
+### Footsteps by floor material (2026-10-24, typing step 3): decoded from the data, ported
+- **The mapping: step sound id = 0x390002 + the floor's sound type** (GameMaterial +8; -1 = none). The footstep switch
+  is Bnk_0 event 49 (id 0x390000, resource 46 of type 8 whose record holds 0x18 = 24: the switch's entries); the step
+  resources 0x390003..0x390019 are 23 sounds (EsEarthS / H, EsGrassS / H, EsLeafS / H, EsSandS / H, EsStoneS / H,
+  EsTileS / H, EsWaterS / H, EsWoodS / G, EsGrate, EsMetal, EsMud, EsSnow, EsIce, EsFire, EsCarpet) plus the generic
+  Edpasgen (0x39001C). No constant of them is in the code (the switch is data); the offset was settled against the
+  textures of the floors carrying each value: Totalski 20 on its NG_* snow = EsSnow and 3 on NG_HERB grass = EsGrassS,
+  north 23 on its TAPIS carpets = EsCarpet, bar 21 on COKICE ice = EsIce and 19 on orange pulp = EsMud, north 10 on
+  flagstones = EsStoneH. The S / H variants are separate values (the material picks one). Ed's walk / run animations
+  queue event 49 at each foot contact (right after the type 3 events 14 / 15). Where the engine reads the switch value
+  (the ground contact's material, presumably) is not located; the port uses the floor triangle under the origin.
+- **Port:** level.py collision(sounds=True) (each triangle's GameMaterial +8); **.ttai v10** appends it per collision
+  triangle (the .ttlv's order; tc_tri.source keeps each triangle's input index, since degenerate ones are dropped);
+  tc_ed_ai footsteps(): a queued event 49 becomes TC_AI_STEP_SOUND (256) + the floor's type 1..23, else stays the
+  generic step; sfx.py extracts the 23 steps and writes events.tsv rows 257..279 (the frontends need no change: they
+  play by row). `AI_SCRIPT=wander aicheck`: Land 153 steps on type 1 (EsEarthS) ..., north on 2 / 4 / 9, sud0 1 / 3 / 8;
+  bar's main floor has no type (generic, as in the game presumably).
+
+### The camera, first look (2026-10-24; next)
+- The camera is the fix perso StdCam (perso-in-fix 1): 35 behaviours + 25 reflexes, 3555 primitive uses of 86
+  primitives, 37 of them unnamed (mostly camera procedures PROC 156-199, e.g. PROC 184 x 187, 173 x 114, OP 24, FUNC
+  58 / 81 / 76); its 2 states use **card type 3** = the camera mechanics: DNM_IntegrateType3_004b2900 (only when a
+  request set a handler mode) -> FUN_004b3d33(.., dyn, work, so, &work->unk_50, .., &work->wanted, dt) then
+  FUN_004b533c(dyn, so, .., proposal [0x11] + 4, work, dt); request handler DNM_RequestType3_004b3810 (140 lines).
+  Ed reads and writes its dsgvars all the time (NOTES "AI interpreter": Dot(camera, dsg20) gates the idle; the arches
+  drive dsg44 / 89-93 / 39).
+- **Plan:** (1) name the camera primitives from typed/ai/ (their typed decompiles exist); (2) read FUN_004b3d33 /
+  004b533c with types (target, distance, angles, collision) into a tc_mec_camera; (3) let the core run a second perso's
+  AI (tc_ai already holds the camera's dsgvars as an "other"): the camera's scripts + type 3 mechanics each frame,
+  the frontends taking the camera matrix from it; (4) compare with the viewer's current follow camera.
+
+### Swimming refined (2026-10-24): diving fixed, the water sheen
+- **Diving was broken by a missing primitive.** Ed's underwater reflex R8 leaves the water (-> B5, the jump) when
+  `VecZ(FUNC_102((0, 1, -1))) > EnvHeightAbove + 0.55`; FUNC 102 / 103 (FUNC_VecLengthEtc_0049ab10 cases 0x66 / 0x67)
+  are point LocalToGlobal / GlobalToLocal through the perso's **world matrix** (FUN_0047b2f0, with translation), which
+  the port lacked: the result's z of 0 threw Ed out of the water the frame he dived. Ported with the drawn axes
+  (tc_ai_perso.has_axes / axes, host-fed from tc_ed_ai_model_matrix: tilted while swimming / flying).
+  `AI_START=-8.6,24.6,-6 AI_SCRIPT=swim aicheck files/out/ttlv sud0`: Action + Up dives (B7 / R19, state 24, then B9 /
+  R8 state 6), Ed swims down to the bed (-11.3) and along it at ~3 u/s; idle he floats back up, upright.
+- **Water surfaces** (user: they should have a sheen over the texture). Their material (sud0's rainbow
+  O_ZARBI_AUNTXY): specular 0.9 (the shine), UV scrolling, ambient 0.2; the words after the surface's two matrices
+  are 0 (no wave parameters). The .ttlv groups static geometry by material, so tc_viewer marks a mesh a water material
+  (tc_viewer.mesh_water, TC_FLAG_WATER on its draws) when one of its triangles lies flat at a .ttai v8 water plane's
+  height inside its sector boxes (sud0: 2); Shaders.metal / sdl level.frag water_sheen() add, on upward faces only (the
+  falls share the material), a Fresnel sky reflection and the light's highlight over moving procedural ripples, and
+  raise the alpha of blended water. The look is a stand-in for the engine's (its water rendering, the SRF module, is
+  not decoded); **not seen yet** (the Metal shader compiles; the SDL GLSL is unbuilt here: no glslangValidator).
+  Fixed the same day (user: from underwater the whole surface was one solid colour): seen from below, the view vector
+  points down, so the Fresnel term was 1 (full sky) and the alpha forced opaque; now no sheen from below (eye under the
+  fragment), the texture's own alpha, the world above showing through.
+
+### Dry sectors inside water boxes (.ttai v11, 2026-10-24)
+- User: sud0's way into Doc's cave counted as water (Ed swam in the air). Cause: water_planes bounds a surface by the
+  geometry boxes of the sectors listing it; the river's box [-169..-87, -18..75, -23..16] (surface z -5.2) overlaps the
+  cave entrance's own sector [-181..-134, 11..39, -16..-4], which lists no surface. The exe asks the perso's sector.
+- Port: v11 appends the boxes of sectors without surfaces that are not wholly inside a water box (ai.dry_boxes);
+  tc_mec_env_at: a dry box holding the point and smaller than every water box holding it -> no water. A first version
+  (any dry sector, smallest box decides the plane too) lost 11 of sud0's 63 visible water triangles (sector 9, inside
+  the river box) and one in Land: rejected. Checked: every visible water triangle keeps water below it (sud0 63/63,
+  cock01 4/4, cavedoc 4/4; Land 2/3 as before), the cave points dry, aicheck swim / wander on sud0 / Land / cock01
+  identical to v10. Proper fix: the exe's sector choice (who sets SectorInfo +4), not read yet.
+
+### Sliding stages: wrong voices, the wall stumble (2026-10-24, open; start here next)
+- **The user, from the original:** at the speed-up arrow Ed goes "YIPEEE!"; at the jump (spring star) "WOAH!"; after
+  falling into a hole, at the respawn, a gasp. Riding into a wall fast: he stumbles (crash animation) and keeps
+  going, all through Totalski and skymap; skymap's pillars and fire kill him (not a stumble).
+- **Sound references are patched at load (the cause of the wrong voices).** Every level has a `<level>.snd` (sna.decrypt;
+  the notes' "levels have no .snd" was wrong): u32 pairs {event, snapshot address of the reference}. The engine
+  writes the event into the reference, so the pointer values in the snapshot (0x9bdfe0c + 0x20 x index, what
+  sfx.event_index reads) are stale outside the fix. Values < 0x100 = Bnk_0 indices; larger = event ids in other banks.
+  TotalSki.snd: 25 entries; the skier's references (level block 0xd3b0d0c..: 0xd3dd194, 0xd3defb4, 0xd3e514c,
+  0xd3fefbc, 0xd3fefd0) are ids 0x350000 / 0x350000 / 0x330000 / 0x330000 / 0x340000, i.e. not Bnk_0's 65 ed15a.wav
+  that the port plays on the spring. 0x330000 is Bnk_68's only event; 0x340000 / 0x350000 / 0x450000 were not found by
+  id in any bank: the level's bank list is probably TotalSki.bls (4 bytes, encrypted?: not read). vEdyoupi.wav
+  ("youpi" = the YIPEEE) is in Bnk_0 and Bnk_66. **Fix:** resolve T34 nodes and animation sound events through the
+  level's .snd by the reference's address, extract the referenced level banks (sfx.py), number their events after
+  Bnk_0's in events.tsv; check against the three cues above. Applies to every level (all have a .snd).
+- **The wall stumble is not found statically.** Scripts: the skier's crash B9 (state 274, a hit point, then riding) has
+  no wall / speed-loss trigger (only obstacle zones, trees via PROC_237, dsg25 written by NBD_PRESSZTOSTART); the ski
+  mechanics change no state; card +0x18 / +0x1C (6000 / 1000 on the riding card) are read by none of the decoded ski
+  code. **Next step: observe the original.** GAM_PlayAnim_00415c00 prints every state change with OutputDebugStringA
+  ("change state trame", "Next state trame") when the byte at 0x4EC6AC is non-zero: patch it (or poke it at run time)
+  and run under Wine with WINEDEBUG=+debugstr, ride into a wall, read which state plays; then trace its trigger.
+- **Stopgap in the port (2026-10-24, not from the exe):** tc_ed_ai ski_unstick(): a wall hit from above 8 u/s that
+  leaves under 30 % of the speed keeps half of it along the wall (a dead-on hit: along the wall towards the drift) and
+  puts the skier 5 cm off it, so he slides on instead of sticking. No animation (forcing B9 would cost a hit point).
+  Replace it once the original's reaction is traced. Not exercised by the scripted aicheck runs (they never hit a wall).
+- **Second stopgap (same day; user: stuck at a specific slope angle, e.g. Totalski's end ramp to the star platform):**
+  without a card the collide classes are ground <= 45 deg, steep slope <= 60, wall beyond, while the ski forces only
+  call a face steep beyond 70: a 60-70 deg face was a wall (the wall response's x/y damping f(2 vx^2, 36) ate the speed
+  each contact) yet not steep enough for the forces to slide him: pinned. tc_mec_walk.slope_cos (set to cos 70 by the
+  skier's ski_move) makes such faces slopes (no softening without a card). Totalski's end area: 28 faces at 60-70 deg,
+  all snow (grip 0: friction is not the cause). skymap's 60 s wander now travels 1847 instead of 756. Whether the exe
+  classifies them so for the skier is not checked (its sphere path passes no card either: defaults); revisit with the
+  trace of the original.
+- **Third stopgap, reworked (same day; user: still trapped at sharp angles, e.g. the house exit near the start):**
+  ski_unpin() is now a no-progress detector (under 0.75 u in 0.4 s with a wall touched within 0.5 s, not on flat ground):
+  corners flicker between wall and no contact, which reset the first version's timer, and a board still facing the
+  corner rode straight back in. The rescue turns the board to the most open of 16 directions (rays at 0.2 / 0.6 / 1.4)
+  and sends him off at 7 u/s; repeated rescues within 2 u escalate (moved up to 2 u out; the third lifts 1.2 first).
+  Measured with a scratch trap finder (random snow drops, random headings, 5 s of random steering; stuck = under 2 u in
+  the last 1.5 s): Totalski wall traps 90 -> 15 of 798 rides, skymap 2 -> 0 of 53; the scripted Totalski wander now
+  travels 1001 instead of 702. Left: closed pockets (e.g. a 4 x 5 u walled room at (121, -315, 123) beside the start, all
+  static geometry), stops on the flat finish (not traps). Next pass on the sliding mechanics: start from here.
+- **Footsteps (same day, user):** in the original Ed's own step (event 49) plays with the floor's step sound on top, so
+  footsteps() now adds TC_AI_STEP_SOUND + v next to event 49 instead of replacing it.
+- Also found: FUNC 104 Report234 = dynamics +0x2E4 = the environment's +0x2C: 255 = a deadly environment (Land's
+  LAND_MORT liquid): the skier loses a life (state 206), Ed underwater goes to B61.

@@ -56,7 +56,8 @@ State: ptr next, ptr prev, ptr hdr, ptr anim_ref (0x0C), {h, t, n} transitions,
 ObjectList: ptr next, ptr prev, ptr hdr, ptr entries (0x0C), ptr entries_copy, u16 n (0x14), u16.
   Entry (0x14): ptr scale (f32[3], null = 1), ptr physical_object, u32, u16, u16, u32.
 AnimationReference (TT, 0x2C): u32, u16 n_frames, u8 speed, u8 n_channels, ptr events,
-  f32[3], ptr morph, u32 x2, u16 anim_index, u8 n_events, u8 transition, ptr a3d (0x28).
+  u32 n_events (0x0C; raymap's f32[3] here is wrong: tools/exe/types.h AnimRef), u32 x2, then per raymap ptr morph,
+  u32 x2, u16 anim_index, u8, u8 transition (unchecked), ptr a3d (0x28).
 A3D (TT): header 0x34 = u16 speed, n_vectors, n_quaternions, n_hierarchies, n_ntto,
   n_num_ntto, n_channels, n_frames, n_keyframes, n_events, ... (rest unused), then packed arrays:
   vectors f32[3]; quaternions i16[4] (x, y, z, w; |q| = 0x4000); hierarchies {i16 child,
@@ -642,28 +643,29 @@ class LevelData:
             ne, = un('I', zdr, 0x14)
             pv, pt = lv.ptr(zdr, 4), lv.ptr(zdr, 0x18)
             verts = [un('3f', pv, 12 * i) for i in range(nv)] if pv else []
-            tris, floors = [], []
+            tris, floors, sounds = [], [], []
             for i, t in enumerate(un(f'{ne}H', pt) if ne and pt else ()):
                 el = lv.ptr(lv.ptr(zdr, 0x1C), 4 * i)
                 if t in (7, 8) and el is not None:
-                    self.collide_primitives(el, t, verts, tris, floors)
+                    self.collide_primitives(el, t, verts, tris, floors, sounds)
                     continue
                 if t != 1 or el is None:
                     self.collide_skipped[t] = self.collide_skipped.get(t, 0) + 1
                     continue
                 nt, = un('H', el, 4)
                 ti = lv.ptr(el, 8)
-                floor = self.floor_material(lv.ptr(el))
+                floor, sound = self.floor_material(lv.ptr(el)), self.floor_sound(lv.ptr(el))
                 for k in range(nt if ti else 0):
                     tri = un('3h', ti, 6 * k)
                     if 0 <= min(tri) and max(tri) < nv:
                         tris.append(tri)
                         floors.append(floor)
-            out = (verts, tris, floors) if tris else None
+                        sounds.append(sound)
+            out = (verts, tris, floors, sounds) if tris else None
         self.collide_cache[po] = out
         return out
 
-    def collide_primitives(self, el, t, verts, tris, floors):
+    def collide_primitives(self, el, t, verts, tris, floors, sounds):
         """Collide element type 7 (spheres) or 8 (axis-aligned boxes, in the object's axes) -> triangles appended to
         verts / tris / floors. Element = {u32 n, ptr entries, entries...} (the entries follow inline): sphere entry
         (12 bytes) {u16 centre vertex, u16, f32 radius, ptr game material}; box entry (8 bytes) {u16 min vertex, u16
@@ -689,12 +691,19 @@ class LevelData:
                 if c >= len(verts) or not r > 0:
                     continue
                 faces = sphere_triangles(verts[c], r)
-            floor = self.floor_material(gm)
+            floor, sound = self.floor_material(gm), self.floor_sound(gm)
             for f in faces:
                 base = len(verts)
                 verts.extend(f)
                 tris.append((base, base + 1, base + 2))
                 floors.append(floor)
+                sounds.append(sound)
+
+    def floor_sound(self, gm):
+        """GameMaterial +8: its sound type, the footstep switch's value (step sound id 0x390002 + it: 1 EsEarthS ..
+        20 EsSnow, 21 EsIce, 23 EsCarpet; docs/NOTES.md "Footsteps"), 0xFF without one."""
+        v = self.un('I', gm, 8)[0] if gm else 0xFFFFFFFF
+        return v if v < 0xFF else 0xFF
 
     def floor_material(self, gm):
         """GameMaterial -> (grip, rebound) from its mechanics material (+4; 0x1C bytes, 5 floats read
@@ -705,15 +714,16 @@ class LevelData:
         _, rebound, grip = self.un('3f', mm)
         return (grip, rebound)
 
-    def collision(self, floors=False, skip_decals=False):
+    def collision(self, floors=False, skip_decals=False, sounds=False):
         """World-space collision triangles [((x, y, z) * 3)]: every static IPO's collide set, plus
         perso collide meshes posed at frame 0 of their initial state (sud0's lava-pit platforms,
         doors, ...; moving persos are treated as static). Ed's family has none.
-        floors=True returns (triangles, per-triangle (grip, rebound) or None).
+        floors=True returns (triangles, per-triangle (grip, rebound) or None); sounds=True (triangles, floors, per-triangle
+        floor_sound).
         skip_decals: leave out collide sets that are a single flat quad facing up (2 triangles, normal z > 0.5): the
         ski slopes' speed arrows, spring stars and red direction arrows lying on the snow, which the skier rides over
         (their effects come from trigger persos next to them, ai.ski_portals); as collision their edges stopped him."""
-        out, out_floors = [], []
+        out, out_floors, out_sounds = [], [], []
 
         def decal(col, m):
             if len(col[1]) != 2:
@@ -735,6 +745,7 @@ class LevelData:
             flip = mat_det(m) < 0
             out.extend(tuple(verts[i] for i in (t[::-1] if flip else t)) for t in col[1])
             out_floors.extend(col[2])
+            out_sounds.extend(col[3])
         for so in self.walk():
             if so.collide:
                 add(so.collide, so.world)
@@ -743,6 +754,8 @@ class LevelData:
                 for o, m in p.anim.pose(0):
                     if o in p.collides:
                         add(p.collides[o], mat_mul(p.world, mat_mul(m, p.objects[o][1])))
+        if sounds:
+            return out, out_floors, out_sounds
         return (out, out_floors) if floors else out
 
     def family_states(self, fam):

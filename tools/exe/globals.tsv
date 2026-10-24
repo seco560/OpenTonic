@@ -1,0 +1,33 @@
+# Globals of TonicTrouble.exe, typed and labelled by tools/ghidra/ApplyTypes.java (types from tools/exe/types.h).
+# address<TAB>C declaration<TAB>expected value or -<TAB>note. A float constant is labelled only when memory holds the
+# expected value (within 1e-6 relative), else ApplyTypes reports it and leaves it alone.
+008c2240	MecHandlerPair g_mec_handlers[13]	-	filled by GAM_0042a7e0 at engine init; called by GAM_0042b0e0 (fn0) and GAM_0042aff0 (fn1)
+008bd098	u32 g_timer_ms	-	GAM_0041cc90: the timer delta (TMR_Timer_00484fa0), ms; the animation clock (GAM_PlayAnim_00415fb0)
+008bd0dc	u32 g_mec_ms	-	GAM_0041cc90: g_timer_ms clamped to 1..64; the mechanics' dt = g_mec_ms x k_ms_to_s
+004d2254	float k_ms_to_s	0.001	GAM_0042aff0 / b0e0: dt
+004d2ee8	float k_mec_frame	0.0333333	FUN_004aa6af: the re-snap distance scales by (dt - 1/30) x 30 + 1 beyond a 1/30 s frame
+004d2eec	float k_mec_fps	30
+004d3000	float k_cos45	0.70710677	MEC_004bc477 class defaults and head-on tests
+004d3004	float k_minus_cos45	-0.70710677
+004d3008	float k_one	1
+004d300c	float k_zero	0
+004d3010	float k_contact_push	0.01	MEC_004bc477: target += 0.01 n after a response
+004d3014	float k_two	2
+004d3018	float k_minus_one	-1
+004d301c	float k_rising	0.35	MEC_004bb904: v . up above it (and head-on) rebounds instead of sliding
+004d3050	float k_half	0.5	FUN_004c39f0: kinetic energy
+004d3054	float k_rest_energy	0.025	FUN_004c39f0: below it the velocity is dropped
+004d3058	float k_max_speed_sq	10000	FUN_004c39f0: |v| <= 100
+004e43f8	AINodeFn g_ai_node_handlers[41]	-	by node type (AINode.type); AI_EvalNode_0048e930
+004e5a48	AIProcEntry g_ai_procedures[294]	-	PROC (tools/exe/ai_names.tsv)
+004e6378	AIEvalFn g_ai_keywords[10]	-	KW
+004e63a0	AICondEntry g_ai_conditions[111]	-	COND
+004e6718	AIFuncEntry g_ai_functions[165]	-	FUNC
+004e6c40	AIEvalFn g_ai_operators[28]	-	OP
+004e6cb0	AIMetaEntry g_ai_meta_actions[43]	-	META (then a string: 43 entries)
+004e6fa0	AIFieldEntry g_ai_fields[15]	-	FIELD
+004e7058	AIValueKind g_ai_value_kinds[5]	-	AIFieldEntry.kind: 0 int, 1 float, 2 vector, 3 reference, 4 value type 3
+0051b01c	Intelligence *g_ai_intel	-	the running intelligence (AI_RunSchedule_0048ec60 sets it)
+0051b01a	u8 g_ai_script	-	0 = the schedule, k + 1 = rule script k (meta-action slots are keyed by it)
+0051b01b	u8 g_ai_meta_ran	-	set by the meta-action node handler; AI_RunIntelligence_0048eb20 returns it
+004dc9bc	float k_floor_cos	0.93	MEC_SweepZones_0043bff0: a floor-pass (mask 1) hit counts only with normal.z >= it

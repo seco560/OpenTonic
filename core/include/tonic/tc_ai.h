@@ -60,6 +60,8 @@ typedef struct tc_ai_state {
     uint32_t root_first;
     uint16_t root_count;
     uint16_t spheres;            /* v4: mechanics collision spheres (ZDM): index into model->sphere_sets, or none */
+    uint16_t water_points;       /* v8: the state's water sample points (State +0x34): index into
+                                    model->water_point_sets, or none */
     uint32_t sound_first;        /* v7: the animation's sound events, model->sounds[sound_first ..] */
     uint16_t sound_count;
     uint16_t transition_count, prohibited_count;
@@ -103,9 +105,15 @@ enum {
     TC_AI_POP_LEVEL        /* change level to names[b]; c != NONE: arrive at place names[c], camera at names[a] (PROC_29) */
 };
 typedef struct tc_ai_portal_op { uint8_t op, kind; uint16_t a; uint32_t b, c; tc_vec3 v; } tc_ai_portal_op;
+/* v9: a zone primitive in the zone perso's axes (ZDD; COND_13): kind 7 sphere (a centre, b.x radius), 8 box (a min, b max). */
+typedef struct tc_ai_zone_prim { uint32_t kind; tc_vec3 a, b; } tc_ai_zone_prim;
+#define TC_AI_MAX_ZONE_PRIMS 8
 typedef struct tc_ai_portal {
     tc_vec3 position;
-    float radius;
+    float radius;                /* the capture distance, unless the portal has a zone */
+    uint8_t zone_count;          /* v9: the capture is the player's origin inside the perso's ZDD zone (COND_13) */
+    float zone_inverse[12];      /* row-major 3x4: world -> the perso's axes */
+    tc_ai_zone_prim zone[TC_AI_MAX_ZONE_PRIMS];
     float rows[9];               /* the portal's axes, row-major (its local -Y faces the way in) */
     uint16_t perso;              /* as perso nodes (level perso k + 1) */
     uint8_t fire;
@@ -117,6 +125,10 @@ typedef struct tc_ai_portal {
 /* A sound event at an animation frame (v7). event = global sound event (Bnk_0's event index; tools/ttre/sfx.py). */
 typedef struct tc_ai_sound { uint16_t frame, event; } tc_ai_sound;
 #define TC_AI_MAX_SOUNDS 16
+/* The footstep switch (Bnk_0 event 49, id 0x390000) and the step sounds by floor sound type v (1..23): the sound events
+ * the core reports for them are TC_AI_STEP_SOUND + v (tools/ttre/sfx.py writes those rows into events.tsv). */
+#define TC_AI_FOOTSTEP_EVENT 49
+#define TC_AI_STEP_SOUND 256
 /* A level perso by instance name (lowercase): PROC_29 arrivals ("heg_positionedland"). */
 typedef struct tc_ai_place { char *name; tc_vec3 position; float heading; } tc_ai_place;
 /* One screen transition effect (fix.gpt 0x12a8): fields = effect +0x10..+0x30 (A, the mask wipe: start, end, current,
@@ -130,6 +142,25 @@ typedef struct tc_ai_transitions {
 
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
+
+/* .ttai v8: a water surface (docs/NOTES.md "Swimming"): a horizontal plane at z with the mechanical environment below
+ * it, counted only inside the bounding boxes of the sectors that list it (the exe asks the perso's sector; the port
+ * has no sectors). boxes = box_count x {min xyz, max xyz}. */
+typedef struct tc_ai_water {
+    float z;
+    float gravity, density, drag;    /* the environment below: g, density (+0x14, water 1000), drag coefficient (+0x10) */
+    uint16_t box_count;
+    tc_vec3 *boxes;
+} tc_ai_water;
+
+/* v8: a state's water sample points (State +0x34 list, GAM_00437900): kind 1..6 (the head down to the feet) and a point
+ * in the perso's axes; each frame the water flag of the environment there (MecEnv +0x28) is the zone value of its kind. */
+#define TC_AI_MAX_WATER_POINTS 8
+typedef struct tc_ai_water_points {
+    uint8_t count;
+    uint8_t kind[TC_AI_MAX_WATER_POINTS];
+    tc_vec3 point[TC_AI_MAX_WATER_POINTS];
+} tc_ai_water_points;
 
 typedef struct tc_ai_model {
     uint32_t node_count;
@@ -168,6 +199,17 @@ typedef struct tc_ai_model {
     tc_ai_transitions transitions;
     uint32_t sound_count;        /* v7: the states' animation sound events, by state (tc_ai_state.sound_first) */
     tc_ai_sound *sounds;
+    uint16_t water_count;        /* v8 (0 before) */
+    tc_ai_water *water;
+    uint16_t dry_box_count;      /* v11: the boxes of sectors without water (min, max pairs); the smallest box holding a
+                                  * point decides (tc_mec_env_at) */
+    tc_vec3 *dry_boxes;
+    uint16_t water_point_set_count; /* v8 */
+    tc_ai_water_points *water_point_sets;
+    /* v10: per collision triangle (the .ttlv's order, tc_tri.source) its floor's sound type (GameMaterial +8; 0xFF
+     * none): the footstep switch picks step sound 0x390002 + it (docs/NOTES.md "Footsteps"). */
+    uint32_t floor_sound_count;
+    uint8_t *floor_sounds;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
@@ -213,6 +255,16 @@ typedef struct tc_ai_perso {
     float heading;               /* as tc_player: local -Y points along (sin, -cos) */
     uint32_t contacts;           /* TC_AI_CONTACT_* */
     float report_2bc, report_2c0; /* dynamics +0x2BC / +0x2C0 (FUNC 91 / 92): in flight the lagged attack / bank, rad */
+    bool has_axes;               /* host-fed: the perso's drawn axes (its world matrix's columns: tilted in flight and
+                                    swimming); FUNC 102 / 103 (point LocalToGlobal / GlobalToLocal) use them */
+    tc_vec3 axes[3];
+    float env_depth;             /* dynamics +0x2E0 (FUNC 51 EnvHeight; 52 adds the perso's z): how far below a water
+                                    surface, 0 out of the water (host-fed: tc_mec_env_at, or the swim forces' probe) */
+    /* The water zones (host-fed, GAM_00437900 / MEC_004c0fb5): per kind 0..6 the water flag at the origin (0) and at the
+     * playing state's sample points (1..6), -1 = no such point; zone_combined = the value all present kinds 1..6 share,
+     * 3 when they differ, kind 0's without points. COND 70..74 read them. */
+    int8_t zone[7];
+    int8_t zone_combined;
     tc_vec3 *other_positions;    /* per model->others (the camera's eye for role 1) */
     const char *level_name;      /* LevelIs, compared case-insensitively ("bar") */
     uint32_t global_flags;       /* GlobalFlag?(n) (abilities?): bit n; all set by default */
