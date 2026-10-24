@@ -197,7 +197,7 @@ def dump(ai, path, names=None):
   v6 (appended after the v5 trigger table): portals, places, screen transitions (docs/PORTALS.md):
       u16 n_portals, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major as stored), u16 perso
           (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the screen is covered),
-          u8 0, u16 fire_dsg, u16 0, i32 fire_value, u16 n_capture, u16 n_fire, (n_capture + n_fire) x op
+          u8 0, u16 fire_dsg, u16 0, i32 fire_value (fire 2: never, capture only: the player's scripts do the rest), u16 n_capture, u16 n_fire, (n_capture + n_fire) x op
           { u8 op, u8 kind, u16 a, u32 b, u32 c, f32 v[3] } } (ops: ai.POP_*, see portals())
       u16 n_names, n x { u16 len, bytes }: level and place names the ops refer to (lowercase)
       u16 n_places, u16 0, n x { u16 len, name bytes (lowercase), f32 position[3], f32 heading }: every level perso
@@ -205,12 +205,16 @@ def dump(ai, path, names=None):
       transitions: u16 cover threshold, u16 cover range, u16 reveal threshold, u16 reveal range (random r in
           [0, range]: r > threshold -> effect B), 4 x { u16 n_variants, u16 0, f32 fields[9] (effect +0x10..+0x30),
           n_variants x { u16 len, texture path relative to the .ttai } } for cover A, cover B, reveal A, reveal B
+  v7 (after the v6 transitions): sounds (tools/ttre/sfx.py, docs/NOTES.md "Sound events"): u32 n_rows, n_rows x
+      { u16 frame, u16 event (global sound event = Bnk_0 event index) }: the type-0 events of the states' animations;
+      then per state { u32 first row, u16 n_rows, u16 0 }. Sound event nodes (type 34, PlaySound3D's argument) hold the
+      event index too.
   v2: u16 n_cards, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw:
       mostly f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
 """
 import re
 
-TTAI_VERSION = 6
+TTAI_VERSION = 7
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
@@ -509,7 +513,7 @@ def portals(ai, strings):
     d, lv = ai.d, ai.lv
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
     if ai.perso != fix_ed:
-        return []
+        return ski_portals(ai, strings)
     persos = {p.loc: k + 1 for k, p in enumerate(d.persos())}
     normal = {ref: int(n[1:]) for ref, n in ai.beh_names.items() if n.startswith('B')}
     reflex = {ref: int(n[1:]) for ref, n in ai.beh_names.items() if n.startswith('R')}
@@ -687,6 +691,47 @@ def portals(ai, strings):
     return out
 
 
+def ski_portals(ai, strings):
+    """Totalski and skymap, played as the skier: a stand-in for the game's finish (there the arches capture the skier by a
+    zone test and his own scripts walk him in, B7, and change level, B22, after the finish markers' cutscene-like
+    sequence). The holes (SYM_GenTrou) work as in the game, their zone test taken as a radius of 8 (its size is not
+    decoded): they set the skier's respawn point and fall flag, his own scripts do the rest. The arch named *Retry teleports the skier back to the start of the run (cover, reveal); the others
+    lead to sud0 at the place the skier's B22 names for this level. Same records as portals()."""
+    d, lv = ai.d, ai.lv
+    persos = {p.loc: k + 1 for k, p in enumerate(d.persos())}
+    arrival = {'totalski': ('heg_positionedtotalski', 'heg_positioncamtotalski'),
+               'skymap': ('nbd_positionedrevientskymap', 'nbd_positioncamrevientskymap')}.get(lv.name.lower())
+    start = d.fix_matrices.get(ai.perso) or next((p.world for p in d.persos() if p.loc == ai.perso), None)
+    if not arrival or start is None:
+        return []
+    import math
+    sid = lambda s: strings.setdefault(s.encode(), len(strings))
+    out = []
+    for p in d.persos():
+        fam, model, inst = d.perso_names(p.loc)
+        if model == 'SYM_GenTrou':
+            # A hole (its zone test, COND_13): the skier's respawn point := its own dsg0, dsg22 := 0, dsg29 := 1 (fell in);
+            # his reflexes R1 / R3 then cover the screen and B10 respawns him there (SetPositionFrom(KW_5, dsg30)).
+            spot = perso_dsg(d, p.loc, 0)
+            if spot and spot[0] == 'vec':
+                rows = (p.world[0:3], p.world[4:7], p.world[8:11])
+                ops = [(POP_SET, 3, 30, 0, 0, tuple(spot[1])), (POP_SET, 0, 22, 0, 0, (0, 0, 0)),
+                       (POP_SET, 0, 29, 1, 0, (0, 0, 0))]
+                out.append((tuple(p.world[3::4][:3]), 8.0, rows, persos[p.loc], 2, 0, 0, ops, [], (fam, inst)))
+            continue
+        if model not in ('SYM_Arche_Ski', 'NBD_ArcheSpePourSkiEtSky'):
+            continue
+        if inst.lower().endswith('retry'):
+            heading = math.atan2(-start[1], start[5])
+            fire = [(POP_TELEPORT, 1, 0, 0, struct.unpack('<I', struct.pack('<f', heading))[0], tuple(start[3::4][:3]))]
+        else:
+            fire = [(POP_LEVEL, 0, sid(arrival[1]), sid('sud0'), sid(arrival[0]), (0, 0, 0))]
+        rows = (p.world[0:3], p.world[4:7], p.world[8:11])
+        out.append((tuple(p.world[3::4][:3]), 6.0, rows, persos[p.loc], 1, 0, 0,
+                    [(POP_COVER, 0, 0, 0, 0, (0, 0, 0))], fire, (fam, inst)))
+    return out
+
+
 def places(d):
     """Every level perso by instance name, for PROC_29 arrivals ('heg_positionedland' = where Ed appears, '..cam..'
     the camera): [(lowercase name, position, heading)], heading as tc_heading_of (where local -Y points)."""
@@ -773,6 +818,10 @@ def export(ai, path):
     def resolve(n):
         nonlocal btn
         t, ref = n.type, n.ref
+        if t == 34:  # a sound event: snapshot pointer -> global event index
+            from .sfx import event_index
+            k = event_index(n.param)
+            return k if k is not None else 0xFFFFFFFF
         if t == 14 and ref:
             if btn is None:
                 btn = Buttons(d, ref)
@@ -967,6 +1016,22 @@ def export(ai, path):
                 missing_fx.append(v)
             rel = os.path.relpath(png, os.path.dirname(os.path.abspath(path))).replace(os.sep, '/') if png else ''
             out += struct.pack('<H', len(rel)) + rel.encode()
+    from .sfx import event_index
+    sound_rows, sound_index = [], []
+    for st in ai.states:
+        ar = lv.ptr(st, 0xC)
+        ev = lv.ptr(ar, 8) if ar else None
+        n_ev = d.un('I', ar, 0xC)[0] if ev else 0
+        rows = []
+        for k in range(n_ev if n_ev < 256 else 0):
+            typ, value, frame = d.un('3I', ev, 20 * k)  # anim event (20 bytes): {type, value, frame, ?, ?}
+            e = event_index(value) if typ == 0 and value else None
+            if e is not None and frame <= d.un('H', ar, 4)[0]:  # within the animation (some lists hold garbage)
+                rows.append((frame, e))
+        sound_index.append((len(sound_rows), len(rows)))
+        sound_rows += sorted(rows)
+    out += struct.pack('<I', len(sound_rows)) + b''.join(struct.pack('<HH', f, e) for f, e in sound_rows)
+    out += b''.join(struct.pack('<IHH', first, n, 0) for first, n in sound_index)
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:

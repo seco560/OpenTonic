@@ -1,7 +1,9 @@
 /* Grid of converted levels (*.ttlv in one folder), each shown with its loading-screen image from
  * out/Vignette/Level/<Name>.png when available (matched case-insensitively). Port of LevelPicker.swift, drawn with
  * the 2D quad pipeline: click a tile, or move with the arrow keys and press Enter. All sizes in pixels.
- * Two sections under headings: "Levels", then the game's cutscene-only levels (tc_level_is_cutscene). */
+ * Three sections under headings: "Levels", the game's cutscene-only levels (tc_level_is_cutscene), and "Imported":
+ * models brought in with tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), drawn with a question mark
+ * when they have no picture. */
 #ifndef TV_PICKER_H
 #define TV_PICKER_H
 #include "gpu.h"
@@ -10,6 +12,7 @@ typedef struct picker_entry {
     char *name, *path;
     SDL_GPUTexture *thumb;    /* NULL: no loading screen */
     int thumb_w, thumb_h;
+    int section;              /* 0 levels, 1 cutscenes, 2 imported */
     SDL_GPUTexture *caption;
     int caption_w, caption_h;
 } picker_entry;
@@ -18,9 +21,11 @@ typedef struct picker {
     gpu *g;
     picker_entry *entries;
     int count;
-    int first_cutscene;       /* entries [first_cutscene, count) are cutscene levels */
-    SDL_GPUTexture *heading[2];  /* "Levels", "Cutscenes" (NULL: section empty) */
-    int heading_w[2], heading_h[2];
+    int first[4];             /* section k = entries [first[k], first[k + 1]) */
+    SDL_GPUTexture *heading[3];  /* "Levels", "Cutscenes", "Imported" (NULL: section empty) */
+    int heading_w[3], heading_h[3];
+    SDL_GPUTexture *unknown;  /* "?": the picture of an imported level */
+    int unknown_w, unknown_h;
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* pixels */
     int hover, selected;      /* -1 = none */

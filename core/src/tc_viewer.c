@@ -1,4 +1,5 @@
 #include "tc_internal.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include "tonic/tc_viewer.h"
@@ -127,6 +128,157 @@ static float raycast(tc_viewer_play *p, tc_vec3 origin, tc_vec3 dir, float max_d
     return tc_collision_raycast(&p->world, origin, dir, max_distance, &hit) ? hit.distance : -1;
 }
 
+/* ---- portals and screen transitions ---- */
+
+static int same_text(const char *a, const char *b) {
+    for (; *a && *b; a++, b++)
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
+    return *a == *b;
+}
+
+static void copy_text(char *dst, size_t n, const char *src) {
+    size_t i;
+    for (i = 0; src && src[i] && i + 1 < n; i++) dst[i] = src[i];
+    dst[i] = 0;
+}
+
+/* The distinct effect textures of the model's transitions. */
+static bool collect_effects(tc_viewer *v, const tc_ai_model *m) {
+    uint32_t i, k, j, n = 0;
+    for (i = 0; i < 4; i++) n += m->transitions.effects[i].variant_count;
+    if (!m->has_transitions || n == 0) return true;
+    v->effects = (const char **)tc_calloc(n, sizeof(*v->effects));
+    if (!v->effects) return false;
+    for (i = 0; i < 4; i++)
+        for (k = 0; k < m->transitions.effects[i].variant_count; k++) {
+            const char *t = m->transitions.effects[i].variants[k];
+            for (j = 0; j < v->effect_count && strcmp(v->effects[j], t) != 0; j++) {}
+            if (t && j == v->effect_count) v->effects[v->effect_count++] = t;
+        }
+    return true;
+}
+
+static const tc_ai_model *ai_model(const tc_viewer *v) {
+    return v->play && v->play->has_driver ? v->play->driver.ai.model : NULL;
+}
+
+/* Starts the cover or the reveal; without transition data, it is done at once. */
+static void start_transition(tc_viewer *v, bool reveal) {
+    const tc_ai_model *m = ai_model(v);
+    if (m && m->has_transitions && tc_transition_start(&v->transition, &m->transitions, reveal, &v->rng)) {
+        v->phase = reveal ? TC_VP_REVEAL : TC_VP_COVER;
+        return;
+    }
+    memset(&v->transition, 0, sizeof(v->transition));
+    v->phase = reveal ? TC_VP_PLAY : TC_VP_BLACK;
+    if (!reveal && v->play) v->play->driver.screen_covered = true;
+}
+
+/* The orbit camera looking at Ed from `eye` (PROC_8's camera position, PROC_29's camera place). */
+static void aim_camera(tc_viewer *v, tc_vec3 eye) {
+    tc_vec3 d = tc_v3_sub(tc_v3_add(v->play->player.position, tc_v3(0, 0, 1.1f)), eye);
+    float h = sqrtf(d.x * d.x + d.y * d.y);
+    if (h < 1e-3f) return;
+    v->camera.yaw = atan2f(d.x, d.y);
+    v->camera.pitch = fmaxf(-1.5f, fminf(1.5f, atan2f(d.z, h)));
+}
+
+/* Arriving through a portal: Ed's dsgvars from the last level, the arrival place, then the reveal. */
+static void arrive(tc_viewer *v, const tc_viewer_carry *c) {
+    tc_viewer_play *p = v->play;
+    const tc_ai_model *m = ai_model(v);
+    uint16_t i;
+    if (!m) return;
+    if (c->dsg_size && c->dsg_size == m->dsg.size && p->driver.ai.dsg) memcpy(p->driver.ai.dsg, c->dsg, c->dsg_size);
+    for (i = 0; c->place[0] && i < m->place_count; i++)
+        if (m->places[i].name && same_text(m->places[i].name, c->place))
+            tc_player_teleport(&p->player, m->places[i].position, m->places[i].heading);
+    for (i = 0; c->camera_place[0] && i < m->place_count; i++)
+        if (m->places[i].name && same_text(m->places[i].name, c->camera_place)) aim_camera(v, m->places[i].position);
+    start_transition(v, true);
+}
+
+/* After Ed's step: his portal events drive the phases (docs/PORTALS.md). */
+static void update_portals(tc_viewer *v, float dt) {
+    tc_ed_ai *e;
+    tc_ed_ai_events *ev;
+    if (!v->play || !v->play->has_driver) return;
+    e = &v->play->driver;
+    ev = &e->events;
+    if (ev->cover) {
+        ev->cover = false;
+        start_transition(v, false);
+    }
+    if (v->phase == TC_VP_COVER && tc_transition_step(&v->transition, dt)) {
+        v->phase = TC_VP_BLACK;
+        e->screen_covered = true;
+    }
+    if (ev->teleported) {
+        ev->teleported = false;
+        if (ev->camera_set) aim_camera(v, ev->camera);
+        ev->camera_set = false;
+        if (v->phase == TC_VP_BLACK) { /* a teleport behind the cover: reveal; one in plain view just happens */
+            e->screen_covered = false;
+            start_transition(v, true);
+        }
+    }
+    if (ev->level) {
+        tc_viewer_carry *c = v->carry ? v->carry : (tc_viewer_carry *)tc_calloc(1, sizeof(*c));
+        if (c) {
+            const tc_ai_model *m = e->ai.model;
+            const char *after = tc_level_after_cutscene(ev->level);
+            /* Cutscenes don't play yet: a portal into a cutscene level goes on to the level it hands over to, Ed at
+             * its start. */
+            copy_text(c->level, sizeof(c->level), after ? after : ev->level);
+            copy_text(c->place, sizeof(c->place), after ? NULL : ev->place);
+            copy_text(c->camera_place, sizeof(c->camera_place), after ? NULL : ev->camera_place);
+            c->dsg_size = m->dsg.size <= TC_VIEWER_CARRY_DSG && e->ai.dsg ? m->dsg.size : 0;
+            if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
+            v->carry = c;
+            v->phase = TC_VP_LOADING;
+            v->loading_time = 0;
+        }
+        ev->level = ev->place = ev->camera_place = NULL;
+    }
+    if (v->phase == TC_VP_LOADING && (v->loading_time += dt) >= 3) v->phase = TC_VP_PENDING;
+    if (v->phase == TC_VP_REVEAL && tc_transition_step(&v->transition, dt)) v->phase = TC_VP_PLAY;
+}
+
+uint32_t tc_viewer_effect_count(const tc_viewer *v) { return v->effect_count; }
+
+const char *tc_viewer_effect_texture(const tc_viewer *v, uint32_t i) { return i < v->effect_count ? v->effects[i] : NULL; }
+
+const tc_viewer_carry *tc_viewer_pending_level(const tc_viewer *v) { return v->phase == TC_VP_PENDING ? v->carry : NULL; }
+
+void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out) {
+    const tc_transition *t = &v->transition;
+    memset(out, 0, sizeof(*out));
+    out->texture = -1;
+    switch (v->phase) {
+    case TC_VP_BLACK: out->kind = TC_VO_BLACK; return;
+    case TC_VP_LOADING: case TC_VP_PENDING:
+        out->kind = TC_VO_LOADING;
+        out->progress = fminf(1, v->loading_time / 3);
+        out->level = v->carry ? v->carry->level : NULL;
+        return;
+    case TC_VP_COVER: case TC_VP_REVEAL: {
+        const char *name = t->effect && t->variant < t->effect->variant_count ? t->effect->variants[t->variant] : NULL;
+        uint32_t i;
+        for (i = 0; name && i < v->effect_count; i++)
+            if (strcmp(v->effects[i], name) == 0) out->texture = (int32_t)i;
+        if (t->logo) {
+            out->kind = TC_VO_LOGO;
+            tc_transition_logo_quad(t, out->corners, out->uv);
+        } else {
+            out->kind = TC_VO_MASK;
+            out->threshold = t->value;
+        }
+        return;
+    }
+    default: return;
+    }
+}
+
 /* ---- setup ---- */
 
 static bool drawable(const tc_mesh *m) { return m->index_count > 0 && m->vertex_count > 0 && m->vertices && m->indices; }
@@ -193,6 +345,11 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
 
     v->play = play_create(v, desc);
     v->ed_clip = ed_anim(l, "idle");
+    v->rng = desc->seed ? desc->seed : 0x7417u;
+    if (ai_model(v) && !collect_effects(v, ai_model(v))) {
+        tc_viewer_free(v);
+        return TC_ERR_OUT_OF_MEMORY;
+    }
 
     tc_level_bounds(l, &lo, &hi);
     size = tc_v3_length(tc_v3_sub(hi, lo));
@@ -204,11 +361,14 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->fly_speed = fmaxf(2, size / 40);
     /* Start as Ed when the level has him (Tab still switches to free-fly). */
     if (v->play) tc_viewer_toggle_play(v);
+    if (desc->carry && v->play) arrive(v, desc->carry);
     return TC_OK;
 }
 
 void tc_viewer_free(tc_viewer *v) {
     play_destroy(v->play);
+    tc_free((void *)v->effects);
+    tc_free(v->carry);
     tc_free((void *)v->meshes);
     tc_free(v->draws);
     tc_free(v->blended);
@@ -323,6 +483,42 @@ bool tc_viewer_ai_active(const tc_viewer *v) { return v->playing && tc_viewer_ha
 
 const tc_player *tc_viewer_player(const tc_viewer *v) { return v->play ? &v->play->player : NULL; }
 
+/* The simple controller at a portal (the ski levels' finish, or I pressed anywhere): when one captures, Ed faces it and
+ * plays the step-in (state 228's animation, as the AI's walk-in does), then the cover; once the screen is covered the
+ * portal fires as with the AI (its dsgvar condition set as Ed's B106 would). Capture-only portals (the holes) need the
+ * player's scripts and are left alone. */
+static void simple_portals(tc_viewer *v, float dt) {
+    tc_viewer_play *p = v->play;
+    tc_ed_ai *e = &p->driver;
+    const tc_ai_model *m = e->ai.model;
+    if (v->walk_in == 0) {
+        const tc_ai_portal *g;
+        char name[16];
+        if (v->phase != TC_VP_PLAY) return;
+        tc_ed_ai_run_portals(e, dt);
+        e->events.cover = false; /* the step-in comes first */
+        if (e->portal < 0) return;
+        g = &m->portals[e->portal];
+        p->player.heading = atan2f(g->position.x - p->player.position.x, -(g->position.y - p->player.position.y));
+        snprintf(name, sizeof(name), "s%u", m->state_count > 228 ? (unsigned)m->states[228].anim : 0u);
+        v->walk_clip = m->state_count > 228 ? ed_anim(v->level, name) : -1;
+        v->ed_phase = 0;
+        v->walk_in = 1;
+        if (v->walk_clip < 0) {
+            v->walk_in = 2;
+            start_transition(v, false);
+        }
+        return;
+    }
+    if (v->walk_in == 2 && v->phase == TC_VP_BLACK && e->portal >= 0) {
+        const tc_ai_portal *g = &m->portals[e->portal];
+        if (g->fire == 0) tc_ai_dsgvar_set_int(&e->ai, g->fire_dsg, g->fire_value);
+        e->screen_covered = true;
+        tc_ed_ai_run_portals(e, dt);
+    }
+    if (v->walk_in == 2 && e->portal < 0) v->walk_in = 0;
+}
+
 static void update_play(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
@@ -334,12 +530,16 @@ static void update_play(tc_viewer *v, float dt) {
     if (p->use_ai) {
         /* Ed's own scripts; they see last frame's camera eye (it makes the direction keys camera-relative). */
         tc_ed_ai_step(&p->driver, v->paused ? 0 : dt, ai_inputs(v), 0, 0, v->camera.position);
+        v->sound_count = p->driver.ai.sound_count;
+        memcpy(v->sounds, p->driver.ai.sounds, v->sound_count * sizeof(v->sounds[0]));
     } else {
         tc_player_input in;
-        in.move = move_direction(v);
-        in.run = held(v, TC_VA_FAST);
-        in.jump = held(v, TC_VA_JUMP);
+        bool walking_in = v->walk_in != 0;
+        in.move = walking_in ? tc_v2(0, 0) : move_direction(v);
+        in.run = !walking_in && held(v, TC_VA_FAST);
+        in.jump = !walking_in && held(v, TC_VA_JUMP);
         tc_player_step(&p->player, dt, &in);
+        if (p->has_driver) simple_portals(v, dt);
     }
     /* Third-person orbit around Ed's chest; pulled in when the level is in the way. */
     target = tc_v3_add(p->player.position, tc_v3(0, 0, 1.1f));
@@ -360,6 +560,19 @@ static void update_play(tc_viewer *v, float dt) {
         v->ed_loop = tc_ed_ai_loops(&p->driver);
         return;
     }
+    if (v->walk_in == 1) { /* the step-in: once through at its own rate, then the cover */
+        a = &l->ed.anims[v->walk_clip];
+        v->ed_clip = v->walk_clip;
+        v->ed_state = -1;
+        v->ed_loop = false;
+        v->ed_phase = tc_phase_advance(v->ed_phase, dt * a->sample_rate * (v->paused ? 0 : v->animation_speed),
+                                       a->sample_count, false);
+        if (v->ed_phase >= (float)a->sample_count - 1) {
+            v->walk_in = 2;
+            start_transition(v, false);
+        }
+        return;
+    }
     /* Clip from the movement state; walk/run play at the rate that matches Ed's ground speed. */
     if ((int)p->player.animation != v->ed_state) {
         v->ed_state = (int)p->player.animation;
@@ -376,9 +589,17 @@ static void update_play(tc_viewer *v, float dt) {
                                    a->sample_count, a->loop != 0);
 }
 
+uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events) {
+    *events = v->sounds;
+    return v->sound_count;
+}
+
 void tc_viewer_update(tc_viewer *v, float dt) {
-    if (v->playing) update_play(v, dt);
+    v->sound_count = 0;
+    if (v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) look(v, 0); /* the level is about to change: Ed waits */
+    else if (v->playing) update_play(v, dt);
     else fly(v, dt);
+    update_portals(v, v->paused ? 0 : dt);
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
 

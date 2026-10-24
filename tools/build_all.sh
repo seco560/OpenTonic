@@ -86,4 +86,10 @@ if [ "$CHECK" = 1 ]; then
   echo "== core checks"
   make -C core check mechcheck
 fi
+
+# ---- 5a. sound effects (Ed's: the global sound events) ----
+if need "$OUT/audio/sfx/events.tsv"; then
+  echo "== sound effects"
+  python3 -m tools.ttre.sfx "$OUT/audio/sfx" || echo "sound effects: skipped (vgmstream-cli?)"
+fi
 echo "done: run with 'swift run -c release TonicViewer', or package with tools/make_app.sh"

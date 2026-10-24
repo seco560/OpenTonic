@@ -5,8 +5,10 @@
 # This on top of the fact that you'd be redistributing copyrighted Ubisoft assets (textures and music mainly)
 # if you were posting this anywhere.
 
-# Needs: files/out/ttlv, files/out/Textures, files/out/Vignette, files/out/audio (music + music.tsv), files/out/icon (tools/make_icon.sh);
-# optional: files/out/video/intro.mp4 (tools/make_intro.sh).
+# Needs: files/out/ttlv (.ttlv + .ttai), files/out/Textures (incl. Effects/: the screen transitions), files/out/Vignette
+# (picker thumbnails, portal loading screens), files/out/audio (music + music.tsv; sfx/ from tools/ttre/sfx.py),
+# files/out/icon (tools/make_icon.sh); optional: files/out/video/intro.mp4 (tools/make_intro.sh), files/out/Imported
+# (tools/ttre/import_gltf.py).
 # Usage (from the repo root): tools/make_app.sh [install dir, default ~/Applications]
 set -e
 DEST="${1:-$HOME/Applications}"
@@ -20,7 +22,12 @@ cp Sources/TonicViewer/Shaders.metal "$APP/Contents/Resources/"
 # Data keeps the files/out/ layout, so the .ttlv files' relative texture paths (../Textures/...) still resolve.
 R="$APP/Contents/Resources/data"
 cp -R files/out/ttlv files/out/Textures "$R/"
-mkdir -p "$R/Vignette" "$R/audio/music" "$R/icon"
+rm -f "$R"/ttlv/*_ai.txt  # the AI listings level-ttai writes next to the .ttai: debugging only
+# Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
+[ -d files/out/Imported ] && cp -R files/out/Imported "$R/"
+mkdir -p "$R/Vignette" "$R/audio/music" "$R/audio/sfx" "$R/icon"
+# Sound effects (tools/ttre/sfx.py): the global sound events' files and their table.
+[ -d files/out/audio/sfx ] && cp files/out/audio/sfx/*.wav files/out/audio/sfx/events.tsv "$R/audio/sfx/"
 cp -R files/out/Vignette/Level "$R/Vignette/"
 cp files/out/icon/TonicViewer.png "$R/icon/"
 # Music: WAV -> AAC (about 10x smaller), tracks already in .m4a are copied; the table is rewritten to the .m4a names.

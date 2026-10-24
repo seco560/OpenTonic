@@ -60,6 +60,8 @@ typedef struct tc_ai_state {
     uint32_t root_first;
     uint16_t root_count;
     uint16_t spheres;            /* v4: mechanics collision spheres (ZDM): index into model->sphere_sets, or none */
+    uint32_t sound_first;        /* v7: the animation's sound events, model->sounds[sound_first ..] */
+    uint16_t sound_count;
     uint16_t transition_count, prohibited_count;
     tc_ai_transition *transitions; /* target -> state actually played first */
     uint16_t *prohibited;
@@ -88,15 +90,15 @@ typedef struct tc_ai_trigger {
 /* .ttai v6: a portal (docs/PORTALS.md): a level perso that moves the player elsewhere, reduced by the converter to
  * op lists (tools/ttre/ai.py portals()). Capture ops run once when the player comes within radius (after any GUARD
  * ops hold); fire ops when `fire` holds: 0 = the player's dsgvar fire_dsg == fire_value (Ed's B106 sets dsg103 once
- * the cover is done), 1 = the screen is covered. */
+ * the cover is done), 1 = the screen is covered, 2 = never (capture only: the player's own scripts do the rest). */
 enum {
     TC_AI_POP_GUARD = 1,   /* the player's dsgvar a == (int)b, else no capture */
-    TC_AI_POP_SET,         /* the player's dsgvar a := kind 0 (int)b, 1 v.x, 2 this portal's perso */
+    TC_AI_POP_SET,         /* the player's dsgvar a := kind 0 (int)b, 1 v.x, 2 this portal's perso, 3 the vector v */
     TC_AI_POP_FORCE,       /* the player's normal behaviour := a */
     TC_AI_POP_FORCE_REFLEX,/* the player's reflex := a */
     TC_AI_POP_COVER,       /* start the cover transition (GameAction2) */
     TC_AI_POP_WAIT,        /* wait b ms (META_29) */
-    TC_AI_POP_TELEPORT,    /* the player to v (PROC_8) */
+    TC_AI_POP_TELEPORT,    /* the player to v (PROC_8); kind 1: and facing the heading in c (f32 bits) */
     TC_AI_POP_CAMERA,      /* the camera to v (PROC_8) */
     TC_AI_POP_LEVEL        /* change level to names[b]; c != NONE: arrive at place names[c], camera at names[a] (PROC_29) */
 };
@@ -112,6 +114,9 @@ typedef struct tc_ai_portal {
     uint16_t capture_count, fire_count;
     tc_ai_portal_op *ops;        /* capture_count capture ops, then fire_count fire ops */
 } tc_ai_portal;
+/* A sound event at an animation frame (v7). event = global sound event (Bnk_0's event index; tools/ttre/sfx.py). */
+typedef struct tc_ai_sound { uint16_t frame, event; } tc_ai_sound;
+#define TC_AI_MAX_SOUNDS 16
 /* A level perso by instance name (lowercase): PROC_29 arrivals ("heg_positionedland"). */
 typedef struct tc_ai_place { char *name; tc_vec3 position; float heading; } tc_ai_place;
 /* One screen transition effect (fix.gpt 0x12a8): fields = effect +0x10..+0x30 (A, the mask wipe: start, end, current,
@@ -161,6 +166,8 @@ typedef struct tc_ai_model {
     tc_ai_place *places;
     bool has_transitions;        /* v6 */
     tc_ai_transitions transitions;
+    uint32_t sound_count;        /* v7: the states' animation sound events, by state (tc_ai_state.sound_first) */
+    tc_ai_sound *sounds;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
@@ -183,6 +190,10 @@ typedef struct tc_ai_motion {
     tc_vec3 axes[3];             /* DynAxis0..2 written by the script */
     tc_vec3 jump_vector;         /* JumpBallistic(vector, height) */
     float jump_height;
+    bool heading_set;            /* face `heading` now: PROC_242, ChangeStateByDirection, TurnTowardOverFrames */
+    float heading;
+    bool teleport_set;           /* SetPositionFrom (PROC_27) on this perso: move it to `teleport` (feet) */
+    tc_vec3 teleport;
 } tc_ai_motion;
 
 typedef struct tc_ai_slot { uint32_t node; int32_t a, b; } tc_ai_slot; /* a meta-action in progress */
@@ -206,6 +217,7 @@ typedef struct tc_ai_perso {
     const char *level_name;      /* LevelIs, compared case-insensitively ("bar") */
     uint32_t global_flags;       /* GlobalFlag?(n) (abilities?): bit n; all set by default */
     int32_t hit_points;          /* FUNC_34 / PROC_66 on Ed (inferred) */
+    bool screen_covered;         /* GameState63: the cover transition has finished (the screen is black) */
 
     /* AI state. */
     uint32_t time_ms;            /* engine clock (GetTime) */
@@ -231,6 +243,10 @@ typedef struct tc_ai_perso {
     uint64_t hidden_channels;    /* PROC_120 / PROC_121, bit = channel */
     float float13, float14;      /* FIELD 13 / 14 */
     int32_t change_level;        /* ChangeLevel's string index, -1 none */
+    bool cover_requested;        /* GameAction2: start the cover transition; the host clears it */
+    /* Sound events started this step (animation events passed, PlaySound3D): global event indices; reset each step. */
+    uint16_t sounds[TC_AI_MAX_SOUNDS];
+    uint8_t sound_count;
     uint8_t g_flags, g_armed;    /* Proc9's deferred result (exe DAT_0051b019 / DAT_0051b018) */
 
     /* Diagnostics: use counts of the primitives the interpreter skipped, [kind * TC_AI_UNKNOWN_STRIDE + index]
@@ -247,9 +263,15 @@ void tc_ai_free(tc_ai_perso *p);
 void tc_ai_step(tc_ai_perso *p, float dt);
 /* Another perso sets this one's normal behaviour (PROC_237): it starts from its beginning on the next step. */
 void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t behaviour);
+/* The same for the reflex (PROC_238); reflex = index among the reflexes. */
+void tc_ai_force_reflex(tc_ai_perso *p, uint16_t reflex);
 
 /* Raw dsgvar access for tests/debug UIs: value of dsgvar i of the perso as float (ints converted). */
 float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i);
+/* Another perso writes this one's dsgvar i (Assign(Dot(perso, dsg<i>), ...)); perso ids go in as ints. */
+void tc_ai_dsgvar_set_int(tc_ai_perso *p, uint32_t i, int32_t v);
+void tc_ai_dsgvar_set_float(tc_ai_perso *p, uint32_t i, float v);
+void tc_ai_dsgvar_set_vec(tc_ai_perso *p, uint32_t i, tc_vec3 v);
 
 #ifdef __cplusplus
 }

@@ -54,6 +54,10 @@ static void frame(tc_viewer *v, float dt) {
     last_opaque = opaque;
 }
 
+static void check_overlay_texture(const tc_viewer *v, const tc_view_overlay *o) {
+    if (o->texture < 0 || !tc_viewer_effect_texture(v, (uint32_t)o->texture)) bad_frames++;
+}
+
 static void run(tc_viewer *v, float seconds, uint32_t actions) {
     int i, n = (int)(seconds * 60 + 0.5f), a;
     for (a = 0; a < TC_VA_COUNT; a++) tc_viewer_set_action(v, (tc_view_action)a, (actions >> a) & 1u);
@@ -72,6 +76,90 @@ static void report(const tc_viewer *v, const char *label) {
 }
 
 #define BIT(a) (1u << (a))
+
+/* Portals through the viewer (docs/PORTALS.md): Ed walks into sud0's Cocktail arch; the overlay must go cover ->
+ * black -> loading screen, then the level change is pending: the arch leads to the cutscene level bar, so cock01
+ * (tc_level_after_cutscene). bar's viewer, started with the carry, reveals and Ed steps out (state 229). */
+static void portal_scenario(const char *dir) {
+    char path[1024];
+    size_t size, ai_size;
+    uint8_t *data, *ai;
+    tc_level sud0, bar;
+    tc_ai_model model;
+    tc_viewer v, w;
+    tc_viewer_desc desc;
+    tc_viewer_carry carry;
+    tc_view_overlay o;
+    const tc_viewer_carry *pending = NULL;
+    const tc_ai_portal *g = NULL;
+    int i, k, seen[5] = {0, 0, 0, 0, 0}, saw_229 = 0;
+    tc_vec3 front;
+    snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&sud0, data, size) != TC_OK) { printf("  (no sud0: portals skipped)\n"); return; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/sud0.ttai", dir);
+    if (!(ai = read_file(path, &ai_size)) || tc_ai_model_load(&model, ai, ai_size) != TC_OK) return;
+    for (i = 0; i < model.portal_count && !g; i++)
+        for (k = 0; k < model.portals[i].fire_count; k++) {
+            const tc_ai_portal_op *op = &model.portals[i].ops[model.portals[i].capture_count + k];
+            if (op->op == TC_AI_POP_LEVEL && strcmp(model.names[op->b], "bar") == 0) g = &model.portals[i];
+        }
+    desc.level = &sud0;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "sud0";
+    desc.carry = NULL;
+    desc.seed = 1;
+    if (!g || tc_viewer_init(&v, &desc) != TC_OK) { check(0, "sud0: the Cocktail arch and a viewer"); return; }
+    front = tc_v3_normalize(tc_v3(-g->rows[1], -g->rows[4], 0));
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(g->position, tc_v3_scale(front, 8)),
+                       atan2f(-front.x, front.y));
+    v.camera.yaw = TC_PI - tc_viewer_player(&v)->heading;
+    for (i = 0; i < 60 * 25 && !pending; i++) {
+        tc_viewer_set_action(&v, TC_VA_FORWARD, i < 60);
+        frame(&v, 1.0f / 60);
+        tc_viewer_overlay(&v, &o);
+        seen[o.kind] = 1;
+        if (o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO) check_overlay_texture(&v, &o);
+        pending = tc_viewer_pending_level(&v);
+    }
+    printf("  sud0 -> %s after %.1f s; overlays: mask %d, logo %d, black %d, loading %d\n", pending ? pending->level : "-",
+           (double)i / 60, seen[TC_VO_MASK], seen[TC_VO_LOGO], seen[TC_VO_BLACK], seen[TC_VO_LOADING]);
+    check(pending && strcmp(pending->level, "cock01") == 0, "sud0 Cocktail arch: bar is a cutscene, cock01 pending");
+    check((seen[TC_VO_MASK] || seen[TC_VO_LOGO]) && seen[TC_VO_BLACK] && seen[TC_VO_LOADING], "overlays: cover, black, loading");
+    if (pending) carry = *pending;
+    tc_viewer_free(&v);
+    tc_ai_model_free(&model);
+    free(ai);
+    tc_level_free(&sud0);
+    if (!pending) return;
+
+    snprintf(path, sizeof(path), "%s/bar.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&bar, data, size) != TC_OK) return;
+    free(data);
+    snprintf(path, sizeof(path), "%s/bar.ttai", dir);
+    ai = read_file(path, &ai_size);
+    desc.level = &bar;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "bar";
+    desc.carry = &carry;
+    if (tc_viewer_init(&w, &desc) != TC_OK) { check(0, "bar with the carry"); return; }
+    free(ai);
+    tc_viewer_overlay(&w, &o);
+    check(o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO, "bar starts with the reveal");
+    for (i = 0; i < 60 * 4; i++) {
+        frame(&w, 1.0f / 60);
+        if (tc_viewer_player(&w) && w.phase == TC_VP_PLAY) break;
+    }
+    for (i = 0; i < 60 * 2; i++) {
+        frame(&w, 1.0f / 60);
+        if (strcmp(w.level->ed.anims[w.ed_clip < 0 ? 0 : w.ed_clip].name, "s229") == 0) saw_229 = 1;
+    }
+    check(saw_229, "bar: Ed steps out of the portal (state 229)");
+    tc_viewer_free(&w);
+    tc_level_free(&bar);
+}
 
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv", *name = argc > 2 ? argv[2] : "bar";
@@ -93,6 +181,8 @@ int main(int argc, char **argv) {
     desc.ai_data = ai;
     desc.ai_size = ai_size;
     desc.level_name = name;
+    desc.carry = NULL;
+    desc.seed = 0;
     if (tc_viewer_init(&v, &desc) != TC_OK) { fprintf(stderr, "tc_viewer_init failed\n"); return 1; }
     free(ai);  /* the model is a copy */
 
@@ -152,6 +242,7 @@ int main(int argc, char **argv) {
     check(tc_viewer_status(&v, NULL, status, 8) > 8 && strlen(status) == 7, "status truncates");
 
 done:
+    portal_scenario(dir);
     check(bad_frames == 0, "every frame's draw list is valid");
     tc_viewer_free(&v);
     tc_level_free(&level);

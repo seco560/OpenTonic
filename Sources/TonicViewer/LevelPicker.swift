@@ -3,16 +3,18 @@ import TonicCore
 
 /// Grid of converted levels (*.ttlv in one folder), each shown with its loading-screen image
 /// from out/Vignette/Level/<Name>.png when available (matched case-insensitively).
-/// Two sections under headings: "Levels", then the game's cutscene-only levels (`tc_level_is_cutscene`).
+/// Three sections under headings: "Levels", the game's cutscene-only levels (`tc_level_is_cutscene`), and
+/// "Imported": models brought in with tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a
+/// question mark as their picture.
 final class LevelPicker: NSView {
-    struct Entry { let name: String; let url: URL; let image: NSImage? }
+    struct Entry { let name: String; let url: URL; let image: NSImage?; let section: Int }
 
+    private static let titles = ["Levels", "Cutscenes", "Imported"]
     private let entries: [Entry]
     private let onPick: (URL) -> Void
     private var tiles: [NSButton] = []
-    private let firstCutscene: Int  // entries[firstCutscene...] are cutscene levels
-    private let headings = [NSTextField(labelWithString: "Levels"), NSTextField(labelWithString: "Cutscenes")]
-    private let rules = [NSBox(), NSBox()]
+    private let headings = LevelPicker.titles.map { NSTextField(labelWithString: $0) }
+    private let rules = LevelPicker.titles.map { _ in NSBox() }
     private let headingHeight: CGFloat = 40
     private let tile = NSSize(width: 256, height: 192)
     private let caption: CGFloat = 26, pad: CGFloat = 20
@@ -22,20 +24,27 @@ final class LevelPicker: NSView {
     init(folder: URL, thumbnails: URL, onPick: @escaping (URL) -> Void) {
         self.onPick = onPick
         let fm = FileManager.default
-        func isCutscene(_ url: URL) -> Bool { tc_level_is_cutscene(url.deletingPathExtension().lastPathComponent) != 0 }
-        let levels = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+        let imported = folder.deletingLastPathComponent().appendingPathComponent("Imported")
+        func section(_ url: URL) -> Int {
+            let name = url.deletingPathExtension().lastPathComponent
+            if fm.fileExists(atPath: imported.appendingPathComponent(name).path) { return 2 }
+            return tc_level_is_cutscene(name) != 0 ? 1 : 0
+        }
+        let files: [URL] = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension.lowercased() == "ttlv" }
-            .sorted {  // playable levels first, then the cutscene levels; by name within each
-                isCutscene($0) != isCutscene($1) ? !isCutscene($0)
-                    : $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
-            }
-        firstCutscene = levels.firstIndex(where: isCutscene) ?? levels.count
+        let tagged: [(URL, Int)] = files.map { ($0, section($0)) }
+        let levels = tagged.sorted { (a: (URL, Int), b: (URL, Int)) -> Bool in  // by section, then by name
+            if a.1 != b.1 { return a.1 < b.1 }
+            return a.0.lastPathComponent.localizedCaseInsensitiveCompare(b.0.lastPathComponent) == .orderedAscending
+        }
         let thumbs = Dictionary(((try? fm.contentsOfDirectory(at: thumbnails, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension.lowercased() == "png" }
             .map { ($0.deletingPathExtension().lastPathComponent.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
-        entries = levels.map { url in
+        let unknown = LevelPicker.questionMark(size: tile)
+        entries = levels.map { url, s in
             let name = url.deletingPathExtension().lastPathComponent
-            return Entry(name: name, url: url, image: thumbs[name.lowercased()].flatMap { NSImage(contentsOf: $0) })
+            let image = thumbs[name.lowercased()].flatMap { NSImage(contentsOf: $0) } ?? (s == 2 ? unknown : nil)
+            return Entry(name: name, url: url, image: image, section: s)
         }
         super.init(frame: .zero)
         for (i, e) in entries.enumerated() {
@@ -49,11 +58,12 @@ final class LevelPicker: NSView {
             addSubview(b)
             tiles.append(b)
         }
-        for (k, (heading, rule)) in zip(headings, rules).enumerated() {
+        for (k, (heading, rule)) in zip(headings, rules).enumerated() where entries.contains(where: { $0.section == k }) {
             heading.font = .systemFont(ofSize: 15, weight: .semibold)
             heading.textColor = .secondaryLabelColor
             rule.boxType = .separator
-            if k == 0 ? firstCutscene > 0 : firstCutscene < entries.count { addSubview(heading); addSubview(rule) }
+            addSubview(heading)
+            addSubview(rule)
         }
     }
 
@@ -61,28 +71,42 @@ final class LevelPicker: NSView {
 
     var isEmpty: Bool { entries.isEmpty }
 
+    /// The placeholder picture of an imported level: a big question mark on a dark tile.
+    private static func questionMark(size: NSSize) -> NSImage {
+        NSImage(size: size, flipped: false) { r in
+            NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.22, alpha: 1).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10).fill()
+            let text = NSAttributedString(string: "?", attributes: [
+                .font: NSFont.systemFont(ofSize: r.height * 0.6, weight: .bold),
+                .foregroundColor: NSColor(calibratedRed: 0.55, green: 0.6, blue: 0.75, alpha: 1)])
+            let s = text.size()
+            text.draw(at: NSPoint(x: (r.width - s.width) / 2, y: (r.height - s.height) / 2))
+            return true
+        }
+    }
+
     /// Lay the tiles out for the given width and size self to fit (we live in a scroll view).
     func relayout(width: CGFloat) {
         let cellW = tile.width + pad, cellH = tile.height + caption + pad
         let cols = max(1, Int((width - pad) / cellW))
         let left = max(pad, (width - CGFloat(cols) * cellW + pad) / 2)
-        func rows(_ n: Int) -> Int { (n + cols - 1) / cols }
-        // Each section starts on a new row, under its heading.
-        let headingY = [pad / 2, pad / 2 + headingHeight + CGFloat(rows(firstCutscene)) * cellH]
-        for (i, b) in tiles.enumerated() {
-            let cut = i >= firstCutscene, j = cut ? i - firstCutscene : i
-            let top = headingY[cut ? 1 : 0] + headingHeight
-            b.frame = NSRect(x: left + CGFloat(j % cols) * cellW, y: top + CGFloat(j / cols) * cellH,
-                             width: tile.width, height: tile.height + caption)
-        }
         let rowWidth = CGFloat(cols) * cellW - pad
+        // Each section starts on a new row, under its heading; empty sections take no space.
+        var y = pad / 2
         for (k, (heading, rule)) in zip(headings, rules).enumerated() {
+            let members = entries.indices.filter { entries[$0].section == k }
+            guard !members.isEmpty else { continue }
             heading.sizeToFit()
-            heading.frame.origin = NSPoint(x: left, y: headingY[k] + 4)
-            rule.frame = NSRect(x: left, y: headingY[k] + headingHeight - 10, width: rowWidth, height: 1)
+            heading.frame.origin = NSPoint(x: left, y: y + 4)
+            rule.frame = NSRect(x: left, y: y + headingHeight - 10, width: rowWidth, height: 1)
+            y += headingHeight
+            for (j, i) in members.enumerated() {
+                tiles[i].frame = NSRect(x: left + CGFloat(j % cols) * cellW, y: y + CGFloat(j / cols) * cellH,
+                                        width: tile.width, height: tile.height + caption)
+            }
+            y += CGFloat((members.count + cols - 1) / cols) * cellH
         }
-        let end = headingY[1] + (firstCutscene < tiles.count ? headingHeight + CGFloat(rows(tiles.count - firstCutscene)) * cellH : 0)
-        setFrameSize(NSSize(width: width, height: end))
+        setFrameSize(NSSize(width: width, height: y))
     }
 
     @objc private func pick(_ sender: NSButton) { onPick(entries[sender.tag].url) }

@@ -121,7 +121,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
     version = rd_u32(&r);
-    if (version < 1 || version > 6) return TC_ERR_UNSUPPORTED_VERSION;
+    if (version < 1 || version > 7) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -273,6 +273,20 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         }
     }
     if (version >= 6) load_v6(&r, m);
+    if (version >= 7) {
+        m->sound_count = rd_u32(&r);
+        m->sounds = (tc_ai_sound *)rd_array(&r, m->sound_count, sizeof(tc_ai_sound), 4);
+        for (i = 0; m->sounds && i < m->sound_count; i++) {
+            m->sounds[i].frame = rd_u16(&r);
+            m->sounds[i].event = rd_u16(&r);
+        }
+        for (i = 0; m->states && i < m->state_count; i++) {
+            m->states[i].sound_first = rd_u32(&r);
+            m->states[i].sound_count = rd_u16(&r);
+            (void)rd_u16(&r);
+            if ((uint64_t)m->states[i].sound_first + m->states[i].sound_count > m->sound_count) r.error = TC_ERR_TRUNCATED;
+        }
+    }
     for (i = 0; !r.error && m->states && i < m->state_count; i++) {
         if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
         if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
@@ -298,6 +312,7 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->root);
     tc_free(m->sphere_sets);
     tc_free(m->triggers);
+    tc_free(m->sounds);
     for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);
     tc_free(m->portals);
     free_strings(m->names, m->name_count);
@@ -447,6 +462,9 @@ static void dsg_set(tc_ai_perso *p, int32_t perso, uint32_t i, value v) {
 }
 
 float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i) { return as_float(dsg_get(p, 0, i)); }
+void tc_ai_dsgvar_set_int(tc_ai_perso *p, uint32_t i, int32_t v) { dsg_set(p, 0, i, v_int(v)); }
+void tc_ai_dsgvar_set_float(tc_ai_perso *p, uint32_t i, float v) { dsg_set(p, 0, i, v_float(v)); }
+void tc_ai_dsgvar_set_vec(tc_ai_perso *p, uint32_t i, tc_vec3 v) { dsg_set(p, 0, i, v_vec(v)); }
 
 /* ---- the perso's frame ---- */
 
@@ -458,6 +476,25 @@ static tc_vec3 global_to_local(const tc_ai_perso *p, tc_vec3 v) {
     float c = cosf(p->heading), s = sinf(p->heading);
     return tc_v3(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
 }
+/* A level perso's placement, where the model knows it: the portals (.ttai v6), whose perso Ed's dsg99 holds while he
+ * walks in. rows: its 3x3, row-major. */
+static bool perso_frame(const tc_ai_perso *p, int32_t perso, tc_vec3 *position, const float **rows) {
+    uint16_t k;
+    for (k = 0; k < p->model->portal_count; k++)
+        if ((int32_t)p->model->portals[k].perso == perso) {
+            *position = p->model->portals[k].position;
+            *rows = p->model->portals[k].rows;
+            return true;
+        }
+    return false;
+}
+
+/* The heading that faces a point (Ed's front, local -Y, along (sin h, -cos h)). */
+static float heading_to(const tc_ai_perso *p, tc_vec3 target) {
+    float dx = target.x - p->position.x, dy = target.y - p->position.y;
+    return dx * dx + dy * dy > 1e-8f ? atan2f(dx, -dy) : p->heading;
+}
+
 static tc_vec3 perso_position(const tc_ai_perso *p, int32_t perso) {
     int o = perso == 0 ? -1 : other_index(p, perso);
     if (perso == 0) return p->position;
@@ -501,6 +538,19 @@ static bool can_change_state(const tc_ai_perso *p, uint32_t target) {
     return target == p->wanted_state || (target < p->model->state_count && state_allowed(p, target, &play));
 }
 
+static void play_sound(tc_ai_perso *p, uint32_t event) {
+    if (event <= 0xFFFF && p->sound_count < TC_AI_MAX_SOUNDS) p->sounds[p->sound_count++] = (uint16_t)event;
+}
+
+/* The animation's sound events at frames in [from, to) of the playing state. */
+static void state_sounds(tc_ai_perso *p, const tc_ai_state *s, float from, float to) {
+    uint32_t k;
+    for (k = 0; k < s->sound_count; k++) {
+        const tc_ai_sound *e = &p->model->sounds[s->sound_first + k];
+        if ((float)e->frame >= from && (float)e->frame < to) play_sound(p, e->event);
+    }
+}
+
 /* GAM_PlayAnim_00415fb0 / 00415c00: at the end of the animation, repeat it (State +0x3A times), else play
  * the next state (the requested state, InState, stays); with no next state hold the last frame, "ended". */
 static void advance_state(tc_ai_perso *p, float dt) {
@@ -511,6 +561,7 @@ static void advance_state(tc_ai_perso *p, float dt) {
         const tc_ai_state *s = &p->model->states[p->state];
         float length = (float)(s->frames ? s->frames : 1);
         uint8_t rate = p->frame_rate;
+        state_sounds(p, s, p->state_frame, fminf(length, p->state_frame + frames));
         if (p->state_frame + frames < length) { p->state_frame += frames; return; }
         frames -= length - p->state_frame;
         if (p->repeats_left) { p->repeats_left--; p->state_frame = 0; continue; }
@@ -532,6 +583,11 @@ static void set_behaviour(tc_ai_perso *p, tc_ai_intel *in, uint32_t b) {
 
 void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t b) {
     if (b < p->model->normal_count && p->normal.behaviour != b) set_behaviour(p, &p->normal, b);
+}
+
+void tc_ai_force_reflex(tc_ai_perso *p, uint16_t reflex) {
+    uint32_t b = (uint32_t)p->model->normal_count + reflex;
+    if (reflex < p->model->reflex_count && p->reflex.behaviour != b) set_behaviour(p, &p->reflex, b);
 }
 
 /* ChangeBehaviour / ChangeReflex (FUN_0048b7d0): restarting is only for the intelligence that is running. */
@@ -749,7 +805,8 @@ static bool condition(run *r, uint32_t i) {
     case 65: { value v = arg(r, i, 0); return v.type == V_PERSO ? v.i >= 0 && v.i != (int32_t)TC_AI_NONE : truthy(v); }
     case 73: case 74: return true; /* ZoneTest (true while COND_70 is false), NotInAnyZone: no zones yet */
     case 90: { uint32_t n = (uint32_t)as_int(arg(r, i, 0)); return n < 32 ? (p->global_flags >> n) & 1 : (p->global_flags & n) != 0; }
-    case 30: case 37: case 38: case 44: case 45: case 46: case 47: case 59: case 63: case 64:
+    case 63: return p->screen_covered; /* GameState63 = GAM_004290a0: the cover transition has finished */
+    case 30: case 37: case 38: case 44: case 45: case 46: case 47: case 59: case 64:
     case 69: case 70: case 71: case 72:
         return false;    /* collision probes, zones, materials, touched objects, game state: not modelled yet */
     default: unknown(r, i); return false;
@@ -830,7 +887,7 @@ static value eval(run *r, uint32_t i) {
     value v = v_int(0);
     switch (n->type) {
     case TC_AI_KEYWORD:
-        if (n->param == 4) { v.type = V_PERSO; v.i = 0; } /* Me */
+        if (n->param == 4 || n->param == 5) { v.type = V_PERSO; v.i = 0; } /* Me; KW_5 = the main actor (the player) */
         else unknown(r, i);
         return v;
     case TC_AI_COND: return v_int(condition(r, i));
@@ -929,8 +986,26 @@ static uint32_t procedure(run *r, uint32_t i) {
         return 0;
     }
     case 249: return change_state(p, arg_param(r, i, 0)) ? 0 : F_ABORT;
-    case 0: case 2: case 5: case 25: case 26: case 27: case 32: case 33: case 70: case 71: case 79: case 80:
-    case 84: case 85: case 86: case 105: case 106: case 107: case 108: case 145: case 146: case 147: case 148:
+    case 2: p->cover_requested = true; p->screen_covered = false; return 0; /* GameAction2: GAM_00429070 */
+    case 242: { /* FUN_0048ba00: the perso's rotation about Z = deg * pi / 180 - pi / 2, for 0 <= deg <= 360 */
+        float deg = argf(r, i, 0), h;
+        if (!(deg >= 0 && deg <= 360)) return 0;
+        h = deg * TC_PI / 180 - TC_PI / 2;
+        p->motion.heading_set = true;
+        p->motion.heading = h;
+        return 0;
+    }
+    case 145: case 146: case 147: case 148: play_sound(p, arg_param(r, i, 0)); return 0; /* PlaySound3D ... (event) */
+    case 27: { /* SetPositionFrom(perso, position) = AI_00488010: this perso only (the others' AI does not run) */
+        value who = arg(r, i, 0);
+        if (who.type == V_PERSO && who.i == 0) {
+            p->motion.teleport_set = true;
+            p->motion.teleport = argv3(r, i, 1);
+        }
+        return 0;
+    }
+    case 0: case 5: case 25: case 26: case 32: case 33: case 70: case 71: case 79: case 80:
+    case 84: case 85: case 86: case 105: case 106: case 107: case 108:
     case 154: case 155: case 236: case 278: case 279: case 291: case 292:
         return 0; /* world, sound, text, camera and channel effects: no-ops for now */
     default: unknown(r, i); return 0;
@@ -952,7 +1027,9 @@ static uint32_t meta_action(run *r, uint32_t i) {
             slot->a = change_state(p, s);
             break;
         }
-        case 11: case 12: case 19: case 21: case 40: slot->a = 0; break; /* not modelled: finish at once */
+        case 12: slot->a = 0; slot->b = 0; break; /* ChangeStateByDirection: a = walking, b = frames */
+        case 19: break;
+        case 11: case 21: case 40: slot->a = 0; break; /* not modelled: finish at once */
         default: unknown(r, i); slot->a = 0; break;
         }
     }
@@ -960,6 +1037,35 @@ static uint32_t meta_action(run *r, uint32_t i) {
     case 4:
         if (slot->a && p->wanted_state == (uint32_t)slot->b && !p->state_ended) return F_STOP;
         break;
+    case 12: { /* ChangeStateByDirection(perso, offset, forward state, backward state): walk to the point at offset in
+                * the perso's axes (B68: 4.5 in front of an arch) in the forward state, facing it. Not decoded: always
+                * forwards, done within 0.4 or after 10 s. */
+        value who = arg(r, i, 0);
+        tc_vec3 pos, off = argv3(r, i, 1), target, d;
+        const float *m3;
+        if (who.type != V_PERSO || !perso_frame(p, who.i, &pos, &m3)) break;
+        target = tc_v3_add(pos, tc_v3(m3[0] * off.x + m3[1] * off.y + m3[2] * off.z,
+                                      m3[3] * off.x + m3[4] * off.y + m3[5] * off.z, 0));
+        d = tc_v3_sub(target, p->position);
+        if (d.x * d.x + d.y * d.y < 0.4f * 0.4f || ++slot->b > 600) {
+            p->motion.stop = true;
+            break;
+        }
+        p->motion.heading_set = true;
+        p->motion.heading = heading_to(p, target);
+        if (!slot->a) slot->a = change_state(p, arg_param(r, i, 2));
+        return F_STOP;
+    }
+    case 19: { /* TurnTowardOverFrames(perso, frames): face it (at once; the frame count is not modelled) */
+        value who = arg(r, i, 0);
+        tc_vec3 pos;
+        const float *m3;
+        if (who.type == V_PERSO && perso_frame(p, who.i, &pos, &m3)) {
+            p->motion.heading_set = true;
+            p->motion.heading = heading_to(p, pos);
+        }
+        break;
+    }
     default: break;
     }
     slot->node = TC_AI_NONE;
@@ -1153,6 +1259,7 @@ void tc_ai_step(tc_ai_perso *p, float dt) {
     int32_t mode = p->motion.mech_mode;
     memcpy(axes, p->motion.axes, sizeof(axes));
     memset(&p->motion, 0, sizeof(p->motion));
+    p->sound_count = 0;
     p->motion.mech_mode = mode;          /* the mechanics mode stays until the AI picks another */
     memcpy(p->motion.axes, axes, sizeof(axes));
     p->dt = dt;

@@ -1,6 +1,7 @@
 # Portals, screen transitions and the loading screen (plan)
 
-Status: step 1 done 2026-10-24 (.ttai v6: portals, places, transitions; core loader reads it); steps 2-5 open. Supersedes the "Level portals" guesses in docs/NOTES.md (session 10): Ed's
+Status: steps 1-3 and 5 done 2026-10-25 (core + the Mac app; `make -C core portalcheck viewcheck`); step 4 (SDL) open:
+it builds and runs as before, without the overlay or the level change. Supersedes the "Level portals" guesses in docs/NOTES.md (session 10): Ed's
 `dsg136` is an arrival **heading**, not a destination index, and Land's red arches teleport **within** Land.
 
 ## What the game does (decoded)
@@ -131,15 +132,56 @@ core runs Ed and sequences everything, the frontends draw.
    into capture / fire op lists), `ai.places()` (every level perso by instance name), `ai.transition_config()`; .ttai
    v6; `python3 -m tools.ttre level-ttai <level> ...` prints the portal table. Core: `tc_ai_model` gains portals,
    names, places, transitions (`tc_ai_portal`, `TC_AI_POP_*`).
-2. Core primitives (PROC 2, COND 63, PROC 242, META 12 / 19) + `aicheck` script `AI_SCRIPT=portal`: Ed walks into
-   sud0's bar arch, plays 228, the cover runs, `dsg103` is set.
-3. `tc_transition` + viewer phases + carry; extend `viewcheck`: sud0 -> bar (pending level, then init with the carry:
-   Ed plays 229 facing the arrival heading), Land's in-level arch (teleport, reveal). `make -C core check aicheck
-   mechcheck crashcheck viewcheck` stay green.
-4. SDL frontend (the user tests on Linux), then the Swift app (the user tests on the Mac).
+2. **Done.** `tc_ai`: GameAction2 (`cover_requested`), GameState63 (`screen_covered`, set by the host), PROC_242
+   (`motion.heading_set`), ChangeStateByDirection (META 12: walk in the forward state facing the point at the offset
+   in the portal's axes, done within 0.4; not decoded, no backward walk) and TurnTowardOverFrames (META 19: face at
+   once); `tc_ai_force_reflex`, `tc_ai_dsgvar_set_int/float`. `tc_ed_ai`: `run_portals` (capture within the radius
+   with the guards holding, a portal re-arms only after the player has left its radius; fire ops in order with the
+   waits) and `tc_ed_ai_events` for the host (cover, teleported + camera, level + place). `make -C core portalcheck`:
+   sud0's Cocktail arch (walk-in, state 228 for 4.2 s, cover, level request "bar"), Land's SDO_Arche2 (teleport to
+   its waypoint, step-out state 229), north's KEV_SousMap1a2 (cover at once, teleport).
+3. **Done.** `tc_transition.h/.c` (effects A / B, the exe's steppers and random picks), `tc_viewer` phases
+   play -> cover -> black -> (teleport -> reveal) | (loading 3 s -> pending) and arrival with a `tc_viewer_carry` (Ed's
+   dsgvars, place, camera place; then the reveal); `tc_viewer_overlay`, `tc_viewer_effect_texture`,
+   `tc_viewer_pending_level`. `viewcheck`: sud0's Cocktail arch -> mask cover, black, loading, pending "bar"; bar with
+   the carry reveals and Ed steps out (state 229).
+4. SDL frontend (the user tests on Linux): load the effect textures, an overlay pipeline (mask: alpha test
+   `a <= threshold` black; logo: black x texture alpha; black), the loading screen (vignette, bar, debug-font text),
+   and on `tc_viewer_pending_level` open that level with a copy of the carry.
+5. **Done (Mac).** Shaders.metal `overlay_vertex` / `overlay_fragment`, Renderer's overlay pass and `onPendingLevel`,
+   main.swift's `LoadingScreen` (AppKit views over the Metal view) and `openPortalLevel`.
 5. Docs: this file -> done, NOTES "Level portals" corrected, core/README backend notes.
 
-## Totalski's finish (looked at 2026-10-24, not implemented)
+## Cutscene levels are skipped (2026-10-25)
+Six of sud0's red arches lead to a cutscene level whose character then changes level (`tc_level_after_cutscene`: bar ->
+cock01, mammyon -> lecanyon, pharmmap -> marmite, pyr_fou -> pyramide, SpyCarota -> carota, spynorth -> north). Until
+cutscenes play (cameras, text, voices), `tc_viewer` sends the portal straight on to that level, Ed at its start. The
+portal data stays as the game has it.
+
+## Totalski and skymap: a stand-in for the finish (2026-10-25)
+`ai.ski_portals()` (used where the player is the skier): the arch named `*Retry` (Totalski's, on the right) covers
+and teleports the skier back to the start of the run; the other arches (Totalski's `GIZ_ArcheRetourneDansSud0`
+straight ahead, skymap's `NBD_ArcheGagneSkymap`) cover and lead to sud0 at the places the skier's B22 names
+(`heg_positionedtotalski`, `nbd_positionedrevientskymap`). Radius 6. Not the game's sequence (below): there the
+skier steps off and walks in by his own scripts. Carried dsgvars don't fit Ed's model, so in sud0 Ed arrives at the
+place's own heading without the step-out.
+
+### The simple controller takes portals too (2026-10-25)
+The ski levels' finish (and any level with I pressed): `tc_viewer`'s `simple_portals` runs the portals
+(`tc_ed_ai_run_portals`) while tc_player moves Ed; on a capture Ed faces the portal and plays the step-in (state
+228's animation, s228, which every level's Ed export has, the skier's too), then the cover; once the screen is covered
+the portal fires (its dsgvar condition set as Ed's B106 would). Capture-only portals (holes) are skipped. On Totalski:
+I at the finish, walk into the arch straight ahead (sud0) or the one on the right (back to the start).
+
+### Totalski's holes (2026-10-25): as in the game
+The 11 `SYM_GenTrou` persos are capture-only portals (fire 2) on the skier, their zone test (COND_13) taken as a
+radius of 8: they set his respawn point dsg30 := their own dsg0 (a vector), dsg22 := 0 and dsg29 := 1 (fell in). His
+own reflexes then start the cover (R3: GameAction2; no hit points left: B15 / B17 game over), and B10 respawns him once
+the screen is covered (`SetPositionFrom(KW_5, dsg30)`, states 309 / 363, back to riding). Core: KW_5 (the main actor)
+= the player, PROC_27 SetPositionFrom on the player (only moves over 2 units: Ed's B62 nudges him 0.85 down for a pose,
+which our body cannot follow), a teleport reveals only when the screen is covered.
+
+## Totalski's finish in the game (looked at 2026-10-24)
 In the original, after the striped finish flags Ed steps off the board and walks into the exit arch on his own.
 Found so far: the finish persos `SYM_Gen_Arrivee` (110, -929, -3093) and `NBD_Arrivee_Et_Retry` (86, -873, -3102)
 (zone tests COND_13 on the skier, set `Ed.dsg148 = 3`, its dsg40 = 1 "next" / 0 "retry" and its arrival waypoints

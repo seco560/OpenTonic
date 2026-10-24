@@ -26,6 +26,13 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     e->time = 0;
     e->trigger_wake = NULL;
     e->triggers_fired = 0;
+    e->portal = -1;
+    e->portal_firing = false;
+    e->portal_op = 0;
+    e->portal_wait = 0;
+    e->portal_armed = NULL;
+    e->screen_covered = false;
+    memset(&e->events, 0, sizeof(e->events));
     if (r != TC_OK) return r;
     if (model->trigger_count) {
         e->trigger_wake = (float *)tc_calloc(model->trigger_count, sizeof(float));
@@ -33,6 +40,16 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
             tc_ai_free(&e->ai);
             return TC_ERR_OUT_OF_MEMORY;
         }
+    }
+    if (model->portal_count) {
+        e->portal_armed = (uint8_t *)tc_calloc(model->portal_count, 1);
+        if (!e->portal_armed) {
+            tc_free(e->trigger_wake);
+            tc_ai_free(&e->ai);
+            return TC_ERR_OUT_OF_MEMORY;
+        }
+        for (i = 0; i < model->portal_count; i++) /* a portal the player starts in captures only once he has left it */
+            e->portal_armed[i] = tc_v3_distance(player->position, model->portals[i].position) >= model->portals[i].radius;
     }
     e->ai.level_name = level_name;
     e->auto_start = level_name && (same_name(level_name, "totalski") || same_name(level_name, "skymap"));
@@ -44,6 +61,8 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
 void tc_ed_ai_free(tc_ed_ai *e) {
     tc_free(e->trigger_wake);
     e->trigger_wake = NULL;
+    tc_free(e->portal_armed);
+    e->portal_armed = NULL;
     tc_ai_free(&e->ai);
 }
 
@@ -66,6 +85,91 @@ static void run_triggers(tc_ed_ai *e) {
         }
         e->trigger_wake[i] = t->sleep_ms ? e->time + (float)t->sleep_ms / 1000 : -1;
     }
+}
+
+/* One portal op on the player (capture or fire). Returns false for a wait that has not elapsed. */
+static bool portal_op(tc_ed_ai *e, const tc_ai_portal *g, const tc_ai_portal_op *o) {
+    const tc_ai_model *m = e->ai.model;
+    switch (o->op) {
+    case TC_AI_POP_SET:
+        if (o->kind == 1) tc_ai_dsgvar_set_float(&e->ai, o->a, o->v.x);
+        else if (o->kind == 3) tc_ai_dsgvar_set_vec(&e->ai, o->a, o->v);
+        else tc_ai_dsgvar_set_int(&e->ai, o->a, o->kind == 2 ? (int32_t)g->perso : (int32_t)o->b);
+        break;
+    case TC_AI_POP_FORCE: tc_ai_force_behaviour(&e->ai, o->a); break;
+    case TC_AI_POP_FORCE_REFLEX: tc_ai_force_reflex(&e->ai, o->a); break;
+    case TC_AI_POP_COVER: e->events.cover = true; e->screen_covered = false; break;
+    case TC_AI_POP_WAIT:
+        if (e->portal_wait <= 0) e->portal_wait = e->time + (float)o->b / 1000;
+        if (e->time < e->portal_wait) return false;
+        e->portal_wait = 0;
+        break;
+    case TC_AI_POP_TELEPORT: {
+        float heading = e->player->heading;
+        if (o->kind == 1) memcpy(&heading, &o->c, sizeof(heading));
+        tc_player_teleport(e->player, o->v, heading);
+        tc_mec_walk_reset(&e->walk);
+        e->contacts = 0;
+        e->events.teleported = true;
+        break;
+    }
+    case TC_AI_POP_CAMERA: e->events.camera_set = true; e->events.camera = o->v; break;
+    case TC_AI_POP_LEVEL:
+        e->events.level = m->names[o->b];
+        e->events.place = o->c != TC_AI_NONE ? m->names[o->c] : NULL;
+        e->events.camera_place = o->c != TC_AI_NONE ? m->names[o->a] : NULL;
+        break;
+    default: break;
+    }
+    return true;
+}
+
+/* The portals (tc_ai_portal): capture, then the fire ops in order once the fire condition holds. */
+static void run_portals(tc_ed_ai *e) {
+    const tc_ai_model *m = e->ai.model;
+    uint16_t i, k;
+    for (i = 0; e->portal_armed && i < m->portal_count; i++)
+        if (!e->portal_armed[i] && tc_v3_distance(e->player->position, m->portals[i].position) >= m->portals[i].radius)
+            e->portal_armed[i] = 1;
+    if (e->portal < 0) {
+        for (i = 0; e->portal_armed && i < m->portal_count; i++) {
+            const tc_ai_portal *g = &m->portals[i];
+            bool ok = e->portal_armed[i] && tc_v3_distance(e->player->position, g->position) < g->radius;
+            for (k = 0; ok && k < g->capture_count; k++)
+                if (g->ops[k].op == TC_AI_POP_GUARD && (int32_t)tc_ai_dsgvar_float(&e->ai, g->ops[k].a) != (int32_t)g->ops[k].b)
+                    ok = false;
+            if (!ok) continue;
+            for (k = 0; k < g->capture_count; k++) (void)portal_op(e, g, &g->ops[k]);
+            e->portal_armed[i] = 0;
+            if (g->fire == 2) break; /* capture only: the player's own scripts take it from there */
+            e->portal = i;
+            e->portal_firing = false;
+            e->portal_op = 0;
+            e->portal_wait = 0;
+            e->portal_armed[i] = 0;
+            break;
+        }
+        return;
+    }
+    {
+        const tc_ai_portal *g = &m->portals[e->portal];
+        if (!e->portal_firing) {
+            if (g->fire == 1 ? !e->screen_covered
+                             : (int32_t)tc_ai_dsgvar_float(&e->ai, g->fire_dsg) != g->fire_value)
+                return;
+            e->portal_firing = true;
+        }
+        while (e->portal_op < g->fire_count) {
+            if (!portal_op(e, g, &g->ops[g->capture_count + e->portal_op])) return;
+            e->portal_op++;
+        }
+        e->portal = -1;
+    }
+}
+
+void tc_ed_ai_run_portals(tc_ed_ai *e, float dt) {
+    e->time += dt;
+    run_portals(e);
 }
 
 static tc_vec3 local_to_global(float heading, tc_vec3 v) {
@@ -201,6 +305,8 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
 
     e->time += dt;
     run_triggers(e);
+    run_portals(e);
+    a->screen_covered = e->screen_covered;
     if (e->auto_start && a->normal.behaviour == a->model->initial_normal) inputs |= 1u << TC_AI_IN_JUMP;
     else e->auto_start = false;
     a->inputs = inputs;
@@ -214,6 +320,21 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     a->report_2bc = e->fly.attack_lagged;
     a->report_2c0 = e->fly.bank_lagged;
     tc_ai_step(a, dt);
+    if (a->cover_requested) { /* GameAction2 */
+        a->cover_requested = false;
+        e->events.cover = true;
+        e->screen_covered = false;
+    }
+    if (m->heading_set) p->heading = m->heading;
+    /* SetPositionFrom: the skier's respawn after a hole (B10), Ed's saved-position arrival. Small moves are pose
+     * adjustments made for the engine's own origin and body (B62: 0.85 down into the floor); ours differ, so only moves
+     * of more than 2 units are applied. */
+    if (m->teleport_set && tc_v3_distance(m->teleport, p->position) > 2) {
+        tc_player_teleport(p, m->teleport, p->heading);
+        tc_mec_walk_reset(&e->walk);
+        e->contacts = 0;
+        e->events.teleported = true;
+    }
 
     st = &a->model->states[a->state];
     card = st->card != TC_AI_NONE16 ? &a->model->cards[st->card] : NULL;

@@ -16,6 +16,18 @@
 extern "C" {
 #endif
 
+/* What the step asks of the host (the screen transitions, the camera, the level): set by tc_ed_ai_step, cleared by
+ * the host once handled. Portals: docs/PORTALS.md. */
+typedef struct tc_ed_ai_events {
+    bool cover;                  /* start the cover transition (GameAction2, or a zone portal); then set screen_covered */
+    bool teleported;             /* the player was moved within the level (PROC_8): start the reveal */
+    bool camera_set;             /* ... and the camera put at `camera` */
+    tc_vec3 camera;
+    const char *level;           /* change level (ChangeLevel / PROC_29), lowercase; NULL none */
+    const char *place;           /* PROC_29: arrive at the level perso of that instance name (tc_ai_place), else NULL */
+    const char *camera_place;
+} tc_ed_ai_events;
+
 typedef struct tc_ed_ai {
     tc_player *player;           /* physics, owned by the caller */
     tc_ai_perso ai;
@@ -35,12 +47,26 @@ typedef struct tc_ed_ai {
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;
     tc_mec_env env;
+    /* Portals (.ttai v6): the one in progress (-1 none), whether its fire condition has held, its next fire op and
+     * when that may run; per portal whether the player has left its radius since it last captured him. */
+    int portal;
+    bool portal_firing;
+    uint16_t portal_op;
+    float portal_wait;
+    uint8_t *portal_armed;
+    bool screen_covered;         /* host -> driver: the cover transition has finished (GameState63) */
+    tc_ed_ai_events events;      /* driver -> host */
 } tc_ed_ai;
 
 tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player, const char *level_name);
 void tc_ed_ai_free(tc_ed_ai *e);
-/* inputs: 1 << TC_AI_IN_* held; stick -1..1 (y forward, 0 with a keyboard); camera: the eye position. */
+/* inputs: 1 << TC_AI_IN_* held; stick -1..1 (y forward, 0 with a keyboard); camera: the eye position.
+ * Runs the portals before the AI: capture when the player comes within a portal's radius (its guards holding), then its
+ * fire ops once its condition holds (see events). */
 void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera);
+/* Only the portals, for a host that moves the player itself (the viewer's simple controller): capture and fire as in
+ * tc_ed_ai_step, the AI not stepped. */
+void tc_ed_ai_run_portals(tc_ed_ai *e, float dt);
 
 /* What to draw: the playing state's animation key (.ttlv Ed animation "s<key>"), the frame into it, and whether
  * it loops (blend the last frame into the first). */

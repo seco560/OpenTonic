@@ -52,15 +52,20 @@ final class Viewer {
     let raw: UnsafeMutablePointer<tc_viewer>
     let level: Level
 
-    init(level: Level) throws {
+    /// carry: arriving through a portal (the last level's `pendingLevel`).
+    init(level: Level, carry: tc_viewer_carry? = nil) throws {
         let v = UnsafeMutablePointer<tc_viewer>.allocate(capacity: 1)
         let aiURL = level.url.deletingPathExtension().appendingPathExtension("ttai")
         let ai = try? Data(contentsOf: aiURL)
+        var carried = carry ?? tc_viewer_carry()
         let r = level.name.withCString { name in
             (ai ?? Data()).withUnsafeBytes { bytes in
-                var desc = tc_viewer_desc(level: level.pointer, ai_data: ai != nil ? bytes.baseAddress : nil,
-                                          ai_size: ai?.count ?? 0, level_name: name)
-                return tc_viewer_init(v, &desc)  // copies the model and the name
+                withUnsafePointer(to: &carried) { carryPointer in
+                    var desc = tc_viewer_desc(level: level.pointer, ai_data: ai != nil ? bytes.baseAddress : nil,
+                                              ai_size: ai?.count ?? 0, level_name: name,
+                                              carry: carry != nil ? carryPointer : nil, seed: UInt32.random(in: 1...UInt32.max))
+                    return tc_viewer_init(v, &desc)  // copies the model, the name and the carry
+                }
             }
         }
         guard r == TC_OK else {
@@ -80,6 +85,19 @@ final class Viewer {
     var canPlay: Bool { tc_viewer_can_play(raw) }
     var aiActive: Bool { tc_viewer_ai_active(raw) }
     var stats: tc_view_stats { raw.pointee.stats }
+
+    /// What to draw over the frame this frame (screen transitions, black, the loading screen).
+    var overlay: tc_view_overlay {
+        var o = tc_view_overlay()
+        tc_viewer_overlay(raw, &o)
+        return o
+    }
+    /// After a red portal's loading screen: the level to open and what Ed brings along (a copy).
+    var pendingLevel: tc_viewer_carry? { tc_viewer_pending_level(raw)?.pointee }
+    /// The transition textures, relative to the level folder.
+    var effectTextures: [String] {
+        (0..<tc_viewer_effect_count(raw)).map { String(cString: tc_viewer_effect_texture(raw, $0)) }
+    }
 
     /// The settings readout for the title bar ("view: anim 1.00×, ...").
     var status: String {

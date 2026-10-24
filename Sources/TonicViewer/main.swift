@@ -2,11 +2,82 @@ import AppKit
 import MetalKit
 import TonicCore
 
+/// A fixed-size C char array (imported as a tuple) as a String.
+func cString<T>(_ chars: T) -> String {
+    withUnsafeBytes(of: chars) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+}
+
+/// The loading screen of a red portal (docs/PORTALS.md): the coming level's vignette, a bar and its name, over the
+/// black the renderer draws.
+final class LoadingScreen: NSView {
+    private let image = NSImageView()
+    private let bar = NSProgressIndicator()
+    private let label = NSTextField(labelWithString: "")
+    private var level = ""
+    let vignettes: URL
+
+    init(frame: NSRect, vignettes: URL) {
+        self.vignettes = vignettes
+        super.init(frame: frame)
+        image.imageScaling = .scaleProportionallyUpOrDown
+        bar.isIndeterminate = false
+        bar.minValue = 0
+        bar.maxValue = 1
+        bar.style = .bar
+        label.font = .systemFont(ofSize: 18, weight: .semibold)
+        label.textColor = .white
+        label.alignment = .center
+        for v in [image, bar, label] as [NSView] { addSubview(v) }
+        autoresizingMask = [.width, .height]
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    func show(level: String, progress: Float) {
+        if level != self.level {
+            self.level = level
+            label.stringValue = "Loading \(level)"
+            // Vignette names differ in case from the level names (Cock01.png / cock01).
+            let files = (try? FileManager.default.contentsOfDirectory(at: vignettes, includingPropertiesForKeys: nil)) ?? []
+            image.image = files.first { $0.deletingPathExtension().lastPathComponent.lowercased() == level.lowercased() }
+                .flatMap { NSImage(contentsOf: $0) }
+            needsLayout = true
+        }
+        bar.doubleValue = Double(progress)
+    }
+
+    override func layout() {
+        super.layout()
+        let b = bounds, w = min(b.width * 0.8, (b.height - 120) * 4 / 3), h = w * 3 / 4
+        image.frame = NSRect(x: (b.width - w) / 2, y: (b.height - h) / 2 + 40, width: w, height: h)
+        label.frame = NSRect(x: 0, y: image.frame.minY - 44, width: b.width, height: 26)
+        bar.frame = NSRect(x: (b.width - w * 0.6) / 2, y: image.frame.minY - 72, width: w * 0.6, height: 16)
+    }
+}
+
 /// TonicViewer: level viewer and barebones collision tester; prototype / MVP of a native macOS port.
 final class GameView: MTKView {
     var renderer: Renderer?
     private let bindings = KeyBindings()
     override var acceptsFirstResponder: Bool { true }
+
+    private var loadingScreen: LoadingScreen?
+    var vignettes: URL?
+
+    /// The renderer's loading screen state, every frame.
+    func showLoading(_ state: (String, Float)?) {
+        guard let (level, progress) = state, let vignettes else {
+            loadingScreen?.removeFromSuperview()
+            loadingScreen = nil
+            return
+        }
+        if loadingScreen == nil {
+            let l = LoadingScreen(frame: bounds, vignettes: vignettes)
+            addSubview(l)
+            loadingScreen = l
+        }
+        loadingScreen?.show(level: level, progress: progress)
+    }
 
     /// The core's viewer state of the open level (tc_viewer.h).
     private var viewer: UnsafeMutablePointer<tc_viewer>? { renderer?.viewer?.raw }
@@ -14,6 +85,7 @@ final class GameView: MTKView {
     /// Mouse-look capture (viewer convenience, not part of the original controls):
     /// click to capture, move to look, Esc to release.
     private var captured = false
+    var isCaptured: Bool { captured }
 
     func setCaptured(_ on: Bool) {
         guard on != captured else { return }
@@ -155,6 +227,7 @@ final class GameView: MTKView {
     }
 
     @MainActor @objc func showPicker() {
+        Sfx.shared.stopAll()
         Music.shared.play(level: "menu", audioDir: levelFolder.deletingLastPathComponent().appendingPathComponent("audio"))
         gameView?.setCaptured(false)
         gameView?.isPaused = true
@@ -246,14 +319,38 @@ final class GameView: MTKView {
         alert.runModal()
     }
 
-    func openLevel(_ url: URL) {
+    /// A red portal's level change: the .ttlv of that name (any case) in the levels folder, entered with the carry.
+    func openPortalLevel(_ carry: tc_viewer_carry) {
+        let name = cString(carry.level)
+        let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
+        guard let url = files.first(where: { $0.pathExtension.lowercased() == "ttlv"
+                                             && $0.deletingPathExtension().lastPathComponent.lowercased() == name }) else {
+            let alert = NSAlert()
+            alert.messageText = "No level \(name)"
+            alert.informativeText = "The portal leads to \(name), which is not in \(levelFolder.path)."
+            alert.runModal()
+            showPicker()
+            return
+        }
+        openLevel(url, carry: carry)
+    }
+
+    func openLevel(_ url: URL, carry: tc_viewer_carry? = nil) {
+        // The old view may hold the mouse (cursor hidden and detached): release it, and capture again in the new view so
+        // a portal's level change keeps playing (and Esc still releases it).
+        let wasCaptured = gameView?.isCaptured ?? false
+        gameView?.setCaptured(false)
+        Sfx.shared.stopAll()
+        Sfx.shared.load(audioDir: url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("audio"))
         // Level music from the user-edited table out/audio/music.tsv (next to out/ttlv).
         Music.shared.play(level: url.deletingPathExtension().lastPathComponent,
                           audioDir: url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("audio"))
         let view = GameView(frame: window.contentLayoutRect, device: MTLCreateSystemDefaultDevice())
         do {
             let r = try Renderer(view: view)
-            r.load(try Viewer(level: Level(url: url)))
+            r.load(try Viewer(level: Level(url: url), carry: carry))
+            r.onLoading = { [weak view] in view?.showLoading($0) }
+            r.onPendingLevel = { [weak self] in self?.openPortalLevel($0) }
             renderer = r
         } catch {
             let alert = NSAlert()
@@ -264,9 +361,11 @@ final class GameView: MTKView {
         }
         view.renderer = renderer
         view.delegate = renderer
+        view.vignettes = levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level")
         gameView = view
         window.contentView = view
         window.makeFirstResponder(view)
+        if wasCaptured { view.setCaptured(true) }
         let r = renderer!, viewer = r.viewer!, s = viewer.stats
         window.title = "TonicViewer — \(viewer.level.name)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(r.textureCount) textures (\(r.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(viewer.canPlay ? "  ·  Tab: play as Ed" : "")"
         view.updateTitle()  // play mode is on from the start when the level has Ed

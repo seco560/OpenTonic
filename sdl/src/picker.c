@@ -2,11 +2,19 @@
 #include <tonic/tonic.h>
 #include "util.h"
 
-/* Playable levels first, then the cutscene levels; by name within each. */
+static const char *const section_titles[3] = {"Levels", "Cutscenes", "Imported"};
+
+/* By section, then by name. */
 static int compare_entries(const void *a, const void *b) {
-    const char *x = ((const picker_entry *)a)->name, *y = ((const picker_entry *)b)->name;
-    int cx = tc_level_is_cutscene(x), cy = tc_level_is_cutscene(y);
-    return cx != cy ? cx - cy : SDL_strcasecmp(x, y);
+    const picker_entry *x = (const picker_entry *)a, *y = (const picker_entry *)b;
+    return x->section != y->section ? x->section - y->section : SDL_strcasecmp(x->name, y->name);
+}
+
+static int section_of(const char *name, const char *imported) {
+    char *dir = imported ? path_join(imported, name) : NULL;
+    bool is_imported = dir && path_is_dir(dir);
+    SDL_free(dir);
+    return is_imported ? 2 : tc_level_is_cutscene(name) ? 1 : 0;
 }
 
 void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, float scale) {
@@ -26,12 +34,21 @@ void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, 
         else { SDL_free(p->entries[i].path); SDL_free(p->entries[i].name); SDL_zero(p->entries[i]); }
     }
     SDL_free(levels);
-    /* Compact out failed entries, then sort by name. */
+    /* Compact out failed entries, then sort by section and name. Imported levels have out/Imported/<name>. */
+    char *out = path_dir(folder), *imported = out ? path_join(out, "Imported") : NULL;
     int k = 0;
-    for (int i = 0; i < n; i++) if (p->entries[i].path) p->entries[k++] = p->entries[i];
+    for (int i = 0; i < n; i++)
+        if (p->entries[i].path) {
+            p->entries[i].section = section_of(p->entries[i].name, imported);
+            p->entries[k++] = p->entries[i];
+        }
+    SDL_free(out);
+    SDL_free(imported);
     SDL_qsort(p->entries, (size_t)p->count, sizeof *p->entries, compare_entries);
-    p->first_cutscene = p->count;
-    for (int i = p->count - 1; i >= 0 && tc_level_is_cutscene(p->entries[i].name); i--) p->first_cutscene = i;
+    for (int s = 0, i = 0; s < 4; s++) {
+        while (i < p->count && p->entries[i].section < s) i++;
+        p->first[s] = s == 3 ? p->count : i;
+    }
 
     int thumb_n = 0;
     char **thumbs = SDL_GlobDirectory(thumbnails, "*.png", SDL_GLOB_CASEINSENSITIVE, &thumb_n);
@@ -55,9 +72,10 @@ void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, 
     }
     if (uploading) gpu_upload_end(g, &u);
     SDL_free(thumbs);
-    if (p->first_cutscene > 0) p->heading[0] = gpu_text(g, "Levels", text_scale, &p->heading_w[0], &p->heading_h[0]);
-    if (p->first_cutscene < p->count)
-        p->heading[1] = gpu_text(g, "Cutscenes", text_scale, &p->heading_w[1], &p->heading_h[1]);
+    for (int s = 0; s < 3; s++)
+        if (p->first[s] < p->first[s + 1])
+            p->heading[s] = gpu_text(g, section_titles[s], text_scale, &p->heading_w[s], &p->heading_h[s]);
+    if (p->first[2] < p->count) p->unknown = gpu_text(g, "?", 1, &p->unknown_w, &p->unknown_h);
 }
 
 void picker_close(picker *p) {
@@ -68,8 +86,9 @@ void picker_close(picker *p) {
         SDL_free(e->name);
         SDL_free(e->path);
     }
-    for (int k = 0; k < 2; k++)
+    for (int k = 0; k < 3; k++)
         if (p->heading[k]) SDL_ReleaseGPUTexture(p->g->device, p->heading[k]);
+    if (p->unknown) SDL_ReleaseGPUTexture(p->g->device, p->unknown);
     SDL_free(p->entries);
     SDL_zerop(p);
 }
@@ -95,27 +114,25 @@ static layout layout_for(const picker *p, float width) {
 
 static int rows_of(int n, int cols) { return (n + cols - 1) / cols; }
 
-/* Top of section k's heading (0 levels, 1 cutscenes; content coordinates, before scrolling). */
+/* Top of section k's heading (content coordinates, before scrolling); k = 3: the end. Empty sections take no space. */
 static float heading_y(const picker *p, const layout *l, int k) {
     float y = l->pad / 2;
-    return k == 0 ? y : y + l->heading + (float)rows_of(p->first_cutscene, l->cols) * l->cell_h;
+    for (int s = 0; s < k; s++)
+        if (p->first[s + 1] > p->first[s]) y += l->heading + (float)rows_of(p->first[s + 1] - p->first[s], l->cols) * l->cell_h;
+    return y;
 }
 
 static SDL_FRect tile_rect(const picker *p, const layout *l, int i) {
-    float top = heading_y(p, l, 0) + l->heading;
-    if (i >= p->first_cutscene) {
-        top = heading_y(p, l, 1) + l->heading;
-        i -= p->first_cutscene;
-    }
+    int s = p->entries[i].section;
+    float top = heading_y(p, l, s) + l->heading;
+    i -= p->first[s];
     SDL_FRect r = {l->left + (float)(i % l->cols) * l->cell_w, top + (float)(i / l->cols) * l->cell_h - p->scroll,
                    l->tile_w, l->tile_h + l->caption};
     return r;
 }
 
 static float max_scroll(const picker *p, const layout *l) {
-    float end = heading_y(p, l, 1);
-    if (p->first_cutscene < p->count) end += l->heading + (float)rows_of(p->count - p->first_cutscene, l->cols) * l->cell_h;
-    return SDL_max(0.0f, end - p->height);
+    return SDL_max(0.0f, heading_y(p, l, 3) - p->height);
 }
 
 int picker_hit(picker *p, float x, float y) {
@@ -138,16 +155,20 @@ void picker_move(picker *p, int dx, int dy) {
     if (p->count == 0) return;
     if (p->selected < 0) { p->selected = 0; }
     else {
-        int cols = SDL_max(1, p->columns), i = p->selected;
-        bool cut = i >= p->first_cutscene;
-        int first = cut ? p->first_cutscene : 0, n = cut ? p->count - p->first_cutscene : p->first_cutscene;
+        int cols = SDL_max(1, p->columns), i = p->selected, s = p->entries[i].section;
+        int first = p->first[s], n = p->first[s + 1] - first, col = (i - first) % cols;
         int j = i - first + dx + dy * cols;  /* position within the section */
         if (j >= 0 && j < n) i = first + j;
-        else if (dy > 0 && !cut && p->first_cutscene < p->count)  /* down from the last row: into the cutscenes */
-            i = p->first_cutscene + SDL_min((i - first) % cols, p->count - p->first_cutscene - 1);
-        else if (dy < 0 && cut && p->first_cutscene > 0) {  /* up from the first row: back to the levels */
-            int last_row = (p->first_cutscene - 1) / cols * cols;
-            i = SDL_min(last_row + (i - first) % cols, p->first_cutscene - 1);
+        else if (dy > 0) {  /* down from the last row: the first row of the next section with levels */
+            for (int t = s + 1; t < 3; t++)
+                if (p->first[t + 1] > p->first[t]) { i = p->first[t] + SDL_min(col, p->first[t + 1] - p->first[t] - 1); break; }
+        } else if (dy < 0) {  /* up from the first row: the last row of the previous one */
+            for (int t = s - 1; t >= 0; t--)
+                if (p->first[t + 1] > p->first[t]) {
+                    int last_row = p->first[t] + (p->first[t + 1] - p->first[t] - 1) / cols * cols;
+                    i = SDL_min(last_row + col, p->first[t + 1] - 1);
+                    break;
+                }
         }
         p->selected = i;
     }
@@ -165,7 +186,7 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
     layout l = layout_for(p, p->width);
     p->columns = l.cols;
     p->scroll = SDL_clamp(p->scroll, 0.0f, max_scroll(p, &l));
-    for (int k = 0; k < 2; k++) {
+    for (int k = 0; k < 3; k++) {
         if (!p->heading[k]) continue;
         float y = heading_y(p, &l, k) - p->scroll;
         SDL_FRect line = {l.left, SDL_roundf(y + l.heading - 8 * p->scale), (float)l.cols * l.cell_w - l.pad, SDL_max(1.0f, p->scale)};
@@ -193,6 +214,11 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
             gpu_quad(g, f, pass, e->thumb, fit, NULL, (SDL_FColor){1, 1, 1, 1});
         } else {
             gpu_quad(g, f, pass, NULL, img, NULL, (SDL_FColor){0.14f, 0.15f, 0.22f, 1});
+            if (e->section == 2 && p->unknown) {  /* imported: a big question mark (the 8x8 font, scaled up) */
+                float h = l.tile_h * 0.6f, w = h * (float)p->unknown_w / (float)SDL_max(1, p->unknown_h);
+                SDL_FRect q = {SDL_roundf(img.x + (l.tile_w - w) / 2), SDL_roundf(img.y + (l.tile_h - h) / 2), w, h};
+                gpu_quad_sampled(g, f, pass, p->unknown, g->nearest_sampler, q, NULL, (SDL_FColor){0.55f, 0.6f, 0.75f, 1});
+            }
         }
         if (e->caption) {
             float cw = (float)e->caption_w, ch = (float)e->caption_h;

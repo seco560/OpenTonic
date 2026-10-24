@@ -101,6 +101,12 @@ if [ "$CHECK" = 1 ]; then
   make -C core check mechcheck
 fi
 
+# ---- 5a. sound effects (Ed's: the global sound events) ----
+if need "$OUT/audio/sfx/events.tsv"; then
+  echo "== sound effects"
+  python3 -m tools.ttre.sfx "$OUT/audio/sfx" || echo "sound effects: skipped (vgmstream-cli?)"
+fi
+
 # ---- the SDL3 frontend ----
 if [ "$BUILD" = 1 ]; then
   echo "== sdl"

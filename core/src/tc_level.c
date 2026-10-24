@@ -265,6 +265,26 @@ const char *tc_result_string(tc_result r) {
     return "unknown error";
 }
 
+static int same_level(const char *a, const char *b) {
+    while (*a && tolower((unsigned char)*a) == tolower((unsigned char)*b)) a++, b++;
+    return *a == 0 && *b == 0;
+}
+
+const char *tc_level_after_cutscene(const char *name) {
+    /* The character of each cutscene level whose script changes level (tools: every ChangeLevel / PROC_29 in the
+     * level's persos; NBD_Appui*Start, which names every level, is the generic "press start" selector). */
+    static const char *const next[][2] = {{"bar", "cock01"},        /* PAT_Barman_Astuce01 */
+                                          {"mammyon", "lecanyon"},  /* PAT_Mammouth01 */
+                                          {"pharmmap", "marmite"},  /* PAT_Pharmacien001 */
+                                          {"pyr_fou", "pyramide"},  /* PAT_Fou */
+                                          {"spycarota", "carota"},  /* PAT_EspionNews */
+                                          {"spynorth", "north"}};   /* PAT_EspionAstuce02 */
+    size_t i;
+    for (i = 0; name && i < sizeof(next) / sizeof(next[0]); i++)
+        if (same_level(name, next[i][0])) return next[i][1];
+    return NULL;
+}
+
 int tc_level_is_cutscene(const char *name) {
     static const char *const cutscenes[] = {"bar", "death", "mammyon", "outro", "pharmmap", "pyr_fou", "spycarota",
                                             "spynorth"};

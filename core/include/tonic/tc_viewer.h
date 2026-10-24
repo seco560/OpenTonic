@@ -12,6 +12,7 @@
 #include "tc_math.h"
 #include "tc_level.h"
 #include "tc_player.h"
+#include "tc_transition.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,12 +67,41 @@ typedef struct tc_view_frame {
     float clear_color[3];     /* the fog colour with fog (the horizon fades into it), else (0.08, 0.09, 0.14) */
 } tc_view_frame;
 
+/* What to draw over the frame (docs/PORTALS.md): a screen transition, black, or the loading screen. */
+typedef enum tc_view_overlay_kind { TC_VO_NONE, TC_VO_MASK, TC_VO_LOGO, TC_VO_BLACK, TC_VO_LOADING } tc_view_overlay_kind;
+typedef struct tc_view_overlay {
+    tc_view_overlay_kind kind;
+    int32_t texture;          /* MASK / LOGO: tc_viewer_effect_texture index */
+    float threshold;          /* MASK: a full-viewport black quad where the mask's alpha <= threshold (0..1) */
+    float corners[4][2];      /* LOGO: the texture on this quad, viewport units (0..1, y down), triangles 0 1 2 and */
+    float uv[4][2];           /*       1 3 2, black tinted by the texture's alpha, over the frame */
+    float progress;           /* LOADING: the bar, 0..1 */
+    const char *level;        /* LOADING: the level coming ("bar"); its vignette is Vignette/Level/<level>.png */
+} tc_view_overlay;
+
+/* A level change through a portal: what the next level's viewer needs (tc_viewer_desc.carry). Ed lives in the fix,
+ * so his dsgvars survive (B63's arrival branch reads them: dsg134 = 2 -> heading dsg136, the step-out). */
+#define TC_VIEWER_CARRY_DSG 4096
+typedef struct tc_viewer_carry {
+    char level[64];           /* the level to load, lowercase (match the .ttlv case-insensitively) */
+    char place[64];           /* PROC_29: Ed arrives at the level perso of this instance name; "" = his start */
+    char camera_place[64];
+    uint32_t dsg_size;        /* 0: no dsgvars carried */
+    uint8_t dsg[TC_VIEWER_CARRY_DSG];
+} tc_viewer_carry;
+
 typedef struct tc_viewer_desc {
     const tc_level *level;    /* loaded by the frontend; must outlive the viewer */
     const void *ai_data;      /* the .ttai next to the .ttlv (written by `tools.ttre level-ttai`), or NULL */
     size_t ai_size;
     const char *level_name;   /* "bar": the AI's per-level settings (copied) */
+    const tc_viewer_carry *carry; /* arriving through a portal (tc_viewer_pending_level of the last level), or NULL */
+    uint32_t seed;            /* random effects of the screen transitions */
 } tc_viewer_desc;
+
+typedef enum tc_viewer_phase {
+    TC_VP_PLAY, TC_VP_COVER, TC_VP_BLACK, TC_VP_LOADING, TC_VP_PENDING, TC_VP_REVEAL
+} tc_viewer_phase;
 
 typedef struct tc_viewer_play tc_viewer_play;  /* private: collision, Ed's controller and AI at stable addresses */
 
@@ -108,6 +138,19 @@ typedef struct tc_viewer {
     float ed_phase;           /* samples into ed_clip */
     bool ed_loop;
 
+    /* Portals and screen transitions. */
+    tc_viewer_phase phase;
+    tc_transition transition;
+    float loading_time;       /* seconds into the loading screen */
+    uint32_t rng;
+    const char **effects;     /* distinct effect texture paths (relative to the level folder) */
+    uint32_t effect_count;
+    tc_viewer_carry *carry;   /* the level change in progress (LOADING / PENDING) */
+    int walk_in;              /* simple controller at a portal: 1 the step-in clip, 2 the cover and the portal firing */
+    int walk_clip;            /* the step-in clip (state 228's animation), -1 none */
+    uint16_t sounds[TC_AI_MAX_SOUNDS]; /* sound events started by the last update */
+    uint32_t sound_count;
+
     /* Mesh table and this frame's draw list. */
     const tc_mesh **meshes;
     uint32_t mesh_count, perso_first, ed_first;
@@ -136,6 +179,17 @@ void tc_viewer_update(tc_viewer *v, float dt);
  * everything opaque without depth writes. Storage is the viewer's, valid until the next call. */
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out);
+
+/* Screen transitions and portals. Load the effect textures once (paths relative to the level folder, as the level's
+ * textures); each frame draw the overlay over the 3D frame. When tc_viewer_pending_level returns non-NULL (after the
+ * loading screen), load that level and start its viewer with the carry (copy it first: it is freed with this one). */
+uint32_t tc_viewer_effect_count(const tc_viewer *v);
+const char *tc_viewer_effect_texture(const tc_viewer *v, uint32_t i);
+void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out);
+const tc_viewer_carry *tc_viewer_pending_level(const tc_viewer *v);
+/* Sound events started by the last tc_viewer_update (global event indices: audio/sfx/events.tsv, written by
+ * tools/ttre/sfx.py: play, loop or stop a file). */
+uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events);
 
 /* Settings (keys in the Swift and SDL frontends in brackets). */
 void tc_viewer_step_speed(tc_viewer *v, int dir);   /* [ ]: 1/4, 1/3, 1/2, 2/3, 3/4, 1, 1.5, 2 */

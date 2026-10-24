@@ -5,6 +5,7 @@
 #   make mechcheck  -> type 0/4 mechanics on hand-made geometry (no game data needed)
 #   make crashcheck -> Totalski: the skier rides into a tree and crashes (needs ../files/out/ttlv/Totalski.*)
 #   make viewcheck  -> the viewer module (tc_viewer) headless on bar: scripted keys, draw lists, title readout
+#   make portalcheck -> Ed walks into portals on sud0, Land and north (docs/PORTALS.md)
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 CC ?= cc
 AR ?= ar
@@ -15,7 +16,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck $(BUILD)/portalcheck
 lib: $(BUILD)/libtoniccore.a
 
 $(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard src/*.h) | $(BUILD)
@@ -39,6 +40,9 @@ $(BUILD)/crashcheck: tests/crashcheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/viewcheck: tests/viewcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
+$(BUILD)/portalcheck: tests/portalcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -57,7 +61,10 @@ crashcheck: $(BUILD)/crashcheck
 viewcheck: $(BUILD)/viewcheck
 	$(BUILD)/viewcheck ../files/out/ttlv bar
 
+portalcheck: $(BUILD)/portalcheck
+	$(BUILD)/portalcheck ../files/out/ttlv
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck viewcheck clean
+.PHONY: all lib check aicheck mechcheck crashcheck viewcheck portalcheck clean

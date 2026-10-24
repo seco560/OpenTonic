@@ -124,6 +124,10 @@ void tc_level_bounds(const tc_level *level, tc_vec3 *lo, tc_vec3 *hi);
  * death, mammyon, outro, pharmmap, pyr_fou, SpyCarota, spynorth (per the user). They stay explorable; level
  * pickers list them after the playable ones. */
 int tc_level_is_cutscene(const char *name);
+/* The level a cutscene level hands over to (its character's ChangeLevel: bar -> cock01, mammyon -> lecanyon, pharmmap
+ * -> marmite, pyr_fou -> pyramide, SpyCarota -> carota, spynorth -> north), or NULL. Until cutscenes play, portals
+ * into a cutscene level go straight on to this one (tc_viewer). */
+const char *tc_level_after_cutscene(const char *name);
 
 /* Index of Ed's animation called `name`, or -1. */
 int tc_ed_find_anim(const tc_ed *ed, const char *name);

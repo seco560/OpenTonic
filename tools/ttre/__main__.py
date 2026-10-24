@@ -61,7 +61,7 @@ def level_cmd(cmd, argv):
         def show(op):
             o, kind, a, b, c, v = op
             if o == ai.POP_SET:
-                return f'set dsg{a}=' + (f'{struct.unpack("<i", struct.pack("<I", b))[0]}', f'{v[0]:g}', 'self')[kind]
+                return f'set dsg{a}=' + (f'{struct.unpack("<i", struct.pack("<I", b))[0]}', f'{v[0]:g}', 'self', f'({v[0]:.0f}, {v[1]:.0f}, {v[2]:.0f})')[kind]
             if o == ai.POP_GUARD:
                 return f'guard dsg{a}=={b}'
             if o in (ai.POP_FORCE, ai.POP_FORCE_REFLEX):
@@ -77,7 +77,7 @@ def level_cmd(cmd, argv):
         print(f"  portals {len(r['portals'])}, places {r['places']}" +
               (f", missing effect textures {r['missing_effects']}" if r['missing_effects'] else ''))
         for pos, radius, _, _, fire, fire_dsg, fire_value, cap, fire_ops, (fam, inst) in r['portals']:
-            when = f'dsg{fire_dsg}=={fire_value}' if fire == 0 else 'covered'
+            when = f'dsg{fire_dsg}=={fire_value}' if fire == 0 else 'covered' if fire == 1 else 'never (capture only)'
             print(f"    {inst} @({pos[0]:.0f}, {pos[1]:.0f}, {pos[2]:.0f}) r {radius:g}: "
                   f"{'; '.join(show(o) for o in cap)}  |  on {when}: {'; '.join(show(o) for o in fire_ops)}")
         for off, mask, kind, lo, hi in r['buttons']:

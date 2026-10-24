@@ -222,6 +222,32 @@ headless tests, and ask before large explorations.
    (player behaviours, the sud0 river, day/night logic).
 3. Parked: lighting stages 2-4, the river, collision materials (water/death), steps higher than 0.15.
 
+## Sound events (2026-10-25): Ed's sound effects
+- **Global sound events = Bnk_0's events** (84; the fix bank, always loaded). The snapshot stores a sound reference as
+  a pointer 0x9bdfe0c + 0x20 x index (where Bnk_0's event 0 lived); **fix.snd** lists them as { u32 index, u32 address }
+  pairs (fix.rts = their relocation table). Levels have no .snd (their own sounds: not looked at).
+- **Bank** (.bnm, plain): { u32 version 0, events offset, n_events, resources offset, n_resources, data offset, ... };
+  event 0x20 { u32 id, u32 kind (1 play, 2 stop), u32 (index-like, unreliable), ... }; resource 0x5c { u32 id, u32 type
+  (1 audio = the vgmstream streams, `bnm/<resource index>/...`; 8 / 10 tiny raw waveforms), u32, u32 size, u32 data
+  offset, u32 volume (0x7f), ..., file name }. An event plays the resource of the **same id**; the 6 stop events share a
+  resource with a play event (loops: flight, sliding). Event 49 (0x00390000) has no resource: the **footstep switch** over
+  0x0039xxxx (EsCarpet, EsIce, EsSnow, EsGrassS/H, ... Edpasgen = generic) by ground material, probably resource r2e
+  (type 8) + GameMaterial +8 "sound"; not decoded, the generic step plays. **Event word 2 (fixed 2026-10-25)**: play
+  events = the resource index (agrees with the id link wherever both exist; the id link was wrong for 45: edboof01,
+  the portal's "boof", not edpafo01), stop events = the index of the event they stop (0 -> 1, 13 -> 12, 19 -> 18,
+  33 -> 34 edgliss = sliding, 37 -> 38, 76 -> 77 edplane1 = flight): those targets are the loops. Sfx.swift: a loop has
+  one voice (the animations retrigger it every cycle; stacking copies made the flight / sliding echo), one-shot sounds
+  overlap to their end (the portal step-in's six boofs, user-confirmed). The engine's voice sharing: not decoded yet.
+- **Triggers**: animation events, AnimationReference (TT) +8 ptr events, +0xC u32 n (the A3D header's n_events agrees),
+  20-byte entries { u32 type, u32 value, u32 frame, u32, u32 }: type 0 = sound (value = event pointer), type 3 = foot
+  contact (value 14 / 15; not used yet), types 1 / 2 rare; 232 of Ed's 369 states have some (523 sounds). Scripts:
+  PlaySound3D / ...Other / Global / Global2 (PROC 145-148) with a T34 node (the event pointer).
+- **Port**: tools/ttre/sfx.py extracts the events' files (72, 5.3 MB) to out/audio/sfx with events.tsv (play / loop /
+  stop, volume); .ttai v7 adds each state's animation sound rows and turns T34 nodes into event indices; tc_ai queues
+  the events whose frame the animation clock passes and PlaySound3D's (tc_ai_perso.sounds), tc_viewer_sounds hands them
+  to the frontend; the Mac app plays them (Sfx.swift, AVAudioPlayer, muted with M). Not positional yet (3D), no
+  per-material footsteps, other persos' sounds not played.
+
 ## Audio (2026-10-19)
 - All audio lives in Ubisoft sound banks `WORLD/SOUND/Bnk_*.bnm` (+ `English/` voice banks). vgmstream reads them (brew `vgmstream`).
   `python3 -m tools.audio_inventory 20 > out/audio/inventory.tsv` lists streams ≥ 20 s.

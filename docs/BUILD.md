@@ -56,6 +56,10 @@ cp tools/music.tsv files/out/audio/
 ```
 (Converting to .m4a is optional; if you do, rename the entries in `files/out/audio/music.tsv` too.)
 
+Sound effects (Ed's, the game's global sound events; docs/NOTES.md "Sound events"): `python3 -m tools.ttre.sfx`
+writes `files/out/audio/sfx/*.wav` and `events.tsv` (about 15 s, needs vgmstream-cli). The .ttai files (step 4) carry
+the animation sound events.
+
 ## 5b. Intro movie (optional)
 Copy the disc's `Videos` folder to `files/sources/Videos`, then `tools/make_intro.sh` (about a minute): the
 400x240 `EDPROL.AVI`, deblocked and upscaled to 1800x1080, with its soundtrack from sound bank 200
@@ -80,3 +84,17 @@ pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
 - `make -C core mechcheck`: the game's ground/air mechanics on hand-made geometry (no game data needed).
 - `make -C core aicheck` (Ed's AI on bar; `AI_SCRIPT=fly|ski|wander`, see tests/aicheck.c) and
   `make -C core crashcheck` (Totalski: the skier crashes into a tree).
+
+## Importing other models (optional)
+Any glTF 2.0 model (`.gltf` + `.bin`, or `.glb`) becomes a level to walk around as Ed:
+```sh
+python3 -m tools.ttre.import_gltf path/to/Sponza.gltf Sponza [--scale 1] [--spawn x,y,z] [--ed bar]
+```
+It writes `files/out/ttlv/<name>.ttlv` (+ `.ttai`: Ed's AI) and the textures as PNG in `files/out/Imported/<name>/`
+(JPEG and embedded images are converted with ffmpeg or, on macOS, sips). Y-up glTF becomes TT's Z-up; materials map
+alphaMode MASK to alpha test and BLEND to transparent; every non-blended triangle is collision; there is no baked
+lighting (the viewer's sun lights it). Ed (meshes, animations, AI) comes from `--ed`'s level, by default bar (a
+cutscene level, so no portals or triggers). He starts on the highest surface at the model's centre, or at `--spawn`
+(glTF coordinates). Good test levels: Sponza from Khronos' glTF sample assets, CC-licensed downloadable scenes on
+Sketchfab (glTF export), Kenney / Quaternius kits (CC0); game rips only from your own copies, never redistributed.
+

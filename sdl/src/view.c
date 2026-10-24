@@ -81,7 +81,7 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, char *err, size_t err_siz
     char *ai_path = path_with_ext(ttlv_path, ".ttai");
     size_t ai_size = 0;
     void *ai = ai_path ? SDL_LoadFile(ai_path, &ai_size) : NULL;
-    tc_viewer_desc desc = {r, ai, ai_size, v->level.name};
+    tc_viewer_desc desc = {r, ai, ai_size, v->level.name, NULL, (Uint32)SDL_GetTicksNS() | 1};  /* portals: TODO (docs/PORTALS.md step 4) */
     tc_result vr = tc_viewer_init(&v->viewer, &desc);
     if (ai && v->viewer.ai_result != TC_OK) SDL_Log("%s: %s", ai_path, tc_result_string(v->viewer.ai_result));
     SDL_free(ai);

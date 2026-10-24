@@ -96,3 +96,31 @@ fragment float4 level_fragment_flat(VertexOut in [[stage_in]], constant Uniforms
                                      texture2d<float> lightmap [[texture(1)]]) {
     return float4(fogged(pow(saturate(float3(0.7) * light(in, u, lightmap)), float3(1.0 / u.gamma)), in, u), 1.0);
 }
+
+// ---- Screen transitions (docs/PORTALS.md): 2D quads over the frame, alpha blended, no depth ----
+
+struct OverlayVertex { float2 position; float2 uv; };  // position: viewport units, 0..1, y down
+struct OverlayOut { float4 position [[position]]; float2 uv; };
+
+vertex OverlayOut overlay_vertex(uint vid [[vertex_id]], constant OverlayVertex *v [[buffer(0)]]) {
+    OverlayOut out;
+    out.position = float4(v[vid].position.x * 2 - 1, 1 - v[vid].position.y * 2, 0, 1);
+    out.uv = v[vid].uv;
+    return out;
+}
+
+// mode 0: black where the mask's alpha <= threshold (effect A: Direct3D alpha test LESSEQUAL); 1: black with the
+// texture's alpha (effect B, the spinning logo); 2: solid black.
+struct OverlayParams { uint mode; float threshold; };
+
+fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant OverlayParams &p [[buffer(0)]],
+                                 texture2d<float> tex [[texture(0)]]) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    if (p.mode == 2) return float4(0, 0, 0, 1);
+    float a = tex.sample(s, in.uv).a;
+    if (p.mode == 0) {
+        if (a > p.threshold) discard_fragment();
+        return float4(0, 0, 0, 1);
+    }
+    return float4(0, 0, 0, a);
+}
