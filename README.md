@@ -1,20 +1,18 @@
-## Tonic Viewer - native macOS renderer for Tonic Trouble levels
+## Open Tonic - open source engine reimplemetation for Tonic Trouble
 
 <img width="1800" height="1130" alt="Screenshot 2026-10-19 at 20 55 41" src="https://github.com/user-attachments/assets/ce53b698-d818-4161-8d94-40539f97c555" />
 
-Unfortunately we're still quite far from calling this a proper game; it's rather an ambitious first step towards a full decompilation effort. The bulk (about 99% really, the rest were very small tweaks) of this project was produced in under 4 hours using Claude Code harnessed with REA. I'm very happy with the results but completely unsure about their correctness, and I also don't have a fully reproducible build process yet. Let's take a look at the project structure:
-* core - TonicCore: a reimplementation of the Tonic Trouble engine. I feel like Claude drew heavily from previous efforts to decompile the Rayman 2 engine (can be found by searching online) and was able to get it fairly accurately, at least as far as the rendering goes
-- Sources - TonicViewer: a Swift program that wraps around TonicCore to render game levels natively via Metal APIs. There's even a shader and some very basic lighting work done. This is the "impressive tech demo" part of this project
-- tools - TonicTools: a selection of utilities Claude made use of to deconstruct the game files. Unfortunately the process was poorly documented and I have neither the time nor the tokens to fully figure it out once again. However I am certain that an agent thrown at this would easily be able to use these scripts to extract the files. 
-  - exe - utility functions used to assign names to function in binary code
-  - ghidra - utility functions for exe decompilation efforts
-  - ttre - Python scripts used to extract and convert game files
-  - audio\_inventory.py extracts and converts audio files
-  - make\_app.sh and make\_icon.sh may be used to create a standalone redistributable which must NEVER be redistributed as it bundles copyrighted files. FOR PERSONAL USE ONLY!
+While still very much a work in progress, enough gameplay has been implemented to call this a working reimplementatio of Tonic Trouble. Let's go through the folder structure:
+
+* core - Tonic Core: a reimplementation of the Tonic Trouble engine. Done entirely assisted by Claude Code, formed from decompiled outputs and previous efforts to reverse engineer Rayman 2 (Open Rayman, namely)
+* docs - various notes taken throughout the project, haphazard documentation, mostly Claude-speak
+* files - where you'll be placing your own game assets and where the game's own files live
+* sdl - an example SDL implementation of Tonic Core; currently slightly out of date with the Swift version
+* Sources - what began as Tonic Viewer: a Swift program that wraps around TonicCore to render game levels natively via Metal APIs (you can still go into free roam view by pressing Tab; this was initially the default). It was the first target platform and the reason this repository is still a Swift package. The project evolved as I began iterating upon a "simple Ed walking mode".
+* tools - Tonic Tools: all the scripts needed to extract and build game files. make_app.sh builds for macOS, build_linux.sh self-documents what it builds for. The output of the build scripts must obviously never be posted anywhere, it's filled to the brim with Ubisoft copyrighted assets.
   
  <img width="1800" height="1130" alt="Screenshot 2026-10-20 at 04 45 02" src="https://github.com/user-attachments/assets/aec86f85-30ff-4ddf-a167-1e21a0f756a7" /> 
  
-Once you do obtain the converted files you'll need to build TonicViewer and point it to the assets somehow. Currently the build process on Xcode is a tad broken and you have to manually copy the files inside the Library/Developer/Xcode/DerivedData folder which contains the program's build output. Quite cumbersome indeed. This is where make\_app.sh can come in handy to automatically install a self-contained version of the app inside your Applications folder.
-It's a bit iffy to get up and running, and there is a LOT of work left to do, but I'd like to publish this as a demonstration and hoping others can build on it. This can come in handy for Rayman 2 efforts as well, the two games are similar enough that they could probably be combined. Sky's the limit still. 
+The project is firmly in Alpha territory, with a lot of outstanding work still needing to be done. Just about everything is still rough around the edges, or completely unimplemented. For now it acts more like a proof of concept and exploration of the game itself. You can essentially simulate a playthrough by starting with Ski Slope (totalski) and sequentially going through portals. The next steps for the project consist of further decompilation and implementation of actual game mechanics. For now, it is what it is.
 
 <img width="1800" height="1130" alt="skislopes" src="https://github.com/user-attachments/assets/4aceb873-a9d7-409e-9ad1-9a7b344dec09" />
