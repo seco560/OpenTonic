@@ -94,7 +94,9 @@ It writes `files/out/ttlv/<name>.ttlv` (+ `.ttai`: Ed's AI) and the textures as 
 (JPEG and embedded images are converted with ffmpeg or, on macOS, sips). Y-up glTF becomes TT's Z-up; materials map
 alphaMode MASK to alpha test and BLEND to transparent; every non-blended triangle is collision; there is no baked
 lighting (the viewer's sun lights it). Ed (meshes, animations, AI) comes from `--ed`'s level, by default bar (a
-cutscene level, so no portals or triggers). He starts on the highest surface at the model's centre, or at `--spawn`
-(glTF coordinates). Good test levels: Sponza from Khronos' glTF sample assets, CC-licensed downloadable scenes on
+cutscene level, so no portals or triggers). He starts on the highest upward-facing surface at the model's centre
+(sky domes and ceilings face down, so they are skipped), or at `--spawn` (glTF coordinates: Y is up). Re-importing
+under the same name overwrites the level; delete `files/out/Imported/<name>/` first if the model changed a lot, or
+old PNGs stay behind. Good test levels: Sponza from Khronos' glTF sample assets, CC-licensed downloadable scenes on
 Sketchfab (glTF export), Kenney / Quaternius kits (CC0); game rips only from your own copies, never redistributed.
 

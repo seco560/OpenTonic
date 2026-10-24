@@ -10,12 +10,13 @@ Writes files/out/ttlv/NAME.ttlv (+ NAME.ttai, Ed's AI) and the textures as PNG i
 - Collision: the triangles of every non-blended material.
 - Ed: his record (meshes, animations) from the donor level's .ttlv (default bar, a cutscene level: no portals or
   triggers in its .ttai to fire at random places here), his textures added to this level's; his AI = the donor's
-  .ttai. Start: --spawn (glTF coordinates), else on the highest surface at the model's centre.
+  .ttai. Start: --spawn (glTF coordinates), else on the highest upward-facing surface at the model's centre.
 """
 import base64
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -128,10 +129,13 @@ def material_texture(doc, base, mi, tex_dir, cache, buffers):
     t = m.get('pbrMetallicRoughness', {}).get('baseColorTexture')
     if t is None:
         return None, flags
-    img = doc['images'][doc['textures'][t['index']]['source']]
-    key = (mi, t['index'])
+    key = doc['textures'][t['index']]['source']  # one PNG per image, however many materials share it
+    img = doc['images'][key]
     if key not in cache:
-        name = f"{len(cache):03d}_{os.path.splitext(os.path.basename(img.get('uri', 'embedded')))[0][:40]}.png"
+        uri = img.get('uri', '')
+        stem = img.get('name') or (os.path.splitext(os.path.basename(uri))[0] if uri and not uri.startswith('data:')
+                                   else 'embedded')
+        name = f"{len(cache):03d}_{re.sub(r'[^A-Za-z0-9_.-]', '_', stem)[:40]}.png"
         dst = os.path.join(tex_dir, name)
         if 'uri' in img and not img['uri'].startswith('data:'):
             ok = to_png(os.path.join(base, img['uri'].replace('%20', ' ')), dst)
@@ -297,7 +301,8 @@ def main(argv):
             for t in range(0, len(indices), 3):
                 tris.append(tuple(c for j in range(3) for c in verts[indices[t + j]][0]))
 
-    # spawn: --spawn (glTF coordinates), else the highest surface at the centre
+    # spawn: --spawn (glTF coordinates), else the highest upward-facing surface at the centre (skips sky domes and
+    # ceilings, whose faces point down)
     if '--spawn' in opts:
         spawn = to_tt([float(x) for x in opts['--spawn'].split(',')])
     else:
@@ -306,7 +311,7 @@ def main(argv):
         for t in tris:
             a, b, c = t[0:3], t[3:6], t[6:9]
             det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
-            if abs(det) < 1e-12:
+            if det < 1e-12:  # det = 2 x the face normal's z (glTF fronts are counter-clockwise): vertical or facing down
                 continue
             w1 = ((b[1] - c[1]) * (cx - c[0]) + (c[0] - b[0]) * (cy - c[1])) / det
             w2 = ((c[1] - a[1]) * (cx - c[0]) + (a[0] - c[0]) * (cy - c[1])) / det
