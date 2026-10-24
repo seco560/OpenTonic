@@ -1,4 +1,4 @@
-# Level music for TonicViewer: <level><TAB><track file in files/out/audio/music>. Leave the track empty for silence.
+# Level music for Open Tonic: <level><TAB><track file in files/out/audio/music>. Leave the track empty for silence.
 # Tracks (listen in Finder/QuickLook):
 # Matched to the official soundtrack by length and audio. Level pairings marked ? in docs/NOTES.md are inferred.
 #   Bnk_21_2.wav  371s  = North Plain

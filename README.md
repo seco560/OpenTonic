@@ -16,3 +16,9 @@ While still very much a work in progress, enough gameplay has been implemented t
 The project is firmly in Alpha territory, with a lot of outstanding work still needing to be done. Just about everything is still rough around the edges, or completely unimplemented. For now it acts more like a proof of concept and exploration of the game itself. You can essentially simulate a playthrough by starting with Ski Slope (totalski) and sequentially going through portals. The next steps for the project consist of further decompilation and implementation of actual game mechanics. For now, it is what it is.
 
 <img width="1800" height="1130" alt="skislopes" src="https://github.com/user-attachments/assets/4aceb873-a9d7-409e-9ad1-9a7b344dec09" />
+
+### Controls
+
+![Open Tonic controls](docs/controls.png)
+
+Open this pictogram in the app by pressing F1.

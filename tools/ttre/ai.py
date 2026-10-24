@@ -10,6 +10,7 @@ Primitive names are placeholders (COND_12, PROC_200, ...) until the exe's tables
 """
 import collections
 import os
+import math
 import struct
 from dataclasses import dataclass, field
 
@@ -718,6 +719,35 @@ def ski_portals(ai, strings):
                 ops = [(POP_SET, 3, 30, 0, 0, tuple(spot[1])), (POP_SET, 0, 22, 0, 0, (0, 0, 0)),
                        (POP_SET, 0, 29, 1, 0, (0, 0, 0))]
                 out.append((tuple(p.world[3::4][:3]), 8.0, rows, persos[p.loc], 2, 0, 0, ops, [], (fam, inst)))
+            continue
+        if model in ('SYM_GenHurryUp', 'SYM_Gen_Ressort'):
+            # Within its activation radius (PROC_18(Me, r)) the prop writes the skier's dsgvars, then sleeps (META_29):
+            #   speed arrow (HurryUp, r = own dsg0): dsg0 := 0, dsg22 := 1, dsg24 := own dsg1, dsg27 := own dsg2,
+            #     dsg46 := its facing direction;
+            #   spring star (Ressort, r = own dsg3): dsg41 := 0, dsg0 := own dsg4, dsg26 := 1,
+            #     dsg27 := (own dsg0, dsg1, dsg2), dsg46 := 0, dsg41 := 1.
+            # His own scripts do the rest (the boost, the jump).
+            def num(k):
+                v = perso_dsg(d, p.loc, k)
+                return v[1] if v and v[0] in ('int', 'float') else 0
+            m = p.world
+            if model == 'SYM_GenHurryUp':
+                f = (-m[1], -m[5], -m[9])  # FacingDirection: where its local -Y points
+                l = math.sqrt(sum(x * x for x in f)) or 1
+                spot = perso_dsg(d, p.loc, 2)
+                ops = [(POP_SET, 0, 0, 0, 0, (0, 0, 0)), (POP_SET, 0, 22, 1, 0, (0, 0, 0)),
+                       (POP_SET, 0, 24, int(num(1)) & 0xFFFFFFFF, 0, (0, 0, 0)),
+                       (POP_SET, 3, 27, 0, 0, tuple(spot[1]) if spot and spot[0] == 'vec' else (0, 0, 0)),
+                       (POP_SET, 3, 46, 0, 0, tuple(x / l for x in f))]
+                radius = num(0)
+            else:
+                ops = [(POP_SET, 0, 41, 0, 0, (0, 0, 0)), (POP_SET, 0, 0, int(num(4)) & 0xFFFFFFFF, 0, (0, 0, 0)),
+                       (POP_SET, 0, 26, 1, 0, (0, 0, 0)), (POP_SET, 3, 27, 0, 0, (float(num(0)), float(num(1)), float(num(2)))),
+                       (POP_SET, 3, 46, 0, 0, (0, 0, 0)), (POP_SET, 0, 41, 1, 0, (0, 0, 0))]
+                radius = num(3)
+            if radius > 0:
+                rows = (m[0:3], m[4:7], m[8:11])
+                out.append((tuple(m[3::4][:3]), float(radius), rows, persos[p.loc], 2, 0, 0, ops, [], (fam, inst)))
             continue
         if model not in ('SYM_Arche_Ski', 'NBD_ArcheSpePourSkiEtSky'):
             continue

@@ -83,13 +83,26 @@ static float3 fogged(float3 rgb, VertexOut in, constant Uniforms &u) {
     return mix(rgb, u.fogColor.rgb, f);
 }
 
+// f.x: TC_FLAG_*; f.y: drawn with alpha to coverage (the opaque pipeline with MSAA on, as the SDL build).
 fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],
                                         texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],
                                         texture2d<float> lightmap [[texture(1)]],
-                                        constant uint &flags [[buffer(2)]]) {
+                                        constant uint2 &f [[buffer(2)]]) {
     float4 c = tex.sample(smp, in.uv);
-    if ((flags & 1u) && c.a < 0.5) discard_fragment();
-    return float4(fogged(pow(saturate(c.rgb * light(in, u, lightmap)), float3(1.0 / u.gamma)), in, u), c.a);
+    float a = c.a;
+    if (f.y != 0u) {
+        // Alpha to coverage: the alpha becomes the share of covered samples, so it must be 1 on opaque surfaces.
+        // Alpha-tested cutouts keep the 0.5 threshold, sharpened to about a pixel wide around it: a crisp edge as
+        // with discard, but antialiased.
+        a = 1.0;
+        if (f.x & 1u) {
+            a = saturate((c.a - 0.5) / max(fwidth(c.a), 1e-4) + 0.5);
+            if (a <= 0.0) discard_fragment();
+        }
+    } else if ((f.x & 1u) && c.a < 0.5) {
+        discard_fragment();
+    }
+    return float4(fogged(pow(saturate(c.rgb * light(in, u, lightmap)), float3(1.0 / u.gamma)), in, u), a);
 }
 
 fragment float4 level_fragment_flat(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],

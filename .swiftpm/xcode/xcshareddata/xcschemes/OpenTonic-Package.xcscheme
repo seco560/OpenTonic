@@ -15,8 +15,8 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "TonicViewer"
-               BuildableName = "TonicViewer"
+               BlueprintIdentifier = "OpenTonic"
+               BuildableName = "OpenTonic"
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
@@ -56,8 +56,8 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "TonicViewer"
-            BuildableName = "TonicViewer"
+            BlueprintIdentifier = "OpenTonic"
+            BuildableName = "OpenTonic"
             ReferencedContainer = "container:">
          </BuildableReference>
       </MacroExpansion>

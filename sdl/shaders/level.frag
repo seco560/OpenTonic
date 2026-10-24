@@ -1,6 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-// Port of level_fragment_textured / level_fragment_flat (built with -DFLAT) in Sources/TonicViewer/Shaders.metal.
+// Port of level_fragment_textured / level_fragment_flat (built with -DFLAT) in Sources/OpenTonic/Shaders.metal.
 #define UNIFORM_SET 3
 #include "level_common.glsl"
 

@@ -375,6 +375,20 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
             c.ground_grip = p->ground_grip;
         }
         c.ground_factor = 1; /* floor mat[0]: 1 on the ski slopes (not exported yet) */
+        /* A speed vector written this frame (ProposalVecA / B: the jump button's (0, -70000, 10000), a spring star's
+         * launch) has the mode 10 layout ([2] along the board, [3] up) and is taken once, as one exe frame of a mode 10
+         * request, before the queued ones (whose steering it would otherwise replace). The scripts then hold it for
+         * the jump (ChangeStateAndWait / Wait), so it is read on that frame only. How the exe routes it: not decoded. */
+        if (m->speed_set && (m->proposal[1] != 0 || m->proposal[2] != 0 || m->proposal[3] != 0) &&
+            !memchr(m->modes, 10, m->mode_count)) {
+            const float *q = m->proposal;
+            tc_vec3 f = tc_v3_add(tc_v3_scale(e->ski.y, q[2]), tc_v3_scale(tc_v3(q[7], q[8], q[9]), q[1]));
+            if (q[3] != 0) {
+                c.ground = c.wall = false;
+                f = tc_v3_add(f, tc_v3_scale(e->ski.z, q[3]));
+            }
+            e->ski.force = tc_v3_add(e->ski.force, tc_v3_scale(f, dt > 0 ? TC_MEC_FRAME / dt : 1));
+        }
         if (m->mode_count == 0) tc_mec_ski_request(&e->ski, card, 0, m->proposal, &c, v);
         for (k = 0; k < m->mode_count; k++) tc_mec_ski_request(&e->ski, card, m->modes[k], m->proposal, &c, v);
         v = tc_mec_ski_velocity(&e->ski, card, e->env, &c, p->world, p->position, v, dt);

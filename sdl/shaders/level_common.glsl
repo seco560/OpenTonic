@@ -1,4 +1,4 @@
-// Shared by level.vert and level.frag. Port of Sources/TonicViewer/Shaders.metal: keep the two in sync by hand.
+// Shared by level.vert and level.frag. Port of Sources/OpenTonic/Shaders.metal: keep the two in sync by hand.
 // std140; must match struct gpu_uniforms in src/renderer.c (checked there with _Static_assert).
 // SDL_GPU SPIR-V sets: vertex uniforms in set 1, fragment textures in set 2, fragment uniforms in set 3.
 layout(std140, set = UNIFORM_SET, binding = 0) uniform Uniforms {

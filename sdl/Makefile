@@ -1,5 +1,5 @@
 # SDL3 frontend for TonicCore (Linux, and anything else SDL_GPU runs on). See docs/SDL3.md.
-#   make            -> build/tonicviewer (builds ../core and, without a system SDL3, the pinned SDL below)
+#   make            -> build/opentonic (builds ../core and, without a system SDL3, the pinned SDL below)
 #   make sdl3       -> only fetch and build the pinned SDL3 into build/sdl3
 #   make clean      -> remove our objects and shaders (keeps the SDL3 build)
 #   make distclean  -> remove build/ entirely
@@ -35,9 +35,9 @@ OBJ := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 SHADERS := level_vert level_frag level_flat_frag ui_vert ui_frag
 SHADER_H := $(SHADERS:%=$(BUILD)/shaders/%.h)
 
-all: $(BUILD)/tonicviewer
+all: $(BUILD)/opentonic
 
-$(BUILD)/tonicviewer: $(OBJ) $(CORE_LIB) $(SDL_DEP)
+$(BUILD)/opentonic: $(OBJ) $(CORE_LIB) $(SDL_DEP)
 	$(CC) $(CFLAGS) $(OBJ) $(CORE_LIB) $(SDL_LIBS) -lm -o $@
 
 $(BUILD)/obj/%.o: src/%.c $(SHADER_H) $(SDL_DEP) | $(BUILD)/obj
@@ -78,7 +78,7 @@ $(BUILD)/obj $(BUILD)/shaders:
 	mkdir -p $@
 
 clean:
-	rm -rf $(BUILD)/obj $(BUILD)/shaders $(BUILD)/tonicviewer
+	rm -rf $(BUILD)/obj $(BUILD)/shaders $(BUILD)/opentonic
 
 distclean:
 	rm -rf $(BUILD)

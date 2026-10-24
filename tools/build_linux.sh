@@ -92,7 +92,7 @@ else echo "== intro movie: present (skip)"; fi
 # ---- 6. app icon ----
 if [ ! -e "$SRC/icon_ED.ICO" ]; then echo "== icon: $SRC/icon_ED.ICO not found (optional, skip)"
 elif ! command -v ffmpeg >/dev/null 2>&1; then echo "== icon: ffmpeg not found (optional, skip)"
-elif need "$OUT/icon/TonicViewer.png"; then echo "== icon"; tools/make_icon.sh
+elif need "$OUT/icon/OpenTonic.png" && need "$OUT/icon/TonicViewer.png"; then echo "== icon"; tools/make_icon.sh
 else echo "== icon: present (skip)"; fi
 
 # ---- checks ----
@@ -111,7 +111,7 @@ fi
 if [ "$BUILD" = 1 ]; then
   echo "== sdl"
   make -C sdl
-  echo "done: run sdl/build/tonicviewer"
+  echo "done: run sdl/build/opentonic"
 else
-  echo "done: build with 'make -C sdl', then run sdl/build/tonicviewer"
+  echo "done: build with 'make -C sdl', then run sdl/build/opentonic"
 fi

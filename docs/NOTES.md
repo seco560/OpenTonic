@@ -81,7 +81,10 @@
   LaunchCredits (FUN_00412870) is a separate action (not a video).
 - **In the viewer (2026-10-23):** `tools/make_intro.sh` -> files/out/video/intro.mp4 (deblock + light denoise +
   Lanczos to 1800x1080, HEVC, soundtrack as AAC; classical filters, no ML upscaler installed); V on the level select
-  screen plays it at 5:3, 80% of the largest fit, centred on black (user: it is 240p underneath; IntroView.screenFraction) (Sources/TonicViewer/IntroPlayer.swift), Esc / Space / Return skip.
+  screen plays it at 5:3, 80% of the largest fit, centred on black (user: it is 240p underneath; IntroView.screenFraction) (Sources/OpenTonic/IntroPlayer.swift), Esc / Space / Return skip.
+- **Intro -> Totalski (2026-10-24, user):** the original game goes from the intro, watched or skipped, straight into
+  the ski slope; both frontends do the same (`startAfterIntro` / `finish_intro`; the level select when Totalski is not
+  converted). The level select has a big "Play Intro Video" button at the top (and V), Controls top right.
 - Disc and installed copies are byte-identical.
 - FFmpeg decodes it natively. TonicTroubleFix ships an Indeo-free intro path, worth checking how it handles sound.
 - Upscaling plan:
@@ -109,7 +112,7 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
 - **Pipeline:** docs/BUILD.md (textures, vignettes, then per level `level-ttlv` + `level-ttai`, icon, music, app via
   `tools/make_app.sh`). The .ttlv and .ttai of a level must come from the same exporter run.
 - **Code map:** core/ = portable C11 (tc_level loader, tc_collision, tc_player physics, tc_anim, **tc_ai** interpreter,
-  **tc_ed_ai** AI + physics driver); Sources/TonicViewer = macOS layer. Tests: `make -C core check` (playcheck, must
+  **tc_ed_ai** AI + physics driver); Sources/OpenTonic = macOS layer. Tests: `make -C core check` (playcheck, must
   stay output-identical) and `make -C core aicheck` (Ed's AI headless on bar's collision; AI_TRACE=<frame>).
   Python: tools/ttre (ai.py = scripts, buttons, .ttai export; level-ai dumps scripts as text). Primitive names:
   tools/exe/ai_names.tsv. Ghidra helpers: tools/ghidra (MkDis/Raw/RefsIn). Details: "AI interpreter" below.
@@ -141,6 +144,9 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
    looks right), the invisible sud0 river, Vita/3DS backends, CD-archive pipeline.
 
 **Project direction (agreed with the user, 2026-10-22):**
+- **Renamed 2026-10-25 (user):** the project and the app are **Open Tonic** (repo OpenTonic, `Sources/OpenTonic`,
+  `OpenTonic.app`, `sdl/build/opentonic`); TonicCore keeps its name; free-roam (Tab) stays in the app. The plan below
+  (a separate viewer and game) is history.
 - **Two apps, one repo for now.** TonicViewer stays a self-contained, macOS-native app: the inspection and debug tool
   (free-fly, AI traces, collision/contact views, later physics debug views). The game ("Tonic Trouble Recomp") is
   a separate app in the same repo, named **OpenTonic** (user, 2026-10-22): an engine reimplementation running the
@@ -685,6 +691,18 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   along its up axis (the viewer uses it). Flight still draws with the heading only.
 - Known (user, 2026-10-23): it rides but feels janky and unstable next to the original; Ed once got stuck on a
   slope and stopped sliding (collision: our capsule vs the exe's collide spheres / MEC_004bedd6 not decoded).
+- **Slope props (2026-10-24):** the speed arrows (SYM_GenHurryUp; skymap JET_Speed*) and spring stars
+  (SYM_Gen_Ressort; JET_Etoile*) are trigger persos: within PROC_18(Me, r) they write the skier's dsgvars and sleep
+  (META_29 = Wait(ms), FUN_004a0b00 / 0x4a0b30, now ported). Arrow: dsg0 0, dsg22 1, dsg24 duration (ms), dsg27 the
+  proposal (2000, -500, 0), dsg46 its facing (local -Y, downhill) -> skier B3 rule 1: state 278, B12 = each frame
+  ProposalVecB(dsg27, dsg46) (AI_004891a0: [7..9] = direction, then ProposalVecA) + SetMechMode10Value -> push
+  -500 along the board + 2000 along the arrow, until TimeElapsed dsg24. Spring: dsg27 = (own dsg0, dsg1, dsg2), e.g.
+  (0, -100000, 300000) -> B3 rule 2: ProposalVecA(dsg27), state 217, Wait 1000, R2 (-> 220), B8. Exported as
+  capture-only portals (ai.ski_portals). ProposalVecA queues no request; on a type 2 card the port takes a freshly
+  written non-zero vector as one 1/30 s frame of mode 10 (the skier's own jump button uses the same layout,
+  (0, -70000, 10000)): spring ressort1 ~45 u/s up, 30-40 units high. The exe's routing of it is not decoded.
+  Their flat decal quads (2 triangles facing up, also the red direction arrows further down) were collision and
+  stopped or slowed the skier: `LevelData.collision(skip_decals=True)` for skier levels drops them.
 - Not done: floor mat[0] is not exported (taken as 1, its value on the snow), contact type 3 and mode 20, rebound (mat[1]) on
   impacts, the camera's ski behaviour. The simple controller's sliding profile (I key) is unchanged.
 

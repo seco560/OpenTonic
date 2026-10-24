@@ -1,4 +1,4 @@
-/* Draws one converted level: the GPU half of Sources/TonicViewer/Renderer.swift. The core's tc_viewer owns the
+/* Draws one converted level: the GPU half of Sources/OpenTonic/Renderer.swift. The core's tc_viewer owns the
  * cameras, play mode, settings and what to draw each frame; this uploads its mesh table and the level's textures once,
  * then packs its shading values into the shaders' uniforms and draws its list. */
 #ifndef TV_VIEW_H

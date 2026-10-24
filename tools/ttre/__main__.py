@@ -6,7 +6,7 @@
   python3 -m tools.ttre level-export LEVEL OUTDIR [--no-preview] [--no-persos]
   python3 -m tools.ttre level-ai LEVEL OUT.txt   (Ed's AI behaviours as indented trees, plus primitive usage counts)
   python3 -m tools.ttre level-ttai LEVEL OUT.ttai   (Ed's AI for the core's interpreter; format: see tools/ttre/ai.py)
-  python3 -m tools.ttre level-ttlv LEVEL OUT.ttlv [--no-persos]   (for TonicViewer; current format: see tools/ttre/ttlv.py)
+  python3 -m tools.ttre level-ttlv LEVEL OUT.ttlv [--no-persos]   (for Open Tonic; current format: see tools/ttre/ttlv.py)
 Level commands read from GAMEDATA/WORLD/LEVELS textures from files/out/Textures (so, generate textures before the levels)
 """
 import os

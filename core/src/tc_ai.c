@@ -935,6 +935,15 @@ static uint32_t procedure(run *r, uint32_t i) {
     }
     case 39: pr[0x18] = argf(r, i, 0); return 0;
     case 40: pr[0xB] = argf(r, i, 0); return 0;
+    case 42: { /* ProposalVecB(v, dir) = AI_004891a0: direction [7..9] (dynamics proposal +0x1C), then ProposalVecA(v);
+                * a zero direction zeroes v.x. The ski slopes' speed arrows (skier B12) */
+        tc_vec3 v = argv3(r, i, 0), dir = argv3(r, i, 1);
+        if (dir.x == 0 && dir.y == 0 && dir.z == 0) v.x = 0;
+        pr[7] = dir.x; pr[8] = dir.y; pr[9] = dir.z;
+        pr[1] = v.x; pr[2] = v.y; pr[3] = v.z; pr[0] = tc_v3_length(v);
+        p->motion.speed_set = true;
+        return 0;
+    }
     case 41: { /* AI_00488070: wanted speed vector [1..3], its length [0] */
         tc_vec3 v = argv3(r, i, 0);
         pr[1] = v.x; pr[2] = v.y; pr[3] = v.z; pr[0] = tc_v3_length(v);
@@ -1029,6 +1038,7 @@ static uint32_t meta_action(run *r, uint32_t i) {
         }
         case 12: slot->a = 0; slot->b = 0; break; /* ChangeStateByDirection: a = walking, b = frames */
         case 19: break;
+        case 29: slot->a = (int32_t)(p->time_ms + (uint32_t)as_int(arg(r, i, 0))); break; /* Wait(ms): FUN_004a0b00 */
         case 11: case 21: case 40: slot->a = 0; break; /* not modelled: finish at once */
         default: unknown(r, i); slot->a = 0; break;
         }
@@ -1036,6 +1046,9 @@ static uint32_t meta_action(run *r, uint32_t i) {
     switch (m) {
     case 4:
         if (slot->a && p->wanted_state == (uint32_t)slot->b && !p->state_ended) return F_STOP;
+        break;
+    case 29: /* FUN_004a0b30: running until the clock passes start + ms (the ski props' sleep, the spring's jump) */
+        if ((int32_t)(p->time_ms - (uint32_t)slot->a) < 0) return F_STOP;
         break;
     case 12: { /* ChangeStateByDirection(perso, offset, forward state, backward state): walk to the point at offset in
                 * the perso's axes (B68: 4.5 in front of an arch) in the forward state, facing it. Not decoded: always

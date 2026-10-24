@@ -275,7 +275,9 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                      + b''.join(struct.pack('<H', 0xFFFF if o is None or o not in p.objects else o)
                                 for pose in poses for o, _ in pose))
 
-    tris, floors = data.collision(floors=True)
+    # Played as the skier (Totalski, skymap): the decals on the slope are not obstacles (LevelData.collision).
+    fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
+    tris, floors = data.collision(floors=True, skip_decals=data.player() != fix_ed)
     play = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     table = sorted({f for f in floors if f is not None})
     index = {f: i for i, f in enumerate(table)}

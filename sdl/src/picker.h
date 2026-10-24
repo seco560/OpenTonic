@@ -26,6 +26,8 @@ typedef struct picker {
     int heading_w[3], heading_h[3];
     SDL_GPUTexture *unknown;  /* "?": the picture of an imported level */
     int unknown_w, unknown_h;
+    SDL_GPUTexture *intro_text, *controls_text;  /* the two buttons' labels */
+    int intro_w, intro_h, controls_w, controls_h;
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* pixels */
     int hover, selected;      /* -1 = none */
@@ -36,7 +38,9 @@ typedef struct picker {
 /* Lists the folder's levels and loads their thumbnails. count == 0 when there are none. */
 void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, float scale);
 void picker_close(picker *p);
-/* Tile under the point (target pixels), or -1. */
+/* Tile under the point (target pixels), PICKER_INTRO / PICKER_CONTROLS for the buttons, or -1. */
+#define PICKER_INTRO (-2)     /* the big "Play Intro Video" button at the top */
+#define PICKER_CONTROLS (-3)  /* "Controls (F1)", top right */
 int picker_hit(picker *p, float x, float y);
 void picker_set_hover(picker *p, float x, float y);
 void picker_scroll(picker *p, float pixels);

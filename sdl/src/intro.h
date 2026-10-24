@@ -1,4 +1,4 @@
-/* The intro movie (V on the level select screen). Port of Sources/TonicViewer/IntroPlayer.swift over pl_mpeg
+/* The intro movie (V on the level select screen). Port of Sources/OpenTonic/IntroPlayer.swift over pl_mpeg
  * (third_party/pl_mpeg.h): out/video/intro.mpg, MPEG-1 video + MP2 audio made by `tools/make_intro.sh mpg`.
  * The picture keeps its shape at 0.8 of the largest size that fits, centred on black. The soundtrack is the clock:
  * a frame is shown once the audio device has played up to its time (the wall clock when there is no audio). */

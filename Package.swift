@@ -6,7 +6,7 @@ import PackageDescription
 let coreWarnings: [CSetting] = [.unsafeFlags(["-Wall", "-Wextra", "-Wpedantic"])]
 
 let package = Package(
-    name: "TonicViewer",
+    name: "OpenTonic",
     platforms: [.macOS(.v14)],
     targets: [
         // Portable C11 core: .ttlv loader, collision, Ed's controller, animation sampling. No platform code.
@@ -19,9 +19,9 @@ let package = Package(
             cSettings: coreWarnings
         ),
         .executableTarget(
-            name: "TonicViewer",
+            name: "OpenTonic",
             dependencies: ["TonicCore"],
-            path: "Sources/TonicViewer",
+            path: "Sources/OpenTonic",
             resources: [.copy("Shaders.metal")]
         ),
         // Headless checks of the core against converted levels: `swift run -c release CorePlayCheck files/out/ttlv`.

@@ -1,6 +1,6 @@
-/* TonicViewer (SDL3): level viewer and barebones collision tester over TonicCore. Port of
- * Sources/TonicViewer/main.swift: the level select screen, the level view and its keys, the title bar readout.
- * Usage: tonicviewer [levels folder | level.ttlv] */
+/* Open Tonic (SDL3): the game over TonicCore (began as Tonic Viewer, a level viewer and collision tester). Port of
+ * Sources/OpenTonic/main.swift: the level select screen, the level view and its keys, the title bar readout.
+ * Usage: opentonic [levels folder | level.ttlv] */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include "input.h"
@@ -15,7 +15,7 @@
 #endif
 
 static const char *controls_text =
-    "TonicViewer controls\n"
+    "Open Tonic controls\n"
     "\n"
     "Move:  W A S D  (W/S fly where the camera looks)\n"
     "Up / down:  R / F\n"
@@ -127,12 +127,12 @@ static void show_picker(app *a) {
             SDL_snprintf(msg, sizeof msg, "No .ttlv levels in %s. Please run your genuine installed Tonic Trouble "
                                           "files through the conversion step (docs/BUILD.md).", a->level_folder);
             SDL_Log("%s", msg);
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "TonicViewer", msg, a->window);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Tonic", msg, a->window);
             a->quit = true;
             return;
         }
     }
-    set_title(a, "TonicViewer  \xc2\xb7  pick a level (click, or arrow keys + Enter)  \xc2\xb7  F1: controls");
+    set_title(a, "Open Tonic  \xc2\xb7  pick a level (click, or arrow keys + Enter)  \xc2\xb7  F1: controls");
 }
 
 /* false (with a message box) when the level can't be loaded; the current screen stays. */
@@ -144,7 +144,7 @@ static bool open_level(app *a, const char *path) {
         char msg[1024];
         SDL_snprintf(msg, sizeof msg, "Could not load %s: %s", path, err);
         SDL_Log("%s", msg);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "TonicViewer", msg, a->window);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Tonic", msg, a->window);
         SDL_free(v);
         return false;
     }
@@ -158,7 +158,7 @@ static bool open_level(app *a, const char *path) {
     const tc_view_stats *s = &v->viewer.stats;
     uint32_t textures = v->texture_count - v->missing_textures;
     SDL_snprintf(a->title_base, sizeof a->title_base,
-                 "TonicViewer \xe2\x80\x94 %s  \xc2\xb7  %u meshes, %u animated objects, %u tris, %u textures (%u missing)"
+                 "Open Tonic \xe2\x80\x94 %s  \xc2\xb7  %u meshes, %u animated objects, %u tris, %u textures (%u missing)"
                  "  \xc2\xb7  P pause  \xc2\xb7  Ctrl+L level select%s",
                  v->level.name, s->meshes, s->persos, s->triangles, textures, v->missing_textures,
                  tc_viewer_can_play(&v->viewer) ? "  \xc2\xb7  Tab: play as Ed" : "");
@@ -190,20 +190,25 @@ static void play_intro(app *a) {
     if (!a->intro) {
         SDL_snprintf(msg, sizeof msg, "Could not play the intro: %s", err);
         SDL_Log("%s", msg);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "TonicViewer", msg, a->window);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Tonic", msg, a->window);
         show_picker(a);  /* the menu music again */
         return;
     }
     a->help = false;
-    set_title(a, "TonicViewer \xe2\x80\x94 intro  \xc2\xb7  Esc skips");
+    set_title(a, "Open Tonic \xe2\x80\x94 intro  \xc2\xb7  Esc skips");
 }
 
-/* At the end, or skipped: back to the level select screen. */
+/* At the end, or skipped: the ski slope, as the original game starts it (the level select if it isn't converted). */
 static void finish_intro(app *a) {
     if (!a->intro) return;
     intro_close(a->intro);
     a->intro = NULL;
-    show_picker(a);
+    int n = 0;
+    char **levels = SDL_GlobDirectory(a->level_folder, "totalski.ttlv", SDL_GLOB_CASEINSENSITIVE, &n);
+    char *path = levels && n > 0 ? path_join(a->level_folder, levels[0]) : NULL;
+    SDL_free(levels);
+    if (!path || !open_level(a, path)) show_picker(a);
+    SDL_free(path);
 }
 
 /* ---- input ---- */
@@ -339,7 +344,9 @@ static void handle(app *a, const SDL_Event *e) {
         if (a->view) set_captured(a, true);
         else if (a->picker_open) {
             int i = picker_hit(&a->picker, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
-            if (i >= 0) {
+            if (i == PICKER_INTRO) play_intro(a);
+            else if (i == PICKER_CONTROLS) a->help = true;
+            else if (i >= 0) {
                 char *path = SDL_strdup(a->picker.entries[i].path);  /* opening closes the picker */
                 if (path) open_level(a, path);
                 SDL_free(path);
@@ -416,7 +423,7 @@ static char *strip_slashes(char *p) {
 }
 
 /* Default data, first that exists: files/out/ttlv in the working directory; next to the binary in the checkout
- * (sdl/build/tonicviewer -> files/out/ttlv); in the checkout this binary was built from; out/ttlv in the working
+ * (sdl/build/opentonic -> files/out/ttlv); in the checkout this binary was built from; out/ttlv in the working
  * directory (older layout). */
 static char *default_level_folder(void) {
     const char *base = SDL_GetBasePath();
@@ -438,19 +445,19 @@ static int msaa_setting(void) {
 }
 
 int main(int argc, char **argv) {
-    SDL_SetAppMetadata("TonicViewer", "0.1", "org.tonicviewer.sdl");
+    SDL_SetAppMetadata("Open Tonic", "0.1", "org.opentonic.sdl");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
     }
     app a;
     SDL_zero(a);
-    a.window = SDL_CreateWindow("TonicViewer", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    a.window = SDL_CreateWindow("Open Tonic", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!a.window || !gpu_init(&a.g, a.window, msaa_setting())) {
         char msg[512];
         SDL_snprintf(msg, sizeof msg, "Could not set up the GPU: %s", SDL_GetError());
         SDL_Log("%s", msg);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "TonicViewer", msg, a.window);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Tonic", msg, a.window);
         gpu_quit(&a.g);
         if (a.window) SDL_DestroyWindow(a.window);
         SDL_Quit();
@@ -471,7 +478,11 @@ int main(int argc, char **argv) {
 
     /* Window icon: Ed's original icon on the sud0 water swirl, generated into out/icon by tools/make_icon.sh. */
     char *icon_dir = path_join(a.data_dir, "icon");
-    char *icon_path = icon_dir ? path_join(icon_dir, "TonicViewer.png") : NULL;
+    char *icon_path = icon_dir ? path_join(icon_dir, "OpenTonic.png") : NULL;
+    if (icon_path && !path_is_file(icon_path)) {  /* the name before the rename */
+        SDL_free(icon_path);
+        icon_path = path_join(icon_dir, "TonicViewer.png");
+    }
     SDL_Surface *icon = icon_path && path_is_file(icon_path) ? SDL_LoadPNG(icon_path) : NULL;
     if (icon) { SDL_SetWindowIcon(a.window, icon); SDL_DestroySurface(icon); }
     SDL_free(icon_dir);

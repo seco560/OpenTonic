@@ -1,4 +1,4 @@
-/* A .ttlv level read from disk and parsed by the core (Sources/TonicViewer/Core.swift's Level). Play mode itself
+/* A .ttlv level read from disk and parsed by the core (Sources/OpenTonic/Core.swift's Level). Play mode itself
  * (collision, Ed's controller and AI) lives in the core's tc_viewer. */
 #ifndef TV_PLAY_H
 #define TV_PLAY_H

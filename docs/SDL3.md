@@ -9,7 +9,7 @@ Linux packages (Ubuntu 24.04 / Mint 22 names; SDL3 itself isn't packaged there, 
 sudo apt install build-essential cmake git pkg-config glslang-tools \
   libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxkbcommon-dev libwayland-dev libdecor-0-dev \
   libvulkan-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev
-make -C sdl            # -> sdl/build/tonicviewer
+make -C sdl            # -> sdl/build/opentonic
 ```
 - SDL3: a system SDL3 >= 3.4 when `pkg-config` finds one; otherwise `make` clones the pinned `release-3.4.8` into
   `sdl/build/SDL` and builds it statically into `sdl/build/sdl3` (git-ignored, done once). SDL picks its video/audio
@@ -31,7 +31,7 @@ two). Linux filesystems are case-sensitive and the game install mixes case (`pha
 case-insensitively; if a level fails with "not found", check letter case first.
 
 ## Running
-`sdl/build/tonicviewer [levels folder | level.ttlv]`. Without an argument it looks for `files/out/ttlv` in the
+`sdl/build/opentonic [levels folder | level.ttlv]`. Without an argument it looks for `files/out/ttlv` in the
 working directory, then relative to the binary in the checkout, then in the checkout it was built from. Converted data
 as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails), `audio/` (music) and `icon/` next to it.
 
@@ -46,7 +46,7 @@ MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where
 sdl/
   Makefile
   shaders/level_common.glsl  # Uniforms block shared by both stages
-  shaders/level.vert/.frag   # port of Sources/TonicViewer/Shaders.metal (.frag built twice: textured, -DFLAT)
+  shaders/level.vert/.frag   # port of Sources/OpenTonic/Shaders.metal (.frag built twice: textured, -DFLAT)
   shaders/ui.vert/.frag      # 2D quads: level picker, controls overlay
   src/main.c     # window, screens, keys, title bar, controls overlay   (main.swift)
   src/view.c     # mesh table + texture upload, uniforms, draws the core's list (Renderer.swift)

@@ -40,13 +40,25 @@ import TonicCore
 
     let device: MTLDevice
     private let queue: MTLCommandQueue
-    private let texturedPipeline: MTLRenderPipelineState
-    private let flatPipeline: MTLRenderPipelineState
+    private let library: MTLLibrary
+    private let vertexDescriptor = MTLVertexDescriptor()
+    private let colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat
+    /// The level and overlay pipelines for the current sample count (rebuilt by setMSAA). The opaque textured one uses
+    /// alpha to coverage when multisampling, so alpha-tested cutouts (foliage, fences, sprites) are antialiased too.
+    private var texturedPipeline: MTLRenderPipelineState!
+    private var flatPipeline: MTLRenderPipelineState!
     /// TC_FLAG_TRANSPARENT surfaces: alpha blended, drawn after everything opaque without writing depth.
-    private let blendedPipeline: MTLRenderPipelineState
+    private var blendedPipeline: MTLRenderPipelineState!
     private let blendedDepthState: MTLDepthStencilState
     /// Screen transitions and the loading screen's black (docs/PORTALS.md): 2D quads over the frame.
-    private let overlayPipeline: MTLRenderPipelineState
+    private var overlayPipeline: MTLRenderPipelineState!
+    /// Multisample antialiasing: 1 (off), 2, 4 or 8 samples, as far as the GPU goes; F2 cycles it. Kept across levels and
+    /// launches (UserDefaults "msaa", default 4).
+    private(set) var msaa = 1
+    static var preferredMSAA: Int {
+        get { UserDefaults.standard.object(forKey: "msaa") as? Int ?? 4 }
+        set { UserDefaults.standard.set(newValue, forKey: "msaa") }
+    }
     private let overlayDepthState: MTLDepthStencilState
     private let depthState: MTLDepthStencilState
     private let sampler: MTLSamplerState
@@ -69,7 +81,7 @@ import TonicCore
 
     init(view: MTKView) throws {
         guard let device = view.device ?? MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
-            throw NSError(domain: "TonicViewer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No Metal device"])
+            throw NSError(domain: "OpenTonic", code: 1, userInfo: [NSLocalizedDescriptionKey: "No Metal device"])
         }
         self.device = device
         self.queue = queue
@@ -79,12 +91,14 @@ import TonicCore
         view.clearColor = MTLClearColor(red: 0.08, green: 0.09, blue: 0.14, alpha: 1)
         view.preferredFramesPerSecond = 120
 
-        // Inside TonicViewer.app the shader sits in Contents/Resources; `swift run` builds use the SwiftPM bundle.
+        // Inside OpenTonic.app the shader sits in Contents/Resources; `swift run` builds use the SwiftPM bundle.
         let shaderURL = Bundle.main.url(forResource: "Shaders", withExtension: "metal")
             ?? Bundle.module.url(forResource: "Shaders", withExtension: "metal")!
-        let library = try device.makeLibrary(source: String(contentsOf: shaderURL, encoding: .utf8), options: nil)
+        library = try device.makeLibrary(source: String(contentsOf: shaderURL, encoding: .utf8), options: nil)
+        colorFormat = view.colorPixelFormat
+        depthFormat = view.depthStencilPixelFormat
 
-        let vd = MTLVertexDescriptor()
+        let vd = vertexDescriptor
         vd.attributes[0].format = .float3; vd.attributes[0].offset = 0
         vd.attributes[1].format = .float3; vd.attributes[1].offset = 12
         vd.attributes[2].format = .float2; vd.attributes[2].offset = 24
@@ -93,35 +107,6 @@ import TonicCore
         for i in 0..<7 { vd.attributes[i].bufferIndex = 0 }
         vd.layouts[0].stride = MemoryLayout<tc_vertex>.stride  // 52: pos3 + normal3 + uv floats, 3 x rgba8 baked sets, uv2
 
-        func pipeline(_ fragment: String, blended: Bool = false) throws -> MTLRenderPipelineState {
-            let d = MTLRenderPipelineDescriptor()
-            if blended {
-                let c = d.colorAttachments[0]!
-                c.isBlendingEnabled = true
-                c.sourceRGBBlendFactor = .sourceAlpha
-                c.destinationRGBBlendFactor = .oneMinusSourceAlpha
-                c.sourceAlphaBlendFactor = .one
-                c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            }
-            d.vertexFunction = library.makeFunction(name: "level_vertex")
-            d.fragmentFunction = library.makeFunction(name: fragment)
-            d.vertexDescriptor = vd
-            d.colorAttachments[0].pixelFormat = view.colorPixelFormat
-            d.depthAttachmentPixelFormat = view.depthStencilPixelFormat
-            return try device.makeRenderPipelineState(descriptor: d)
-        }
-        let od = MTLRenderPipelineDescriptor()
-        od.vertexFunction = library.makeFunction(name: "overlay_vertex")
-        od.fragmentFunction = library.makeFunction(name: "overlay_fragment")
-        od.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        od.colorAttachments[0].isBlendingEnabled = true
-        od.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        od.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        od.depthAttachmentPixelFormat = view.depthStencilPixelFormat
-        overlayPipeline = try device.makeRenderPipelineState(descriptor: od)
-        texturedPipeline = try pipeline("level_fragment_textured")
-        flatPipeline = try pipeline("level_fragment_flat")
-        blendedPipeline = try pipeline("level_fragment_textured", blended: true)
 
         let ds = MTLDepthStencilDescriptor()
         ds.depthCompareFunction = .less
@@ -135,9 +120,57 @@ import TonicCore
         let sd = MTLSamplerDescriptor()
         sd.minFilter = .linear; sd.magFilter = .linear; sd.mipFilter = .linear
         sd.sAddressMode = .repeat; sd.tAddressMode = .repeat
-        sd.maxAnisotropy = 8
+        sd.maxAnisotropy = 16  // sharp floors and walls at grazing angles
         sampler = device.makeSamplerState(descriptor: sd)!
         super.init()
+        try setMSAA(Renderer.preferredMSAA, view: view)
+    }
+
+    /// The largest supported sample count up to `wanted` (1, 2, 4, 8).
+    private func supported(_ wanted: Int) -> Int {
+        [8, 4, 2].first { $0 <= wanted && device.supportsTextureSampleCount($0) } ?? 1
+    }
+
+    /// The next setting after the current one: off -> 2x -> 4x -> 8x -> off, skipping what the GPU lacks.
+    var nextMSAA: Int { [2, 4, 8, 1].first { $0 > msaa && supported($0) == $0 } ?? 1 }
+
+    /// Switches multisampling: the view's targets and every pipeline (they must match its sample count).
+    func setMSAA(_ wanted: Int, view: MTKView) throws {
+        let n = supported(wanted)
+        func pipeline(_ fragment: String, blended: Bool = false, coverage: Bool = false) throws -> MTLRenderPipelineState {
+            let d = MTLRenderPipelineDescriptor()
+            if blended {
+                let c = d.colorAttachments[0]!
+                c.isBlendingEnabled = true
+                c.sourceRGBBlendFactor = .sourceAlpha
+                c.destinationRGBBlendFactor = .oneMinusSourceAlpha
+                c.sourceAlphaBlendFactor = .one
+                c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            }
+            d.vertexFunction = library.makeFunction(name: "level_vertex")
+            d.fragmentFunction = library.makeFunction(name: fragment)
+            d.vertexDescriptor = vertexDescriptor
+            d.colorAttachments[0].pixelFormat = colorFormat
+            d.depthAttachmentPixelFormat = depthFormat
+            d.rasterSampleCount = n
+            d.isAlphaToCoverageEnabled = coverage && n > 1
+            return try device.makeRenderPipelineState(descriptor: d)
+        }
+        let od = MTLRenderPipelineDescriptor()
+        od.vertexFunction = library.makeFunction(name: "overlay_vertex")
+        od.fragmentFunction = library.makeFunction(name: "overlay_fragment")
+        od.colorAttachments[0].pixelFormat = colorFormat
+        od.colorAttachments[0].isBlendingEnabled = true
+        od.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        od.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        od.depthAttachmentPixelFormat = depthFormat
+        od.rasterSampleCount = n
+        overlayPipeline = try device.makeRenderPipelineState(descriptor: od)
+        texturedPipeline = try pipeline("level_fragment_textured", coverage: true)
+        flatPipeline = try pipeline("level_fragment_flat")
+        blendedPipeline = try pipeline("level_fragment_textured", blended: true)
+        view.sampleCount = n
+        msaa = n
     }
 
     func load(_ viewer: Viewer) {
@@ -157,12 +190,14 @@ import TonicCore
         }
         let loader = MTKTextureLoader(device: device)
         missingTextures = 0
+        let mips = queue.makeCommandBuffer(), blit = mips?.makeBlitCommandEncoder()
         textures = level.textures.map { url in
-            do {
-                return try loader.newTexture(URL: url, options: [.SRGB: false, .generateMipmaps: true,
-                                                                  .textureStorageMode: MTLStorageMode.private.rawValue])
-            } catch { missingTextures += 1; return nil }
+            if let t = loadBled(url, blit: blit) { return t }
+            missingTextures += 1
+            return nil
         }
+        blit?.endEncoding()
+        mips?.commit()
         effects = viewer.effectTextures.map { path in
             try? loader.newTexture(URL: level.folder.appendingPathComponent(path), options: [.SRGB: false, .generateMipmaps: false])
         }
@@ -178,6 +213,71 @@ import TonicCore
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    /// A level texture with mipmaps (generated by `blit`). Fully transparent texels take the colour of their opaque
+    /// neighbours first (a ring per pass, 16 passes; the rest the image's average opaque colour), so filtering and the
+    /// mipmaps don't fringe cutout edges with whatever colour the artist left under the transparency. As the SDL
+    /// build's gpu_upload_surface.
+    private func loadBled(_ url: URL, blit: MTLBlitCommandEncoder?) -> MTLTexture? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+        let w = image.width, h = image.height
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        Renderer.unpremultiplyAndBleed(&px, w, h, passes: 16)
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: true)
+        d.usage = .shaderRead
+        d.storageMode = .shared
+        guard let t = device.makeTexture(descriptor: d) else { return nil }
+        t.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: px, bytesPerRow: w * 4)
+        blit?.generateMipmaps(for: t)
+        return t
+    }
+
+    private static func unpremultiplyAndBleed(_ px: inout [UInt8], _ w: Int, _ h: Int, passes: Int) {
+        var known = [UInt8](repeating: 0, count: w * h)
+        var sum = (0, 0, 0), opaque = 0, unknown = 0
+        for i in 0..<(w * h) {
+            let a = Int(px[4 * i + 3])
+            if a == 0 { unknown += 1; continue }
+            if a < 255 { for c in 0..<3 { px[4 * i + c] = UInt8(min(255, Int(px[4 * i + c]) * 255 / a)) } }
+            known[i] = 1
+            sum.0 += Int(px[4 * i]); sum.1 += Int(px[4 * i + 1]); sum.2 += Int(px[4 * i + 2]); opaque += 1
+        }
+        guard unknown > 0, opaque > 0 else { return }
+        for _ in 0..<passes where unknown > 0 {
+            var filled = 0
+            for y in 0..<h {
+                for x in 0..<w where known[y * w + x] == 0 {
+                    var r = 0, g = 0, b = 0, n = 0
+                    for dy in -1...1 {
+                        for dx in -1...1 {
+                            let nx = x + dx, ny = y + dy
+                            guard nx >= 0, ny >= 0, nx < w, ny < h, known[ny * w + nx] == 1 else { continue }
+                            let q = 4 * (ny * w + nx)
+                            r += Int(px[q]); g += Int(px[q + 1]); b += Int(px[q + 2]); n += 1
+                        }
+                    }
+                    guard n > 0 else { continue }
+                    let p = 4 * (y * w + x)
+                    px[p] = UInt8(r / n); px[p + 1] = UInt8(g / n); px[p + 2] = UInt8(b / n)
+                    known[y * w + x] = 2
+                    filled += 1
+                }
+            }
+            for i in 0..<(w * h) where known[i] == 2 { known[i] = 1 }
+            unknown -= filled
+            if filled == 0 { break }
+        }
+        if unknown > 0 {
+            for i in 0..<(w * h) where known[i] == 0 {
+                px[4 * i] = UInt8(sum.0 / opaque); px[4 * i + 1] = UInt8(sum.1 / opaque); px[4 * i + 2] = UInt8(sum.2 / opaque)
+            }
+        }
+    }
 
     func draw(in view: MTKView) {
         guard let v = viewer?.raw else { return }
@@ -214,12 +314,12 @@ import TonicCore
             let d = draws[i]
             guard let m = meshes[Int(d.mesh)] else { continue }
             let transparent = d.flags & TC_FLAG_TRANSPARENT != 0
-            var flags = d.flags
+            var flags = SIMD2<UInt32>(d.flags, !transparent && msaa > 1 ? 1 : 0)  // coverage: as the textured pipeline
             if d.texture >= 0, let tex = textures[Int(d.texture)] {
                 enc.setRenderPipelineState(transparent ? blendedPipeline : texturedPipeline)
                 enc.setFragmentTexture(tex, index: 0)
                 enc.setFragmentTexture(lightmap, index: 1)
-                enc.setFragmentBytes(&flags, length: 4, index: 2)
+                enc.setFragmentBytes(&flags, length: MemoryLayout<SIMD2<UInt32>>.stride, index: 2)
             } else {
                 enc.setRenderPipelineState(flatPipeline)
                 enc.setFragmentTexture(lightmap, index: 1)

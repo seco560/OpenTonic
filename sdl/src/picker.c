@@ -76,6 +76,8 @@ void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, 
         if (p->first[s] < p->first[s + 1])
             p->heading[s] = gpu_text(g, section_titles[s], text_scale, &p->heading_w[s], &p->heading_h[s]);
     if (p->first[2] < p->count) p->unknown = gpu_text(g, "?", 1, &p->unknown_w, &p->unknown_h);
+    p->intro_text = gpu_text(g, "Play Intro Video", text_scale + 1, &p->intro_w, &p->intro_h);
+    p->controls_text = gpu_text(g, "Controls (F1)", text_scale, &p->controls_w, &p->controls_h);
 }
 
 void picker_close(picker *p) {
@@ -89,13 +91,15 @@ void picker_close(picker *p) {
     for (int k = 0; k < 3; k++)
         if (p->heading[k]) SDL_ReleaseGPUTexture(p->g->device, p->heading[k]);
     if (p->unknown) SDL_ReleaseGPUTexture(p->g->device, p->unknown);
+    if (p->intro_text) SDL_ReleaseGPUTexture(p->g->device, p->intro_text);
+    if (p->controls_text) SDL_ReleaseGPUTexture(p->g->device, p->controls_text);
     SDL_free(p->entries);
     SDL_zerop(p);
 }
 
 /* Layout, as LevelPicker.relayout: 256x192 tiles with a caption line, centred columns; each section starts on a new
  * row under a heading line. */
-typedef struct layout { float tile_w, tile_h, caption, pad, cell_w, cell_h, left, heading; int cols; } layout;
+typedef struct layout { float tile_w, tile_h, caption, pad, cell_w, cell_h, left, heading, intro; int cols; } layout;
 
 static layout layout_for(const picker *p, float width) {
     layout l;
@@ -107,6 +111,7 @@ static layout layout_for(const picker *p, float width) {
     l.cell_w = l.tile_w + l.pad;
     l.cell_h = l.tile_h + l.caption + l.pad;
     l.heading = 40 * s;
+    l.intro = 64 * s;  /* the "Play Intro Video" button's band, above the first heading */
     l.cols = SDL_max(1, (int)((width - l.pad) / l.cell_w));
     l.left = SDL_max(l.pad, (width - (float)l.cols * l.cell_w + l.pad) / 2);
     return l;
@@ -116,7 +121,7 @@ static int rows_of(int n, int cols) { return (n + cols - 1) / cols; }
 
 /* Top of section k's heading (content coordinates, before scrolling); k = 3: the end. Empty sections take no space. */
 static float heading_y(const picker *p, const layout *l, int k) {
-    float y = l->pad / 2;
+    float y = l->pad + l->intro;
     for (int s = 0; s < k; s++)
         if (p->first[s + 1] > p->first[s]) y += l->heading + (float)rows_of(p->first[s + 1] - p->first[s], l->cols) * l->cell_h;
     return y;
@@ -135,8 +140,25 @@ static float max_scroll(const picker *p, const layout *l) {
     return SDL_max(0.0f, heading_y(p, l, 3) - p->height);
 }
 
+/* The two buttons, in target pixels: the intro one centred at the top (scrolls with the grid), Controls top right. */
+static SDL_FRect intro_rect(const picker *p, const layout *l) {
+    float w = SDL_max((float)p->intro_w + 60 * p->scale, 320 * p->scale), h = (float)p->intro_h + 24 * p->scale;
+    SDL_FRect r = {SDL_roundf((p->width - w) / 2), l->pad - p->scroll, w, h};
+    return r;
+}
+
+static SDL_FRect controls_rect(const picker *p) {
+    float w = (float)p->controls_w + 24 * p->scale, h = (float)p->controls_h + 16 * p->scale;
+    SDL_FRect r = {p->width - w - 16 * p->scale, 12 * p->scale, w, h};
+    return r;
+}
+
+static bool inside(SDL_FRect r, float x, float y) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; }
+
 int picker_hit(picker *p, float x, float y) {
     layout l = layout_for(p, p->width);
+    if (inside(controls_rect(p), x, y)) return PICKER_CONTROLS;
+    if (inside(intro_rect(p, &l), x, y)) return PICKER_INTRO;
     for (int i = 0; i < p->count; i++) {
         SDL_FRect r = tile_rect(p, &l, i);
         if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return i;
@@ -145,6 +167,14 @@ int picker_hit(picker *p, float x, float y) {
 }
 
 void picker_set_hover(picker *p, float x, float y) { p->hover = picker_hit(p, x, y); }
+
+static void draw_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh,
+                        bool hot, float scale) {
+    gpu_quad(g, f, pass, NULL, r, NULL, hot ? (SDL_FColor){0.32f, 0.38f, 0.56f, 1} : (SDL_FColor){0.22f, 0.25f, 0.36f, 1});
+    if (!label) return;
+    SDL_FRect t = {SDL_roundf(r.x + (r.w - (float)lw) / 2), SDL_roundf(r.y + (r.h - (float)lh) / 2 + 2 * scale), (float)lw, (float)lh};
+    gpu_quad(g, f, pass, label, t, NULL, (SDL_FColor){0.95f, 0.96f, 1, 1});
+}
 
 void picker_scroll(picker *p, float pixels) {
     layout l = layout_for(p, p->width);
@@ -186,6 +216,9 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
     layout l = layout_for(p, p->width);
     p->columns = l.cols;
     p->scroll = SDL_clamp(p->scroll, 0.0f, max_scroll(p, &l));
+    SDL_FRect ir = intro_rect(p, &l);
+    if (ir.y + ir.h > 0)
+        draw_button(g, f, pass, ir, p->intro_text, p->intro_w, p->intro_h, p->hover == PICKER_INTRO, p->scale);
     for (int k = 0; k < 3; k++) {
         if (!p->heading[k]) continue;
         float y = heading_y(p, &l, k) - p->scroll;
@@ -220,7 +253,7 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
                 gpu_quad_sampled(g, f, pass, p->unknown, g->nearest_sampler, q, NULL, (SDL_FColor){0.55f, 0.6f, 0.75f, 1});
             }
         }
-        if (e->caption) {
+        if (e->caption) { /* (the Controls button is drawn after the tiles, over them) */
             float cw = (float)e->caption_w, ch = (float)e->caption_h;
             if (cw > l.tile_w) cw = l.tile_w;  /* very long names: cut at the tile edge */
             SDL_FRect uv = {0, 0, cw / (float)e->caption_w, 1};
@@ -229,4 +262,6 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
             gpu_quad(g, f, pass, e->caption, cr, &uv, (SDL_FColor){0.92f, 0.93f, 0.96f, 1});
         }
     }
+    draw_button(g, f, pass, controls_rect(p), p->controls_text, p->controls_w, p->controls_h, p->hover == PICKER_CONTROLS,
+                p->scale);
 }

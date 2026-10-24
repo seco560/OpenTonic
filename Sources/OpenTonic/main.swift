@@ -55,7 +55,7 @@ final class LoadingScreen: NSView {
     }
 }
 
-/// TonicViewer: level viewer and barebones collision tester; prototype / MVP of a native macOS port.
+/// Open Tonic: the native macOS app (began as Tonic Viewer, a level viewer and collision tester).
 final class GameView: MTKView {
     var renderer: Renderer?
     private let bindings = KeyBindings()
@@ -116,11 +116,23 @@ final class GameView: MTKView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { setCaptured(false); return }  // Esc
+        if event.keyCode == 122 {  // F1: the controls (as Cmd-/ and the SDL build's F1)
+            if !event.isARepeat { NSApp.sendAction(#selector(AppDelegate.showControls), to: nil, from: self) }
+            return
+        }
         if event.keyCode == 46, !event.isARepeat {  // M: mute/unmute level music
             Music.shared.muted.toggle()
             return
         }
         guard let v = viewer else { super.keyDown(with: event); return }
+        if event.keyCode == 120 {  // F2: antialiasing off / 2x / 4x / 8x (as far as the GPU goes), kept for next time
+            if !event.isARepeat, let r = renderer {
+                try? r.setMSAA(r.nextMSAA, view: self)
+                Renderer.preferredMSAA = r.msaa
+                updateTitle()
+            }
+            return
+        }
         if event.keyCode == 33 || event.keyCode == 30 {  // [ / ]: animation speed
             if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
             return
@@ -165,7 +177,8 @@ final class GameView: MTKView {
     func updateTitle() {
         guard let viewer = renderer?.viewer, let w = window else { return }
         let base = w.title.components(separatedBy: "  ·  view:").first ?? w.title
-        w.title = base + "  ·  " + viewer.status
+        let aa = renderer.map { $0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off" } ?? ""
+        w.title = base + "  ·  " + viewer.status(extra: aa)
     }
 
     override func keyUp(with event: NSEvent) {
@@ -186,12 +199,12 @@ final class GameView: MTKView {
     var renderer: Renderer?
     private var gameView: GameView?
     private var titleTimer: Timer?  // refreshes the AI's behaviour/state in the title while playing
-    /// Default data, first that exists: inside TonicViewer.app (Contents/Resources/data/ttlv, built by
+    /// Default data, first that exists: inside OpenTonic.app (Contents/Resources/data/ttlv, built by
     /// tools/make_app.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
     /// up without copying); out/ttlv in the working directory (older layout).
     private var levelFolder: URL = {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()  // Sources/TonicViewer
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()  // Sources/OpenTonic
             .deletingLastPathComponent().deletingLastPathComponent()
         let candidates = [Bundle.main.resourceURL?.appendingPathComponent("data/ttlv"),
                           URL(fileURLWithPath: "files/out/ttlv"),
@@ -218,7 +231,9 @@ final class GameView: MTKView {
             showPicker()
         }
         // Dock icon: Ed's original icon on the sud0 water swirl, generated into files/out/icon by tools/make_icon.sh.
-        if let icon = NSImage(contentsOf: levelFolder.deletingLastPathComponent().appendingPathComponent("icon/TonicViewer.png")) {
+        let iconDir = levelFolder.deletingLastPathComponent().appendingPathComponent("icon")
+        if let icon = NSImage(contentsOf: iconDir.appendingPathComponent("OpenTonic.png"))
+            ?? NSImage(contentsOf: iconDir.appendingPathComponent("TonicViewer.png")) {  // the name before the rename
             NSApp.applicationIconImage = icon
         }
         window.makeKeyAndOrderFront(nil)
@@ -236,6 +251,7 @@ final class GameView: MTKView {
         // Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level.
         let thumbs = levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level")
         let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs) { [weak self] url in self?.openLevel(url) }
+        picker.onIntro = { [weak self] in self?.playIntro() }
         if picker.isEmpty {
             fail("No .ttlv levels in \(levelFolder.path). Please run your genuine installed Tonic Trouble files through the conversion step.")
         }
@@ -251,23 +267,22 @@ final class GameView: MTKView {
             }
         }
         picker.relayout(width: scroll.contentView.bounds.width)
-        // Container so the "?" button floats in the top-right corner above the scrolling grid; it also takes V (intro).
+        // Container so the Controls button floats in the top-right corner above the scrolling grid; it also takes V (intro).
         let container = PickerContainer(frame: window.contentLayoutRect)
         container.onIntro = { [weak self] in self?.playIntro() }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
-        let help = NSButton(title: "?", target: self, action: #selector(showControls))
-        help.bezelStyle = .helpButton
-        help.title = ""
-        help.toolTip = "Controls"
+        let help = NSButton(title: "Controls", target: self, action: #selector(showControls))
+        help.bezelStyle = .rounded
+        help.toolTip = "Keyboard and mouse controls (F1, Cmd-/)"
         help.sizeToFit()
         help.frame.origin = NSPoint(x: container.bounds.width - help.frame.width - 16, y: container.bounds.height - help.frame.height - 12)
         help.autoresizingMask = [.minXMargin, .minYMargin]
         container.addSubview(help)
         window.contentView = container
         window.makeFirstResponder(container)
-        window.title = "TonicViewer  ·  V: intro movie"
+        window.title = "Open Tonic  ·  V: intro movie"
     }
 
     /// The intro movie, from the level select screen (V). files/out/video/intro.mp4 next to the ttlv folder.
@@ -281,41 +296,30 @@ final class GameView: MTKView {
             return
         }
         Music.shared.stop()
-        let view = IntroView(frame: window.contentLayoutRect, url: url) { [weak self] in self?.showPicker() }
+        // As the original: when the intro ends, or is skipped, the game starts on the ski slope.
+        let view = IntroView(frame: window.contentLayoutRect, url: url) { [weak self] in self?.startAfterIntro() }
         window.contentView = view
         window.makeFirstResponder(view)
-        window.title = "TonicViewer — intro  ·  Esc skips"
+        window.title = "Open Tonic — intro  ·  Esc skips"
         view.start()
+    }
+
+    /// After the intro (watched or skipped): Totalski, as the original game; the level select if it isn't converted.
+    func startAfterIntro() {
+        let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
+        if let ski = files.first(where: { $0.lastPathComponent.lowercased() == "totalski.ttlv" }) {
+            openLevel(ski)
+        } else {
+            showPicker()
+        }
     }
 
     @objc func showControls() {
         gameView?.setCaptured(false)
         let alert = NSAlert()
-        alert.messageText = "TonicViewer controls"
-        alert.informativeText = """
-        Move:  W A S D  (W/S fly where the camera looks)
-        Up / down:  R / F
-        Look:  arrow keys, or click to capture the mouse (Esc releases), or drag
-        Faster:  hold Shift  ·  scroll wheel: fly speed (free-fly) / camera zoom (play mode)
-        Field of view:  , narrower  ·  . wider
-
-        Play as Ed:  the default; Tab toggles free-fly, fly somewhere and press Tab again to drop Ed there
-          Move:  W A S D, relative to the camera  ·  Jump:  Space
-          With Ed's AI (levels with a .ttai, the default; I switches to the simple controller):
-            Ed runs by default, hold Shift to walk  ·  E stick (Action)  ·  Q Shoot  ·  C Lateral
-          Simple controller:  hold Shift to run
-          Camera:  arrow keys or mouse orbit around Ed
-          (simple collision and physics, not the original game's)
-
-        Animation:  P pause / resume  ·  [ slower  ·  ] faster
-        Lighting variant:  1, 2, 3 …  (levels with day/night lighting, e.g. South Plain)
-        Gamma:  - darker  ·  = brighter  ·  Fog:  G on / off (levels with fog, e.g. north, Totalski)
-        (current speed, gamma, field of view, lighting variant and play mode are shown in the title bar)
-
-        Music:  M mute / unmute  (level → track table: out/audio/music.tsv)
-        Intro movie:  V on the level select screen (Esc skips)
-        Level select:  ⌘L  ·  Controls:  ⌘/  ·  Full screen:  ⌃⌘F  ·  Quit:  ⌘Q
-        """
+        alert.messageText = "Open Tonic Controls"
+        alert.informativeText = "Coloured keys are bound to their respective functions"
+        alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
 
@@ -367,7 +371,7 @@ final class GameView: MTKView {
         window.makeFirstResponder(view)
         if wasCaptured { view.setCaptured(true) }
         let r = renderer!, viewer = r.viewer!, s = viewer.stats
-        window.title = "TonicViewer — \(viewer.level.name)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(r.textureCount) textures (\(r.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(viewer.canPlay ? "  ·  Tab: play as Ed" : "")"
+        window.title = "Open Tonic — \(viewer.level.name)  ·  \(s.meshes) meshes, \(s.persos) animated objects, \(s.triangles) tris, \(r.textureCount) textures (\(r.missingTextures) missing)  ·  P pause  ·  ⌘L level select\(viewer.canPlay ? "  ·  Tab: play as Ed" : "")"
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()
         titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in

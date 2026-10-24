@@ -705,14 +705,32 @@ class LevelData:
         _, rebound, grip = self.un('3f', mm)
         return (grip, rebound)
 
-    def collision(self, floors=False):
+    def collision(self, floors=False, skip_decals=False):
         """World-space collision triangles [((x, y, z) * 3)]: every static IPO's collide set, plus
         perso collide meshes posed at frame 0 of their initial state (sud0's lava-pit platforms,
         doors, ...; moving persos are treated as static). Ed's family has none.
-        floors=True returns (triangles, per-triangle (grip, rebound) or None)."""
+        floors=True returns (triangles, per-triangle (grip, rebound) or None).
+        skip_decals: leave out collide sets that are a single flat quad facing up (2 triangles, normal z > 0.5): the
+        ski slopes' speed arrows, spring stars and red direction arrows lying on the snow, which the skier rides over
+        (their effects come from trigger persos next to them, ai.ski_portals); as collision their edges stopped him."""
         out, out_floors = [], []
 
+        def decal(col, m):
+            if len(col[1]) != 2:
+                return False
+            vs = [mat_apply(m, v) for v in col[0]]
+            for t in col[1]:
+                a, b, c = (vs[i] for i in t)
+                u = [b[k] - a[k] for k in range(3)]
+                v = [c[k] - a[k] for k in range(3)]
+                n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+                if abs(n[2]) <= 0.5 * math.sqrt(sum(x * x for x in n)):
+                    return False
+            return True
+
         def add(col, m):
+            if skip_decals and decal(col, m):
+                return
             verts = [mat_apply(m, v) for v in col[0]]
             flip = mat_det(m) < 0
             out.extend(tuple(verts[i] for i in (t[::-1] if flip else t)) for t in col[1])

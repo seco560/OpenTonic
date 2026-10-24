@@ -1,6 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-// Port of level_vertex in Sources/TonicViewer/Shaders.metal.
+// Port of level_vertex in Sources/OpenTonic/Shaders.metal.
 #define UNIFORM_SET 1
 #include "level_common.glsl"
 

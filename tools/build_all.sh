@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generates everything TonicViewer needs in files/out/ from your own copy of the game (docs/BUILD.md steps 3-6):
+# Generates everything Open Tonic needs in files/out/ from your own copy of the game (docs/BUILD.md steps 3-6):
 # textures and loading screens, levels (.ttlv + .ttai), music, the intro movie and the app icon.
 # Outputs that already exist are skipped, so a re-run only does what is missing; --force redoes everything.
 # Usage (from the repo root): tools/build_all.sh [--force] [--check]
@@ -78,7 +78,7 @@ else echo "== intro movie: $SRC/Videos not found (optional, skip)"; fi
 
 # ---- 6. app icon ----
 if [ -e "$SRC/icon_ED.ICO" ]; then
-  if need "$OUT/icon/TonicViewer.png"; then echo "== icon"; tools/make_icon.sh; else echo "== icon: present (skip)"; fi
+  if need "$OUT/icon/OpenTonic.png" && need "$OUT/icon/TonicViewer.png"; then echo "== icon"; tools/make_icon.sh; else echo "== icon: present (skip)"; fi
 else echo "== icon: $SRC/icon_ED.ICO not found (optional, skip)"; fi
 
 # ---- checks ----
@@ -92,4 +92,4 @@ if need "$OUT/audio/sfx/events.tsv"; then
   echo "== sound effects"
   python3 -m tools.ttre.sfx "$OUT/audio/sfx" || echo "sound effects: skipped (vgmstream-cli?)"
 fi
-echo "done: run with 'swift run -c release TonicViewer', or package with tools/make_app.sh"
+echo "done: run with 'swift run -c release OpenTonic', or package with tools/make_app.sh"

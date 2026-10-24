@@ -12,6 +12,10 @@ final class LevelPicker: NSView {
     private static let titles = ["Levels", "Cutscenes", "Imported"]
     private let entries: [Entry]
     private let onPick: (URL) -> Void
+    /// The big "Play Intro Video" button at the top (the movie then starts the ski slope, as the original).
+    var onIntro: (() -> Void)?
+    private let introButton = NSButton(title: "Play Intro Video", target: nil, action: nil)
+    private let introHeight: CGFloat = 64
     private var tiles: [NSButton] = []
     private let headings = LevelPicker.titles.map { NSTextField(labelWithString: $0) }
     private let rules = LevelPicker.titles.map { _ in NSBox() }
@@ -58,6 +62,14 @@ final class LevelPicker: NSView {
             addSubview(b)
             tiles.append(b)
         }
+        introButton.bezelStyle = .rounded
+        introButton.controlSize = .large
+        introButton.font = .systemFont(ofSize: 20, weight: .semibold)
+        introButton.target = self
+        introButton.action = #selector(intro)
+        introButton.keyEquivalent = ""
+        introButton.toolTip = "The game's intro movie (V)"
+        addSubview(introButton)
         for (k, (heading, rule)) in zip(headings, rules).enumerated() where entries.contains(where: { $0.section == k }) {
             heading.font = .systemFont(ofSize: 15, weight: .semibold)
             heading.textColor = .secondaryLabelColor
@@ -91,8 +103,12 @@ final class LevelPicker: NSView {
         let cols = max(1, Int((width - pad) / cellW))
         let left = max(pad, (width - CGFloat(cols) * cellW + pad) / 2)
         let rowWidth = CGFloat(cols) * cellW - pad
+        introButton.sizeToFit()
+        let bw = max(introButton.frame.width + 60, 320)
+        introButton.frame = NSRect(x: (width - bw) / 2, y: pad + (introHeight - introButton.frame.height) / 2 - 8, width: bw,
+                                   height: introButton.frame.height)
         // Each section starts on a new row, under its heading; empty sections take no space.
-        var y = pad / 2
+        var y = pad + introHeight
         for (k, (heading, rule)) in zip(headings, rules).enumerated() {
             let members = entries.indices.filter { entries[$0].section == k }
             guard !members.isEmpty else { continue }
@@ -110,4 +126,5 @@ final class LevelPicker: NSView {
     }
 
     @objc private func pick(_ sender: NSButton) { onPick(entries[sender.tag].url) }
+    @objc private func intro() { onIntro?() }
 }

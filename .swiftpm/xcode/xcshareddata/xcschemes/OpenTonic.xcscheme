@@ -15,8 +15,8 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "TonicViewer"
-               BuildableName = "TonicViewer"
+               BlueprintIdentifier = "OpenTonic"
+               BuildableName = "OpenTonic"
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
@@ -44,8 +44,8 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "TonicViewer"
-            BuildableName = "TonicViewer"
+            BlueprintIdentifier = "OpenTonic"
+            BuildableName = "OpenTonic"
             ReferencedContainer = "container:">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -60,8 +60,8 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "TonicViewer"
-            BuildableName = "TonicViewer"
+            BlueprintIdentifier = "OpenTonic"
+            BuildableName = "OpenTonic"
             ReferencedContainer = "container:">
          </BuildableReference>
       </BuildableProductRunnable>

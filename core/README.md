@@ -14,7 +14,7 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
 - Must stay clean with `-std=c11 -Wall -Wextra -Wpedantic`.
 - No FP contraction (`src/tc_internal.h`), except the cross product, which uses `fmaf` on purpose
   to match the original Swift code exactly. `tests/playcheck.c` must keep matching the reference output.
-- Platform layers (Swift/AppKit/Metal in `Sources/TonicViewer`, a future Vita backend) own the
+- Platform layers (Swift/AppKit/Metal in `Sources/OpenTonic`, a future Vita backend) own the
   window, rendering, audio, file I/O and input, and talk to the core only through `include/tonic/*.h`.
 
 ## What a platform backend provides

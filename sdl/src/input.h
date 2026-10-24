@@ -1,4 +1,4 @@
-/* Key bindings for the viewer as SDL scancodes (Sources/TonicViewer/Input.swift's table; scancodes so the layout's
+/* Key bindings for the viewer as SDL scancodes (Sources/OpenTonic/Input.swift's table; scancodes so the layout's
  * physical positions match: WASD on AZERTY is ZQSD). What the actions do is the core's (tc_viewer.h):
  * WASD = move, arrow keys = camera, R/F = up/down, Shift = faster (with Ed's AI: SpeedUp, he walks), Space = jump,
  * E = Action, Q = Shoot, C = Lateral. */

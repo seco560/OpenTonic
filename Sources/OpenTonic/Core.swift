@@ -99,10 +99,10 @@ final class Viewer {
         (0..<tc_viewer_effect_count(raw)).map { String(cString: tc_viewer_effect_texture(raw, $0)) }
     }
 
-    /// The settings readout for the title bar ("view: anim 1.00×, ...").
-    var status: String {
+    /// The settings readout for the title bar ("view: anim 1.00×, ..."); extra = the app's own settings after the FOV.
+    func status(extra: String = "") -> String {
         var buf = [CChar](repeating: 0, count: 512)
-        tc_viewer_status(raw, nil, &buf, buf.count)
+        tc_viewer_status(raw, extra, &buf, buf.count)
         return String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }

@@ -1,4 +1,4 @@
-# Building TonicViewer from your own copy of Tonic Trouble
+# Building Open Tonic from your own copy of Tonic Trouble
 
 Everything below runs from the repository root. Nothing generated here may be committed or shared:
 `files/out/` is git-ignored because it holds converted Ubisoft assets.
@@ -19,7 +19,7 @@ After steps 1 and 2:
 ```sh
 tools/build_all.sh            # steps 3-6: everything in files/out/ (existing outputs are skipped; --force redoes all,
                               # --check also runs the core checks)
-tools/build_and_package.sh    # the same, then tools/make_app.sh: TonicViewer.app in ~/Applications
+tools/build_and_package.sh    # the same, then tools/make_app.sh: OpenTonic.app in ~/Applications
 ```
 The steps below are what these scripts run, for doing parts by hand.
 
@@ -68,14 +68,14 @@ screen to play it (Esc skips). The SDL build plays `files/out/video/intro.mpg` i
 pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
 
 ## 6. App icon (optional)
-`tools/make_icon.sh` (writes `files/out/icon/TonicViewer.png`).
+`tools/make_icon.sh` (writes `files/out/icon/OpenTonic.png`).
 
 ## 7. Run
-- Linux: `make -C sdl`, then `sdl/build/tonicviewer` (optionally a levels folder or a .ttlv; docs/SDL3.md).
-- `swift run -c release TonicViewer`, or open `Package.swift` in Xcode and run the TonicViewer scheme.
+- Linux: `make -C sdl`, then `sdl/build/opentonic` (optionally a levels folder or a .ttlv; docs/SDL3.md).
+- `swift run -c release OpenTonic`, or open `Package.swift` in Xcode and run the OpenTonic scheme.
   The viewer finds `files/out/ttlv` by itself (working directory, or the checkout it was built from), so no
   copying into DerivedData is needed. A folder or .ttlv can also be passed as the first argument.
-- `tools/make_app.sh` builds a self-contained `TonicViewer.app` into `~/Applications` (personal use only:
+- `tools/make_app.sh` builds a self-contained `OpenTonic.app` into `~/Applications` (personal use only:
   it bundles the converted assets).
 
 ## 8. Checks

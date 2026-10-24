@@ -12,12 +12,14 @@
 # Usage (from the repo root): tools/make_app.sh [install dir, default ~/Applications]
 set -e
 DEST="${1:-$HOME/Applications}"
-APP="files/out/TonicViewer.app"
+APP="files/out/OpenTonic.app"
+# The icon: files/out/icon/OpenTonic.png (tools/make_icon.sh), or the one made before the rename.
+ICON=files/out/icon/OpenTonic.png; [ -e "$ICON" ] || ICON=files/out/icon/TonicViewer.png
 swift build -c release
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/data"
-cp .build/release/TonicViewer "$APP/Contents/MacOS/TonicViewer"
-cp Sources/TonicViewer/Shaders.metal "$APP/Contents/Resources/"
+cp .build/release/OpenTonic "$APP/Contents/MacOS/OpenTonic"
+cp Sources/OpenTonic/Shaders.metal "$APP/Contents/Resources/"
 
 # Data keeps the files/out/ layout, so the .ttlv files' relative texture paths (../Textures/...) still resolve.
 R="$APP/Contents/Resources/data"
@@ -29,7 +31,7 @@ mkdir -p "$R/Vignette" "$R/audio/music" "$R/audio/sfx" "$R/icon"
 # Sound effects (tools/ttre/sfx.py): the global sound events' files and their table.
 [ -d files/out/audio/sfx ] && cp files/out/audio/sfx/*.wav files/out/audio/sfx/events.tsv "$R/audio/sfx/"
 cp -R files/out/Vignette/Level "$R/Vignette/"
-cp files/out/icon/TonicViewer.png "$R/icon/"
+cp "$ICON" "$R/icon/OpenTonic.png"
 # Music: WAV -> AAC (about 10x smaller), tracks already in .m4a are copied; the table is rewritten to the .m4a names.
 for w in files/out/audio/music/*.wav; do
   [ -e "$w" ] || continue
@@ -43,22 +45,22 @@ sed 's/\.wav/.m4a/g' files/out/audio/music.tsv > "$R/audio/music.tsv"
 if [ -e files/out/video/intro.mp4 ]; then mkdir -p "$R/video"; cp files/out/video/intro.mp4 "$R/video/"; fi
 
 # Icon: PNG -> .icns
-ICONSET="files/out/icon/TonicViewer.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+ICONSET="files/out/icon/OpenTonic.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do
-  sips -z $s $s files/out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) files/out/icon/TonicViewer.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $s $s "$ICON" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) "$ICON" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/TonicViewer.icns"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/OpenTonic.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>TonicViewer</string>
-  <key>CFBundleDisplayName</key><string>Tonic Trouble Viewer</string>
-  <key>CFBundleIdentifier</key><string>local.retonictrouble.viewer</string>
-  <key>CFBundleExecutable</key><string>TonicViewer</string>
-  <key>CFBundleIconFile</key><string>TonicViewer</string>
+  <key>CFBundleName</key><string>Open Tonic</string>
+  <key>CFBundleDisplayName</key><string>Open Tonic</string>
+  <key>CFBundleIdentifier</key><string>local.opentonic</string>
+  <key>CFBundleExecutable</key><string>OpenTonic</string>
+  <key>CFBundleIconFile</key><string>OpenTonic</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>
@@ -70,6 +72,6 @@ PLIST
 
 codesign --force --deep -s - "$APP"
 mkdir -p "$DEST"
-rm -rf "$DEST/TonicViewer.app"
+rm -rf "$DEST/OpenTonic.app"
 cp -R "$APP" "$DEST/"
-echo "Installed $DEST/TonicViewer.app ($(du -sh "$DEST/TonicViewer.app" | cut -f1))"
+echo "Installed $DEST/OpenTonic.app ($(du -sh "$DEST/OpenTonic.app" | cut -f1))"
