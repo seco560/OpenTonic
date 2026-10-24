@@ -2,7 +2,7 @@
 
 <img width="1800" height="1130" alt="Screenshot 2026-10-19 at 20 55 41" src="https://github.com/user-attachments/assets/ce53b698-d818-4161-8d94-40539f97c555" />
 
-While still very much a work in progress, enough gameplay has been implemented to call this a working reimplementatio of Tonic Trouble. Let's go through the folder structure:
+While still very much a work in progress, enough gameplay has been implemented to call this a working reimplementation of Tonic Trouble. Let's go through the folder structure:
 
 * core - Tonic Core: a reimplementation of the Tonic Trouble engine. Done entirely assisted by Claude Code, formed from decompiled outputs and previous efforts to reverse engineer Rayman 2 (Open Rayman, namely)
 * docs - various notes taken throughout the project, haphazard documentation, mostly Claude-speak
