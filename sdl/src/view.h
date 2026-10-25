@@ -24,14 +24,20 @@ typedef struct view {
     /* Per-triangle lightmap atlas (.ttlv v8), or the shared 1x1 white texture for levels without lightmaps. */
     SDL_GPUTexture *lightmap;
     view_mesh *meshes;           /* tc_viewer_mesh order */
+    SDL_GPUTexture **effects;    /* screen transitions, tc_viewer_effect_texture order; NULL = missing */
+    uint32_t effect_count;
 } view;
 
-/* Loads the .ttlv (and the .ttai next to it) and uploads it. On failure err says why and the view is empty
- * (view_free is still safe). */
-bool view_load(view *v, gpu *g, const char *ttlv_path, char *err, size_t err_size);
+/* Loads the .ttlv (and the .ttai next to it) and uploads it. carry: arriving through a portal (a copy of the last
+ * level's tc_viewer_pending_level), or NULL. On failure err says why and the view is empty (view_free is still
+ * safe). */
+bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, char *err, size_t err_size);
 void view_free(view *v);
 
 /* Clears and draws the level into the frame (its own 3D pass). */
 void view_draw_frame(view *v, gpu_frame *f);
+/* The screen transition, black, or the loading screen's black backdrop (o from tc_viewer_overlay) in a 2D pass over
+ * the frame. The loading screen itself (vignette, caption, bar) is the app's. */
+void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_view_overlay *o);
 
 #endif

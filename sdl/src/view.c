@@ -71,7 +71,7 @@ static void add_mesh(mesh_builder *b, const tc_mesh *m, view_mesh *out) {
     b->index_count += m->index_count;
 }
 
-bool view_load(view *v, gpu *g, const char *ttlv_path, char *err, size_t err_size) {
+bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, char *err, size_t err_size) {
     SDL_zerop(v);
     v->g = g;
     if (!tv_level_load(&v->level, ttlv_path, err, err_size)) return false;
@@ -81,7 +81,7 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, char *err, size_t err_siz
     char *ai_path = path_with_ext(ttlv_path, ".ttai");
     size_t ai_size = 0;
     void *ai = ai_path ? SDL_LoadFile(ai_path, &ai_size) : NULL;
-    tc_viewer_desc desc = {r, ai, ai_size, v->level.name, NULL, (Uint32)SDL_GetTicksNS() | 1};  /* portals: TODO (docs/PORTALS.md step 4) */
+    tc_viewer_desc desc = {r, ai, ai_size, v->level.name, carry, (Uint32)SDL_GetTicksNS() | 1};
     tc_result vr = tc_viewer_init(&v->viewer, &desc);
     if (ai && v->viewer.ai_result != TC_OK) SDL_Log("%s: %s", ai_path, tc_result_string(v->viewer.ai_result));
     SDL_free(ai);
@@ -118,6 +118,16 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, char *err, size_t err_siz
     }
     if (v->missing_textures > 5) SDL_Log("... %u textures missing in all", v->missing_textures);
 
+    /* The screen transitions' masks and logos (Textures/Effects), relative to the level folder as the textures. */
+    v->effect_count = tc_viewer_effect_count(&v->viewer);
+    v->effects = SDL_calloc(SDL_max(1u, v->effect_count), sizeof *v->effects);
+    for (uint32_t i = 0; v->effects && i < v->effect_count; i++) {
+        char *path = path_join(v->level.folder, tc_viewer_effect_texture(&v->viewer, i));
+        v->effects[i] = gpu_upload_png(g, &up, path, false, NULL, NULL);
+        if (!v->effects[i]) SDL_Log("effect %s: %s", path, SDL_GetError());
+        SDL_free(path);
+    }
+
     mesh_builder b;
     SDL_zero(b);
     uint32_t mesh_count = tc_viewer_mesh_count(&v->viewer);
@@ -142,11 +152,14 @@ void view_free(view *v) {
         SDL_GPUDevice *d = v->g->device;
         for (uint32_t i = 0; v->textures && i < v->texture_count; i++)
             if (v->textures[i]) SDL_ReleaseGPUTexture(d, v->textures[i]);
+        for (uint32_t i = 0; v->effects && i < v->effect_count; i++)
+            if (v->effects[i]) SDL_ReleaseGPUTexture(d, v->effects[i]);
         if (v->lightmap && v->lightmap != v->g->white) SDL_ReleaseGPUTexture(d, v->lightmap);
         if (v->vertices) SDL_ReleaseGPUBuffer(d, v->vertices);
         if (v->indices) SDL_ReleaseGPUBuffer(d, v->indices);
     }
     SDL_free(v->textures);
+    SDL_free(v->effects);
     SDL_free(v->meshes);
     if (v->has_viewer) tc_viewer_free(&v->viewer);
     tv_level_free(&v->level);
@@ -238,4 +251,18 @@ void view_draw_frame(view *v, gpu_frame *f) {
     const tc_view_draw *draws = tc_viewer_draws(&v->viewer, &count, &opaque);
     for (uint32_t i = 0; i < count; i++) draw_mesh(&c, &draws[i]);
     SDL_EndGPURenderPass(pass);
+}
+
+void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_view_overlay *o) {
+    int mode;
+    switch (o->kind) {
+    case TC_VO_MASK: mode = 0; break;
+    case TC_VO_LOGO: mode = 1; break;
+    case TC_VO_BLACK: case TC_VO_LOADING: mode = 2; break;
+    default: return;
+    }
+    SDL_GPUTexture *tex = v->effects && o->texture >= 0 && (uint32_t)o->texture < v->effect_count ? v->effects[o->texture] : NULL;
+    if (!tex) mode = 2;  /* a missing effect texture: plain black, as Renderer.swift */
+    bool logo = mode == 1;
+    gpu_overlay(v->g, f, pass, tex, logo ? o->corners : NULL, logo ? o->uv : NULL, mode, o->threshold);
 }

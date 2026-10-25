@@ -1169,7 +1169,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   height inside its sector boxes (sud0: 2); Shaders.metal / sdl level.frag water_sheen() add, on upward faces only (the
   falls share the material), a Fresnel sky reflection and the light's highlight over moving procedural ripples, and
   raise the alpha of blended water. The look is a stand-in for the engine's (its water rendering, the SRF module, is
-  not decoded); **not seen yet** (the Metal shader compiles; the SDL GLSL is unbuilt here: no glslangValidator).
+  not decoded); **not seen yet** (the Metal shader compiles; the SDL GLSL builds on Linux).
   Fixed the same day (user: from underwater the whole surface was one solid colour): seen from below, the view vector
   points down, so the Fresnel term was 1 (full sky) and the alpha forced opaque; now no sheen from below (eye under the
   fragment), the texture's own alpha, the world above showing through.

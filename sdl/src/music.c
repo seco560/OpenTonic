@@ -1,5 +1,6 @@
 #include "music.h"
 #include <SDL3/SDL.h>
+#include "sfx.h"
 #include "util.h"
 
 static struct {
@@ -151,8 +152,10 @@ void music_play(const char *level, const char *audio_dir) {
     SDL_ResumeAudioStreamDevice(music.stream);
 }
 
+/* M: the sound effects follow. */
 void music_set_muted(bool muted) {
     music.muted = muted;
+    sfx_set_muted(muted);
     if (music.stream) SDL_SetAudioStreamGain(music.stream, muted ? 0.0f : 1.0f);
 }
 

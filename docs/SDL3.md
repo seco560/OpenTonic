@@ -33,7 +33,9 @@ case-insensitively; if a level fails with "not found", check letter case first.
 ## Running
 `sdl/build/opentonic [levels folder | level.ttlv]`. Without an argument it looks for `files/out/ttlv` in the
 working directory, then relative to the binary in the checkout, then in the checkout it was built from. Converted data
-as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails), `audio/` (music) and `icon/` next to it.
+as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails, portal loading screens), `Textures/Effects`
+(screen transitions), `audio/` (music, `sfx/` sound effects) and `icon/` next to it. Levels converted before .ttai v6
+load, but without portals, transitions or Ed's sounds: re-run `tools/build_linux.sh` (`--force`, or delete `ttlv/`).
 
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
 alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,
@@ -41,19 +43,31 @@ and V plays the intro movie (Esc, Space or Enter skip). F2 cycles the level's an
 MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 4).
 `TONIC_GPU_DEBUG=1` turns on the GPU backend's validation layers (when installed).
 
+## Installing
+`tools/install_linux.sh [dest]` builds the frontend and installs it for the current user, as `tools/make_app.sh` makes
+the .app: the binary and its data in `~/.local/share/opentonic` (`opentonic` + `data/`, the files/out layout: ttlv
+without the `*_ai.txt` listings, Textures, Vignette/Level, audio with music and sfx, video/intro.mpg, icon, Imported),
+a menu entry `~/.local/share/applications/org.opentonic.sdl.desktop` (named after the app ID the binary gives
+`SDL_SetAppMetadata`, which SDL uses as the Wayland app ID / X11 class, so the desktop pairs window and entry) and its
+icon in `~/.local/share/icons/hicolor` (ffmpeg scales it). Re-running it rebuilds and updates the install in place
+(rsync: only changed files, removed ones deleted); `--uninstall [dest]` removes it all. The binary looks for
+`data/ttlv` next to itself before anything else. About 680 MB, mostly the WAV music (the SDL build plays WAV only).
+
 ## Layout
 ```
 sdl/
   Makefile
   shaders/level_common.glsl  # Uniforms block shared by both stages
   shaders/level.vert/.frag   # port of Sources/OpenTonic/Shaders.metal (.frag built twice: textured, -DFLAT)
-  shaders/ui.vert/.frag      # 2D quads: level picker, controls overlay
-  src/main.c     # window, screens, keys, title bar, controls overlay   (main.swift)
+  shaders/ui.vert/.frag      # 2D quads: level picker, controls overlay, loading screen
+  shaders/overlay.vert/.frag # screen transitions (Shaders.metal's overlay_vertex / overlay_fragment)
+  src/main.c     # window, screens, keys, title bar, controls overlay, loading screen, portal level changes (main.swift)
   src/view.c     # mesh table + texture upload, uniforms, draws the core's list (Renderer.swift)
   src/gpu.c      # SDL_GPU device, pipelines, samplers, uploads, quads, debug-font text
   src/play.c     # .ttlv file reading                                    (Core.swift's Level)
   src/input.c    # key bindings: SDL scancodes -> tc_view_action           (Input.swift)
   src/music.c    # music.tsv lookup, looping WAV streamed from disk      (Music.swift)
+  src/sfx.c      # sound effects: events.tsv, one SDL_AudioStream per voice (Sfx.swift)
   src/picker.c   # level select grid                                     (LevelPicker.swift)
   src/intro.c    # intro movie: pl_mpeg decode, audio-clocked frames     (IntroPlayer.swift)
   src/util.c     # path helpers
@@ -90,6 +104,18 @@ sdl/
   build) with generated mipmaps; the lightmap atlas has none.
 - **Music.** The tracks are WAV (docs/BUILD.md step 5), not Ogg, so no stb_vorbis either: the data chunk is streamed
   from disk into an `SDL_AudioStream` and wraps at the end.
+- **Sound effects.** As Sfx.swift: `tc_viewer_sounds` after every update goes to `sfx_play`; events.tsv rows play,
+  loop or stop a WAV (read once with `SDL_LoadWAV`). Each voice is its own `SDL_AudioStream` bound to one shared
+  playback device: one-shots are queued whole and freed once played out, a loop's stream refills itself from its get
+  callback until a stop event (or a level change) destroys it. M mutes them with the music (`music_set_muted`).
+- **Portals and screen transitions** (docs/PORTALS.md). The level's effect textures (`tc_viewer_effect_texture`) are
+  uploaded with the level. After the 3D pass, a 2D pass draws `tc_viewer_overlay`: the mask wipe (alpha test
+  `a <= threshold`, black), the spinning logo (black x the texture's alpha on the core's rotated quad), or black, in
+  their own `overlay` pipeline; for the loading screen, the vignette (`Vignette/Level/<level>.png`, matched
+  case-insensitively), "Loading <level>" in the debug font and a progress bar on top, laid out as main.swift's
+  `LoadingScreen`. Once `tc_viewer_pending_level` is set (after a frame of the full bar), the main loop copies the
+  carry and opens that level with it; mouse-look capture stays on across the change. A missing level: a message
+  box, then the level select.
 - **Level picker.** Thumbnails and captions as textured quads; captions and the controls overlay use SDL's 8x8 debug
   font, rendered into a surface by a software renderer and uploaded.
 - **Intro movie.** SDL has no video decoding, so the movie is MPEG-1 + MP2 for the single-header pl_mpeg rather than
@@ -110,8 +136,8 @@ sdl/
 
 ## Not done yet
 - Gamepad support (the Swift app has none either).
-- `tools/make_app.sh` stays macOS-only. A Linux equivalent (if ever wanted) is `make -C sdl` plus copying
-  `files/out`. **Same rule as the app: never redistribute anything containing converted assets.**
+- `tools/make_app.sh` stays macOS-only; its Linux counterpart is `tools/install_linux.sh` (see Installing). **Same
+  rule as the app: never redistribute anything containing converted assets.**
 
 Parity check once data is converted: screenshot `bar` (lightmaps + fog) and one radiosity-lit level in both builds
 from the same camera position; they should match apart from filtering differences.

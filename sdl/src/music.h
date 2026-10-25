@@ -11,7 +11,7 @@
  * uses the entry named "menu". A track that is already playing just continues. */
 void music_play(const char *level, const char *audio_dir);
 void music_stop(void);
-void music_set_muted(bool muted);
+void music_set_muted(bool muted);  /* the sound effects too (sfx.h) */
 bool music_muted(void);
 
 #endif

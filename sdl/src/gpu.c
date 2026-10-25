@@ -8,6 +8,8 @@
 #include "level_flat_frag.h"
 #include "ui_vert.h"
 #include "ui_frag.h"
+#include "overlay_vert.h"
+#include "overlay_frag.h"
 
 static SDL_GPUShader *shader(gpu *g, const uint32_t *code, size_t size, SDL_GPUShaderStage stage, Uint32 samplers,
                              Uint32 uniform_buffers) {
@@ -206,16 +208,20 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
     g->flat_fs = shader(g, level_flat_frag, sizeof level_flat_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
     SDL_GPUShader *ui_vs = shader(g, ui_vert, sizeof ui_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     SDL_GPUShader *ui_fs = shader(g, ui_frag, sizeof ui_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
-    bool ok = g->level_vs && g->textured_fs && g->flat_fs && ui_vs && ui_fs;
+    SDL_GPUShader *overlay_vs = shader(g, overlay_vert, sizeof overlay_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    SDL_GPUShader *overlay_fs = shader(g, overlay_frag, sizeof overlay_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    bool ok = g->level_vs && g->textured_fs && g->flat_fs && ui_vs && ui_fs && overlay_vs && overlay_fs;
     if (ok && !level_pipelines(g) && g->msaa > 1) {
         SDL_Log("GPU: no pipelines with %dx MSAA, trying without", g->msaa);
         g->msaa = 1;
         level_pipelines(g);
     }
     if (ok) g->ui = ui_pipeline(g, ui_vs, ui_fs);
-    if (ui_vs) SDL_ReleaseGPUShader(g->device, ui_vs);
-    if (ui_fs) SDL_ReleaseGPUShader(g->device, ui_fs);
-    if (!g->textured || !g->ui) {
+    if (ok) g->overlay = ui_pipeline(g, overlay_vs, overlay_fs);
+    SDL_GPUShader *ui_shaders[] = {ui_vs, ui_fs, overlay_vs, overlay_fs};
+    for (size_t i = 0; i < SDL_arraysize(ui_shaders); i++)
+        if (ui_shaders[i]) SDL_ReleaseGPUShader(g->device, ui_shaders[i]);
+    if (!g->textured || !g->ui || !g->overlay) {
         SDL_SetError("could not create the pipelines (see the log)");
         return false;
     }
@@ -242,6 +248,7 @@ void gpu_quit(gpu *g) {
     SDL_WaitForGPUIdle(g->device);
     release_level_pipelines(g);
     if (g->ui) SDL_ReleaseGPUGraphicsPipeline(g->device, g->ui);
+    if (g->overlay) SDL_ReleaseGPUGraphicsPipeline(g->device, g->overlay);
     SDL_GPUShader *shaders[] = {g->level_vs, g->textured_fs, g->flat_fs};
     for (size_t i = 0; i < SDL_arraysize(shaders); i++)
         if (shaders[i]) SDL_ReleaseGPUShader(g->device, shaders[i]);
@@ -578,5 +585,29 @@ void gpu_quad_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUText
     SDL_BindGPUGraphicsPipeline(pass, g->ui);
     SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
     SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);
+    SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
+}
+
+/* Must match the Quad block in shaders/overlay.vert and the Params block in shaders/overlay.frag (std140). */
+typedef struct overlay_quad { float corner[4][4]; } overlay_quad;
+typedef struct overlay_params { Uint32 mode; float threshold, pad[2]; } overlay_params;
+_Static_assert(sizeof(overlay_quad) == 64, "overlay_quad must match shaders/overlay.vert");
+
+void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, const float corners[4][2],
+                 const float uv[4][2], int mode, float threshold) {
+    static const float full[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
+    overlay_quad q;
+    for (int i = 0; i < 4; i++) {
+        q.corner[i][0] = corners ? corners[i][0] : full[i][0];
+        q.corner[i][1] = corners ? corners[i][1] : full[i][1];
+        q.corner[i][2] = uv ? uv[i][0] : full[i][0];
+        q.corner[i][3] = uv ? uv[i][1] : full[i][1];
+    }
+    overlay_params p = {(Uint32)mode, threshold, {0, 0}};
+    SDL_GPUTextureSamplerBinding binding = {tex ? tex : g->white, g->ui_sampler};
+    SDL_BindGPUGraphicsPipeline(pass, g->overlay);
+    SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+    SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);
+    SDL_PushGPUFragmentUniformData(f->cmd, 0, &p, sizeof p);
     SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
 }

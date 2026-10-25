@@ -1,7 +1,7 @@
 # Portals, screen transitions and the loading screen (plan)
 
-Status: steps 1-3 and 5 done 2026-10-25 (core + the Mac app; `make -C core portalcheck viewcheck`); step 4 (SDL) open:
-it builds and runs as before, without the overlay or the level change. Supersedes the "Level portals" guesses in docs/NOTES.md (session 10): Ed's
+Status: steps 1-3 and 5 done 2026-10-25 (core + the Mac app; `make -C core portalcheck viewcheck`); step 4 (SDL) written
+2026-10-25 on Linux (builds; not yet run by the user): overlay pipeline, loading screen, level change with the carry. Supersedes the "Level portals" guesses in docs/NOTES.md (session 10): Ed's
 `dsg136` is an arrival **heading**, not a destination index, and Land's red arches teleport **within** Land.
 
 ## What the game does (decoded)
@@ -145,7 +145,7 @@ core runs Ed and sequences everything, the frontends draw.
    dsgvars, place, camera place; then the reveal); `tc_viewer_overlay`, `tc_viewer_effect_texture`,
    `tc_viewer_pending_level`. `viewcheck`: sud0's Cocktail arch -> mask cover, black, loading, pending "bar"; bar with
    the carry reveals and Ed steps out (state 229).
-4. SDL frontend (the user tests on Linux): load the effect textures, an overlay pipeline (mask: alpha test
+4. **Written (Linux, untested).** SDL frontend: load the effect textures, an overlay pipeline (mask: alpha test
    `a <= threshold` black; logo: black x texture alpha; black), the loading screen (vignette, bar, debug-font text),
    and on `tc_viewer_pending_level` open that level with a copy of the carry.
 5. **Done (Mac).** Shaders.metal `overlay_vertex` / `overlay_fragment`, Renderer's overlay pass and `onPendingLevel`,

@@ -19,6 +19,7 @@ typedef struct gpu {
     int msaa;
     SDL_GPUShader *level_vs, *textured_fs, *flat_fs;  /* kept to rebuild the level pipelines for another msaa */
     SDL_GPUGraphicsPipeline *ui;      /* 2D quads, alpha-blended, no depth */
+    SDL_GPUGraphicsPipeline *overlay; /* screen transitions (docs/PORTALS.md): free-cornered quads, as ui */
     SDL_GPUSampler *repeat_sampler;   /* level textures: trilinear, repeat, 16x anisotropy */
     SDL_GPUSampler *clamp_sampler;    /* lightmap atlas: linear, clamp to edge */
     SDL_GPUSampler *ui_sampler;       /* thumbnails and text: trilinear, clamp */
@@ -81,5 +82,11 @@ void gpu_quad(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex
 /* The same with a given sampler (e.g. nearest_sampler). */
 void gpu_quad_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, SDL_GPUSampler *sampler,
                       SDL_FRect rect, const SDL_FRect *uv, SDL_FColor color);
+
+/* A screen transition over the frame in a 2D pass (Shaders.metal's overlay_fragment): mode 0 black where tex's alpha
+ * <= threshold (the mask wipe), 1 black with tex's alpha (the spinning logo), 2 solid black (tex unused). corners and
+ * uv in viewport units (0..1, y down), triangles 0 1 2 and 1 3 2; NULL = the whole viewport and texture. */
+void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, const float corners[4][2],
+                 const float uv[4][2], int mode, float threshold);
 
 #endif
