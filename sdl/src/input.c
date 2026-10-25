@@ -20,3 +20,14 @@ int input_action(SDL_Scancode key) {
     default: return -1;
     }
 }
+
+uint32_t input_pad_actions(SDL_GamepadButton button) {
+    switch (button) {
+    case SDL_GAMEPAD_BUTTON_SOUTH: return 1u << TC_VA_JUMP;
+    case SDL_GAMEPAD_BUTTON_WEST: return 1u << TC_VA_ACTION;
+    case SDL_GAMEPAD_BUTTON_EAST: return 1u << TC_VA_SHOOT;
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return 1u << TC_VA_LATERAL | 1u << TC_VA_UP;
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return 1u << TC_VA_DOWN;
+    default: return 0;
+    }
+}

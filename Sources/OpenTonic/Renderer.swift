@@ -71,6 +71,9 @@ import TonicCore
     var onLoading: ((String, Float)?) -> Void = { _ in }
     /// Called once when a red portal's loading screen is done: open that level with this carry.
     var onPendingLevel: (tc_viewer_carry) -> Void = { _ in }
+    /// Gamepad buttons for the app (level select, controls, play / free-fly), after the frame that read them.
+    var onGamepad: (Gamepad.Command) -> Void = { _ in }
+    private lazy var gamepad = Gamepad()  // made on first use, in draw (main actor)
     private var pendingSent = false
     private(set) var missingTextures = 0
     var textureCount: Int { textures.count - missingTextures }
@@ -284,6 +287,11 @@ import TonicCore
         let now = CACurrentMediaTime()
         let dt = Float(min(now - (lastTime ?? now), 0.1))
         lastTime = now
+        let commands = gamepad.poll(v, dt: dt)
+        if !commands.isEmpty {
+            let send = onGamepad
+            DispatchQueue.main.async { commands.forEach(send) }  // the level select replaces this renderer: not from inside draw
+        }
         tc_viewer_update(v, dt)
         var sounds: UnsafePointer<UInt16>?
         let n = Int(tc_viewer_sounds(v, &sounds))

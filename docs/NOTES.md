@@ -138,7 +138,9 @@ idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/ai
    hide/show (PROC_120/121, props like the stick), meta-actions other than ChangeStateAndWait (11, 12, 19, 21, 40
    finish at once now), collision probes (PathBlocked? is always false), touched objects, zones. Unimplemented
    primitives are counted in tc_ai_perso.unknown (aicheck prints them): FUNC_95/164, PROC_16/35/212-214/290, META_6.
-4. **Gamepad:** tc_ed_ai_step takes a stick (-1..1); the viewer passes 0 (keyboard path in the scripts).
+4. **Gamepad (done 2026-10-25):** tc_viewer_set_move_stick feeds the left stick to tc_ed_ai_step as the game's own
+   stick (the scripts' thresholds and walk-to-run pace; headless: a 0.35 push 2.9 u/s, 0.5 4.1, 0.85 10, full 12 =
+   the keyboard run, directions camera-relative); tc_viewer_set_look_stick turns the camera. `viewcheck` covers it.
 5. Other persos' AI (doors, platforms, enemies, bonuses) once the shared primitives exist; then sound events.
 6. Older parked items: the 0.25 animation time factor for non-Ed persos (Ed's AI path uses the exe's 1x clock and
    looks right), the invisible sud0 river, Vita/3DS backends, CD-archive pipeline.

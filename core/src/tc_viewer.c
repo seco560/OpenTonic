@@ -412,12 +412,31 @@ void tc_viewer_set_action(tc_viewer *v, tc_view_action a, bool down) {
     else v->held &= ~(1u << a);
 }
 
-void tc_viewer_release_all(tc_viewer *v) { v->held = 0; }
+void tc_viewer_release_all(tc_viewer *v) {
+    v->held = 0;
+    v->move_x = v->move_y = v->look_x = v->look_y = 0;
+}
 
 void tc_viewer_mouse_look(tc_viewer *v, float dx, float dy) {
     v->mouse_dx += dx;
     v->mouse_dy += dy;
 }
+
+/* Radial dead zone; rescale: the rest maps to 0..1 (a slight push starts slowly), else it stays as is (length <= 1). */
+static void dead_zone(float x, float y, bool rescale, float *ox, float *oy) {
+    float len = sqrtf(x * x + y * y), k;
+    if (len <= TC_VIEWER_STICK_DEAD_ZONE) {
+        *ox = *oy = 0;
+        return;
+    }
+    k = rescale ? fminf(1, (len - TC_VIEWER_STICK_DEAD_ZONE) / (1 - TC_VIEWER_STICK_DEAD_ZONE)) / len : 1 / fmaxf(len, 1);
+    *ox = x * k;
+    *oy = y * k;
+}
+
+void tc_viewer_set_move_stick(tc_viewer *v, float x, float y) { dead_zone(x, y, false, &v->move_x, &v->move_y); }
+
+void tc_viewer_set_look_stick(tc_viewer *v, float x, float y) { dead_zone(x, y, true, &v->look_x, &v->look_y); }
 
 static bool held(const tc_viewer *v, tc_view_action a) { return (v->held >> a) & 1u; }
 
@@ -425,33 +444,39 @@ static float axis(const tc_viewer *v, tc_view_action pos, tc_view_action neg) {
     return (held(v, pos) ? 1.0f : 0.0f) - (held(v, neg) ? 1.0f : 0.0f);
 }
 
-/* Arrow keys and mouse turn the camera (both modes). */
+/* Arrow keys, the right stick and the mouse turn the camera (both modes). */
 static void look(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
+    float yaw_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_RIGHT, TC_VA_LOOK_LEFT) + v->look_x));
+    float pitch_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_UP, TC_VA_LOOK_DOWN) + v->look_y));
     float pitch;
-    c->yaw += axis(v, TC_VA_LOOK_RIGHT, TC_VA_LOOK_LEFT) * v->turn_speed * dt + v->mouse_dx * 0.003f;
-    pitch = c->pitch + axis(v, TC_VA_LOOK_UP, TC_VA_LOOK_DOWN) * v->turn_speed * dt - v->mouse_dy * 0.003f;
+    c->yaw += yaw_rate * v->turn_speed * dt + v->mouse_dx * 0.003f;
+    pitch = c->pitch + pitch_rate * v->turn_speed * dt - v->mouse_dy * 0.003f;
     c->pitch = fmaxf(-1.5f, fminf(1.5f, pitch));
     v->mouse_dx = v->mouse_dy = 0;
 }
 
-/* Free-fly: W/S fly along the view direction (pitch included); R/F stay world up/down. */
+/* Free-fly: W/S (the stick's y) fly along the view direction (pitch included); R/F stay world up/down. Keys fly at
+ * full speed; the stick in proportion to how far it is pushed. */
 static void fly(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
     tc_vec3 move;
+    float len;
     look(v, dt);
-    move = tc_v3_add(tc_v3_scale(tc_camera_forward(c), axis(v, TC_VA_FORWARD, TC_VA_BACK)),
-                     tc_v3_scale(tc_camera_right(c), axis(v, TC_VA_RIGHT, TC_VA_LEFT)));
+    move = tc_v3_add(tc_v3_scale(tc_camera_forward(c), axis(v, TC_VA_FORWARD, TC_VA_BACK) + v->move_y),
+                     tc_v3_scale(tc_camera_right(c), axis(v, TC_VA_RIGHT, TC_VA_LEFT) + v->move_x));
     move.z += axis(v, TC_VA_UP, TC_VA_DOWN);
-    if (tc_v3_length(move) > 0) {
+    len = tc_v3_length(move);
+    if (len > 0) {
         float speed = v->fly_speed * (held(v, TC_VA_FAST) ? 4.0f : 1.0f) * dt;
-        c->position = tc_v3_add(c->position, tc_v3_scale(tc_v3_normalize(move), speed));
+        c->position = tc_v3_add(c->position, tc_v3_scale(move, speed / fmaxf(len, 1)));
     }
 }
 
-/* Simple controller: WASD as a world-space XY direction relative to the camera's yaw (length <= 1). */
+/* Simple controller: WASD and the left stick as a world-space XY direction relative to the camera's yaw (length <= 1). */
 static tc_vec2 move_direction(const tc_viewer *v) {
-    float yaw = v->camera.yaw, fwd = axis(v, TC_VA_FORWARD, TC_VA_BACK), side = axis(v, TC_VA_RIGHT, TC_VA_LEFT);
+    float yaw = v->camera.yaw, fwd = axis(v, TC_VA_FORWARD, TC_VA_BACK) + v->move_y;
+    float side = axis(v, TC_VA_RIGHT, TC_VA_LEFT) + v->move_x;
     tc_vec2 m = tc_v2(sinf(yaw) * fwd + cosf(yaw) * side, cosf(yaw) * fwd - sinf(yaw) * side);
     float len = tc_v2_length(m);
     return len > 1 ? tc_v2(m.x / len, m.y / len) : m;
@@ -554,14 +579,15 @@ static void update_play(tc_viewer *v, float dt) {
     look(v, dt);
     if (p->use_ai) {
         /* Ed's own scripts; they see last frame's camera eye (it makes the direction keys camera-relative). */
-        tc_ed_ai_step(&p->driver, v->paused ? 0 : dt, ai_inputs(v), 0, 0, v->camera.position);
+        tc_ed_ai_step(&p->driver, v->paused ? 0 : dt, ai_inputs(v), v->move_x, v->move_y, v->camera.position);
         v->sound_count = p->driver.ai.sound_count;
         memcpy(v->sounds, p->driver.ai.sounds, v->sound_count * sizeof(v->sounds[0]));
     } else {
         tc_player_input in;
         bool walking_in = v->walk_in != 0;
         in.move = walking_in ? tc_v2(0, 0) : move_direction(v);
-        in.run = !walking_in && held(v, TC_VA_FAST);
+        /* Shift runs; the stick runs when pushed most of the way (0.8: the simple controller has only walk and run). */
+        in.run = !walking_in && (held(v, TC_VA_FAST) || v->move_x * v->move_x + v->move_y * v->move_y > 0.64f);
         in.jump = !walking_in && held(v, TC_VA_JUMP);
         tc_player_step(&p->player, dt, &in);
         if (p->has_driver) simple_portals(v, dt);

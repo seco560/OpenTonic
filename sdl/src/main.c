@@ -42,6 +42,12 @@ static const char *controls_text =
     "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "\n"
+    "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
+    "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
+    "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
+    "  R2:  fly faster  -  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
+    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro  -  Intro:  Cross, Circle or Start skip\n"
+    "\n"
     "F1 or Esc closes this";
 
 typedef struct app {
@@ -54,6 +60,10 @@ typedef struct app {
     char *level_folder;          /* out/ttlv */
     char *data_dir;              /* out: audio/, Vignette/, icon/ next to ttlv/ */
     bool captured;               /* mouse-look capture (viewer convenience, not part of the original controls) */
+    SDL_JoystickID pad;          /* the gamepad last used, 0 = none (every gamepad is opened as it connects) */
+    bool pad_fast;               /* its right trigger past half way: TC_VA_FAST */
+    int nav_dx, nav_dy;          /* level select: the left stick's direction, and when it moves the selection again */
+    float nav_repeat;
     bool help;
     SDL_GPUTexture *help_text;
     int help_w, help_h;
@@ -167,6 +177,7 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     close_level(a);
     close_picker(a);
     a->view = v;
+    a->pad_fast = false;  /* the new viewer holds nothing */
     /* Level music from the user-edited table out/audio/music.tsv (next to out/ttlv); sound effects from out/audio/sfx. */
     char *audio = audio_dir(a);
     sfx_stop_all();
@@ -296,6 +307,15 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     if (action >= 0) tc_viewer_set_action(v, (tc_view_action)action, true);
 }
 
+/* The level select's selected level (Enter, Cross). */
+static void open_selected(app *a) {
+    picker *p = &a->picker;
+    if (p->selected < 0 || p->selected >= p->count) return;
+    char *path = SDL_strdup(p->entries[p->selected].path);  /* opening closes the picker */
+    if (path) open_level(a, path, NULL);
+    SDL_free(path);
+}
+
 static void picker_key(app *a, const SDL_KeyboardEvent *k) {
     picker *p = &a->picker;
     switch (k->scancode) {
@@ -304,11 +324,7 @@ static void picker_key(app *a, const SDL_KeyboardEvent *k) {
     case SDL_SCANCODE_UP: picker_move(p, 0, -1); break;
     case SDL_SCANCODE_DOWN: picker_move(p, 0, 1); break;
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
-        if (!k->repeat && p->selected >= 0 && p->selected < p->count) {
-            char *path = SDL_strdup(p->entries[p->selected].path);  /* opening closes the picker */
-            if (path) open_level(a, path, NULL);
-            SDL_free(path);
-        }
+        if (!k->repeat) open_selected(a);
         break;
     case SDL_SCANCODE_V:  /* V: the intro movie */
         if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) play_intro(a);
@@ -358,6 +374,98 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
     else if (a->picker_open) picker_key(a, k);
 }
 
+/* ---- gamepad ---- */
+
+static void pad_actions(app *a, uint32_t actions, bool down) {
+    for (int i = 0; i < TC_VA_COUNT; i++)
+        if ((actions >> i) & 1u) tc_viewer_set_action(&a->view->viewer, (tc_view_action)i, down);
+}
+
+/* Buttons (positional: SOUTH is Cross / A). The level's actions are input.c's; Start, Select, R3 and the level select
+ * and intro buttons are here, as the keys in key_down. */
+static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
+    SDL_GamepadButton button = (SDL_GamepadButton)b->button;
+    a->pad = b->which;
+    if (!b->down) {
+        if (a->view) pad_actions(a, input_pad_actions(button), false);
+        return;
+    }
+    if (a->intro) {  /* Cross, Circle, Start skip */
+        if (button == SDL_GAMEPAD_BUTTON_SOUTH || button == SDL_GAMEPAD_BUTTON_EAST || button == SDL_GAMEPAD_BUTTON_START)
+            finish_intro(a);
+        return;
+    }
+    if (button == SDL_GAMEPAD_BUTTON_BACK) {  /* Select: the controls (F1) */
+        a->help = !a->help;
+        if (a->help) set_captured(a, false);
+        return;
+    }
+    if (a->help) {  /* Circle closes them (Esc) */
+        if (button == SDL_GAMEPAD_BUTTON_EAST) a->help = false;
+        return;
+    }
+    if (a->view) {
+        if (button == SDL_GAMEPAD_BUTTON_START) { show_picker(a); return; }  /* level select (Ctrl+L) */
+        if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {  /* R3: play as Ed / free-fly (Tab) */
+            tc_viewer_toggle_play(&a->view->viewer);
+            update_title(a);
+            return;
+        }
+        pad_actions(a, input_pad_actions(button), true);
+        return;
+    }
+    if (!a->picker_open) return;
+    switch (button) {
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: picker_move(&a->picker, -1, 0); break;
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: picker_move(&a->picker, 1, 0); break;
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: picker_move(&a->picker, 0, -1); break;
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: picker_move(&a->picker, 0, 1); break;
+    case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_START: open_selected(a); break;
+    case SDL_GAMEPAD_BUTTON_NORTH: play_intro(a); break;  /* Triangle: the intro (V) */
+    default: break;
+    }
+}
+
+static float pad_axis(SDL_Gamepad *g, SDL_GamepadAxis axis) {
+    return SDL_max(-1.0f, (float)SDL_GetGamepadAxis(g, axis) / 32767.0f);
+}
+
+/* Every frame, from the last-used gamepad: in a level the sticks (the core's dead zones), R2 as Fast and the D-pad's
+ * up / down as the mouse wheel (camera distance in play, fly speed in free-fly); in the level select the left stick
+ * moves the selection, repeating while held, and the right one scrolls. */
+static void pad_update(app *a, float dt) {
+    SDL_Gamepad *g = a->pad ? SDL_GetGamepadFromID(a->pad) : NULL;
+    if (!g || a->intro) return;
+    float lx = pad_axis(g, SDL_GAMEPAD_AXIS_LEFTX), ly = -pad_axis(g, SDL_GAMEPAD_AXIS_LEFTY);  /* SDL: y down */
+    float rx = pad_axis(g, SDL_GAMEPAD_AXIS_RIGHTX), ry = -pad_axis(g, SDL_GAMEPAD_AXIS_RIGHTY);
+    if (a->view) {
+        tc_viewer *v = &a->view->viewer;
+        if (a->help) lx = ly = rx = ry = 0;
+        tc_viewer_set_move_stick(v, lx, ly);
+        tc_viewer_set_look_stick(v, rx, ry);
+        bool fast = !a->help && pad_axis(g, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.5f;
+        if (fast != a->pad_fast) {
+            a->pad_fast = fast;
+            tc_viewer_set_action(v, TC_VA_FAST, fast);
+        }
+        int wheel = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_UP) - SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+        if (wheel && !a->help) tc_viewer_wheel(v, (float)wheel * 10 * dt);  /* 10 notches a second */
+    } else if (a->picker_open && !a->help) {
+        int dx = SDL_fabsf(lx) > 0.5f && SDL_fabsf(lx) >= SDL_fabsf(ly) ? (lx > 0 ? 1 : -1) : 0;
+        int dy = SDL_fabsf(ly) > 0.5f && SDL_fabsf(ly) > SDL_fabsf(lx) ? (ly > 0 ? -1 : 1) : 0;  /* stick up: row up */
+        if (dx != a->nav_dx || dy != a->nav_dy) {
+            a->nav_dx = dx;
+            a->nav_dy = dy;
+            a->nav_repeat = 0.4f;
+            if (dx || dy) picker_move(&a->picker, dx, dy);
+        } else if ((dx || dy) && (a->nav_repeat -= dt) <= 0) {
+            a->nav_repeat = 0.12f;
+            picker_move(&a->picker, dx, dy);
+        }
+        if (SDL_fabsf(ry) > 0.2f) picker_scroll(&a->picker, -ry * 1500 * dt * a->picker.scale);
+    }
+}
+
 /* Window coordinates -> swapchain pixels. */
 static float to_pixels(const app *a, float v) { return v * SDL_GetWindowPixelDensity(a->window); }
 
@@ -372,6 +480,26 @@ static void handle(app *a, const SDL_Event *e) {
         if (a->picker_open) a->picker.scale = SDL_GetWindowDisplayScale(a->window);
         break;
     case SDL_EVENT_KEY_DOWN: key_down(a, &e->key); break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+        if (SDL_OpenGamepad(e->gdevice.which)) {
+            if (!a->pad) a->pad = e->gdevice.which;
+            SDL_Log("Gamepad: %s", SDL_GetGamepadNameForID(e->gdevice.which));
+        }
+        break;
+    case SDL_EVENT_GAMEPAD_REMOVED: {
+        SDL_Gamepad *g = SDL_GetGamepadFromID(e->gdevice.which);
+        if (g) SDL_CloseGamepad(g);
+        if (a->pad == e->gdevice.which) {
+            a->pad = 0;
+            a->pad_fast = false;
+            if (a->view) tc_viewer_release_all(&a->view->viewer);
+        }
+        break;
+    }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: pad_button(a, &e->gbutton); break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:  /* a stick or trigger in real use makes that pad the one read */
+        if (e->gaxis.value > 12000 || e->gaxis.value < -12000) a->pad = e->gaxis.which;
+        break;
     case SDL_EVENT_KEY_UP:
         if (a->view) {
             int action = input_action(e->key.scancode);
@@ -551,7 +679,7 @@ static int msaa_setting(void) {
 
 int main(int argc, char **argv) {
     SDL_SetAppMetadata("Open Tonic", "0.1", "org.opentonic.sdl");
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
     }
@@ -607,6 +735,7 @@ int main(int argc, char **argv) {
         float dt = SDL_min((float)(now - last) / 1e9f, 0.1f);
         last = now;
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
+        pad_update(&a, dt);
         if (a.view) {
             tc_viewer_update(&a.view->viewer, dt);
             const uint16_t *sounds;

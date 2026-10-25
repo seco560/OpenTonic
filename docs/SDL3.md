@@ -116,6 +116,14 @@ sdl/
   `LoadingScreen`. Once `tc_viewer_pending_level` is set (after a frame of the full bar), the main loop copies the
   carry and opens that level with it; mouse-look capture stays on across the change. A missing level: a message
   box, then the level select.
+- **Gamepad.** `SDL_Gamepad`: every pad is opened as it connects; the one last used (a button, or a stick pushed
+  past ~40 %) drives the viewer. The sticks go to `tc_viewer_set_move_stick` / `_look_stick` each frame as they are
+  (the dead zones are the core's, so the Swift app behaves the same); buttons by position (SOUTH = Cross / A):
+  `input_pad_actions` in `input.c` has the level's actions (Cross jump, Square action, Circle shoot, R1 lateral and
+  free-fly up, L1 free-fly down), `main.c` the rest (R2 fly faster, D-pad up / down as the mouse wheel, R3 play /
+  free-fly, Start level select, Select the controls; level select: D-pad or left stick with repeat, right stick
+  scrolls, Cross opens, Triangle the intro; intro: Cross, Circle, Start skip). The Mac app's `Gamepad.swift`
+  (GameController) maps the same in a level; its level select and intro are mouse / keyboard only so far.
 - **Level picker.** Thumbnails and captions as textured quads; captions and the controls overlay use SDL's 8x8 debug
   font, rendered into a surface by a software renderer and uploaded.
 - **Intro movie.** SDL has no video decoding, so the movie is MPEG-1 + MP2 for the single-header pl_mpeg rather than
@@ -135,7 +143,6 @@ sdl/
   a fringe. ~1.6 ms per cutout texture at load.
 
 ## Not done yet
-- Gamepad support (the Swift app has none either).
 - `tools/make_app.sh` stays macOS-only; its Linux counterpart is `tools/install_linux.sh` (see Installing). **Same
   rule as the app: never redistribute anything containing converted assets.**
 

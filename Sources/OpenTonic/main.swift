@@ -318,7 +318,11 @@ final class GameView: MTKView {
         gameView?.setCaptured(false)
         let alert = NSAlert()
         alert.messageText = "Open Tonic Controls"
-        alert.informativeText = "Coloured keys are bound to their respective functions"
+        alert.informativeText = "Coloured keys are bound to their respective functions\n\n"
+            + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera, R3 (click) "
+            + "free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, R1 lateral (free-fly: up), L1 "
+            + "free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, Start level select, "
+            + "Select / Options these controls."
         alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
@@ -355,6 +359,17 @@ final class GameView: MTKView {
             r.load(try Viewer(level: Level(url: url), carry: carry))
             r.onLoading = { [weak view] in view?.showLoading($0) }
             r.onPendingLevel = { [weak self] in self?.openPortalLevel($0) }
+            r.onGamepad = { [weak self, weak view] command in
+                switch command {
+                case .levelSelect: self?.showPicker()
+                case .controls: self?.showControls()
+                case .togglePlay:
+                    if let v = view?.renderer?.viewer?.raw {
+                        tc_viewer_toggle_play(v)
+                        view?.updateTitle()
+                    }
+                }
+            }
             renderer = r
         } catch {
             let alert = NSAlert()

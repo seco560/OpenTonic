@@ -124,6 +124,8 @@ typedef struct tc_viewer {
     /* Input. */
     uint32_t held;            /* 1 << tc_view_action */
     float mouse_dx, mouse_dy; /* accumulated since the last update */
+    float move_x, move_y;     /* left stick, x right, y forward, 0 in the dead zone (tc_viewer_set_move_stick) */
+    float look_x, look_y;     /* right stick after the dead zone, x right, y up (tc_viewer_set_look_stick) */
     float fly_speed;          /* free-fly units per second (x4 with TC_VA_FAST) */
     float turn_speed;         /* radians per second */
 
@@ -169,10 +171,20 @@ void tc_viewer_free(tc_viewer *v);
 uint32_t tc_viewer_mesh_count(const tc_viewer *v);
 const tc_mesh *tc_viewer_mesh(const tc_viewer *v, uint32_t i);
 
-/* Input. Frontends map their key codes to actions; focus lost: release_all. Mouse deltas in points. */
+/* Input. Frontends map their key codes and gamepad buttons to actions; focus lost: release_all (sticks too). Mouse
+ * deltas in points. */
 void tc_viewer_set_action(tc_viewer *v, tc_view_action a, bool down);
 void tc_viewer_release_all(tc_viewer *v);
 void tc_viewer_mouse_look(tc_viewer *v, float dx, float dy);
+/* Gamepad sticks, raw -1..1 each frame, inside a radial dead zone of TC_VIEWER_STICK_DEAD_ZONE read as 0. Move: x
+ * right, y forward (up on the stick), passed on as is outside the dead zone. With Ed's AI it is the game's own stick:
+ * the scripts have their own thresholds (directions beyond 0.2 / 0.3, as the original's DirectInput axes), make it
+ * camera-relative, and its magnitude sets the pace from a walk to a run; the simple controller and free-fly take it as
+ * a camera-relative direction, as WASD. Look: x right, y up, rescaled to 0..1 past the dead zone (a slight push turns
+ * slowly); turns the camera at up to turn_speed, as the arrow keys. */
+#define TC_VIEWER_STICK_DEAD_ZONE 0.15f
+void tc_viewer_set_move_stick(tc_viewer *v, float x, float y);
+void tc_viewer_set_look_stick(tc_viewer *v, float x, float y);
 
 /* One frame: look, free-fly or Ed (AI or simple controller) with the orbit camera, Ed's clip, animation clock. */
 void tc_viewer_update(tc_viewer *v, float dt);

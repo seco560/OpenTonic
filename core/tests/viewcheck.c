@@ -67,6 +67,19 @@ static void run(tc_viewer *v, float seconds, uint32_t actions) {
 
 static tc_vec3 ed(const tc_viewer *v) { return tc_viewer_player(v)->position; }
 
+/* The left stick held at (x, y), set every frame as a frontend does; returns Ed's top ground speed. */
+static float run_stick(tc_viewer *v, float seconds, float x, float y) {
+    int i, n = (int)(seconds * 60 + 0.5f);
+    float top = 0;
+    for (i = 0; i < n; i++) {
+        tc_viewer_set_move_stick(v, x, y);
+        frame(v, 1.0f / 60);
+        top = fmaxf(top, tc_player_horizontal_speed(tc_viewer_player(v)));
+    }
+    tc_viewer_release_all(v);
+    return top;
+}
+
 static void report(const tc_viewer *v, const char *label) {
     char status[512];
     tc_vec3 p = ed(v);
@@ -210,11 +223,41 @@ int main(int argc, char **argv) {
     run(&v, 1, BIT(TC_VA_FORWARD) | BIT(TC_VA_JUMP));
     report(&v, "AI, forward + jump");
 
+    /* Gamepad: the left stick is the game's own stick (its scripts: nothing inside their threshold, the pace from the
+     * push), the right stick turns the camera. */
+    run(&v, 1, 0);
+    a = ed(&v);
+    b.x = run_stick(&v, 0.5f, 0, 0.1f);
+    check(b.x == 0 && tc_v3_distance(a, ed(&v)) < 0.05f, "stick: a slight push (dead zone) leaves Ed standing");
+    b.y = run_stick(&v, 1.5f, 0, 0.5f);
+    run(&v, 1, 0);
+    b.z = run_stick(&v, 1.5f, 0, 1);
+    printf("  stick top speed: half %.2f, full %.2f\n", b.y, b.z);
+    check(b.y > 0.5f && b.z > 1.5f * b.y, "stick: half a push walks, a full one runs faster");
+    run(&v, 1, 0);
+    fov = v.camera.yaw;
+    for (int i = 0; i < 60; i++) {
+        tc_viewer_set_look_stick(&v, 1, 0);
+        frame(&v, 1.0f / 60);
+    }
+    tc_viewer_release_all(&v);
+    check(fabsf(v.camera.yaw - fov - v.turn_speed) < 0.05f, "right stick: turns the camera at turn_speed");
+    for (int i = 0; i < 60; i++) { /* and back, so the runs below face where they did */
+        tc_viewer_set_look_stick(&v, -1, 0);
+        frame(&v, 1.0f / 60);
+    }
+    tc_viewer_release_all(&v);
+
     tc_viewer_toggle_play(&v);
     check(!v.playing, "Tab: free-fly");
     a = v.camera.position;
     run(&v, 1, BIT(TC_VA_FORWARD));
     check(tc_v3_distance(a, v.camera.position) > 1, "free-fly moves the camera");
+    a = v.camera.position;
+    run_stick(&v, 1, 0, 1);
+    b = v.camera.position;
+    run_stick(&v, 1, 0, -1); /* and back, so Ed is dropped where he was before */
+    check(tc_v3_distance(a, b) > 1 && tc_v3_distance(a, v.camera.position) < 0.01f, "free-fly: the stick flies there and back");
     exit_cam = v.camera.position;
     tc_viewer_toggle_play(&v);
     b = ed(&v);
