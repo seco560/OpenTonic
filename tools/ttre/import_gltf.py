@@ -6,7 +6,9 @@ Writes files/out/ttlv/NAME.ttlv (+ NAME.ttai, Ed's AI) and the textures as PNG i
 - Geometry: every triangle primitive of the default scene, node transforms applied, one mesh per material. glTF is
   Y-up, TT Z-up: (x, y, z) -> (x, -z, y), times --scale (TT units are about metres, as glTF's).
 - Materials: the base colour texture (converted to PNG: the SDL build loads PNG only; ffmpeg or macOS sips), alphaMode
-  MASK -> alpha test, BLEND -> transparent. No baked light (vertex alpha 0): the viewer lights it with its sun.
+  MASK -> alpha test, BLEND -> transparent. Light: COLOR_0 becomes baked light (1.0 = the texture unchanged, as the
+  glTF colour multiplies it), KHR_materials_unlit without COLOR_0 = 1.0; otherwise none (vertex alpha 0): the viewer
+  lights it with its sun.
 - Collision: the triangles of every non-blended material.
 - Ed: his record (meshes, animations) from the donor level's .ttlv (default bar, a cutscene level: no portals or
   triggers in its .ttai to fire at random places here), his textures added to this level's; his AI = the donor's
@@ -208,9 +210,14 @@ def surface(tex, flags, scroll=(0, 0), frames=()):
         struct.pack('<if', t, s) for t, s in frames)
 
 
+def baked_light(c):
+    """glTF vertex colour (1.0 = texture unchanged) -> .ttlv rgba8 baked light (rgb / 128, see level.RADIOSITY_ONE)."""
+    return struct.unpack('<I', bytes([min(255, max(0, round(x * 128))) for x in c[:3]] + [255]))[0]
+
+
 def geometry(verts, indices):
     return (struct.pack('<II', len(verts), len(indices))
-            + b''.join(struct.pack('<8f3I2f', *p, *nrm, *uv, 0, 0, 0, -1.0, -1.0) for p, nrm, uv in verts)
+            + b''.join(struct.pack('<8f3I2f', *p, *nrm, *uv, light, 0, 0, -1.0, -1.0) for p, nrm, uv, light in verts)
             + struct.pack(f'<{len(indices)}I', *indices))
 
 
@@ -261,9 +268,16 @@ def main(argv):
                         for j in range(3):
                             nrm[idx[t + j]] = tuple(x / l for x in n)
                 png, flags = material_texture(doc, base, prim.get('material'), tex_dir, cache, buffers)
+                mat = doc['materials'][prim['material']] if 'material' in prim else {}
+                if 'COLOR_0' in at:
+                    light = [baked_light(c) for c in accessor(doc, buffers, at['COLOR_0'])]
+                elif 'KHR_materials_unlit' in mat.get('extensions', {}):
+                    light = [baked_light((1.0, 1.0, 1.0))] * len(pos)
+                else:
+                    light = [0] * len(pos)
                 verts, indices = groups.setdefault((png, flags), ([], []))
                 first = len(verts)
-                verts += [(pos[i], nrm[i], tuple(uv[i])) for i in range(len(pos))]
+                verts += [(pos[i], nrm[i], tuple(uv[i]), light[i]) for i in range(len(pos))]
                 indices += [first + i for i in idx[:len(idx) - len(idx) % 3]]
         for c in node.get('children', []):
             walk(c, m)
@@ -294,7 +308,7 @@ def main(argv):
         for i in range(0, len(indices), 0xFFFFFF):  # one mesh per material
             meshes += surface(tex_id(png), flags) + geometry(verts, indices)
             break
-        for p, _, _ in verts:
+        for p, *_ in verts:
             for k in range(3):
                 lo[k], hi[k] = min(lo[k], p[k]), max(hi[k], p[k])
         if not flags & TRANSPARENT:

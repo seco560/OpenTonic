@@ -92,11 +92,18 @@ python3 -m tools.ttre.import_gltf path/to/Sponza.gltf Sponza [--scale 1] [--spaw
 ```
 It writes `files/out/ttlv/<name>.ttlv` (+ `.ttai`: Ed's AI) and the textures as PNG in `files/out/Imported/<name>/`
 (JPEG and embedded images are converted with ffmpeg or, on macOS, sips). Y-up glTF becomes TT's Z-up; materials map
-alphaMode MASK to alpha test and BLEND to transparent; every non-blended triangle is collision; there is no baked
-lighting (the viewer's sun lights it). Ed (meshes, animations, AI) comes from `--ed`'s level, by default bar (a
+alphaMode MASK to alpha test and BLEND to transparent; every non-blended triangle is collision. Light: `COLOR_0`
+becomes baked light (1.0 = the texture unchanged), `KHR_materials_unlit` without it = 1.0 everywhere; without either
+the viewer's sun lights it. Ed (meshes, animations, AI) comes from `--ed`'s level, by default bar (a
 cutscene level, so no portals or triggers). He starts on the highest upward-facing surface at the model's centre
 (sky domes and ceilings face down, so they are skipped), or at `--spawn` (glTF coordinates: Y is up). Re-importing
 under the same name overwrites the level; delete `files/out/Imported/<name>/` first if the model changed a lot, or
 old PNGs stay behind. Good test levels: Sponza from Khronos' glTF sample assets, CC-licensed downloadable scenes on
 Sketchfab (glTF export), Kenney / Quaternius kits (CC0); game rips only from your own copies, never redistributed.
+
+`python3 -m tools.concept_foyer` (needs numpy) rebuilds Tonic Adventure 2000's Concept Art 3 (the hall with the
+grandfather clock and the curved staircase, from `files/sources/tonic2_art/`) as a walkable room: a camera fitted
+to the painting's floor tiles, geometry laid out from it, textures projected from the painting itself. It writes
+`files/out/gltf/ConceptFoyer/` and imports it as the level ConceptFoyer (Imported). How it works: the script's
+docstring.
 
