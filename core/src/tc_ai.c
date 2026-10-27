@@ -1,6 +1,7 @@
 #include "tc_internal.h"
 #include "tc_reader.h"
 #include "tonic/tc_ai.h"
+#include "tonic/tc_collision.h"
 #include <ctype.h>
 
 /* ---- loader ---- */
@@ -121,7 +122,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
     r.offset = 4;
     version = rd_u32(&r);
-    if (version < 1 || version > 11) return TC_ERR_UNSUPPORTED_VERSION;
+    if (version < 1 || version > 12) return TC_ERR_UNSUPPORTED_VERSION;
 
     m->node_count = rd_u32(&r);
     m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
@@ -363,6 +364,12 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
             m->dry_boxes[i].z = rd_f32(&r);
         }
     }
+    if (version >= 12) {
+        m->collide_id_count = rd_u32(&r);
+        m->collide_ids = (uint16_t *)rd_array(&r, m->collide_id_count, 2, 2);
+        for (i = 0; m->collide_ids && i < m->collide_id_count; i++) m->collide_ids[i] = rd_u16(&r);
+        if (m->collide_id_count % 2) (void)rd_u16(&r);
+    }
     for (i = 0; !r.error && m->states && i < m->state_count; i++) {
         if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
         if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
@@ -394,6 +401,7 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->dry_boxes);
     tc_free(m->water_point_sets);
     tc_free(m->floor_sounds);
+    tc_free(m->collide_ids);
     for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);
     tc_free(m->portals);
     free_strings(m->names, m->name_count);
@@ -904,7 +912,18 @@ static bool condition(run *r, uint32_t i) {
     }
     case 90: { uint32_t n = (uint32_t)as_int(arg(r, i, 0)); return n < 32 ? (p->global_flags >> n) & 1 : (p->global_flags & n) != 0; }
     case 63: return p->screen_covered; /* GameState63 = GAM_004290a0: the cover transition has finished */
-    case 30: case 37: case 38: case 44: case 45: case 46: case 47: case 59: case 64:
+    /* FUN_004985e0: the contact's collide identifier & mask (FUN_00497890), when the report has that contact */
+    case 44: return (p->contacts & TC_AI_CONTACT_GROUND) && (p->ground_material & as_int(arg(r, i, 0)));
+    case 45: return (p->contacts & TC_AI_CONTACT_WALL) && (p->wall_material & as_int(arg(r, i, 0)));
+    case 47: return (p->contacts & TC_AI_CONTACT_SLOPE) && (p->ground_material & as_int(arg(r, i, 0)));
+    case 46: { /* no contact with that material: the ground's if any, else the wall's */
+        int32_t mask = as_int(arg(r, i, 0));
+        if (p->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) return !(p->ground_material & mask);
+        if (p->contacts & (TC_AI_CONTACT_WALL | TC_AI_CONTACT_OVERHANG | TC_AI_CONTACT_CEILING))
+            return !(p->wall_material & mask);
+        return true;
+    }
+    case 30: case 37: case 38: case 59: case 64:
         return false;    /* collision probes, zones, materials, touched objects, game state: not modelled yet */
     default: unknown(r, i); return false;
     }
@@ -944,6 +963,20 @@ static value function(run *r, uint32_t i) {
     case 101: return v_vec(global_to_local(p, argv3(r, i, 0)));
     /* FUNC_VecLengthEtc_0049ab10 cases 0x66 / 0x67: a point through the perso's world matrix (FUN_0047b2f0) or its
      * inverse. Ed's underwater reflex R8 leaves the water when FUNC_102((0, 1, -1)) rises 0.55 above the surface. */
+    case 13: return v_float(tc_v3_length(argv3(r, i, 0))); /* used as a length (B82's climb test, B29's aim) */
+    case 162: { /* FUN_0049c690, a probe (not decoded): from a point along a direction, both in the perso's axes, to
+                 * the first surface; the hit point in those axes. Its uses (B82: (0, -1, 0) against 2.25) say the
+                 * ray is not bounded by the direction's length: a miss returns a point far along it. */
+        tc_vec3 o = argv3(r, i, 0), d = argv3(r, i, 1);
+        float l = tc_v3_length(d), reach = 1000;
+        tc_hit hit;
+        if (!(l > 0)) return v_vec(o);
+        d = tc_v3_div(d, l);
+        if (p->world && tc_collision_raycast(p->world, tc_v3_add(p->position, local_to_global(p, o)),
+                                             local_to_global(p, d), reach, &hit))
+            reach = hit.distance;
+        return v_vec(tc_v3_add(o, tc_v3_scale(d, reach)));
+    }
     case 102: {
         tc_vec3 v = argv3(r, i, 0);
         if (!p->has_axes) return v_vec(tc_v3_add(p->position, local_to_global(p, v)));

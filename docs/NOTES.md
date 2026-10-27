@@ -1233,3 +1233,28 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   footsteps() now adds TC_AI_STEP_SOUND + v next to event 49 instead of replacing it.
 - Also found: FUNC 104 Report234 = dynamics +0x2E4 = the environment's +0x2C: 255 = a deadly environment (Land's
   LAND_MORT liquid): the skier loses a life (state 206), Ed underwater goes to B61.
+
+### Hanging from the hang spheres (.ttai v12, 2026-10-27; built, aicheck only, not yet run by the user)
+- **Trigger:** reflexes R0 / R25 / R26 `GroundMaterialIs(0x8)` -> B19 (velocity 0, state 46) -> **B82 + R10** (the hang).
+  B82: stick sideways -> states 48 / 49 (shimmy, Proc10 rate), stick back (> 140 deg) -> state 44 + B90 (drop), stick
+  forward -> FUNC 162 probe from (0, 0, 4.4) along (0, -1, 0), clear beyond 2.25 -> **B43** (climb up, states 153/154).
+  R10 lets go (state 44, B90) once GroundMaterialIs(0x8) has failed for 200 ms.
+- **Material test** FUN_00497890 (hand-disassembled, 64 bytes): GameMaterial valid -> its collide material (+0xC, -1 =
+  none) -> u16 at +2 (the identifier) & mask. COND 44 / 45 / 46 / 47 (FUN_004985e0) read the ground (+0x8C) or wall
+  (+0x108) contact's material when the report has that contact. Identifier 0x8 is only on **type 7 collide spheres**
+  (r ~1.7, 80 faces once triangulated): sud0 1 (under the rock overhang at (-54.7, 96.8, -2.4): Ed's head meets the
+  overhang before any of him reaches the sphere's top, so it does not trigger here), Land 5, cavedoc 3. Other ids seen:
+  0x400, 0x480 (sud0 floors), 0x1000 (Land).
+- **Port:** level.collide_id -> .ttai v12 (per collision triangle u16, after the v11 dry boxes); tc_mec_walk records
+  the contacts' triangles (ground_tri / wall_tri); tc_ai_perso.ground_material / wall_material; COND 44-47.
+  Card type 11 (states 46-49, 197, 238-245; FUN_004adb4d / FUN_004b2793): root motion (or mode 12 along the contact
+  plane), collide-and-move, no grip; FUN_004c6993's forces are not decoded, a 0.1 ground re-snap stands in so the
+  sphere stays a ground contact every frame. FUNC 162 (FUN_0049c690, not decoded): ray in the perso's axes, unbounded
+  (B82 compares a unit direction with 2.25), hit point in those axes. FUNC 13 = vector length (as used).
+- `AI_SCRIPT=hang AI_START=38.5,29.4,-19.4,90 aicheck files/out/ttlv Land` (AI_START takes an optional heading in
+  degrees): grabs at 0.28 s (B82, states 197/47 hold steadily), climb and shimmy run.
+- **Not found: the generic hop onto a ledge just above Ed** (user: he shimmies over any surface a bit higher than him).
+  Not in Ed's scripts (no air behaviour or reflex reacts to a wall that way; R6's AgainstWall -> state 134 is the
+  climb out of water; R25's dsg64 only scales air steering); the exe's step-up (MEC_004bbc4c -> MEC_004bb06e) needs
+  last frame's report & 3 (grounded) and the air card's request clears it. Candidates: the type 4 integrator path
+  around the step-up, or a ZDM sphere's own_zone_type (hit->own_zone_type == 1 gates the step-up).

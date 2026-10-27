@@ -654,7 +654,7 @@ class LevelData:
                     continue
                 nt, = un('H', el, 4)
                 ti = lv.ptr(el, 8)
-                floor, sound = self.floor_material(lv.ptr(el)), self.floor_sound(lv.ptr(el))
+                floor, sound = self.floor_material(lv.ptr(el)), self.floor_sound(lv.ptr(el)) | self.collide_id(lv.ptr(el)) << 8
                 for k in range(nt if ti else 0):
                     tri = un('3h', ti, 6 * k)
                     if 0 <= min(tri) and max(tri) < nv:
@@ -691,7 +691,7 @@ class LevelData:
                 if c >= len(verts) or not r > 0:
                     continue
                 faces = sphere_triangles(verts[c], r)
-            floor, sound = self.floor_material(gm), self.floor_sound(gm)
+            floor, sound = self.floor_material(gm), self.floor_sound(gm) | self.collide_id(gm) << 8
             for f in faces:
                 base = len(verts)
                 verts.extend(f)
@@ -704,6 +704,13 @@ class LevelData:
         20 EsSnow, 21 EsIce, 23 EsCarpet; docs/NOTES.md "Footsteps"), 0xFF without one."""
         v = self.un('I', gm, 8)[0] if gm else 0xFFFFFFFF
         return v if v < 0xFF else 0xFF
+
+    def collide_id(self, gm):
+        """GameMaterial +0xC -> its collide material's identifier (u16 at +2; FUN_00497890 tests it against the
+        AI's GroundMaterialIs / WallMaterialIs masks), 0 without one. 0x8 = Ed's hang (the 80-face sphere primitives
+        he hangs from: B19 -> B82)."""
+        cm = self.lv.ptr(gm, 0xC) if gm else None
+        return self.un('H', cm, 2)[0] if cm else 0
 
     def floor_material(self, gm):
         """GameMaterial -> (grip, rebound) from its mechanics material (+4; 0x1C bytes, 5 floats read
@@ -719,7 +726,7 @@ class LevelData:
         perso collide meshes posed at frame 0 of their initial state (sud0's lava-pit platforms,
         doors, ...; moving persos are treated as static). Ed's family has none.
         floors=True returns (triangles, per-triangle (grip, rebound) or None); sounds=True (triangles, floors, per-triangle
-        floor_sound).
+        floor_sound | collide_id << 8).
         skip_decals: leave out collide sets that are a single flat quad facing up (2 triangles, normal z > 0.5): the
         ski slopes' speed arrows, spring stars and red direction arrows lying on the snow, which the skier rides over
         (their effects come from trigger persos next to them, ai.ski_portals); as collision their edges stopped him."""

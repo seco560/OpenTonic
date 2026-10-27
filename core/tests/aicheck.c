@@ -2,11 +2,12 @@
  * and <level>.ttai, feeds a scripted button sequence, prints every behaviour, reflex, state and mechanics-mode
  * change with Ed's position, then the primitives the interpreter skipped.
  * Usage: aicheck [out/ttlv] [level]  (default ../files/out/ttlv bar); AI_TRACE=<frame> prints executed nodes.
- * AI_SCRIPT=fly | ski | pogo | swim | wander picks another input script (wander: 60 s of running, turning and jumping, then a
+ * AI_SCRIPT=fly | ski | pogo | swim | hang | wander picks another input script (wander: 60 s of running, turning and jumping, then a
  * summary: distance, largest step, teleports, stalls, frames the collide loop gave up); AI_FPS=<n> sets the frame rate
  * (default 60); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then;
  * AI_START=x,y,z starts Ed there (AI_SCRIPT=swim with a point in sud0's river).
  * Test-only stdio. */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,6 +56,7 @@ int main(int argc, char **argv) {
     tc_ai_perso *p;
     tc_result r;
     tc_mat34 start;
+    float start_heading;
     uint32_t i, k, frame, last_changes = 0;
     uint16_t last_normal = 0xFFFE, last_reflex = 0xFFFE, last_wanted = 0xFFFF;
     int32_t last_mode = -2;
@@ -125,6 +127,16 @@ int main(int argc, char **argv) {
         {7.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
         {12.0f, 0, 0, 0, "ride"},
     };
+    /* AI_SCRIPT=hang (AI_START beside one of the hang spheres): jump up to it (B19 -> B82), shimmy, climb, drop. */
+    const step hang_script[] = {
+        {1.0f, 0, 0, 0, "idle"},
+        {1.5f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
+        {3.0f, 0, 0, 0, "release"},
+        {4.0f, 1u << TC_AI_IN_LEFT, 0, 0, "hold left (shimmy)"},
+        {4.5f, 0, 0, 0, "release"},
+        {6.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up (climb)"},
+        {7.0f, 0, 0, 0, "release"},
+    };
     /* AI_SCRIPT=wander: 60 s of running with turns and jumps (collision stress test; prints a summary). */
     step wander_script[48];
     const step *script = base_script;
@@ -144,6 +156,10 @@ int main(int argc, char **argv) {
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "ski") == 0) {
         script = ski_script;
         steps = sizeof(ski_script) / sizeof(ski_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "hang") == 0) {
+        script = hang_script;
+        steps = sizeof(hang_script) / sizeof(hang_script[0]);
     }
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "wander") == 0) {
         static const uint32_t pattern[6] = {1u << TC_AI_IN_UP, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_LEFT),
@@ -179,11 +195,14 @@ int main(int argc, char **argv) {
            model.state_count, model.button_count, model.other_count);
     if (tc_collision_init(&world, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) return 1;
     start = level.ed.start;
-    if (getenv("AI_START")) { /* x,y,z: start there instead (e.g. in the water) */
+    start_heading = NAN;
+    if (getenv("AI_START")) { /* x,y,z[,heading in degrees]: start there instead (e.g. in the water) */
         float x, y, z;
-        if (sscanf(getenv("AI_START"), "%f,%f,%f", &x, &y, &z) == 3) start.m[3] = x, start.m[7] = y, start.m[11] = z;
+        if (sscanf(getenv("AI_START"), "%f,%f,%f,%f", &x, &y, &z, &start_heading) >= 3)
+            start.m[3] = x, start.m[7] = y, start.m[11] = z;
     }
-    tc_player_init(&player, &world, tc_v3(start.m[3], start.m[7], start.m[11]), tc_heading_of(&start));
+    tc_player_init(&player, &world, tc_v3(start.m[3], start.m[7], start.m[11]),
+                   start_heading == start_heading ? start_heading * TC_PI / 180 : tc_heading_of(&start));
     if (model.water_count) printf("water: %u surfaces\n", model.water_count);
     tc_player_apply_floors(&player); /* as the viewer does (sliding profile on zero-grip levels) */
     if (tc_ed_ai_init(&ed, &model, &player, level_name) != TC_OK) { fprintf(stderr, "init failed\n"); return 1; }

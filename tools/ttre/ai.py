@@ -223,12 +223,14 @@ def dump(ai, path, names=None):
       triangles), n x u8 (GameMaterial +8 of the triangle's material, 0xFF none), padded to 4 bytes
   v11 (after the v10 floor sounds): the dry sectors' boxes (dry_boxes; none in a level without water): u16 n, u16 0,
       n x { f32 min[3], f32 max[3] }: a point inside one, smaller than every water box holding the point, is dry
+  v12 (after the v11 dry boxes): the triangles' collide material identifiers (level.collide_id; GroundMaterialIs and
+      the other material conditions): u32 n (= the .ttlv's collision triangles), n x u16, padded to 4 bytes
   v2: u16 n_cards, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw:
       mostly f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
 """
 import re
 
-TTAI_VERSION = 11
+TTAI_VERSION = 12
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
@@ -1263,9 +1265,10 @@ def export(ai, path):
         out += b''.join(struct.pack('<I3f3f', k, *a, *b) for k, a, b in prims)
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
     _, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True)  # as ttlv.py writes the triangles
-    out += struct.pack('<I', len(sounds)) + bytes(sounds) + b'\0' * (-len(sounds) % 4)
+    out += struct.pack('<I', len(sounds)) + bytes(x & 0xFF for x in sounds) + b'\0' * (-len(sounds) % 4)
     dry = dry_boxes(d) if water else []
     out += struct.pack('<HH', len(dry), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in dry)
+    out += struct.pack(f'<I{len(sounds)}H', len(sounds), *(x >> 8 for x in sounds)) + b'\0' * (-2 * len(sounds) % 4)
     with open(path, 'wb') as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:

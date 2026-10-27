@@ -147,6 +147,7 @@ typedef struct tc_mec_walk {
     tc_vec3 ground_normal;       /* contact record +0xCC (ground, steep slope) */
     tc_vec3 wall_normal;         /* contact record +0x148 (wall, overhang, ceiling) */
     float ground_grip;           /* the ground contact's floor material mat[2] (1 = none) */
+    uint32_t ground_tri, wall_tri; /* the contacts' triangles (tc_tri.source; UINT32_MAX none): their materials */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
     /* Without a card: the steep-slope limit (n . up) instead of the default cos 60; 0 = default. The skier sets cos 70,

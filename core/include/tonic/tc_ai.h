@@ -210,6 +210,10 @@ typedef struct tc_ai_model {
      * none): the footstep switch picks step sound 0x390002 + it (docs/NOTES.md "Footsteps"). */
     uint32_t floor_sound_count;
     uint8_t *floor_sounds;
+    /* v12: per collision triangle (as v10) its collide material's identifier (0 none): GroundMaterialIs and the other
+     * material conditions test it against their mask (FUN_00497890). 0x8 = the spheres Ed hangs from. */
+    uint32_t collide_id_count;
+    uint16_t *collide_ids;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
@@ -254,6 +258,8 @@ typedef struct tc_ai_perso {
     tc_vec3 position, velocity;  /* feet, world */
     float heading;               /* as tc_player: local -Y points along (sin, -cos) */
     uint32_t contacts;           /* TC_AI_CONTACT_* */
+    struct tc_collision *world;  /* host-fed: FUNC 162's probe (NULL: nothing in the way) */
+    uint16_t ground_material, wall_material; /* the collide identifiers (v12) of the ground and wall contacts, 0 none */
     float report_2bc, report_2c0; /* dynamics +0x2BC / +0x2C0 (FUNC 91 / 92): in flight the lagged attack / bank, rad */
     bool has_axes;               /* host-fed: the perso's drawn axes (its world matrix's columns: tilted in flight and
                                     swimming); FUNC 102 / 103 (point LocalToGlobal / GlobalToLocal) use them */

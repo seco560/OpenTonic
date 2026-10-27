@@ -20,6 +20,7 @@ void tc_mec_walk_reset(tc_mec_walk *w) {
     w->ground_normal = UP;
     w->wall_normal = tc_v3(1, 0, 0);
     w->ground_grip = 1;
+    w->ground_tri = w->wall_tri = UINT32_MAX;
 }
 
 uint32_t tc_mec_walk_contacts(const tc_mec_walk *w) { return w->report | w->report_prev; }
@@ -235,6 +236,7 @@ static bool step_up(collide_ctx *x, const tc_mec_hit *h) {
     x->velocity = x->dt > 0 ? tc_v3_div(off, x->dt) : tc_v3(0, 0, 0);
     x->w->ground_normal = s.normal;
     x->w->ground_grip = s.tri ? s.tri->floor.grip : 1;
+    x->w->ground_tri = s.tri ? s.tri->source : UINT32_MAX;
     return true;
 }
 
@@ -282,9 +284,11 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
         if (!(bits & TC_MEC_STEPPED)) {
             x->w->ground_normal = h->normal;
             x->w->ground_grip = h->tri ? h->tri->floor.grip : 1;
+            x->w->ground_tri = h->tri ? h->tri->source : UINT32_MAX;
         }
     } else {
         x->w->wall_normal = h->normal;
+        x->w->wall_tri = h->tri ? h->tri->source : UINT32_MAX;
     }
     x->target = tc_v3_add(x->target, tc_v3_scale(h->normal, PUSH_OUT));
     return bits;
@@ -323,6 +327,7 @@ static bool resnap(collide_ctx *x, tc_vec3 *position, float distance, float min_
     *position = to;
     x->w->ground_normal = h.normal;
     x->w->ground_grip = h.tri ? h.tri->floor.grip : 1;
+    x->w->ground_tri = h.tri ? h.tri->source : UINT32_MAX;
     return true;
 }
 

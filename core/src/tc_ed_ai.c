@@ -224,6 +224,38 @@ static tc_vec3 root_motion(const tc_ai_perso *a) {
     return a->model->root[st->root_first + f];
 }
 
+static uint16_t collide_id(const tc_ai_model *m, uint32_t tri) {
+    return tri < m->collide_id_count ? m->collide_ids[tri] : 0;
+}
+
+/* Card type 11 (Ed hanging from a sphere: states 46-49, 197, 238-245; FUN_004adb4d, request FUN_004b2793): no grip. The motion is the animation's root motion (or mode 12's move direction, along the contact's plane), moved
+ * by collide-and-move without turning. FUN_004c6993's force list is not decoded: a ground re-snap (within 0.1) stands
+ * in for it, keeping the sphere under him a ground contact every frame, which R10 needs (it lets go 200 ms after
+ * GroundMaterialIs(0x8) fails). */
+static void hang(tc_ed_ai *e, const tc_ai_sphere_set *body, float dt) {
+    tc_player *p = e->player;
+    tc_ai_perso *a = &e->ai;
+    const tc_ai_motion *m = &a->motion;
+    tc_vec3 v;
+    if (m->turning) p->heading += m->turn_speed * dt;
+    if (m->stop) {
+        v = tc_v3(0, 0, 0);
+    } else if (m->direction_set && m->mech_mode == 12) {
+        tc_vec3 n = e->walk.ground_normal;
+        v = tc_v3_scale(local_to_global(p->heading, tc_v3(m->proposal[7], m->proposal[8], m->proposal[9])), m->proposal[10]);
+        v = tc_v3_sub(v, tc_v3_scale(n, tc_v3_dot(v, n)));
+    } else {
+        v = tc_v3_scale(local_to_global(p->heading, root_motion(a)), (float)a->frame_rate);
+    }
+    if (!(tc_mec_collide_move(&e->walk, NULL, p->world, body, p->heading, dt, &p->position, &v) &
+          (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)))
+        tc_mec_resnap(&e->walk, p->world, body, p->heading, 0.1f, 0.64278764f, &p->position);
+    p->velocity = v;
+    e->contacts = tc_mec_walk_contacts(&e->walk) & 0x1F;
+    p->grounded = (e->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
+    p->against_wall = (e->contacts & TC_AI_CONTACT_WALL) != 0;
+}
+
 /* Card types 0 and 4 (tc_mec_walk; card NULL: a card type not decoded yet): what the request handlers make of the
  * AI's requests, then the integrator.
  * Ground speed: SetMoveDirection under mode 12 (proposal [7..9] x [10], capped by card +0x14), else the
@@ -483,6 +515,10 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     a->velocity = p->velocity;
     a->heading = p->heading;
     a->contacts = e->contacts;
+    a->world = p->world;
+    /* The contacts' collide materials (v12): the walk's triangles, which flight and swimming do not update */
+    a->ground_material = e->card_type == 1 || e->card_type == 5 ? 0 : collide_id(a->model, e->walk.ground_tri);
+    a->wall_material = e->card_type == 1 || e->card_type == 5 ? 0 : collide_id(a->model, e->walk.wall_tri);
     if (e->camera >= 0) a->other_positions[e->camera] = camera;
     /* dynamics +0x2BC / +0x2C0: the lagged attack / bank in flight, the lagged polar angle / heading swimming */
     a->report_2bc = e->card_type == 1 ? e->swim.polar_lagged : e->fly.attack_lagged;
@@ -613,6 +649,11 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
         if (body) ski_move(e, body, v, dt);
         else ski_move_capsule(e, v, dt);
         p->heading = tc_mec_ski_heading(&e->ski);
+        e->card_type = type;
+        return;
+    }
+    if (type == 11 && st->spheres != TC_AI_NONE16) {
+        hang(e, &a->model->sphere_sets[st->spheres], dt);
         e->card_type = type;
         return;
     }
