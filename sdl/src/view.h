@@ -21,7 +21,7 @@ typedef struct view {
     SDL_GPUBuffer *vertices, *indices;
     SDL_GPUTexture **textures;   /* level->textures order; NULL = missing */
     uint32_t texture_count, missing_textures;
-    /* Per-triangle lightmap atlas (.ttlv v8), or the shared 1x1 white texture for levels without lightmaps. */
+    /* Per-triangle lightmap atlas (.ttlv LMAP), or the shared 1x1 white texture for levels without lightmaps. */
     SDL_GPUTexture *lightmap;
     view_mesh *meshes;           /* tc_viewer_mesh order */
     SDL_GPUTexture **effects;    /* screen transitions, tc_viewer_effect_texture order; NULL = missing */

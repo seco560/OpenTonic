@@ -1,7 +1,8 @@
 #!/bin/sh
 # Generates everything Open Tonic needs in files/out/ from your own copy of the game (docs/BUILD.md steps 3-6):
 # textures and loading screens, levels (.ttlv + .ttai), music, the intro movie and the app icon.
-# Outputs that already exist are skipped, so a re-run only does what is missing; --force redoes everything.
+# Outputs that already exist are skipped, so a re-run only does what is missing (and levels a changed converter made
+# stale); --force redoes everything.
 # Usage (from the repo root): tools/build_all.sh [--force] [--check]
 #   --check   also run the core's headless checks afterwards (make -C core check mechcheck)
 # Never commit or share files/out/: it holds converted Ubisoft assets.
@@ -32,6 +33,10 @@ done
 [ "$fail" = 0 ] || exit 1
 
 need() { [ "$FORCE" = 1 ] || [ ! -e "$1" ]; }  # true when $1 has to be (re)made
+# A level file from another converter version (its stamp, tools/ttre/chunks.py, differs from the current sources'):
+# re-exported even when present. The app refuses such files ("re-run the conversion").
+STAMP=$(python3 -m tools.ttre.chunks)
+stale() { [ "$(python3 -c 'import sys; from tools.ttre.chunks import file_stamp; print(file_stamp(sys.argv[1]))' "$1")" != "$STAMP" ]; }
 
 # ---- 3. textures and loading screens ----
 if need "$OUT/Textures"; then
@@ -47,7 +52,7 @@ else echo "== loading screens: present (skip)"; fi
 mkdir -p "$OUT/ttlv"
 missing_tex=""
 for l in $(ls "$LEVELS" | grep -v '\.'); do
-  if need "$OUT/ttlv/$l.ttlv" || need "$OUT/ttlv/$l.ttai"; then
+  if need "$OUT/ttlv/$l.ttlv" || need "$OUT/ttlv/$l.ttai" || stale "$OUT/ttlv/$l.ttlv" || stale "$OUT/ttlv/$l.ttai"; then
     line=$(python3 -m tools.ttre level-ttlv "$l" "$OUT/ttlv/$l.ttlv" 2>/dev/null | grep '^wrote' || true)
     case "$line" in
       *" 0 not found"*) ;;

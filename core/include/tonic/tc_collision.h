@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-/* Mechanics material of a collision triangle (.ttlv v6). grip 1 = normal ground; below 1 the
+/* Mechanics material of a collision triangle (.ttlv FLOR). grip 1 = normal ground; below 1 the
  * engine keeps momentum and scales the steering by grip^4. rebound: share of the normal speed kept
  * on impact (1 elastic). No material = {1, 1}. */
 typedef struct tc_floor { float grip, rebound; } tc_floor;
@@ -20,7 +20,7 @@ typedef struct tc_tri {
     tc_vec3 normal; /* unit, from counter-clockwise winding */
     tc_vec3 lo, hi;
     tc_floor floor;
-    uint32_t source; /* the triangle's index in the input (degenerate ones are dropped): per-triangle tables (.ttai v10) */
+    uint32_t source; /* the triangle's index in the input (degenerate ones are dropped): per-triangle tables (.ttai FSND, CLID) */
 } tc_tri;
 
 typedef struct tc_collision {

@@ -1,70 +1,61 @@
-"""Writer for .ttlv, the native viewer's level format (reader: port/core/src/tc_level.c).
+""".ttlv, a level for the core (reader: core/src/tc_level.c), in the chunk container of chunks.py. Little-endian.
 
-Version 8 = v7 plus per-triangle lightmaps: right after the fog, u16 len + utf8 path (relative to the .ttlv) of
-  a lightmap atlas PNG (len 0 = none), and 52-byte vertices: v7's 44 bytes + f32 uv2[2] = atlas coordinates
-  (top-left origin, 0..1; -1 = no lightmap). Lightmapped triangles get their own vertices. The lightmap value
-  replaces the baked light (same x255/128 scale). Atlas = 32x32 tiles in a square power of two.
-Version 7 = v6 plus level fog right after play_offset: f32 fog_near, f32 fog_far, f32 fog_rgb[3]
-  (linear by eye distance; fog_far <= fog_near = no fog). LevelData.fog: the visual environment most
-  sectors use. Sky-sector IPOs ("...ciel..." sectors) carry neutral baked light (LevelData.mark_sky).
-Version 6 = v5 plus floor materials right after the collision triangles in the play section:
-  u16 n_floors, u16 0, n_floors x { f32 grip, f32 rebound }   (the mechanics material of the
-      triangle's GameMaterial: grip = mat[2], rebound = mat[1]; see NOTES "Floor mechanical material")
-  n_triangles x u16 floor index (0xFFFF = no material: grip 1, rebound 1), padded to 4 bytes
-Version 5 = v4 plus u32 play_offset right after light_set_count (absolute file offset of the play
-section, so headless tools can seek to it) and a play section after the perso section:
-  u32 n_triangles, n_triangles x f32[9]   collision, world space (LevelData.collision: static
-                                          collide sets + perso collide meshes at frame 0)
-  u32 has_ed (0/1), then if 1:
-    f32 start[12] (row-major 3x4: Ed's placement, GPT perso-in-fix matrix; he faces local -Y)
-    i32 static_perso (index of Ed's own entry in the perso section, -1 = none: hide it in play mode)
-    u32 part_count, part_count x { u16 object, u16 0, surface, geometry (object space, scale applied) }
-    u16 n_anims, u16 0, n_anims x {
-      u16 name_len, utf8 name ("idle", "walk", "run", "jump", "jump_air", "fall", "land"),
-      u16 n_channels, u16 n_samples, f32 sample_rate (as for persos, ANIM_TIME_SCALE applied),
-      u8 loop, u8 0, u16 0, f32 ground_speed (units/s the feet cover at sample_rate: 2 x the
-      feet's horizontal stride / loop length; 0 = not locomotion. The viewer scales walk/run
-      playback by its move speed / ground_speed so the feet don't slide),
-      n_samples x n_channels x f32[12] channel -> Ed, n_samples x n_channels x u16 object (0xFFFF none) }
-  Parts are keyed by object only: channel numbering differs between Ed's animations.
-  After the 7 named clips come Ed's state animations for the AI (no format change): one per distinct A3D, named
-  "s<k>" (k = the first state using it; .ttai states point at it), one sample per animation frame, sample_rate =
-  the A3D's own frames per second (no ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
-Version 4 = v3 plus u32 light_set_count right after the version, and 44-byte vertices carrying
-3 baked sets (rgba8 each, alpha 0 = set absent: the viewer falls back to set 0). Number keys pick
-the set. Version 3 (v2 = the same with 32-byte vertices, no colour; v1 = v2 without scroll/anim in the
-surface record and no perso section, persos merged into the static meshes at frame 0; the viewer
-reads all three):
-  "TTLV", u32 version (3)
-  u32 texture_count, texture_count x { u16 len, utf8 path relative to the .ttlv }
-  surface = { i32 texture (-1 = none), u32 flags, f32 scroll[2] (Metal UV per second:
-              uv' = uv + scroll * t),
-              u16 n_anim, u16 0, n_anim x { i32 texture, f32 seconds } (animated texture loop;
-              n_anim = 0: static texture) }
+Chunks, in file order (* = only when the level has one; every other chunk is required):
+  LEVL  u32 light_set_count (baked radiosity sets per vertex, 1-3: set 0 everywhere, 1-2 only in Land / sud0; number
+        keys pick the set), f32 fog_near, f32 fog_far, f32 fog_rgb[3] (linear by eye distance; fog_far <= fog_near = no
+        fog; LevelData.fog: the visual environment most sectors use)
+  LMAP* u16 len + utf8 path (relative to the .ttlv) of the per-triangle lightmap atlas PNG: 32x32 tiles in a square
+        power of two. The lightmap value replaces the baked light (same x255/128 scale).
+  TEXS  u32 n, n x { u16 len, utf8 path relative to the .ttlv }
+  MESH  u32 n, n x { surface, geometry }: the static world, engine world space
+  PRSO  u32 n, n x {
+          f32 world[12] (row-major 3x4, perso -> world)
+          u16 n_channels, u16 n_samples, f32 sample_rate (samples per second; loop = n_samples / rate)
+          n_channels x i16 parent channel at frame 0 (-1 = root; informational, matrices are composed)
+          u32 part_count, part_count x { u16 channel, u16 object, surface, geometry (channel space, object-list scale
+                                         applied) }
+          n_samples x n_channels x f32[12] channel -> perso transform (row-major 3x4)
+          n_samples x n_channels x u16 object shown by the channel (0xFFFF = none) }
+  COLL  u32 n_triangles, n_triangles x f32[9]: collision, world space (LevelData.collision: static collide sets + perso
+        collide meshes at frame 0). The .ttai's per-triangle tables follow this order; its LINK chunk holds this
+        chunk's CRC-32.
+  FLOR  u16 n_floors, u16 0, n_floors x { f32 grip, f32 rebound } (the mechanics material of the triangle's
+        GameMaterial: grip = mat[2], rebound = mat[1]; NOTES "Floor mechanical material"),
+        n_triangles x u16 floor index (0xFFFF = no material: grip 1, rebound 1)
+  EDPL* the player (Ed, or the skier):
+          f32 start[12] (row-major 3x4: the placement, GPT perso-in-fix matrix; he faces local -Y)
+          i32 static_perso (his own entry in PRSO, -1 = none: hidden in play mode)
+          u32 part_count, part_count x { u16 object, u16 0, surface, geometry (object space, scale applied) }
+          u16 n_anims, u16 0, n_anims x {
+            u16 name_len, utf8 name ("idle", "walk", "run", "jump", "jump_air", "fall", "land"),
+            u16 n_channels, u16 n_samples, f32 sample_rate (as for persos, ANIM_TIME_SCALE applied),
+            u8 loop, u8 0, u16 0, f32 ground_speed (units/s the feet cover at sample_rate: 2 x the feet's horizontal
+            stride / loop length; 0 = not locomotion),
+            n_samples x n_channels x f32[12] channel -> Ed, n_samples x n_channels x u16 object (0xFFFF none) }
+        Parts are keyed by object only: channel numbering differs between his animations. After the 7 named clips come
+        the state animations for the AI: one per distinct A3D, named "s<k>" (k = the first state using it; .ttai states
+        point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
+        ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
+
+  surface  = { i32 texture (-1 = none), u32 flags (TC_FLAG_*), f32 scroll[2] (UV per second: uv' = uv + scroll * t),
+               u16 n_anim, u16 0, n_anim x { i32 texture, f32 seconds } (animated texture loop; 0 = static) }
   geometry = { u32 n_vertices, u32 n_indices, n_vertices x vertex, n_indices x u32 }
-  vertex (36) = f32 pos[3], f32 normal[3], f32 uv[2], u8 rgba: baked radiosity clamped to 0..255
-              (light = rgb / 128, see level.RADIOSITY_ONE; a = 255 baked, a = 0 none: the viewer
-              uses its fallback lighting, as for all perso parts)
-  u32 mesh_count, mesh_count x { surface, geometry }          static world, engine world space
-  u32 perso_count, perso_count x {
-    f32 world[12] (row-major 3x4, perso -> world)
-    u16 n_channels, u16 n_samples, f32 sample_rate (samples per second; loop = n_samples / rate)
-    n_channels x i16 parent channel at frame 0 (-1 = root; informational, matrices are composed)
-    u32 part_count, part_count x { u16 channel, u16 object, surface, geometry (channel space,
-                                   object-list scale applied) }
-    n_samples x n_channels x f32[12] channel -> perso transform (row-major 3x4)
-    n_samples x n_channels x u16 object shown by the channel (0xFFFF = none) }
-One mesh/part per material, LOD 0 only, Z up. Samples: the A3D is evaluated (keyframe lerp, see
-level.Anim) at k = round(60 / fps) samples per animation frame. UVs are converted to Metal's
-top-left origin (v' = 1 - v; engine v=0 is the image's bottom row). The engine subtracts its
-scroll offset (inferred: only then does sud0's rainbow pool flow over its edge and down the falls).
-Engine time unit = 1/60 s (scroll speed and texture frame durations are per 1/60 s).
+  vertex (52 bytes, = tc_vertex) = f32 pos[3], f32 normal[3], f32 uv[2], u32 rgba8 x 3 (the baked sets: radiosity
+             clamped to 0..255, light = rgb / 128, see level.RADIOSITY_ONE; alpha 255 = baked, 0 = none: the viewer's
+             fallback lighting, as for all perso parts), f32 uv2[2] (lightmap atlas coordinates, top-left origin;
+             -1 = none; lightmapped triangles get their own vertices)
+  Sprites (TC_FLAG_BILLBOARD meshes): every vertex holds the centre, normal.xy = the corner offset; unlit.
+
+One mesh/part per material, LOD 0 only, Z up. Samples: the A3D is evaluated (keyframe lerp, see level.Anim) at
+k = round(60 / fps) samples per animation frame. UVs are converted to top-left origin (v' = 1 - v; engine v=0 is the
+image's bottom row). The engine subtracts its scroll offset (inferred: only then does sud0's rainbow pool flow over its
+edge and down the falls). Engine time unit = 1/60 s (scroll speed and texture frame durations are per 1/60 s).
 """
 import math
 import os
 import struct
 
-from . import export, gf, level
+from . import chunks, export, gf, level
 
 ALPHA_TEST = 1 << 0
 TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8 without 0x2, see surface())
@@ -78,7 +69,6 @@ ANIM_TIME_SCALE = 0.25
 # right. Texture-name prefix (case-insensitive, file name only) -> factor on the playback rate, so
 # 0.25 makes each frame last 4x longer. Hypothesis: the same unexplained 4x as ANIM_TIME_SCALE.
 TEXTURE_TIME_SCALE = {'GEN_ARCH': 0.5}  # user-matched: 0.25 was too slow, 2x that looked natural
-VERSION = 8
 LIGHT_SETS = 3  # baked radiosity sets per vertex (set 0 everywhere; 1-2 only in Land/sud0)
 
 
@@ -278,13 +268,13 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     # Played as the skier (Totalski, skymap): the decals on the slope are not obstacles (LevelData.collision).
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
     tris, floors = data.collision(floors=True, skip_decals=data.player() != fix_ed)
-    play = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
+    coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     table = sorted({f for f in floors if f is not None})
     index = {f: i for i, f in enumerate(table)}
-    play += struct.pack('<HH', len(table), 0) + b''.join(struct.pack('<2f', *f) for f in table)
-    play += struct.pack(f'<{len(floors)}H', *(0xFFFF if f is None else index[f] for f in floors))
-    play += b'\0' * (-len(floors) * 2 % 4)
+    flor = struct.pack('<HH', len(table), 0) + b''.join(struct.pack('<2f', *f) for f in table)
+    flor += struct.pack(f'<{len(floors)}H', *(0xFFFF if f is None else index[f] for f in floors))
     ed = data.ed(state_anims=True)
+    edpl = None
     if ed:
         p, start, anims = ed
         parts = []
@@ -304,26 +294,18 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                                                                     ground_speed(poses, rate) if name in ('walk', 'run') else 0.0)
                         + b''.join(struct.pack('<12f', *mat) for pose in poses for _, mat in pose)
                         + b''.join(struct.pack('<H', 0xFFFF if o is None or o not in p.objects else o) for pose in poses for o, _ in pose))
-        play += (struct.pack('<I12fiI', 1, *start, ed_blob if ed_blob is not None else -1, len(parts)) + b''.join(parts)
-                 + struct.pack('<2H', len(recs), 0) + b''.join(recs))
-    else:
-        play += struct.pack('<I', 0)
+        edpl = (struct.pack('<12fiI', *start, ed_blob if ed_blob is not None else -1, len(parts)) + b''.join(parts)
+                + struct.pack('<2H', len(recs), 0) + b''.join(recs))
 
     n_sets = max((len(getattr(so, 'color_sets', ())) for so in data.walk()), default=1)
-    body = bytearray()
-    for tp in tex_paths:
-        b = tp.encode()
-        body += struct.pack('<H', len(b)) + b
-    body += struct.pack('<I', len(meshes))
-    for m in meshes.values():
-        body += m['surface'] + geometry(m)
-    body += struct.pack('<I', len(blobs)) + b''.join(blobs)
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
-    head = (b'TTLV' + struct.pack('<III', VERSION, max(1, n_sets), 0) + struct.pack('<5f', fog[0], fog[1], *fog[2])
-            + struct.pack('<H', len(atlas_rel.encode())) + atlas_rel.encode() + struct.pack('<I', len(tex_paths)))
-    head = head[:12] + struct.pack('<I', len(head) + len(body)) + head[16:]  # play_offset
-    with open(path, 'wb') as f:
-        f.write(head + body + play)
+    texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
+    mesh = struct.pack('<I', len(meshes)) + b''.join(m['surface'] + geometry(m) for m in meshes.values())
+    out = [('LEVL', struct.pack('<I5f', max(1, n_sets), fog[0], fog[1], *fog[2])),
+           ('LMAP', struct.pack('<H', len(atlas_rel.encode())) + atlas_rel.encode()) if atlas_rel else None,
+           ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),
+           ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None]
+    chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),
             len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else [])
 

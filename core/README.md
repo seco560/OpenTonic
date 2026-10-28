@@ -1,6 +1,6 @@
 # TonicCore: the portable core
 
-Plain C11 library with the platform-independent part of the port: the `.ttlv` loader (v1-v8),
+Plain C11 library with the platform-independent part of the port: the `.ttlv` loader,
 world collision (uniform grid, raycast, closest point), Ed's play-mode controller, the
 animation sampling helpers, the AI interpreter (`tc_ai.h`: runs Ed's own scripts from a
 `.ttai`, see docs/NOTES.md "AI interpreter"), the exe's mechanics (`tc_mec.h`: ground/air with the

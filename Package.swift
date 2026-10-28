@@ -3,7 +3,9 @@
 import PackageDescription
 
 // The game core is portable C (core/, see core/README.md); Swift is only the macOS platform layer.
-let coreWarnings: [CSetting] = [.unsafeFlags(["-Wall", "-Wextra", "-Wpedantic"])]
+// -ffp-contract=off: no fused multiply-adds, so the float math rounds as the exe's (x87 in single precision) on every
+// platform (tools/exe/oracle.py checks the collision code against the exe this way); keep it in core/Makefile too.
+let coreWarnings: [CSetting] = [.unsafeFlags(["-Wall", "-Wextra", "-Wpedantic", "-ffp-contract=off"])]
 
 let package = Package(
     name: "OpenTonic",

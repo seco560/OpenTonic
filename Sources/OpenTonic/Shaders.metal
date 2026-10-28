@@ -8,7 +8,7 @@ struct VertexIn {
     float4 color    [[attribute(3)]];  // rgba8 normalised: baked radiosity set 0; a = 0: none (persos)
     float4 color1   [[attribute(4)]];  // alternative baked sets (day/night variants); a = 0: absent
     float4 color2   [[attribute(5)]];
-    float2 uv2      [[attribute(6)]];  // lightmap atlas coordinates (.ttlv v8); -1 = no lightmap
+    float2 uv2      [[attribute(6)]];  // lightmap atlas coordinates (.ttlv LMAP); -1 = no lightmap
 };
 
 struct Uniforms {

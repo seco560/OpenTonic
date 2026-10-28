@@ -1,4 +1,4 @@
-/* .ttlv loader (versions 1-5; spec in tools/ttre/ttlv.py). The platform layer reads the file into
+/* .ttlv loader (spec in tools/ttre/ttlv.py, container in tools/ttre/chunks.py). The platform layer reads the file into
  * memory; tc_level_load parses it into plain structs owned by the tc_level (free with tc_level_free).
  * Texture paths are relative to the .ttlv file's folder; resolving them is the platform's job. */
 #ifndef TONIC_TC_LEVEL_H
@@ -14,15 +14,15 @@ extern "C" {
 
 #define TC_FLAG_ALPHA_TEST (1u << 0)
 #define TC_FLAG_TRANSPARENT (1u << 1)
-#define TC_FLAG_BILLBOARD (1u << 2)  /* v7 sprites: vertex = centre, normal.xy = corner offset (camera plane) */
-#define TC_FLAG_WATER (1u << 3)      /* set by tc_viewer on draws: a water material (a triangle flat at a .ttai v8 water
+#define TC_FLAG_BILLBOARD (1u << 2)  /* sprites: vertex = centre, normal.xy = corner offset (camera plane) */
+#define TC_FLAG_WATER (1u << 3)      /* set by tc_viewer on draws: a water material (a triangle flat at a .ttai water
                                         plane): the renderers add the sheen to its upward faces (NOTES "Water surfaces") */
 #define TC_HIDDEN 0xFFFFu /* "shown object" value of a hidden channel */
 
 typedef enum tc_result {
     TC_OK = 0,
     TC_ERR_BAD_MAGIC,
-    TC_ERR_UNSUPPORTED_VERSION,
+    TC_ERR_STALE,          /* written by another converter (old format, missing or resized chunk): re-run the conversion */
     TC_ERR_TRUNCATED,
     TC_ERR_OUT_OF_MEMORY
 } tc_result;
@@ -31,8 +31,7 @@ const char *tc_result_string(tc_result r);
 
 /* 52 bytes, tightly packed: exactly the GPU vertex layout the viewer uses.
  * color[i]: baked lighting set i, rgba8 little-endian (r in the low byte); alpha 0 = none.
- * Files before v4 fill only color[0] (v3) or nothing (v1/v2).
- * uv2: v8 lightmap atlas coordinates (texel space / atlas size, top-left origin); -1 = no lightmap. */
+ * uv2: lightmap atlas coordinates (texel space / atlas size, top-left origin); -1 = no lightmap. */
 typedef struct tc_vertex {
     float position[3];
     float normal[3];
@@ -74,7 +73,7 @@ typedef struct tc_perso {
     uint16_t *shown;             /* same indexing; TC_HIDDEN = channel hidden */
 } tc_perso;
 
-/* One of Ed's baked animations (v5). Channels index only this animation's tracks. */
+/* One of Ed's baked animations. Channels index only this animation's tracks. */
 typedef struct tc_ed_anim {
     char *name;                  /* NUL-terminated: idle, walk, run, jump, jump_air, fall, land */
     uint16_t channel_count, sample_count;
@@ -97,11 +96,11 @@ typedef struct tc_ed {
 } tc_ed;
 
 typedef struct tc_level {
-    uint32_t version;
-    uint32_t light_set_count;    /* 1 before v4 */
-    float fog_near, fog_far;     /* v7: linear fog by eye distance; fog_far <= fog_near: none */
+    char converter[16];          /* the converter's stamp (STMP), for log lines */
+    uint32_t light_set_count;    /* baked sets per vertex, 1-3 */
+    float fog_near, fog_far;     /* linear fog by eye distance; fog_far <= fog_near: none */
     float fog_rgb[3];
-    char *lightmap_atlas;        /* v8: per-triangle lightmaps packed into one image, path relative to the .ttlv (NULL: none) */
+    char *lightmap_atlas;        /* per-triangle lightmaps packed into one image, path relative to the .ttlv (NULL: none) */
     uint32_t texture_count;
     char **textures;             /* NUL-terminated UTF-8 paths relative to the .ttlv */
     uint32_t mesh_count;
@@ -109,8 +108,9 @@ typedef struct tc_level {
     uint32_t perso_count;
     tc_perso *persos;
     uint32_t collision_triangle_count;
-    tc_vec3 *collision;          /* v5: 3 vertices per triangle, world space */
-    tc_floor *collision_floors;  /* v6: one per triangle (NULL before v6: all {1, 1}) */
+    tc_vec3 *collision;          /* 3 vertices per triangle, world space */
+    tc_floor *collision_floors;  /* one per triangle */
+    uint32_t collision_crc;      /* CRC-32 of the COLL chunk: a .ttai's per-triangle tables match when its LINK holds it */
     int has_ed;
     tc_ed ed;
 } tc_level;

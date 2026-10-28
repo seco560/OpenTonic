@@ -3,7 +3,7 @@
  *   sud0, ZOR_ArcheCocktail (red): walk-in (B66 -> B68 -> state 228), cover, then a level request for "bar";
  *   Land, SDO_Arche2 (blue walk-in): teleport to its waypoint, then the step-out (state 229);
  *   north, KEV_SousMap1a2 (blue zone teleport): cover at once, no walk-in, teleport;
- *   Totalski, the SYM_GenTrou holes (.ttai v9 zones, COND_13): inside a hole's zone box the skier falls in (dsg29 := 1),
+ *   Totalski, the SYM_GenTrou holes (.ttai ZONE, COND_13): inside a hole's zone box the skier falls in (dsg29 := 1),
  *   5 above the box he does not.
  * Usage: portalcheck [out/ttlv]. Test-only stdio. */
 #include <stdio.h>
@@ -85,13 +85,13 @@ static int run(const char *dir, const char *name, int op, const char *level, int
     if (tc_ed_ai_init(&ed, &model, &player, name) != TC_OK) return 0;
     printf("%s: portal %d @(%.1f, %.1f, %.1f) r %.1f, Ed starts at (%.1f, %.1f, %.1f)\n", name, k, (double)g->position.x,
            (double)g->position.y, (double)g->position.z, (double)g->radius, (double)start.x, (double)start.y, (double)start.z);
-    for (i = 0; i < 60 * 20; i++) {
+    for (i = 0; i < 30 * 20; i++) { /* at the game's tick */
         tc_vec3 eye;
         uint32_t in = ed.portal < 0 && res->teleport_at < 0 ? 1u << TC_AI_IN_UP : 0;
-        t = (float)i / 60;
+        t = (float)i * TC_ED_AI_TICK;
         eye = tc_v3_add(player.position, tc_v3(sinf(player.heading) * -5, cosf(player.heading) * 5, 2)); /* behind Ed */
         if (cover_at >= 0 && t >= cover_at + 1.6f) { ed.screen_covered = true; cover_at = -1; }
-        tc_ed_ai_step(&ed, 1.0f / 60, in, 0, 0, eye);
+        tc_ed_ai_step(&ed, TC_ED_AI_TICK, in, 0, 0, eye);
         if (ed.portal >= 0) res->captured = 1;
         if (ed.ai.state == 228) res->saw_228 = 1;
         if (ed.ai.state == 229 && res->teleport_at >= 0) res->saw_229 = 1;

@@ -1,4 +1,4 @@
-"""Any glTF 2.0 model as a .ttlv level for the viewer (format: tools/ttre/ttlv.py, version 8).
+"""Any glTF 2.0 model as a .ttlv level for the viewer (format: tools/ttre/ttlv.py).
 
 Usage: python3 -m tools.ttre.import_gltf MODEL.gltf|.glb NAME [--scale S] [--spawn X,Y,Z] [--ed DONOR]
 Writes files/out/ttlv/NAME.ttlv (+ NAME.ttai, Ed's AI) and the textures as PNG in files/out/Imported/NAME/.
@@ -10,9 +10,9 @@ Writes files/out/ttlv/NAME.ttlv (+ NAME.ttai, Ed's AI) and the textures as PNG i
   glTF colour multiplies it), KHR_materials_unlit without COLOR_0 = 1.0; otherwise none (vertex alpha 0): the viewer
   lights it with its sun.
 - Collision: the triangles of every non-blended material.
-- Ed: his record (meshes, animations) from the donor level's .ttlv (default bar, a cutscene level: no portals or
-  triggers in its .ttai to fire at random places here), his textures added to this level's; his AI = the donor's
-  .ttai. Start: --spawn (glTF coordinates), else on the highest upward-facing surface at the model's centre.
+- Ed: his record (the EDPL chunk: meshes, animations) from the donor level's .ttlv (default bar, a cutscene level: no
+  portals or triggers in its .ttai to fire at random places here), his textures added to this level's; his AI = the
+  donor's .ttai (its per-triangle tables do not match this collision: the core drops them, tc_ai_model_link). Start: --spawn (glTF coordinates), else on the highest upward-facing surface at the model's centre.
 """
 import base64
 import json
@@ -24,7 +24,8 @@ import struct
 import subprocess
 import sys
 
-VERSION = 8
+from tools.ttre import chunks
+
 ALPHA_TEST, TRANSPARENT = 1, 2
 OUT = 'files/out'
 
@@ -158,32 +159,20 @@ def material_texture(doc, base, mi, tex_dir, cache, buffers):
 # ---- Ed from a donor .ttlv ----
 
 def read_ed(donor):
-    """(texture paths relative to the donor's folder, Ed record bytes split into (start, static, parts [(object, surface
-    dict, geometry bytes)], anim bytes)) of a .ttlv v8, or None."""
-    d = open(donor, 'rb').read()
-    magic, version, _, play = struct.unpack_from('<4sIII', d, 0)
-    if magic != b'TTLV' or version != 8:
-        raise SystemExit(f'{donor}: need a .ttlv version 8')
-    o = 16 + 20
-    n, = struct.unpack_from('<H', d, o)
-    o += 2 + n
-    n_tex, = struct.unpack_from('<I', d, o)
-    o += 4
-    textures = []
-    for _ in range(n_tex):
-        n, = struct.unpack_from('<H', d, o)
-        textures.append(d[o + 2:o + 2 + n].decode())
-        o += 2 + n
-    o = play
-    n_tri, = struct.unpack_from('<I', d, o)
-    o += 4 + 36 * n_tri
-    n_floor, = struct.unpack_from('<H', d, o)
-    o += 4 + 8 * n_floor
-    o += 2 * n_tri + (2 * n_tri) % 4
-    has_ed, = struct.unpack_from('<I', d, o)
-    if not has_ed:
+    """(texture paths relative to the donor's folder, Ed record split into (start, parts [(object, surface tuple,
+    geometry bytes)], anim bytes)) of a .ttlv, or None when it has no player."""
+    c = chunks.read(donor, 'TTLV')
+    if c is None:
+        raise SystemExit(f'{donor}: not a current .ttlv (re-run the conversion)')
+    if 'EDPL' not in c:
         return None
-    o += 4
+    t, o = c['TEXS'], 4
+    textures = []
+    for _ in range(struct.unpack_from('<I', t)[0]):
+        n, = struct.unpack_from('<H', t, o)
+        textures.append(t[o + 2:o + 2 + n].decode())
+        o += 2 + n
+    d, o = c['EDPL'], 0
     start = struct.unpack_from('<12f', d, o)
     o += 48
     o += 4  # static perso
@@ -335,10 +324,10 @@ def main(argv):
                 best = z if best is None else max(best, z)
         spawn = (cx, cy, (best if best is not None else hi[2]) + 0.3)
 
-    play = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *t) for t in tris)
-    play += struct.pack('<HH', 0, 0) + struct.pack(f'<{len(tris)}H', *([0xFFFF] * len(tris)))
-    play += b'\0' * ((2 * len(tris)) % 4)
+    coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *t) for t in tris)
+    flor = struct.pack('<HH', 0, 0) + struct.pack(f'<{len(tris)}H', *([0xFFFF] * len(tris)))
     ed = read_ed(os.path.join(ttlv_dir, f'{donor}.ttlv'))
+    edpl = None
     if ed:
         donor_tex, start, parts, anims = ed
         start = list(start)
@@ -349,19 +338,15 @@ def main(argv):
                 return tex_id(os.path.join(ttlv_dir, donor_tex[t])) if 0 <= t < len(donor_tex) else -1
             ed_parts += struct.pack('<2H', obj, 0) + surface(remap(tex), flags, (su, sv),
                                                               [(remap(t), s) for t, s in frames]) + geo
-        play += struct.pack('<I12fiI', 1, *start, -1, len(parts)) + ed_parts + anims
+        edpl = struct.pack('<12fiI', *start, -1, len(parts)) + ed_parts + anims
         if os.path.exists(os.path.join(ttlv_dir, f'{donor}.ttai')):
             shutil.copyfile(os.path.join(ttlv_dir, f'{donor}.ttai'), os.path.join(ttlv_dir, f'{name}.ttai'))
-    else:
-        play += struct.pack('<I', 0)
 
-    head = b'TTLV' + struct.pack('<III', VERSION, 1, 0) + struct.pack('<5f', 0, 0, 0, 0, 0) + struct.pack('<H', 0)
-    head += struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(p.encode())) + p.encode() for p in tex_paths)
-    body = struct.pack('<I', len(groups)) + meshes + struct.pack('<I', 0)
-    head = head[:12] + struct.pack('<I', len(head) + len(body)) + head[16:]
+    texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(p.encode())) + p.encode() for p in tex_paths)
     out = os.path.join(ttlv_dir, f'{name}.ttlv')
-    with open(out, 'wb') as f:
-        f.write(head + body + play)
+    chunks.write(out, 'TTLV', [('LEVL', struct.pack('<I5f', 1, 0, 0, 0, 0, 0)), ('TEXS', texs),
+                               ('MESH', struct.pack('<I', len(groups)) + meshes), ('PRSO', struct.pack('<I', 0)),
+                               ('COLL', coll), ('FLOR', flor)] + ([('EDPL', edpl)] if edpl else []))
     n_tri = sum(len(i) // 3 for _, i in groups.values())
     print(f'wrote {out}: {len(groups)} meshes, {n_tri} triangles, {len(cache)} textures '
           f'({sum(1 for v in cache.values() if v is None)} failed), {len(tris)} collision triangles, Ed '

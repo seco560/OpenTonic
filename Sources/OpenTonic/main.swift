@@ -7,23 +7,89 @@ func cString<T>(_ chars: T) -> String {
     withUnsafeBytes(of: chars) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
 }
 
+/// The loading bar, filled with sud0's psychedelic rainbow pool (SUD0\O_ZARBI_AUNTXY): the texture scrolls at the
+/// pool's own 0.6 UV/s and rippling strips make it wave. Plain white without the texture.
+final class RainbowBar: NSView {
+    var progress: Double = 0 { didSet { needsDisplay = true } }
+    private let texture: CGImage?
+    private let start = CACurrentMediaTime()
+    private var timer: Timer?
+
+    init(texture url: URL) {
+        texture = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        timer?.invalidate()
+        timer = window == nil ? nil : Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsDisplay = true }
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let r = bounds.insetBy(dx: 1, dy: 1), radius = r.height / 2
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.setFillColor(NSColor(white: 0, alpha: 0.55).cgColor)
+        ctx.fillPath()
+        let width = r.width * CGFloat(min(max(progress, 0), 1))
+        if width > 0 {
+            let fill = CGRect(x: r.minX, y: r.minY, width: max(width, r.height), height: r.height)
+            let t = CGFloat(CACurrentMediaTime() - start)
+            ctx.saveGState()
+            ctx.addPath(CGPath(roundedRect: fill, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            ctx.clip()
+            if let texture {
+                let tile = r.height * 3, strip: CGFloat = 3
+                let scroll = (t * 0.6).truncatingRemainder(dividingBy: 1) * tile
+                var x = fill.minX
+                while x < fill.maxX {
+                    let wave = sin(x / 16 + t * 4) * r.height * 0.3
+                    ctx.saveGState()
+                    ctx.clip(to: CGRect(x: x, y: fill.minY, width: strip, height: fill.height))
+                    ctx.draw(texture, in: CGRect(x: fill.minX - tile + x * 0.15, y: fill.minY - scroll + wave,
+                                                 width: tile, height: tile), byTiling: true)
+                    ctx.restoreGState()
+                    x += strip
+                }
+            } else {
+                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.fill(fill)
+            }
+            // a soft gloss on the upper half
+            let gloss = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                   colors: [NSColor(white: 1, alpha: 0.35).cgColor, NSColor(white: 1, alpha: 0).cgColor] as CFArray,
+                                   locations: [0, 1])!
+            ctx.drawLinearGradient(gloss, start: CGPoint(x: 0, y: fill.maxY), end: CGPoint(x: 0, y: fill.midY), options: [])
+            ctx.restoreGState()
+        }
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.setStrokeColor(NSColor(white: 1, alpha: 0.6).cgColor)
+        ctx.setLineWidth(1)
+        ctx.strokePath()
+    }
+}
+
 /// The loading screen of a red portal (docs/PORTALS.md): the coming level's vignette, a bar and its name, over the
 /// black the renderer draws.
 final class LoadingScreen: NSView {
     private let image = NSImageView()
-    private let bar = NSProgressIndicator()
+    private let bar: RainbowBar
     private let label = NSTextField(labelWithString: "")
     private var level = ""
     let vignettes: URL
 
     init(frame: NSRect, vignettes: URL) {
         self.vignettes = vignettes
+        // out/Vignette/Level -> out/Textures/Sud0 (the same layout inside the app bundle)
+        bar = RainbowBar(texture: vignettes.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Textures/Sud0/o_zarbi_auntxy.png"))
         super.init(frame: frame)
         image.imageScaling = .scaleProportionallyUpOrDown
-        bar.isIndeterminate = false
-        bar.minValue = 0
-        bar.maxValue = 1
-        bar.style = .bar
         label.font = .systemFont(ofSize: 18, weight: .semibold)
         label.textColor = .white
         label.alignment = .center
@@ -43,7 +109,7 @@ final class LoadingScreen: NSView {
                 .flatMap { NSImage(contentsOf: $0) }
             needsLayout = true
         }
-        bar.doubleValue = Double(progress)
+        bar.progress = Double(progress)
     }
 
     override func layout() {
@@ -51,7 +117,7 @@ final class LoadingScreen: NSView {
         let b = bounds, w = min(b.width * 0.8, (b.height - 120) * 4 / 3), h = w * 3 / 4
         image.frame = NSRect(x: (b.width - w) / 2, y: (b.height - h) / 2 + 40, width: w, height: h)
         label.frame = NSRect(x: 0, y: image.frame.minY - 44, width: b.width, height: 26)
-        bar.frame = NSRect(x: (b.width - w * 0.6) / 2, y: image.frame.minY - 72, width: w * 0.6, height: 16)
+        bar.frame = NSRect(x: (b.width - w * 0.6) / 2, y: image.frame.minY - 74, width: w * 0.6, height: 18)
     }
 }
 

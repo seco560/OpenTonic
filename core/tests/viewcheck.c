@@ -204,7 +204,6 @@ int main(int argc, char **argv) {
     desc.carry = NULL;
     desc.seed = 0;
     if (tc_viewer_init(&v, &desc) != TC_OK) { fprintf(stderr, "tc_viewer_init failed\n"); return 1; }
-    free(ai);  /* the model is a copy */
 
     printf("viewcheck: %s: %u meshes in the table; %u statics, %u persos (%u parts), %u tris; ai %s\n", name,
            tc_viewer_mesh_count(&v), v.stats.meshes, v.stats.persos, v.stats.parts, v.stats.triangles,
@@ -224,7 +223,11 @@ int main(int argc, char **argv) {
     report(&v, "AI, forward + jump");
 
     /* Gamepad: the left stick is the game's own stick (its scripts: nothing inside their threshold, the pace from the
-     * push), the right stick turns the camera. */
+     * push), the right stick turns the camera. From a fresh start: after the runs above Ed stands against bar's wall,
+     * and the stick's speeds there measure the wall slide, not the stick. */
+    tc_viewer_free(&v);
+    if (tc_viewer_init(&v, &desc) != TC_OK) { fprintf(stderr, "tc_viewer_init failed\n"); return 1; }
+    free(ai);  /* the model is a copy */
     run(&v, 1, 0);
     a = ed(&v);
     b.x = run_stick(&v, 0.5f, 0, 0.1f);

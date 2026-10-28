@@ -62,7 +62,7 @@ import TonicCore
     private let overlayDepthState: MTLDepthStencilState
     private let depthState: MTLDepthStencilState
     private let sampler: MTLSamplerState
-    /// Per-triangle lightmap atlas (.ttlv v8), or a 1x1 white texture for levels without lightmaps.
+    /// Per-triangle lightmap atlas (.ttlv LMAP), or a 1x1 white texture for levels without lightmaps.
     private var lightmap: MTLTexture?
     private var textures: [MTLTexture?] = []  // level.textures order; nil = missing
     private var meshes: [GPUMesh?] = []        // tc_viewer_mesh order; nil = empty
@@ -106,7 +106,7 @@ import TonicCore
         vd.attributes[1].format = .float3; vd.attributes[1].offset = 12
         vd.attributes[2].format = .float2; vd.attributes[2].offset = 24
         for (i, off) in [(3, 32), (4, 36), (5, 40)] { vd.attributes[i].format = .uchar4Normalized; vd.attributes[i].offset = off }
-        vd.attributes[6].format = .float2; vd.attributes[6].offset = 44  // lightmap atlas uv (v8)
+        vd.attributes[6].format = .float2; vd.attributes[6].offset = 44  // lightmap atlas uv
         for i in 0..<7 { vd.attributes[i].bufferIndex = 0 }
         vd.layouts[0].stride = MemoryLayout<tc_vertex>.stride  // 52: pos3 + normal3 + uv floats, 3 x rgba8 baked sets, uv2
 

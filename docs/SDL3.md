@@ -34,8 +34,8 @@ case-insensitively; if a level fails with "not found", check letter case first.
 `sdl/build/opentonic [levels folder | level.ttlv]`. Without an argument it looks for `files/out/ttlv` in the
 working directory, then relative to the binary in the checkout, then in the checkout it was built from. Converted data
 as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails, portal loading screens), `Textures/Effects`
-(screen transitions), `audio/` (music, `sfx/` sound effects) and `icon/` next to it. Levels converted before .ttai v6
-load, but without portals, transitions or Ed's sounds: re-run `tools/build_linux.sh` (`--force`, or delete `ttlv/`).
+(screen transitions), `audio/` (music, `sfx/` sound effects) and `icon/` next to it. Levels from another converter
+version do not load ("re-run the conversion"): `tools/build_linux.sh` re-exports exactly those (docs/BUILD.md "Formats").
 
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
 alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,

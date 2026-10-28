@@ -62,6 +62,13 @@ struct tc_viewer_play {
     bool has_driver;
     bool use_ai;
     char level_name[128];        /* tc_ed_ai keeps a pointer to it */
+    /* Ed's AI and mechanics step in fixed ticks of TC_ED_AI_TICK; drawing interpolates between the last two. */
+    float tick_time;             /* seconds not yet stepped */
+    bool have_pose;
+    tc_mat4 pose_prev, pose_cur, pose_draw; /* Ed's model matrix after the last two ticks, and this frame's */
+    int clip_prev, clip_cur;     /* level->ed.anims index after those ticks */
+    float phase_prev, phase_cur;
+    bool loop_cur;
 };
 
 static bool level_has_ed(const tc_level *l) { return l->has_ed && l->collision_triangle_count > 0; }
@@ -104,6 +111,7 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
     if (desc->ai_data) {
         v->ai_result = tc_ai_model_load(&p->model, (const uint8_t *)desc->ai_data, desc->ai_size);
         p->has_model = v->ai_result == TC_OK;
+        if (p->has_model) tc_ai_model_link(&p->model, l);
     }
     if (p->has_model) {
         tc_result r = tc_ed_ai_init(&p->driver, &p->model, &p->player, p->level_name);
@@ -521,6 +529,8 @@ void tc_viewer_toggle_play(tc_viewer *v) {
 void tc_viewer_toggle_ai(tc_viewer *v) {
     if (!tc_viewer_has_ai(v)) return;
     v->play->use_ai = !v->play->use_ai;
+    v->play->have_pose = false; /* the tick blending starts over from where Ed is */
+    v->play->tick_time = 0;
     v->ed_state = -1;
     v->ed_phase = 0;
 }
@@ -569,6 +579,95 @@ static void simple_portals(tc_viewer *v, float dt) {
     if (v->walk_in == 2 && e->portal < 0) v->walk_in = 0;
 }
 
+/* A rotation's quaternion (x, y, z, w) from a model matrix's orthonormal axes (columns m[0..2], m[4..6], m[8..10]). */
+static void axes_quat(const tc_mat4 *a, float q[4]) {
+    const float *m = a->m;
+    float tr = m[0] + m[5] + m[10], s;
+    if (tr > 0) {
+        s = sqrtf(tr + 1) * 2;
+        q[3] = s / 4, q[0] = (m[6] - m[9]) / s, q[1] = (m[8] - m[2]) / s, q[2] = (m[1] - m[4]) / s;
+    } else if (m[0] > m[5] && m[0] > m[10]) {
+        s = sqrtf(1 + m[0] - m[5] - m[10]) * 2;
+        q[3] = (m[6] - m[9]) / s, q[0] = s / 4, q[1] = (m[4] + m[1]) / s, q[2] = (m[8] + m[2]) / s;
+    } else if (m[5] > m[10]) {
+        s = sqrtf(1 + m[5] - m[0] - m[10]) * 2;
+        q[3] = (m[8] - m[2]) / s, q[0] = (m[4] + m[1]) / s, q[1] = s / 4, q[2] = (m[9] + m[6]) / s;
+    } else {
+        s = sqrtf(1 + m[10] - m[0] - m[5]) * 2;
+        q[3] = (m[1] - m[4]) / s, q[0] = (m[8] + m[2]) / s, q[1] = (m[9] + m[6]) / s, q[2] = s / 4;
+    }
+}
+
+/* Between two of Ed's poses: the position linearly, the rotation along the shorter way (normalised quaternion lerp). A
+ * jump of more than 5 units (a teleport, a respawn) is not interpolated. */
+static tc_mat4 pose_lerp(const tc_mat4 *a, const tc_mat4 *b, float t) {
+    float qa[4], qb[4], q[4], l, sign;
+    tc_mat4 r = *b;
+    int k;
+    float dx = b->m[12] - a->m[12], dy = b->m[13] - a->m[13], dz = b->m[14] - a->m[14];
+    if (dx * dx + dy * dy + dz * dz > 25) return *b;
+    axes_quat(a, qa);
+    axes_quat(b, qb);
+    sign = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3] < 0 ? -1.f : 1.f;
+    for (k = 0; k < 4; k++) q[k] = qa[k] * (1 - t) + qb[k] * sign * t;
+    l = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (l > 0) for (k = 0; k < 4; k++) q[k] /= l;
+    r.m[0] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]), r.m[1] = 2 * (q[0] * q[1] + q[2] * q[3]), r.m[2] = 2 * (q[0] * q[2] - q[1] * q[3]);
+    r.m[4] = 2 * (q[0] * q[1] - q[2] * q[3]), r.m[5] = 1 - 2 * (q[0] * q[0] + q[2] * q[2]), r.m[6] = 2 * (q[1] * q[2] + q[0] * q[3]);
+    r.m[8] = 2 * (q[0] * q[2] + q[1] * q[3]), r.m[9] = 2 * (q[1] * q[2] - q[0] * q[3]), r.m[10] = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
+    r.m[12] = a->m[12] + dx * t, r.m[13] = a->m[13] + dy * t, r.m[14] = a->m[14] + dz * t;
+    return r;
+}
+
+/* Ed's drawn pose and animation after a tick. */
+static void capture_pose(tc_viewer *v) {
+    tc_viewer_play *p = v->play;
+    char name[16];
+    int i;
+    snprintf(name, sizeof(name), "s%u", (unsigned)tc_ed_ai_anim(&p->driver));
+    i = ed_anim(v->level, name);
+    p->pose_cur = tc_ed_ai_model_matrix(&p->driver);
+    p->clip_cur = i >= 0 ? i : ed_anim(v->level, "idle");
+    p->phase_cur = tc_ed_ai_frame(&p->driver);
+    p->loop_cur = tc_ed_ai_loops(&p->driver);
+    if (!p->have_pose) {
+        p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
+        p->have_pose = true;
+    }
+}
+
+/* Ed's AI and mechanics in ticks of TC_ED_AI_TICK (the game's 30 per second), then this frame's pose between the
+ * last two ticks. The scripts see last frame's camera eye (it makes the direction keys camera-relative). */
+static void step_ai(tc_viewer *v, float dt) {
+    tc_viewer_play *p = v->play;
+    float t;
+    int ticks = 0;
+    if (!p->have_pose) capture_pose(v);
+    v->sound_count = 0;
+    p->tick_time += dt;
+    while (p->tick_time >= TC_ED_AI_TICK) {
+        uint32_t n;
+        p->tick_time -= TC_ED_AI_TICK;
+        if (++ticks > 8) { p->tick_time = 0; break; } /* a long stall: drop the backlog */
+        p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
+        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, ai_inputs(v), v->move_x, v->move_y, v->camera.position);
+        for (n = 0; n < p->driver.ai.sound_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
+            v->sounds[v->sound_count++] = p->driver.ai.sounds[n];
+        capture_pose(v);
+    }
+    t = p->tick_time / TC_ED_AI_TICK;
+    p->pose_draw = pose_lerp(&p->pose_prev, &p->pose_cur, t);
+    v->ed_clip = p->clip_cur;
+    v->ed_state = -1;
+    v->ed_loop = p->loop_cur;
+    v->ed_phase = p->phase_cur;
+    if (p->clip_prev == p->clip_cur && p->clip_cur >= 0) {
+        float count = (float)v->level->ed.anims[p->clip_cur].sample_count, d = p->phase_cur - p->phase_prev;
+        if (d < 0 && p->loop_cur) d += count; /* wrapped round the loop */
+        if (d >= 0 && d < count / 2) v->ed_phase = fmodf(p->phase_prev + d * t, count);
+    }
+}
+
 static void update_play(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
@@ -578,10 +677,7 @@ static void update_play(tc_viewer *v, float dt) {
     int i;
     look(v, dt);
     if (p->use_ai) {
-        /* Ed's own scripts; they see last frame's camera eye (it makes the direction keys camera-relative). */
-        tc_ed_ai_step(&p->driver, v->paused ? 0 : dt, ai_inputs(v), v->move_x, v->move_y, v->camera.position);
-        v->sound_count = p->driver.ai.sound_count;
-        memcpy(v->sounds, p->driver.ai.sounds, v->sound_count * sizeof(v->sounds[0]));
+        step_ai(v, v->paused ? 0 : dt); /* Ed's own scripts, at the game's tick */
     } else {
         tc_player_input in;
         bool walking_in = v->walk_in != 0;
@@ -592,25 +688,16 @@ static void update_play(tc_viewer *v, float dt) {
         tc_player_step(&p->player, dt, &in);
         if (p->has_driver) simple_portals(v, dt);
     }
-    /* Third-person orbit around Ed's chest; pulled in when the level is in the way. */
-    target = tc_v3_add(p->player.position, tc_v3(0, 0, 1.1f));
+    /* Third-person orbit around Ed's chest (as drawn); pulled in when the level is in the way. */
+    target = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14] + 1.1f)
+                       : tc_v3_add(p->player.position, tc_v3(0, 0, 1.1f));
     back = tc_v3_scale(tc_camera_forward(&v->camera), -1);
     d = v->orbit_distance;
     hit = raycast(p, target, back, d + 0.3f);
     if (hit >= 0) d = fmaxf(0.4f, hit - 0.3f);
     v->camera.position = tc_v3_add(target, tc_v3_scale(back, d));
 
-    if (p->use_ai) {
-        /* The AI's state clock picks the frame (one sample per frame). */
-        char name[16];
-        snprintf(name, sizeof(name), "s%u", (unsigned)tc_ed_ai_anim(&p->driver));
-        i = ed_anim(l, name);
-        v->ed_clip = i >= 0 ? i : ed_anim(l, "idle");
-        v->ed_state = -1;
-        v->ed_phase = tc_ed_ai_frame(&p->driver);
-        v->ed_loop = tc_ed_ai_loops(&p->driver);
-        return;
-    }
+    if (p->use_ai) return; /* the AI's state clock picked the frame (step_ai) */
     if (v->walk_in == 1) { /* the step-in: once through at its own rate, then the cover */
         a = &l->ed.anims[v->walk_clip];
         v->ed_clip = v->walk_clip;
@@ -799,7 +886,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;
         /* The skier's board tilts with the slope. */
-        tc_mat4 model = v->play->use_ai && v->play->has_driver ? tc_ed_ai_model_matrix(&v->play->driver)
+        tc_mat4 model = v->play->use_ai && v->play->has_driver ? v->play->pose_draw
                                                                : tc_player_model_matrix(&v->play->player);
         for (ch = 0; ch < nch; ch++) {
             uint16_t obj = a->shown[s.s0 * nch + ch];

@@ -35,113 +35,263 @@ static tc_vec3 turn(float heading, tc_vec3 v) {
     return tc_v3(c * v.x - s * v.y, s * v.x + c * v.y, v.z);
 }
 
-/* ---- Sweep ---- */
+/* ---- Sweep (the collision library, docs/DECOMP.md: FUN_0043bff0 -> FUN_00464440 -> FUN_004657f0, a body made
+ * of spheres only, -> FUN_00465520 -> FUN_00464c80 -> FUN_00465b60 per sphere and triangle) ---- */
 
-typedef struct sweep_ctx { tc_vec3 c0, d; float r; tc_mec_hit best; bool found; } sweep_ctx;
+#define FLOOR_ONLY_Z 0.93f /* DAT_004dc9bc: the flag 8 spheres' sweep counts only floors this flat */
 
-static void take(sweep_ctx *x, float t, tc_vec3 n, tc_vec3 p, const tc_tri *tri) {
-    if (x->found && t >= x->best.t) return;
-    x->found = true;
-    x->best.t = t;
-    x->best.normal = n;
-    x->best.point = p;
-    x->best.tri = tri;
+/* FUN_004661b0: real roots of a t^2 + b t + c; 2 roots: r1 = (-b + sqrt) / 2a, r2 = (-b - sqrt) / 2a. */
+static int quadratic(float a, float b, float c, float *r1, float *r2) {
+    float disc, inv;
+    if (a == 0) {
+        if (b != 0) { *r1 = -(c / b); return 1; }
+        return 0;
+    }
+    disc = b * b - c * a * 4;
+    if (disc > 0) {
+        inv = 1 / (a + a);
+        *r1 = (sqrtf(disc) - b) * inv;
+        *r2 = (-b - sqrtf(disc)) * inv;
+        return 2;
+    }
+    if (disc == 0) { *r1 = -(b / (a + a)); return 1; }
+    return 0;
 }
 
-/* First t >= 0 at which c0 + d t is within r of segment ab (ray against a capsule), or -1. */
-static float ray_capsule(tc_vec3 o, tc_vec3 d, tc_vec3 a, tc_vec3 b, float r) {
-    tc_vec3 ba = tc_v3_sub(b, a), oa = tc_v3_sub(o, a);
-    float baba = tc_v3_dot(ba, ba), bard = tc_v3_dot(ba, d), baoa = tc_v3_dot(ba, oa);
-    float dd = tc_v3_dot(d, d), doa = tc_v3_dot(d, oa), oaoa = tc_v3_dot(oa, oa);
-    float qa = baba * dd - bard * bard, best = -1;
-    int k;
-    if (qa > 1e-12f) {
-        float qb = baba * doa - baoa * bard, qc = baba * oaoa - baoa * baoa - r * r * baba, h = qb * qb - qa * qc;
-        if (h >= 0) {
-            float t = (-qb - sqrtf(h)) / qa, y = baoa + t * bard;
-            if (t >= 0 && y > 0 && y < baba) return t;
+/* The smaller root of quadratic(), when it lies in 0..1 (FUN_0046a220 / FUN_00469500's choice). The edge test rejects
+ * t < 0 or t > 1, the corner test keeps 0 <= t <= 1: they differ only on a NaN root, which the edge test keeps. */
+static bool first_root(float a, float b, float c, bool keep_nan, float *t) {
+    float r1 = 0, r2 = 0;
+    int n = quadratic(a, b, c, &r1, &r2);
+    if (n == 0) return false;
+    if (n == 2 && r2 <= r1) r1 = r2;
+    if (keep_nan ? r1 < 0 || r1 > 1 : !(r1 >= 0 && r1 <= 1)) return false;
+    *t = r1;
+    return true;
+}
+
+/* The exe's box rejection on one axis: the interval swept from p by d against the one from q by e, grown by r. */
+static bool overlap_axis(float p, float d, float q, float e, float r) {
+    return p + fminf(d, 0) <= q + fmaxf(e, 0) + r && q + fminf(e, 0) - r <= p + fmaxf(d, 0);
+}
+static bool overlap(tc_vec3 p, tc_vec3 d, tc_vec3 q, tc_vec3 e, float r) {
+    return overlap_axis(p.x, d.x, q.x, e.x, r) && overlap_axis(p.y, d.y, q.y, e.y, r) &&
+           overlap_axis(p.z, d.z, q.z, e.z, r);
+}
+
+/* FUN_0046a220: sphere p0 + d t (radius r) against segment e0 + e s: t in 0..1 (the smaller root, which must be >= 0:
+ * a sphere already overlapping the edge's line does not hit), s in 0..1; centre at t and the segment point. */
+static bool sphere_edge(tc_vec3 p0, tc_vec3 d, tc_vec3 e0, tc_vec3 e, float r, float *t, tc_vec3 *centre,
+                        tc_vec3 *on_edge) {
+    float ee, inv, de, pe, k, s;
+    tc_vec3 f, u, w;
+    if (!overlap(p0, d, e0, e, r)) return false;
+    ee = tc_v3_dot(e, e);
+    if (ee == 0) return false;
+    inv = 1 / ee;
+    f = tc_v3_sub(p0, e0);
+    de = tc_v3_dot(e, d);
+    pe = tc_v3_dot(e, f);
+    k = de * inv;
+    if (k * e.x == d.x && d.y == k * e.y && d.z == k * e.z) return false; /* moving exactly along the edge */
+    u = tc_v3_sub(tc_v3_scale(e, k), d);                 /* the motion across the edge's line */
+    w = tc_v3_sub(tc_v3_scale(e, pe * inv), f);          /* the start's offset from it */
+    if (!first_root(tc_v3_dot(u, u), tc_v3_dot(u, w) * 2, tc_v3_dot(w, w) - r * r, true, t)) return false;
+    *centre = tc_v3_add(tc_v3_scale(d, *t), p0);
+    s = (de * *t + pe) * inv;
+    if (!(s >= 0) || s > 1) return false;
+    *on_edge = tc_v3_add(tc_v3_scale(e, s), e0);
+    return true;
+}
+
+/* FUN_00469500 (called with the motion reversed): point v against sphere p0 + d t (radius r): t in 0..1. */
+static bool sphere_vertex(tc_vec3 v, tc_vec3 d, tc_vec3 p0, float r, float *t) {
+    tc_vec3 back = tc_v3_scale(d, -1), f = tc_v3_sub(v, p0);
+    if (!overlap(v, back, p0, tc_v3(0, 0, 0), r)) return false;
+    return first_root(tc_v3_dot(back, back), tc_v3_dot(back, f) * 2, tc_v3_dot(f, f) - r * r, false, t);
+}
+
+/* FUN_00465870: is the plane point (a, b, c = the corners minus it) inside, by the cross products' signs along the
+ * normal's largest axis (z first, then y, else x; 1/sqrt 3 picks it). */
+static bool same_side(float n, float cross) { return (n >= 0) == (cross >= 0); }
+static bool inside(tc_vec3 a, tc_vec3 b, tc_vec3 c, tc_vec3 n) {
+    if (fabsf(n.z) >= 0.57735026f)
+        return same_side(n.z, b.y * a.x - a.y * b.x) && same_side(n.z, c.y * b.x - b.y * c.x) &&
+               same_side(n.z, a.y * c.x - c.y * a.x);
+    if (fabsf(n.y) >= 0.57735026f)
+        return same_side(n.y, a.z * b.x - b.z * a.x) && same_side(n.y, b.z * c.x - b.x * c.z) &&
+               same_side(n.y, c.z * a.x - a.z * c.x);
+    return same_side(n.x, a.y * b.z - b.y * a.z) && same_side(n.x, b.y * c.z - b.z * c.y) &&
+           same_side(n.x, c.y * a.z - c.z * a.y);
+}
+
+int tc_mec_sphere_tri(tc_vec3 p0, tc_vec3 d, float r, tc_vec3 n, tc_vec3 a, tc_vec3 b, tc_vec3 c, int *kind, float *t,
+                      tc_vec3 *normal, tc_vec3 *point) {
+    const tc_vec3 *from[3] = {&a, &a, &b}, *to[3] = {&b, &c, &c}, *corner[3] = {&a, &b, &c};
+    float dn = tc_v3_dot(d, n), best = 0, tt;
+    tc_vec3 centre, on_edge;
+    int k, which = 0;
+    if (dn < 0) { /* the face: its nearest point q = p0 - r n reaches the plane within this move */
+        tc_vec3 q = tc_v3_add(tc_v3_scale(n, -r), p0);
+        float s = -tc_v3_dot(tc_v3_sub(q, a), n);
+        if (dn <= s && s <= 0) {
+            tt = s / dn;
+            *point = tc_v3_add(tc_v3_scale(d, tt), q);
+            if (inside(tc_v3_sub(a, *point), tc_v3_sub(b, *point), tc_v3_sub(c, *point), n)) {
+                *t = tt;
+                *kind = TC_MEC_FACE;
+                *normal = n;
+                return 1;
+            }
         }
     }
-    for (k = 0; k < 2; k++) { /* the end spheres */
-        tc_vec3 oc = tc_v3_sub(o, k ? b : a);
-        float sb = tc_v3_dot(d, oc), sc = tc_v3_dot(oc, oc) - r * r, h = sb * sb - dd * sc;
-        if (h >= 0 && dd > 1e-12f) {
-            float t = (-sb - sqrtf(h)) / dd;
-            if (t >= 0 && (best < 0 || t < best)) best = t;
-        }
+    for (k = 0; k < 3; k++) { /* the edges a-b, a-c, b-c: the earliest (a tie keeps the first) */
+        if (!sphere_edge(p0, d, *from[k], tc_v3_sub(*to[k], *from[k]), r, &tt, &centre, &on_edge)) continue;
+        if (which && !(tt < best)) continue;
+        which = k + 1;
+        best = tt;
+        *normal = centre;
+        *point = on_edge;
     }
-    return best;
+    if (which) {
+        *t = best;
+        *kind = TC_MEC_EDGE;
+        *normal = tc_v3_scale(tc_v3_sub(*normal, *point), 1 / r);
+        return which;
+    }
+    for (k = 0; k < 3; k++) { /* the corners */
+        if (!sphere_vertex(*corner[k], d, p0, r, &tt)) continue;
+        if (which && !(tt < best)) continue;
+        which = k + 1;
+        best = tt;
+    }
+    if (!which) return 0;
+    *t = best;
+    *kind = TC_MEC_VERTEX;
+    *point = *corner[which - 1];
+    *normal = tc_v3_scale(tc_v3_sub(tc_v3_add(tc_v3_scale(d, best), p0), *point), 1 / r);
+    return 1;
 }
 
-static tc_vec3 closest_on_segment(tc_vec3 a, tc_vec3 b, tc_vec3 p) {
-    tc_vec3 ab = tc_v3_sub(b, a);
-    float l = tc_v3_dot(ab, ab), t = l > 0 ? tc_v3_dot(tc_v3_sub(p, a), ab) / l : 0;
-    return tc_v3_add(a, tc_v3_scale(ab, fminf(fmaxf(t, 0), 1)));
+/* FUN_00467d40: the plane point inside the triangle, by cross products on the normal's largest axis (z first, then x,
+ * else y): FUN_00465870's test with other operand orders, kept as the exe has them (they differ on zeros and NaN). */
+static bool inside_point(tc_vec3 p, tc_vec3 a, tc_vec3 b, tc_vec3 c, tc_vec3 n) {
+    tc_vec3 A = tc_v3_sub(a, p), B = tc_v3_sub(b, p), C = tc_v3_sub(c, p);
+    if (fabsf(n.z) >= 0.57735026f)
+        return same_side(n.z, B.y * A.x - B.x * A.y) && same_side(n.z, C.y * B.x - C.x * B.y) &&
+               (n.z >= 0) == !(C.x * A.y - C.y * A.x < 0);
+    if (fabsf(n.x) >= 0.57735026f)
+        return same_side(n.x, B.z * A.y - B.y * A.z) && same_side(n.x, C.z * B.y - C.y * B.z) &&
+               (n.x >= 0) == !(C.y * A.z - C.z * A.y < 0);
+    return same_side(n.y, B.x * A.z - B.z * A.x) && same_side(n.y, C.x * B.z - C.z * B.x) &&
+           same_side(n.y, C.z * A.x - C.x * A.z);
 }
 
-static bool inside(const tc_tri *t, tc_vec3 n, tc_vec3 p) {
-    return tc_v3_dot(tc_v3_cross(tc_v3_sub(t->b, t->a), tc_v3_sub(p, t->a)), n) >= 0 &&
-           tc_v3_dot(tc_v3_cross(tc_v3_sub(t->c, t->b), tc_v3_sub(p, t->b)), n) >= 0 &&
-           tc_v3_dot(tc_v3_cross(tc_v3_sub(t->a, t->c), tc_v3_sub(p, t->c)), n) >= 0;
+/* The exe's box rejection for a point: its swept interval on one axis against the triangle's. */
+static bool point_axis(float p, float d, float a, float b, float c) {
+    return fmaxf(fmaxf(a, b), c) >= p + fminf(d, 0) && p + fmaxf(d, 0) >= fminf(fminf(a, b), c);
 }
 
-static void sweep_tri(const tc_tri *t, void *user) {
+int tc_mec_point_tri(tc_vec3 p0, tc_vec3 d, tc_vec3 n, tc_vec3 a, tc_vec3 b, tc_vec3 c, float *t, tc_vec3 *point) {
+    float dn = n.z * d.z + n.y * d.y + n.x * d.x, s, tt;
+    tc_vec3 hit;
+    if (dn >= 0) return 0;
+    if (!point_axis(p0.x, d.x, a.x, b.x, c.x) || !point_axis(p0.y, d.y, a.y, b.y, c.y) ||
+        !point_axis(p0.z, d.z, a.z, b.z, c.z))
+        return 0;
+    s = n.z * p0.z + n.y * p0.y + n.x * p0.x + -(n.z * a.z + n.y * a.y + n.x * a.x); /* FUN_004683b0 */
+    if (!(s > 0) || !(s < -dn)) return 0;
+    tt = -(s / dn);
+    hit = tc_v3_add(tc_v3_scale(d, tt), p0);
+    if (!inside_point(hit, a, b, c, n)) return 0;
+    *t = tt;
+    *point = hit;
+    return 1;
+}
+
+typedef struct sweep_ctx {
+    tc_vec3 c0, d;
+    float r;
+    bool point;
+    uint16_t flags;
+    float rebound, grip;
+    tc_mec_hit best;
+    bool found;
+} sweep_ctx;
+
+/* FUN_00464c80: keep the contact when it is earlier than the best so far (the first of equal ones stays). */
+static int zone_type(uint16_t flags);
+static void sweep_tri(const tc_tri *tri, void *user) {
     sweep_ctx *x = (sweep_ctx *)user;
-    tc_vec3 q = tc_closest_point_on_triangle(t->a, t->b, t->c, x->c0), diff = tc_v3_sub(x->c0, q), n = t->normal;
-    float d2 = tc_v3_length_sq(diff), dist0, dn;
-    const tc_vec3 *e[3][2];
-    int k;
-    if (d2 < x->r * x->r) { /* already touching: a contact only when moving into it */
-        tc_vec3 m = d2 > 1e-12f ? tc_v3_div(diff, sqrtf(d2)) : (tc_v3_dot(n, diff) < 0 ? tc_v3_scale(n, -1) : n);
-        if (tc_v3_dot(x->d, m) < 0) take(x, 0, m, q, t);
+    tc_mec_hit h;
+    if (x->point) { /* FUN_0046ff70: a face contact, normal = the face's */
+        if (!tc_mec_point_tri(x->c0, x->d, tri->normal, tri->a, tri->b, tri->c, &h.t, &h.point)) return;
+        h.kind = TC_MEC_FACE;
+        h.normal = tri->normal;
+    } else if (!tc_mec_sphere_tri(x->c0, x->d, x->r, tri->normal, tri->a, tri->b, tri->c, &h.kind, &h.t, &h.normal,
+                                  &h.point)) {
         return;
     }
-    dist0 = tc_v3_dot(n, tc_v3_sub(x->c0, t->a));
-    if (dist0 < 0) {
-        n = tc_v3_scale(n, -1);
-        dist0 = -dist0;
-    }
-    dn = tc_v3_dot(x->d, n);
-    if (dn < 0 && dist0 >= x->r) { /* the face */
-        float tt = (dist0 - x->r) / -dn;
-        tc_vec3 p = tc_v3_sub(tc_v3_add(x->c0, tc_v3_scale(x->d, tt)), tc_v3_scale(n, x->r));
-        if (tt <= 1 && inside(t, t->normal, p)) { /* the winding's normal: n may be flipped */
-            take(x, tt, n, p, t);
-            return;
-        }
-    }
-    e[0][0] = &t->a; e[0][1] = &t->b;
-    e[1][0] = &t->b; e[1][1] = &t->c;
-    e[2][0] = &t->c; e[2][1] = &t->a;
-    for (k = 0; k < 3; k++) { /* edges and corners */
-        float tt = ray_capsule(x->c0, x->d, *e[k][0], *e[k][1], x->r);
-        tc_vec3 c, p, m;
-        if (tt < 0 || tt > 1 || (x->found && tt >= x->best.t)) continue;
-        c = tc_v3_add(x->c0, tc_v3_scale(x->d, tt));
-        p = closest_on_segment(*e[k][0], *e[k][1], c);
-        m = tc_v3_sub(c, p);
-        if (tc_v3_length_sq(m) < 1e-12f) continue;
-        m = tc_v3_normalize(m);
-        if (tc_v3_dot(x->d, m) < 0) take(x, tt, m, p, t);
-    }
+    if (x->found ? !(h.t < x->best.t) : !(h.t < 2)) return; /* DAT_0050e140 starts at 2 (FUN_00460210) */
+    h.zone_type = zone_type(x->flags);
+    h.own_flags = x->flags;
+    h.own_rebound = x->rebound;
+    h.own_grip = x->grip;
+    h.own_point = x->point;
+    h.tri = tri;
+    x->best = h;
+    x->found = true;
 }
 
-bool tc_mec_sweep(tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 from, tc_vec3 to,
-                  tc_mec_hit *hit) {
+/* FUN_0043bf70: the zone type of a sphere's collide flags. */
+static int zone_type(uint16_t flags) {
+    if ((flags & 1) == 1) return 1;
+    if ((flags & 2) == 2) return 4;
+    if ((flags & 4) == 4) return 3;
+    return (flags & 8) == 8 ? 2 : -1;
+}
+
+/* One sweep over the parts the mask selects (FUN_00420610: flag 8 set, or clear; flag 0x10 never). Within a zone the
+ * exe tests its points (FUN_00470b40) before its spheres; the earliest contact wins either way. */
+static bool sweep_spheres(tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 from, tc_vec3 d,
+                          bool floor_spheres, tc_mec_hit *hit) {
     sweep_ctx x;
     uint16_t i;
     x.found = false;
-    x.d = tc_v3_sub(to, from);
-    for (i = 0; world && body && i < body->count; i++) {
+    x.d = d;
+    for (i = 0; i < body->count; i++) {
+        const tc_ai_sphere *s = &body->spheres[i];
         tc_vec3 c1;
-        x.c0 = tc_v3_add(from, turn(heading, body->spheres[i].center));
-        x.r = body->spheres[i].radius;
+        if (s->flags & 0x10 || ((s->flags & 8) != 0) != floor_spheres) continue;
+        x.c0 = tc_v3_add(from, turn(heading, s->center));
+        x.r = s->point ? 0 : s->radius;
+        x.point = s->point != 0;
+        x.flags = s->flags;
+        x.rebound = s->rebound;
+        x.grip = s->grip;
         c1 = tc_v3_add(x.c0, x.d);
         tc_collision_query(world, tc_v3_adds(tc_v3_min(x.c0, c1), -x.r - 1e-3f),
                            tc_v3_adds(tc_v3_max(x.c0, c1), x.r + 1e-3f), sweep_tri, &x);
     }
-    if (x.found && hit) *hit = x.best;
+    if (x.found) *hit = x.best;
     return x.found;
+}
+
+bool tc_mec_sweep(tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 from, tc_vec3 to,
+                  tc_mec_hit *hit) {
+    tc_vec3 d = tc_v3_sub(to, from);
+    tc_mec_hit floor_hit, hit_b;
+    bool a, b;
+    if (!world || !body || (d.x == 0 && d.y == 0 && d.z == 0)) return false;
+    a = sweep_spheres(world, body, heading, from, d, true, &floor_hit);
+    b = sweep_spheres(world, body, heading, from, d, false, &hit_b);
+    /* FUN_0043bff0: the floor spheres' contact wins when it is a floor and not later than the others' */
+    if (a && floor_hit.normal.z >= FLOOR_ONLY_Z && (!b || floor_hit.t <= hit_b.t)) {
+        if (hit) *hit = floor_hit;
+        return true;
+    }
+    if (b && hit) *hit = hit_b;
+    return b;
 }
 
 /* ---- Responses (MEC_004bc477 and the handlers it calls) ---- */
@@ -170,6 +320,11 @@ static tc_vec3 impact(const collide_ctx *x, float t) {
     return tc_v3_add(x->start, tc_v3_scale(tc_v3_sub(x->target, x->start), t));
 }
 
+/* A contact's rebound and grip: the obstacle's mechanics material times the touching part's own (record +0x34 x +0x50,
+ * +0x38 x +0x54; no material: 1). Ed's body spheres have rebound 0.85 and grip 0, his feet none. */
+static float hit_rebound(const tc_mec_hit *h) { return (h->tri ? h->tri->floor.rebound : 1) * h->own_rebound; }
+static float hit_grip(const tc_mec_hit *h) { return (h->tri ? h->tri->floor.grip : 1) * h->own_grip; }
+
 /* v -= n x (2 - r)(v . n): r = 1 slides along, r = 0 bounces back fully (MEC_004bb66b). */
 static tc_vec3 rebound(tc_vec3 v, tc_vec3 n, float r) { return tc_v3_sub(v, tc_v3_scale(n, (2 - r) * tc_v3_dot(v, n))); }
 
@@ -192,7 +347,7 @@ static void respond_ground(collide_ctx *x, const tc_mec_hit *h, bool slope) {
         float k = clamp01(slope ? 1 - soften(s, 6) : 0); /* steep slopes: the speed along them tends to 12 */
         v = tc_v3_scale(tangent(v, h->normal), 1 - k);
     } else {
-        v = rebound(v, h->normal, clamp01(h->tri ? h->tri->floor.rebound : 1));
+        v = rebound(v, h->normal, clamp01(hit_rebound(h)));
     }
     x->velocity = v;
     continue_from(x, at, h->t);
@@ -225,18 +380,17 @@ static bool step_up(collide_ctx *x, const tc_mec_hit *h) {
     off = tc_v3_add(d, tc_v3_scale(d, 0.15f / l));
     low = tc_v3_add(x->start, off);
     high = tc_v3_add(low, tc_v3_scale(UP, height));
-    if (!tc_mec_sweep(x->world, x->body, x->heading, high, low, &s) || !(s.t > 0)) return false;
+    if (!tc_mec_sweep(x->world, x->body, x->heading, high, low, &s)) return false;
     if (fabsf(tc_v3_dot(s.normal, UP)) < flat) return false;
     top = impact(&(collide_ctx){.start = high, .target = low}, s.t);
     from = tc_v3_add(tc_v3_sub(top, off), tc_v3_scale(s.normal, PUSH_OUT));
-    /* Not in the exe: the lift itself must be free, so a thin wall cannot be stepped through. */
-    if (tc_mec_sweep(x->world, x->body, x->heading, x->start, from, NULL)) return false;
     x->start = from;
     x->target = top;
     x->velocity = x->dt > 0 ? tc_v3_div(off, x->dt) : tc_v3(0, 0, 0);
     x->w->ground_normal = s.normal;
-    x->w->ground_grip = s.tri ? s.tri->floor.grip : 1;
+    x->w->ground_grip = hit_grip(&s);
     x->w->ground_tri = s.tri ? s.tri->source : UINT32_MAX;
+    x->w->ground_own = s.own_flags;
     return true;
 }
 
@@ -248,7 +402,10 @@ static uint32_t respond_wall(collide_ctx *x, const tc_mec_hit *h, float up_dot) 
         x->target = at;
         return 4;
     }
-    if ((x->report_prev & 3) && card_f(x->card, 8, 0) > 0 && up_dot >= -lean && up_dot <= lean && step_up(x, h))
+    /* Step up: ground last frame, the touching sphere of zone type 1 (collide flag 1: the feet and lower body), a step
+     * height; and an edge, or a wall within the lean (the 0x40 collide flag that forces both is unused by Ed). */
+    if ((x->report_prev & 3) && h->zone_type == 1 && card_f(x->card, 8, 0) > 0 &&
+        (h->kind == TC_MEC_EDGE || (up_dot >= -lean && up_dot <= lean)) && step_up(x, h))
         return TC_AI_CONTACT_GROUND | TC_MEC_STEPPED;
     if (tc_v3_dot(v, h->normal) / s >= HEAD_ON) {
         /* The exe softens with x^2 + x^2 (velocity x twice) against 36; z is not scaled. */
@@ -257,7 +414,7 @@ static uint32_t respond_wall(collide_ctx *x, const tc_mec_hit *h, float up_dot) 
         v.x *= 1 - k;
         v.y *= 1 - k;
     } else {
-        v = rebound(v, h->normal, clamp01(h->tri ? h->tri->floor.rebound : 1));
+        v = rebound(v, h->normal, clamp01(hit_rebound(h)));
     }
     x->velocity = v;
     continue_from(x, at, h->t);
@@ -271,7 +428,7 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
     if (c >= card_f(x->card, 0x1C, 0.70710677f)) {
         respond_ground(x, h, false);
         bits = TC_AI_CONTACT_GROUND;
-    } else if (c >= (x->card || !(x->w->slope_cos > 0) ? card_f(x->card, 0x20, 0.5f) : x->w->slope_cos)) {
+    } else if (c >= card_f(x->card, 0x20, 0.5f)) {
         respond_ground(x, h, x->card != NULL);
         bits = TC_AI_CONTACT_SLOPE;
     } else if (c >= card_f(x->card, 0x24, -0.5f)) {
@@ -283,12 +440,14 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
     if (bits & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) {
         if (!(bits & TC_MEC_STEPPED)) {
             x->w->ground_normal = h->normal;
-            x->w->ground_grip = h->tri ? h->tri->floor.grip : 1;
+            x->w->ground_grip = hit_grip(h);
             x->w->ground_tri = h->tri ? h->tri->source : UINT32_MAX;
+            x->w->ground_own = h->own_flags;
         }
     } else {
         x->w->wall_normal = h->normal;
         x->w->wall_tri = h->tri ? h->tri->source : UINT32_MAX;
+        x->w->wall_own = h->own_flags;
     }
     x->target = tc_v3_add(x->target, tc_v3_scale(h->normal, PUSH_OUT));
     return bits;
@@ -326,8 +485,9 @@ static bool resnap(collide_ctx *x, tc_vec3 *position, float distance, float min_
     if (tc_mec_sweep(x->world, x->body, x->heading, *position, to, NULL)) return false;
     *position = to;
     x->w->ground_normal = h.normal;
-    x->w->ground_grip = h.tri ? h.tri->floor.grip : 1;
+    x->w->ground_grip = hit_grip(&h);
     x->w->ground_tri = h.tri ? h.tri->source : UINT32_MAX;
+    x->w->ground_own = h.own_flags;
     return true;
 }
 

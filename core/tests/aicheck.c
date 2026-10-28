@@ -2,10 +2,11 @@
  * and <level>.ttai, feeds a scripted button sequence, prints every behaviour, reflex, state and mechanics-mode
  * change with Ed's position, then the primitives the interpreter skipped.
  * Usage: aicheck [out/ttlv] [level]  (default ../files/out/ttlv bar); AI_TRACE=<frame> prints executed nodes.
- * AI_SCRIPT=fly | ski | pogo | swim | hang | wander picks another input script (wander: 60 s of running, turning and jumping, then a
- * summary: distance, largest step, teleports, stalls, frames the collide loop gave up); AI_FPS=<n> sets the frame rate
- * (default 60); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then;
- * AI_START=x,y,z starts Ed there (AI_SCRIPT=swim with a point in sud0's river).
+ * AI_SCRIPT=fly | ski | pogo | swim | hang | shimmy | airturn | wander picks another input script (wander: 60 s of running, turning and jumping, then a
+ * summary: distance, largest step, teleports, stalls, frames the collide loop gave up); AI_FPS=<n> sets the tick rate
+ * (default 30, the game's: TC_ED_AI_TICK); AI_FROM=<seconds> prints every frame's position, velocity and contacts for 0.25 s from then;
+ * AI_START=x,y,z starts Ed there (AI_SCRIPT=swim with a point in sud0's river); AI_PATH=<file> writes every frame's
+ * time, position, state and heading.
  * Test-only stdio. */
 #include <math.h>
 #include <stdio.h>
@@ -29,6 +30,7 @@ static uint8_t *read_file(const char *path, size_t *size) {
 }
 
 static int tracing;
+static FILE *path_log; /* AI_PATH */
 static void trace(void *user, uint32_t node, uint32_t flags) {
     (void)user;
     if (tracing) printf("          node %u flags %#x\n", node, flags);
@@ -65,7 +67,7 @@ int main(int argc, char **argv) {
     int fly_frames = 0, steps_generic = 0, steps_by[24] = {0};
     float travelled = 0, max_step = 0, stalled_for = 0;
     tc_vec3 before;
-    const float dt = 1.0f / (getenv("AI_FPS") ? (float)atof(getenv("AI_FPS")) : 60);
+    const float dt = getenv("AI_FPS") ? 1.0f / (float)atof(getenv("AI_FPS")) : TC_ED_AI_TICK; /* the game's tick */
     const step base_script[] = {
         {1.0f, 0, 0, 0, "idle"},
         {2.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up (run)"},
@@ -127,15 +129,35 @@ int main(int argc, char **argv) {
         {7.1f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
         {12.0f, 0, 0, 0, "ride"},
     };
-    /* AI_SCRIPT=hang (AI_START beside one of the hang spheres): jump up to it (B19 -> B82), shimmy, climb, drop. */
+    /* AI_SCRIPT=hang / shimmy (AI_START a few units from a ledge 2.3-3 high, facing it): run, jump, his hand point
+     * lands on the ledge (GroundMaterialIs(8): B19 -> B82, hanging); then climb (up: B43, states 153-154) or shimmy
+     * (left). */
     const step hang_script[] = {
         {1.0f, 0, 0, 0, "idle"},
-        {1.5f, 1u << TC_AI_IN_JUMP, 0, 0, "jump"},
-        {3.0f, 0, 0, 0, "release"},
-        {4.0f, 1u << TC_AI_IN_LEFT, 0, 0, "hold left (shimmy)"},
-        {4.5f, 0, 0, 0, "release"},
-        {6.0f, 1u << TC_AI_IN_UP, 0, 0, "hold up (climb)"},
+        {1.3f, 1u << TC_AI_IN_UP, 0, 0, "run at the ledge"},
+        {1.37f, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_JUMP), 0, 0, "jump (a tap: a held jump clears these ledges)"},
+        {1.9f, 1u << TC_AI_IN_UP, 0, 0, "hold up"},
+        {3.5f, 0, 0, 0, "release (hang)"},
+        {3.8f, 1u << TC_AI_IN_UP, 0, 0, "up (climb)"},
         {7.0f, 0, 0, 0, "release"},
+    };
+    const step shimmy_script[] = {
+        {1.0f, 0, 0, 0, "idle"},
+        {1.3f, 1u << TC_AI_IN_UP, 0, 0, "run at the ledge"},
+        {1.37f, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_JUMP), 0, 0, "jump (a tap: a held jump clears these ledges)"},
+        {1.9f, 1u << TC_AI_IN_UP, 0, 0, "hold up"},
+        {3.5f, 0, 0, 0, "release (hang)"},
+        {4.5f, 1u << TC_AI_IN_RIGHT, 0, 0, "right (shimmy)"},
+        {6.0f, 0, 0, 0, "release"},
+    };
+    /* AI_SCRIPT=airturn: run, jump, then steer left in the air (B89's air control: PROC 35 every frame). */
+    const step airturn_script[] = {
+        {1.0f, 0, 0, 0, "idle"},
+        {1.5f, 1u << TC_AI_IN_UP, 0, 0, "run"},
+        {1.6f, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_JUMP), 0, 0, "jump"},
+        {1.8f, 1u << TC_AI_IN_UP, 0, 0, "hold up"},
+        {2.6f, 1u << TC_AI_IN_LEFT, 0, 0, "steer left in the air"},
+        {3.5f, 0, 0, 0, "release"},
     };
     /* AI_SCRIPT=wander: 60 s of running with turns and jumps (collision stress test; prints a summary). */
     step wander_script[48];
@@ -160,6 +182,14 @@ int main(int argc, char **argv) {
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "hang") == 0) {
         script = hang_script;
         steps = sizeof(hang_script) / sizeof(hang_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "airturn") == 0) {
+        script = airturn_script;
+        steps = sizeof(airturn_script) / sizeof(airturn_script[0]);
+    }
+    if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "shimmy") == 0) {
+        script = shimmy_script;
+        steps = sizeof(shimmy_script) / sizeof(shimmy_script[0]);
     }
     if (getenv("AI_SCRIPT") && strcmp(getenv("AI_SCRIPT"), "wander") == 0) {
         static const uint32_t pattern[6] = {1u << TC_AI_IN_UP, (1u << TC_AI_IN_UP) | (1u << TC_AI_IN_LEFT),
@@ -190,6 +220,7 @@ int main(int argc, char **argv) {
     r = tc_ai_model_load(&model, data, size);
     free(data);
     if (r != TC_OK) { fprintf(stderr, "%s: %s\n", path, tc_result_string(r)); return 1; }
+    tc_ai_model_link(&model, &level);
     printf("%s: %u nodes, %u scripts, %u behaviours + %u reflexes, %u dsgvars, %u states, %u buttons, %u others\n",
            path, model.node_count, model.script_count, model.normal_count, model.reflex_count, model.dsg.count,
            model.state_count, model.button_count, model.other_count);
@@ -209,6 +240,7 @@ int main(int argc, char **argv) {
     p = &ed.ai;
     p->trace = trace;
     tracing = getenv("AI_TRACE") != NULL;
+    path_log = getenv("AI_PATH") ? fopen(getenv("AI_PATH"), "w") : NULL; /* every frame: t, position, state, heading */
 
     for (frame = 0, k = 0; frame < (uint32_t)(script[steps - 1].until / dt); frame++) {
         float t = frame * dt;
@@ -221,9 +253,14 @@ int main(int argc, char **argv) {
         if (tracing && frame >= (uint32_t)atoi(getenv("AI_TRACE")) + 3) tracing = 0;
         if (tracing && frame >= (uint32_t)atoi(getenv("AI_TRACE"))) printf("frame %u\n", frame);
         /* camera 4.5 behind the start heading, following Ed's position (does not swing round) */
-        cam = tc_v3_add(player.position, tc_v3(-4.5f * sinf(tc_heading_of(&start)), 4.5f * cosf(tc_heading_of(&start)), 1.5f));
+        {   /* the camera behind the start heading (AI_START's when given): "up" runs that way */
+            float h = start_heading == start_heading ? start_heading * TC_PI / 180 : tc_heading_of(&start);
+            cam = tc_v3_add(player.position, tc_v3(-4.5f * sinf(h), 4.5f * cosf(h), 1.5f));
+        }
         before = player.position;
         tc_ed_ai_step(&ed, dt, script[k].inputs, script[k].sx, script[k].sy, cam);
+        if (path_log) fprintf(path_log, "%.3f %.5f %.5f %.5f %u %.4f\n", (double)t, (double)player.position.x,
+                          (double)player.position.y, (double)player.position.z, p->state, (double)player.heading);
         {
             float step_len = tc_v3_distance(before, player.position);
             if (step_len > 5) {
@@ -260,11 +297,12 @@ int main(int argc, char **argv) {
             }
         }
         if (getenv("AI_FROM") && t >= (float)atof(getenv("AI_FROM")) && t < (float)atof(getenv("AI_FROM")) + 0.25f) {
-            printf("%6.3f  state %u frame %.2f rate %u pos (%.3f, %.3f, %.3f) v (%.2f, %.2f, %.2f) contacts %#x passes %u ground n (%.2f, %.2f, %.2f) wall n (%.2f, %.2f, %.2f)\n",
+            printf("%6.3f  state %u frame %.2f rate %u pos (%.3f, %.3f, %.3f) v (%.2f, %.2f, %.2f) contacts %#x passes %u ground n (%.2f, %.2f, %.2f) own %#x wall n (%.2f, %.2f, %.2f) own %#x\n",
                    (double)t, p->state, (double)p->state_frame, p->frame_rate, (double)player.position.x, (double)player.position.y, (double)player.position.z,
                    (double)player.velocity.x, (double)player.velocity.y, (double)player.velocity.z, ed.contacts, ed.walk.passes,
                    (double)ed.walk.ground_normal.x, (double)ed.walk.ground_normal.y, (double)ed.walk.ground_normal.z,
-                   (double)ed.walk.wall_normal.x, (double)ed.walk.wall_normal.y, (double)ed.walk.wall_normal.z);
+                   ed.walk.ground_own, (double)ed.walk.wall_normal.x, (double)ed.walk.wall_normal.y,
+                   (double)ed.walk.wall_normal.z, ed.walk.wall_own);
         }
         for (i = 0; i < p->sound_count; i++) { /* footsteps: the generic step, or by floor sound type */
             if (p->sounds[i] == TC_AI_FOOTSTEP_EVENT) steps_generic++;
@@ -346,6 +384,7 @@ int main(int argc, char **argv) {
     tc_ed_ai_free(&ed);
     tc_collision_free(&world);
     tc_ai_model_free(&model);
+    if (path_log) fclose(path_log);
     tc_level_free(&level);
     return 0;
 }

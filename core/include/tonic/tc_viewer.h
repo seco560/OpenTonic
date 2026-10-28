@@ -118,7 +118,7 @@ typedef struct tc_viewer {
     float animation_time;     /* seconds */
     uint32_t light_set, light_set_count;  /* baked lighting variant (day/night levels have more than one) */
     float gamma;
-    bool has_fog, fog_enabled;  /* the level's fog (.ttlv v7) and its toggle */
+    bool has_fog, fog_enabled;  /* the level's fog (.ttlv LEVL) and its toggle */
     float fog_near, fog_far, fog_color[3];
 
     /* Input. */

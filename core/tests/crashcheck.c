@@ -42,6 +42,7 @@ int main(int argc, char **argv) {
     snprintf(path, sizeof(path), "%s/Totalski.ttai", dir);
     if (!(data = read_file(path, &size)) || tc_ai_model_load(&model, data, size) != TC_OK) { fprintf(stderr, "%s?\n", path); return 1; }
     free(data);
+    tc_ai_model_link(&model, &level);
     if (which < 0 || which >= model.trigger_count) { fprintf(stderr, "no trigger %d (%u)\n", which, model.trigger_count); return 1; }
     if (tc_collision_init(&world, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) return 1;
     t = &model.triggers[which];
@@ -59,9 +60,9 @@ int main(int argc, char **argv) {
     tc_player_init(&player, &world, start, atan2f(d.x, -d.y));
     if (tc_ed_ai_init(&ed, &model, &player, "Totalski") != TC_OK) return 1;
     printf("crashcheck: trigger %d (r %.1f -> B%u), start 12 uphill\n", which, (double)t->radius, t->behaviour);
-    for (i = 0; i < 60 * 8; i++) {
-        float time = (float)i / 60;
-        tc_ed_ai_step(&ed, 1.0f / 60, 0, 0, 0, tc_v3_add(player.position, tc_v3(0, 5, 2)));
+    for (i = 0; i < 30 * 8; i++) { /* at the game's tick */
+        float time = (float)i * TC_ED_AI_TICK;
+        tc_ed_ai_step(&ed, TC_ED_AI_TICK, 0, 0, 0, tc_v3_add(player.position, tc_v3(0, 5, 2)));
         if (ed.ai.state == 274) {
             if (crash_at < 0) crash_at = time;
             if (time > crash_at + 0.2f && tc_v3_length(player.velocity) > max_crash_speed)

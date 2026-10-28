@@ -12,7 +12,10 @@ import collections
 import os
 import math
 import struct
+import zlib
 from dataclasses import dataclass, field
+
+from . import chunks
 
 NODE_TYPES = {
     0: 'KEYWORD', 1: 'COND', 2: 'OP', 3: 'FUNC', 4: 'PROC', 5: 'META', 9: 'FIELD', 11: 'DSGVAR', 12: 'INT',
@@ -167,70 +170,83 @@ def dump(ai, path, names=None):
 
 # ---- .ttai export (reader: core/src/tc_ai.c) ----
 """
-.ttai version 1: one perso's AI (Ed's), with every pointer resolved to an index. Little-endian.
-  "TTAI", u32 version
-  u32 n_nodes, n_nodes x { u32 param, u8 type, u8 depth, u16 0 }
-      Scripts are runs of nodes in the engine's order, each closed by an end node (type 8, depth 0).
-      Resolved params: 14 button -> button index; 15 constant vector -> vector index; 20 string -> string index;
-      24 perso -> 0 = this perso, k + 1 = level perso k (LevelData.persos()); 25 state -> state index;
-      32 behaviour -> normal index, or 0x10000 | reflex index. Unresolvable pointers -> 0xFFFFFFFF.
-  u32 n_scripts, n_scripts x u32 first node
-  u16 n_normal, u16 n_reflex, (n_normal + n_reflex) x { i32 schedule script (-1 none), u16 first script, u16 n }
-  u16 initial normal behaviour, u16 initial reflex (0xFFFF none)
-  dsgvar block = { u16 n_dsgvars, u16 0, u32 buffer size, n x { u32 offset, u8 type (engine dsgvar type 0-16),
-      u8 x3 }, buffer bytes (initial values), padded to 4 }: this perso's
-  u16 n_states, u16 initial state, n x { i16 next (-1 none), u16 n_frames, u8 speed (frames/s, 0 = 30),
-      u8 flags (State +0x3C: 1 = only listed transitions allowed), u16 n_transitions, u16 n_prohibited,
-      u8 repeats (State +0x3A: extra plays before the next state), u8 0, u16 anim (first state with the same
-      animation: the .ttlv's Ed animation "s<anim>"), u16 0, f32 ground (units per animation frame Ed moves forward
-      while the animation plays on the ground: level.forward_stride of looping states, 0 = in place),
-      n_transitions x { u16 target, u16 via }, n_prohibited x u16 state }
-      (v3: f32 drop after ground: how far the state's pose reaches below the perso's origin, units, >= 0; measured on
-      the first animation frame. The skier's riding states: 0.63, the board under his feet; standing states 0.)
-      v2: the u16 after anim = the state's mechanics ID card (State +0x30) as an index into the card table, 0xFFFF none
-  u16 n_buttons, u16 0, n x { u16 inputs (mask of TC_AI_IN_*), u8 analog (0 none, 1 stick angle, 2 stick
-      magnitude, 3 stick x, 4 stick y), u8 0, i16 lo, i16 hi (stick range, -100..100, that counts as held) }
-  u16 n_strings, n x { u16 len, bytes }
-  u16 n_vectors, n x f32[3]
-  u16 n_persos, u16 0, n x { u16 id (as in perso nodes), u8 role (1 = perso-in-fix 1, the camera; 2 = perso-in-fix 2;
-      0 other), u8 0, dsgvar block }: the other persos the scripts reference (Dot(perso, dsgvar) reads and writes
-      their dsgvars; their own AI does not run)
-  v6 (appended after the v5 trigger table): portals, places, screen transitions (docs/PORTALS.md):
-      u16 n_portals, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major as stored), u16 perso
-          (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the screen is covered),
-          u8 0, u16 fire_dsg, u16 0, i32 fire_value (fire 2: never, capture only: the player's scripts do the rest), u16 n_capture, u16 n_fire, (n_capture + n_fire) x op
-          { u8 op, u8 kind, u16 a, u32 b, u32 c, f32 v[3] } } (ops: ai.POP_*, see portals())
-      u16 n_names, n x { u16 len, bytes }: level and place names the ops refer to (lowercase)
-      u16 n_places, u16 0, n x { u16 len, name bytes (lowercase), f32 position[3], f32 heading }: every level perso
-          by instance name, for PROC_29 arrivals into this level (other levels' scripts name them)
-      transitions: u16 cover threshold, u16 cover range, u16 reveal threshold, u16 reveal range (random r in
+.ttai: one perso's AI (the player's), with every pointer resolved to an index, in the chunk container of chunks.py.
+Little-endian. Every chunk is required; the per-state tables hold one row per STAT state, in order.
+  SCPT  u32 n_nodes, n_nodes x { u32 param, u8 type, u8 depth, u16 0 }
+          Scripts are runs of nodes in the engine's order, each closed by an end node (type 8, depth 0).
+          Resolved params: 14 button -> button index; 15 constant vector -> vector index; 20 string -> string index;
+          24 perso -> 0 = this perso, k + 1 = level perso k (LevelData.persos()); 25 state -> state index;
+          32 behaviour -> normal index, or 0x10000 | reflex index. Unresolvable pointers -> 0xFFFFFFFF.
+        u32 n_scripts, n_scripts x u32 first node
+        u16 n_normal, u16 n_reflex, (n_normal + n_reflex) x { i32 schedule script (-1 none), u16 first script, u16 n }
+        u16 initial normal behaviour, u16 initial reflex (0xFFFF none)
+        dsgvar block (this perso's) = { u16 n_dsgvars, u16 0, u32 buffer size, n x { u32 offset, u8 type (engine
+          dsgvar type 0-16), u8 x3 }, buffer bytes (initial values), padded to 4 }
+  STAT  u16 n_states, u16 initial state, n x { i16 next (-1 none), u16 n_frames, u8 speed (frames/s, 0 = 30),
+          u8 flags (State +0x3C: 1 = only listed transitions allowed), u16 n_transitions, u16 n_prohibited,
+          u8 repeats (State +0x3A: extra plays before the next state), u8 0, u16 anim (first state with the same
+          animation: the .ttlv's Ed animation "s<anim>"), u16 card (the state's mechanics ID card, State +0x30, as
+          an index into CARD; 0xFFFF none), f32 ground (units per animation frame Ed moves forward while the animation
+          plays on the ground: level.forward_stride of looping states, 0 = in place), f32 drop (how far the state's
+          pose reaches below the perso's origin, >= 0, first animation frame; the skier's riding states 0.63),
+          n_transitions x { u16 target, u16 via }, n_prohibited x u16 state }
+  BTNS  u16 n, u16 0, n x { u16 inputs (mask of TC_AI_IN_*), u8 analog (0 none, 1 stick angle, 2 stick magnitude,
+          3 stick x, 4 stick y), u8 0, i16 lo, i16 hi (stick range, -100..100, that counts as held) }
+  STRS  u16 n, n x { u16 len, bytes }
+  VECS  u16 n, n x f32[3]
+  PRSO  u16 n, u16 0, n x { u16 id (as in perso nodes), u8 role (1 = perso-in-fix 1, the camera; 2 = perso-in-fix 2;
+          0 other), u8 0, dsgvar block }: the other persos the scripts reference (Dot(perso, dsgvar) reads and writes
+          their dsgvars; their own AI does not run)
+  CARD  u16 n, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw: mostly
+          f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
+  BODY  root motion and collision spheres: u32 n_rows, n_rows x f32[3] (each A3D frame's own vector, units per
+          animation frame in the perso's axes); per state { u32 first row, u16 n_rows, u16 sphere set (0xFFFF none) };
+          u16 n_sets, u16 0, n_sets x { u16 n, u16 0, n x { f32 centre[3], f32 radius } } (ZDM, ai.zdm_sets)
+  ZDMF  the BODY parts' collide flags (their GameMaterial's collide material identifier, u16 at +2; FUN_00420610 /
+          FUN_0043bf70: 0x10 no collision, 8 floors only, 1 may step up) and kinds: u16 n_sets, then per set u16 n,
+          n x { u16 flags, u16 collide element type (7 sphere, 5 point: radius 0 in BODY), f32 rebound, f32 grip
+          (its own mechanics material: the responses multiply them with the obstacle's) } (ai.zone_parts)
+  TRIG  u16 n, u16 0, n x { f32 position[3], f32 radius, u16 behaviour, u16 guard dsgvar, u32 sleep ms }
+          (ai.proximity_triggers)
+  PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
+          as stored), u16 perso (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the
+          screen is covered, 2: never, capture only: the player's scripts do the rest), u8 0, u16 fire_dsg, u16 0,
+          i32 fire_value, u16 n_capture, u16 n_fire, (n_capture + n_fire) x op { u8 op, u8 kind, u16 a, u32 b, u32 c,
+          f32 v[3] } } (ops: ai.POP_*, see portals());
+        u16 n_names, n x { u16 len, bytes }: level and place names the ops refer to (lowercase)
+  PLAC  u16 n, u16 0, n x { u16 len, name bytes (lowercase), f32 position[3], f32 heading }: every level perso by
+          instance name, for PROC_29 arrivals into this level (other levels' scripts name them)
+  TRAN  screen transitions: u16 cover threshold, u16 cover range, u16 reveal threshold, u16 reveal range (random r in
           [0, range]: r > threshold -> effect B), 4 x { u16 n_variants, u16 0, f32 fields[9] (effect +0x10..+0x30),
           n_variants x { u16 len, texture path relative to the .ttai } } for cover A, cover B, reveal A, reveal B
-  v7 (after the v6 transitions): sounds (tools/ttre/sfx.py, docs/NOTES.md "Sound events"): u32 n_rows, n_rows x
-      { u16 frame, u16 event (global sound event = Bnk_0 event index) }: the type-0 events of the states' animations;
-      then per state { u32 first row, u16 n_rows, u16 0 }. Sound event nodes (type 34, PlaySound3D's argument) hold the
-      event index too.
-  v8 (after the v7 sounds): water (water_planes, docs/NOTES.md "Swimming"): u16 n, u16 0, n x { f32 z, f32 gravity,
-      f32 density, f32 drag coefficient (the environment below the surface), u16 n_boxes, u16 0, n_boxes x { f32 min[3],
-      f32 max[3] } (the bounding boxes of the sectors that list the surface) }; then the water sample points
-      (water_points): u16 n_sets, u16 0, n_sets x { u16 n, u16 0, n x { u32 kind 1-6, f32 point[3] (the perso's axes) } },
-      per state u16 set (0xFFFF none)
-  v9 (after the v8 water points): the portals' zones (portal_zones, docs/NOTES.md "ZDx zones"): per portal (as the v6
-      list) u16 n_prims, u16 0, then if n_prims: f32 inverse[12] (the perso's world matrix inverted, row-major 3x4) and
-      n_prims x { u32 kind (7 sphere: a = centre, b.x = radius; 8 box: a = min, b = max), f32 a[3], f32 b[3] } in the
-      perso's axes: the capture is "the player's origin inside" (COND_13) instead of the radius
-  v10 (after the v9 zones): the floors' sound types (docs/NOTES.md "Footsteps"): u32 n (= the .ttlv's collision
-      triangles), n x u8 (GameMaterial +8 of the triangle's material, 0xFF none), padded to 4 bytes
-  v11 (after the v10 floor sounds): the dry sectors' boxes (dry_boxes; none in a level without water): u16 n, u16 0,
-      n x { f32 min[3], f32 max[3] }: a point inside one, smaller than every water box holding the point, is dry
-  v12 (after the v11 dry boxes): the triangles' collide material identifiers (level.collide_id; GroundMaterialIs and
-      the other material conditions): u32 n (= the .ttlv's collision triangles), n x u16, padded to 4 bytes
-  v2: u16 n_cards, u16 0, n x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw:
-      mostly f32, some bytes/ints; sizes from MEC_hidcard_004b7d04) }
+  SNDS  sounds (tools/ttre/sfx.py, docs/NOTES.md "Sound events"): u32 n_rows, n_rows x { u16 frame, u16 event (global
+          sound event = Bnk_0 event index), u8 first, u8 period, u16 0 }: the type-0 events of the states' animations;
+          per state { u32 first row, u16 n_rows, u16 0 }. Sound event nodes (type 34, PlaySound3D's argument) hold the
+          event index too. first / period = the event's counter (event +0xB / +0xC, FUN_00436560 / FUN_004366c0): it
+          starts at first when the state starts; reaching the frame, 0 fires the event and reloads period, else it
+          counts down, 0xFF stays. 0xFF first: fired only when a script changes the state (FUN_00436600).
+  MECE  the animations' mechanics requests (event type 1; FUN_004366c0 -> FUN_00436910 pushes {mode = value, the
+          state's card} when the frame is reached; Ed's jump, state 43, pushes mode 7 at frame 0: the take-off):
+          u32 n_rows, n_rows x { u16 frame, u16 mode, u8 first, u8 period, u16 0 } (counters as SNDS); per state
+          { u32 first row, u16 n_rows, u16 0 }
+  WATR  water (water_planes, docs/NOTES.md "Swimming"): u16 n, u16 0, n x { f32 z, f32 gravity, f32 density, f32 drag
+          coefficient (the environment below the surface), u16 n_boxes, u16 0, n_boxes x { f32 min[3], f32 max[3] }
+          (the bounding boxes of the sectors that list the surface) }
+  WPTS  water sample points (water_points): u16 n_sets, u16 0, n_sets x { u16 n, u16 0, n x { u32 kind 1-6,
+          f32 point[3] (the perso's axes) } }; per state u16 set (0xFFFF none)
+  ZONE  the portals' zones (portal_zones, docs/NOTES.md "ZDx zones"): u16 n (= PORT's n), u16 0, per portal
+          u16 n_prims, u16 0, then if n_prims: f32 inverse[12] (the perso's world matrix inverted, row-major 3x4) and
+          n_prims x { u32 kind (7 sphere: a = centre, b.x = radius; 8 box: a = min, b = max), f32 a[3], f32 b[3] } in
+          the perso's axes: the capture is "the player's origin inside" (COND_13) instead of the radius
+  FSND  the floors' sound types (docs/NOTES.md "Footsteps"): u32 n (= the .ttlv's collision triangles), n x u8
+          (GameMaterial +8 of the triangle's material, 0xFF none)
+  DRYB  the dry sectors' boxes (dry_boxes; none in a level without water): u16 n, u16 0, n x { f32 min[3],
+          f32 max[3] }: a point inside one, smaller than every water box holding the point, is dry
+  LINK  u32 n_triangles, u32 CRC-32 of the .ttlv's COLL chunk: FSND indexes those triangles, so the core ignores it
+          when the level's collision differs (an imported level using a donor's .ttai)
 """
 import re
 
-TTAI_VERSION = 12
 # ID card sizes in bytes by type (constructor MEC_hidcard_004b7d04), including the type word
 CARD_SIZES = {0: 0x40, 1: 0x48, 2: 0x50, 3: 0x10, 4: 0x40, 5: 0x50, 6: 0x40, 7: 0x28, 8: 8, 9: 0x1C, 10: 0x14,
               11: 0x34, 12: 0x18}
@@ -518,15 +534,62 @@ def water_planes(d):
     return [(z, env, boxes) for z, env, boxes in planes.values() if boxes]
 
 
+def collide_flags(d, gm):
+    """A GameMaterial's collide flags: its collide material (+0xC) u16 at +2 (FUN_0042f770; the same field as
+    level.collide_id), 0 without one. On Ed's ZDM spheres (bar): 1 the feet and lower body (may step up), 2 / 4 the
+    body and head, 0x11 the spheres below the feet that never collide (FUN_00420610 leaves 0x10 out)."""
+    cm = d.lv.ptr(gm, 0xC) if gm else None
+    return d.un('H', cm, 2)[0] if cm else 0
+
+
+def own_material(d, gm):
+    """A GameMaterial's mechanics material (+4) -> (rebound [1], grip [2]); no material: (1, 1), the exe's defaults
+    (DAT_004dc9c4..d4). Ed's body spheres: rebound 0.85, grip 0; his feet none; some lower-body spheres grip 0.02."""
+    mm = d.lv.ptr(gm, 4) if gm else None
+    return tuple(d.un('2f', mm, 4)) if mm else (1.0, 1.0)
+
+
+def zone_parts(d, g):
+    """A ZDx zone's GeometricObjectCollide -> its mechanics parts [(cx, cy, cz, r, flags, element type, rebound, grip)]
+    (own_material): each sphere of
+    its type 7 elements (entries inline at element +8: {u16 centre vertex, u16, f32 radius, ptr game material}), then
+    its points: element type 5 (Points), whose vertices FUN_00470b40 sweeps as moving points, radius 0, flags from the
+    vertex's material (object +0xC, one GameMaterial per vertex; FUN_004702d0). Ed's zone 9 is a point 1.3 ahead and 2.0
+    up with flag 8: it lands on ledge tops and GroundMaterialIs(8) hangs him (docs/DECOMP.md "Ledge hang")."""
+    lv, un = d.lv, d.un
+    if not g:
+        return []
+    nv, ne = un('I', g)[0], un('I', g, 0x14)[0]
+    types = un(f'{ne}H', lv.ptr(g, 0x18)) if 0 < ne < 64 and lv.ptr(g, 0x18) else ()
+    verts, vmats = lv.ptr(g, 4), lv.ptr(g, 0xC)
+    parts, in_spheres = [], set()
+    for k, t in enumerate(types):
+        el = lv.ptr(lv.ptr(g, 0x1C), 4 * k)
+        if t == 7 and el:
+            for j in range(min(un('I', el)[0], 16)):
+                c, = un('H', el, 8 + 12 * j)
+                if c < nv:
+                    in_spheres.add(c)
+                    gm = lv.ptr(el, 8 + 12 * j + 8)
+                    parts.append(un('3f', verts, 12 * c) + un('f', el, 8 + 12 * j + 4) + (collide_flags(d, gm), 7) +
+                                 own_material(d, gm))
+    if 5 in types:
+        for v in range(min(nv, 16)):
+            if v not in in_spheres:
+                gm = lv.ptr(vmats, 4 * v) if vmats else None
+                parts.append(un('3f', verts, 12 * v) + (0.0, collide_flags(d, gm), 5) + own_material(d, gm))
+    return parts
+
+
 def zdm_sets(d, perso, n_states):
-    """Ed's mechanics collision body per state: (list of distinct sphere sets [(cx, cy, cz, r), ...], per-state set
-    index or 0xFFFF). Perso +0x14 = collide set {ptr ZDD list, ptr ZDE list, ptr ZDM list, ptr ZDR list (0 for Ed),
+    """Ed's mechanics collision body per state: (list of distinct sets of parts [(cx, cy, cz, r, flags, element type
+    7 sphere / 5 point), ...] (zone_parts), per-state set index or 0xFFFF). Perso +0x14 = collide set {ptr ZDD list, ptr ZDE list, ptr ZDM list, ptr ZDR list (0 for Ed),
     then the activation lists of the same four}. A zone list = head {ptr first, ptr last, u32 n} of entries
     {ptr next, ptr prev, ptr head, ptr GeometricObjectCollide}; an activation list has one entry per state
     (+0x10 = state index, +0xC = head of {.., +0xC = zone index} entries). Zones are mostly one sphere (element type
     7: vertex = centre, radius at element +0xC). Ed standing: r 0.25 at (0, 0, 0.25) (touches the origin), 0.375 at
     (0, -0.1, 0.75), 0.53 at (0, -0.15, 1.28), 0.3 at (0, -0.3, 1.95); his model is 2.17 tall. Zone 9 (element
-    type 5, not a sphere) is skipped. A collide set with byte +0x36 set (the skier) has no ZDM: see below."""
+    type 5) is his hand point (zone_parts). A collide set with byte +0x36 set (the skier) has no ZDM: see below."""
     lv, un = d.lv, d.un
     cs = lv.ptr(perso, 0x14) if perso else None
     if cs and un('B', cs, 0x36)[0]:
@@ -534,17 +597,12 @@ def zdm_sets(d, perso, n_states):
         # perso's origin (FUN_0043d480 -> FUN_004717d0) of radius +0x30 x 0.5 (DAT_004d2928; skier 1.3 -> 0.65),
         # whatever the state. His riding poses reach 0.61-0.65 below the origin: the board rides on that sphere.
         r = un('f', cs, 0x30)[0] * 0.5
-        return ([[(0.0, 0.0, 0.0, r)]], [0] * n_states) if r > 0 else ([], [0xFFFF] * n_states)
+        return ([[(0.0, 0.0, 0.0, r, 0, 7, 1.0, 1.0)]], [0] * n_states) if r > 0 else ([], [0xFFFF] * n_states)
     if not cs or not lv.ptr(cs, 8) or not lv.ptr(cs, 0x18):
         return [], [0xFFFF] * n_states
     zones, e = [], lv.ptr(lv.ptr(cs, 8))
     while e and len(zones) < 256:
-        g = lv.ptr(e, 0xC)
-        sphere = None
-        if g and un('I', g, 0x14)[0] == 1 and lv.ptr(g, 0x18) and un('H', lv.ptr(g, 0x18))[0] == 7:
-            el = lv.ptr(lv.ptr(g, 0x1C))
-            sphere = un('3f', lv.ptr(g, 4)) + un('f', el, 0xC)
-        zones.append(sphere)
+        zones.append(zone_parts(d, lv.ptr(e, 0xC)))
         e = lv.ptr(e)
     sets, per_state, e = {}, [0xFFFF] * n_states, lv.ptr(lv.ptr(cs, 0x18))
     while e:
@@ -552,8 +610,8 @@ def zdm_sets(d, perso, n_states):
         z, f = [], lv.ptr(act) if act else None
         while f and len(z) < 32:
             i = un('I', f, 0xC)[0]
-            if i < len(zones) and zones[i]:
-                z.append(zones[i])
+            if i < len(zones):
+                z.extend(zones[i])
             f = lv.ptr(f)
         if st < n_states and z:
             per_state[st] = sets.setdefault(tuple(z), len(sets))
@@ -1144,7 +1202,11 @@ def export(ai, path):
     p3d = lv.ptr(ai.perso)
     init_state = ai.state_index.get(lv.ptr(p3d, 0), 0) if p3d else 0
 
-    out = bytearray(b'TTAI' + struct.pack('<I', TTAI_VERSION))
+    out, parts = bytearray(), []
+
+    def cut(tag):  # the bytes since the last cut become chunk `tag`
+        parts.append((tag, bytes(out)))
+        out.clear()
     out += struct.pack('<I', len(nodes))
     for param, typ, depth in nodes:
         out += struct.pack('<IBBH', param & 0xFFFFFFFF, typ, depth, 0)
@@ -1154,24 +1216,29 @@ def export(ai, path):
         out += struct.pack('<iHH', sched, first, n)
     out += struct.pack('<HH', *initial)
     out += own_dsg
+    cut('SCPT')
     out += struct.pack('<HH', len(st_rows), init_state)
     for nxt, nf, speed, flags, trans, prohib, repeats, anim, ground, card, drop in st_rows:
         out += struct.pack('<hHBBHHBBHHff', nxt, nf, speed, flags, len(trans), len(prohib), repeats, 0, anim, card, ground,
                            drop)
         out += b''.join(struct.pack('<HH', *t) for t in trans) + b''.join(struct.pack('<H', p) for p in prohib)
+    cut('STAT')
     out += struct.pack('<HH', len(buttons), 0)
     button_rows = []
     for ref in buttons:
         mask, kind, lo, hi = btn.leaves(ref[1])
         button_rows.append((ref[1], mask, kind, lo, hi))
         out += struct.pack('<HBBhh', mask, kind, 0, lo, hi)
+    cut('BTNS')
     out += struct.pack('<H', len(strings))
     for ref in strings:
         s = cstr(ref)
         out += struct.pack('<H', len(s)) + s
+    cut('STRS')
     out += struct.pack('<H', len(vectors))
     for ref in vectors:
         out += struct.pack('<3f', *d.un('3f', ref))
+    cut('VECS')
     used = sorted({p for p, t, _ in nodes if t == 24 and p not in (0, 0xFFFFFFFF)})
     by_id = {k: loc for loc, k in persos.items()}
     fix = [x[0] for x in d.perso_in_fix]
@@ -1179,11 +1246,13 @@ def export(ai, path):
     for k in used:
         role = fix.index(by_id[k]) if by_id[k] in fix[1:3] else 0
         out += struct.pack('<HBB', k, role, 0) + dsg_block(by_id[k])[0]
+    cut('PRSO')
     out += struct.pack('<HH', len(cards), 0)
     for c in cards:
         t = d.un('I', c)[0]
         n = CARD_SIZES[t] // 4 - 1
         out += struct.pack('<II', t, n) + struct.pack(f'<{n}I', *d.un(f'{n}I', c, 4))
+    cut('CARD')
     root_rows, root_index = [], []
     for k in keys:
         rows = roots.get(k, [])
@@ -1194,11 +1263,16 @@ def export(ai, path):
         out += struct.pack('<IHH', first, n, zs)
     out += struct.pack('<HH', len(sphere_sets), 0)
     for zs in sphere_sets:
-        out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f', *z) for z in zs)
+        out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f', *z[:4]) for z in zs)
+    cut('BODY')
+    out += struct.pack('<H', len(sphere_sets)) + b''.join(
+        struct.pack('<H', len(zs)) + b''.join(struct.pack('<2H2f', *z[4:8]) for z in zs) for zs in sphere_sets)
+    cut('ZDMF')
     triggers = proximity_triggers(ai)
     out += struct.pack('<HH', len(triggers), 0)
     for pos, radius, beh, guard, sleep_ms, _ in triggers:
         out += struct.pack('<4fHHI', *pos, radius, beh, guard, sleep_ms)
+    cut('TRIG')
     names = {}
     gates = portals(ai, names)
     out += struct.pack('<HH', len(gates), 0)
@@ -1212,10 +1286,12 @@ def export(ai, path):
     out += struct.pack('<H', len(names))
     for n in names:
         out += struct.pack('<H', len(n)) + n
+    cut('PORT')
     out += struct.pack('<HH', len(place_rows), 0)
     for n, pos, h in place_rows:
         b = n.encode('latin-1')
         out += struct.pack('<H', len(b)) + b + struct.pack('<4f', *pos, h)
+    cut('PLAC')
     from . import export as tex_export
     tex_idx = tex_export.texture_index(TEX_ROOT)
     (cov_t, cov_r), (rev_t, rev_r), effects = transition_config(d)
@@ -1229,31 +1305,43 @@ def export(ai, path):
                 missing_fx.append(v)
             rel = os.path.relpath(png, os.path.dirname(os.path.abspath(path))).replace(os.sep, '/') if png else ''
             out += struct.pack('<H', len(rel)) + rel.encode()
+    cut('TRAN')
     from .sfx import event_index
-    sound_rows, sound_index = [], []
+    sound_rows, sound_index, mech_rows, mech_index = [], [], [], []
     for st in ai.states:
         ar = lv.ptr(st, 0xC)
         ev = lv.ptr(ar, 8) if ar else None
         n_ev = d.un('I', ar, 0xC)[0] if ev else 0
-        rows = []
+        rows, mech = [], []
         for k in range(n_ev if n_ev < 256 else 0):
-            typ, value, frame = d.un('3I', ev, 20 * k)  # anim event (20 bytes): {type, value, frame, ?, ?}
+            typ, value, frame = d.un('3I', ev, 20 * k)  # anim event (20 bytes): {type, value, u16 frame, ..}
+            first, period = d.un('2B', ev, 20 * k + 0xB)  # its counter: start value, reload (0xFF: never again)
             e = event_index(value) if typ == 0 and value else None
-            if e is not None and frame <= d.un('H', ar, 4)[0]:  # within the animation (some lists hold garbage)
-                rows.append((frame, e))
+            if e is not None and (frame & 0xFFFF) <= d.un('H', ar, 4)[0]:  # within the animation (some lists hold garbage)
+                rows.append((frame & 0xFFFF, e, first, period))
+            if typ == 1 and value < 0x100 and (frame & 0xFFFF) <= d.un('H', ar, 4)[0]:  # FUN_00436910 case 1
+                mech.append((frame & 0xFFFF, value, first, period))
         sound_index.append((len(sound_rows), len(rows)))
         sound_rows += sorted(rows)
-    out += struct.pack('<I', len(sound_rows)) + b''.join(struct.pack('<HH', f, e) for f, e in sound_rows)
+        mech_index.append((len(mech_rows), len(mech)))
+        mech_rows += sorted(mech)
+    out += struct.pack('<I', len(sound_rows)) + b''.join(struct.pack('<2H2BH', *r, 0) for r in sound_rows)
     out += b''.join(struct.pack('<IHH', first, n, 0) for first, n in sound_index)
+    cut('SNDS')
+    out += struct.pack('<I', len(mech_rows)) + b''.join(struct.pack('<2H2BH', *r, 0) for r in mech_rows)
+    out += b''.join(struct.pack('<IHH', first, n, 0) for first, n in mech_index)
+    cut('MECE')
     water = water_planes(d)
     out += struct.pack('<HH', len(water), 0)
     for z, env, boxes in water:
         out += struct.pack('<4fHH', z, *env, len(boxes), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in boxes)
+    cut('WATR')
     point_sets, point_index = water_points(d, ai.states)
     out += struct.pack('<HH', len(point_sets), 0)
     for pts in point_sets:
         out += struct.pack('<HH', len(pts), 0) + b''.join(struct.pack('<I3f', k, *v) for k, v in pts)
     out += b''.join(struct.pack('<H', i) for i in point_index)
+    cut('WPTS')
     zones = portal_zones(ai, gates)
     out += struct.pack('<HH', len(zones), 0)
     for z in zones:
@@ -1263,14 +1351,18 @@ def export(ai, path):
         inv, prims = z
         out += struct.pack('<HH12f', len(prims), 0, *inv)
         out += b''.join(struct.pack('<I3f3f', k, *a, *b) for k, a, b in prims)
+    cut('ZONE')
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
-    _, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True)  # as ttlv.py writes the triangles
-    out += struct.pack('<I', len(sounds)) + bytes(x & 0xFF for x in sounds) + b'\0' * (-len(sounds) % 4)
+    tris, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True)  # as ttlv.py writes the triangles
+    out += struct.pack('<I', len(sounds)) + bytes(x & 0xFF for x in sounds)
+    cut('FSND')
     dry = dry_boxes(d) if water else []
     out += struct.pack('<HH', len(dry), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in dry)
-    out += struct.pack(f'<I{len(sounds)}H', len(sounds), *(x >> 8 for x in sounds)) + b'\0' * (-2 * len(sounds) % 4)
-    with open(path, 'wb') as f:
-        f.write(out)
+    cut('DRYB')
+    coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
+    out += struct.pack('<II', len(tris), zlib.crc32(coll))  # the .ttlv's COLL chunk, byte for byte
+    cut('LINK')
+    chunks.write(path, 'TTAI', parts)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
         f.write('\n'.join(listing) + '\n')
     return {'nodes': len(nodes), 'scripts': len(scripts), 'behaviours': lists, 'initial': initial,
@@ -1279,4 +1371,4 @@ def export(ai, path):
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
             'strings': [cstr(r) for r in strings], 'cards': len(cards), 'root_states': sum(1 for _, n in root_index if n),
             'sphere_sets': len(sphere_sets), 'triggers': len(triggers), 'portals': gates, 'portal_names': list(names),
-            'places': len(place_rows), 'water': len(water), 'zones': sum(1 for z in zones if z), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': len(out)}
+            'places': len(place_rows), 'water': len(water), 'zones': sum(1 for z in zones if z), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': os.path.getsize(path)}

@@ -61,4 +61,82 @@ static inline char *rd_string(reader *r) {
     r->offset += len;
     return s;
 }
+
+/* The chunk container both files use (tools/ttre/chunks.py): char magic[4], u32 TC_CONTAINER, then chunks to the end
+ * of the file, { char tag[4], u32 size, size bytes, zero padding to 4 }. No versions: a loader asks for the chunks it
+ * needs and reads each to its exact end. A missing chunk, or one of another size than the loader reads, means the file
+ * came from another converter: TC_ERR_STALE. Tags the loader does not ask for are skipped. */
+#define TC_CONTAINER 100u /* the numbered formats before it had 1-12 here */
+typedef struct chunks { const uint8_t *data; size_t size; } chunks;
+
+/* Next chunk at *o (header included); 0 at the end. The framing was checked by chunks_open. */
+static inline int chunk_next(const chunks *c, size_t *o, const uint8_t **tag, reader *body) {
+    uint32_t n;
+    if (c->size - *o < 8) return 0;
+    n = le32(c->data + *o + 4);
+    *tag = c->data + *o;
+    body->data = c->data + *o + 8;
+    body->size = n;
+    body->offset = 0;
+    body->error = TC_OK;
+    *o += 8 + (size_t)n;
+    *o = (4 - n % 4) % 4 > c->size - *o ? c->size : *o + (4 - n % 4) % 4;
+    return 1;
+}
+static inline tc_result chunks_open(chunks *c, const uint8_t *data, size_t size, const char magic[4]) {
+    size_t o = 8;
+    const uint8_t *tag;
+    reader body;
+    if (!data || size < 8 || memcmp(data, magic, 4) != 0) return TC_ERR_BAD_MAGIC;
+    if (le32(data + 4) != TC_CONTAINER) return TC_ERR_STALE;
+    c->data = data;
+    c->size = size;
+    while (size - o >= 8)
+        if (le32(data + o + 4) > size - o - 8) return TC_ERR_TRUNCATED;
+        else chunk_next(c, &o, &tag, &body);
+    return o == size ? TC_OK : TC_ERR_TRUNCATED;
+}
+/* *r := a reader over the first chunk called tag. Missing: r reads nothing and carries TC_ERR_STALE, so the loader
+ * can go on reading (zeros, NULL arrays) and learn it from chunk_end. */
+static inline int chunk_need(const chunks *c, const char tag[4], reader *r) {
+    size_t o = 8;
+    const uint8_t *t;
+    while (chunk_next(c, &o, &t, r))
+        if (memcmp(t, tag, 4) == 0) return 1;
+    r->data = NULL;
+    r->size = r->offset = 0;
+    r->error = TC_ERR_STALE;
+    return 0;
+}
+/* After reading a chunk: TC_OK when the loader read it exactly; reading past its end or stopping short is a layout
+ * mismatch (TC_ERR_STALE); out of memory stays itself. */
+static inline tc_result chunk_end(const reader *r) {
+    if (r->error == TC_ERR_OUT_OF_MEMORY) return r->error;
+    return r->error || r->offset != r->size ? TC_ERR_STALE : TC_OK;
+}
+/* The STMP chunk (the converter's stamp) into out, "" when missing. */
+static inline void chunk_stamp(const chunks *c, char *out, size_t out_size) {
+    reader r;
+    uint16_t n;
+    out[0] = 0;
+    if (!chunk_need(c, "STMP", &r)) return;
+    n = rd_u16(&r);
+    if (!have(&r, n)) return;
+    if (n >= out_size) n = (uint16_t)(out_size - 1);
+    memcpy(out, r.data + r.offset, n);
+    out[n] = 0;
+}
+/* CRC-32 as zlib's (the .ttai's LINK chunk holds the one of the .ttlv's COLL chunk). */
+static inline uint32_t tc_crc32(const uint8_t *p, size_t n) {
+    static const uint32_t t[16] = {0x00000000, 0x1DB71064, 0x3B6E20C8, 0x26D930AC, 0x76DC4190, 0x6B6B51F4,
+                                   0x4DB26158, 0x5005713C, 0xEDB88320, 0xF00F9344, 0xD6D6A3E8, 0xCB61B38C,
+                                   0x9B64C2B0, 0x86D3D2D4, 0xA00AE278, 0xBDBDF21C};
+    uint32_t c = 0xFFFFFFFFu;
+    while (n--) {
+        c ^= *p++;
+        c = (c >> 4) ^ t[c & 15];
+        c = (c >> 4) ^ t[c & 15];
+    }
+    return ~c;
+}
 #endif

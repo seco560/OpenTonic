@@ -24,7 +24,7 @@ extern "C" {
  * level), water 1000 (below a sector's water surface). */
 typedef struct tc_mec_env { float gravity, density, drag; } tc_mec_env;
 tc_mec_env tc_mec_env_default(void);
-/* The environment at p (FUN_00451b90 with the .ttai v8 water planes): among the planes one of whose sector boxes
+/* The environment at p (FUN_00451b90 with the .ttai WATR water planes): among the planes one of whose sector boxes
  * holds p, the one nearest p in height; p below it: its environment and the depth (> 0, the scripts' EnvHeight), else
  * the air and 0 (the exe writes the depth only below a surface). The nearest-in-height rule stands in for the
  * engine's choice of the perso's sector, where sector boxes overlap (sud0's top pool above the falls' foot). */
@@ -148,11 +148,9 @@ typedef struct tc_mec_walk {
     tc_vec3 wall_normal;         /* contact record +0x148 (wall, overhang, ceiling) */
     float ground_grip;           /* the ground contact's floor material mat[2] (1 = none) */
     uint32_t ground_tri, wall_tri; /* the contacts' triangles (tc_tri.source; UINT32_MAX none): their materials */
+    uint16_t ground_own, wall_own; /* the collide flags of the body part that made them (tc_ai_sphere.flags) */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
-    /* Without a card: the steep-slope limit (n . up) instead of the default cos 60; 0 = default. The skier sets cos 70,
-     * the ski forces' own steep limit (stopgap, docs/NOTES.md "Sliding stages"). */
-    float slope_cos;
 } tc_mec_walk;
 
 void tc_mec_walk_reset(tc_mec_walk *w);
@@ -160,10 +158,33 @@ void tc_mec_walk_reset(tc_mec_walk *w);
 uint32_t tc_mec_walk_contacts(const tc_mec_walk *w);
 /* Request handler side for an air card (type 4, FUN_004b0f2a): forget the contacts. */
 void tc_mec_walk_air(tc_mec_walk *w);
-/* Earliest contact of the body (spheres in the perso's axes, turned by heading as tc_player) moving from -> to:
- * t in 0..1, the contact normal (unit, away from the surface) and point. Triangles count from both sides; a
- * sphere already touching a triangle hits it at t = 0 only when it moves into it. */
-typedef struct tc_mec_hit { float t; tc_vec3 normal, point; const tc_tri *tri; } tc_mec_hit;
+/* Contact kinds of a sphere against a triangle (FUN_00465b60, hit record +0x7A). */
+enum { TC_MEC_VERTEX = 0, TC_MEC_FACE = 1, TC_MEC_EDGE = 2 };
+/* One sphere moving from p0 by d against one triangle (n its unit normal, the winding's), FUN_00465b60: the face when
+ * the sphere moves into its front (touching counts), else the earliest of the three edges, else the earliest of the
+ * three corners. On a hit: t in 0..1, *kind TC_MEC_*, the normal (face: n; edge, corner: from the touched point to the
+ * centre, divided by r) and the touched point. Returns 0, or 1 (the face, the corners, edge a-b), 2 (edge a-c),
+ * 3 (edge b-c). The exe runs it in the obstacle's axes; the port's triangles are in world space already. */
+int tc_mec_sphere_tri(tc_vec3 p0, tc_vec3 d, float r, tc_vec3 n, tc_vec3 a, tc_vec3 b, tc_vec3 c, int *kind, float *t,
+                      tc_vec3 *normal, tc_vec3 *point);
+/* Earliest contact of the body (spheres and points in the perso's axes, turned by heading as tc_player) moving
+ * from -> to, as
+ * FUN_0043bff0: t in 0..1, the contact normal (away from the surface), point, kind (TC_MEC_*), the touching sphere's
+ * zone type (FUN_0043bf70 on its collide flags: 1, 4, 3, 2 for flag 1, 2, 4, 8; -1 none) and triangle. Spheres
+ * flagged 0x10 do not collide; those flagged 8 sweep apart and count only on floors (normal z >= 0.93). No motion:
+ * no contact (FUN_00464c80). */
+typedef struct tc_mec_hit {
+    float t;
+    tc_vec3 normal, point;
+    int kind, zone_type;
+    uint16_t own_flags;          /* the touching part's collide flags (the record's own material, +0x70) */
+    float own_rebound, own_grip; /* its mechanics material (record +0x50, +0x54): times the obstacle's */
+    bool own_point;              /* a point made it (own shape 0; spheres 3) */
+    const tc_tri *tri;
+} tc_mec_hit;
+/* A point moving from p0 by d against one triangle, FUN_0046ff70 -> FUN_004683b0 -> FUN_00467d40: only the face, only
+ * moving into its front, strictly from in front of the plane (no edges or corners). On a hit t in 0..1 and the point. */
+int tc_mec_point_tri(tc_vec3 p0, tc_vec3 d, tc_vec3 n, tc_vec3 a, tc_vec3 b, tc_vec3 c, float *t, tc_vec3 *point);
 bool tc_mec_sweep(tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 from, tc_vec3 to,
                   tc_mec_hit *hit);
 /* Collide-and-move (MEC_004be1bd; MEC_004bedd6 for the type 2 integrator, same loop): move by velocity x dt, up to 6

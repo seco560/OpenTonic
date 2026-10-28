@@ -105,6 +105,10 @@
 - **Avoid (clean room):** the 2022 Rayman 2 DS source leak.
 
 ## Next session: start here
+**2026-10-28: see docs/DECOMP.md.** It has the coverage ledger, where the port is not the exe, and the collision
+library, read and ported (tc_mec_sphere_tri = FUN_00465b60, proved under Unicorn by tools/exe/oracle.py). The level
+files are chunk containers now (docs/BUILD.md "Formats"). The text below is older.
+
 **State (end of session 5, 2026-10-22).** Ed is driven by **his own AI scripts** in the viewer (default when a level has
 a .ttai; I switches to the simple controller). The user tested it: "playing pretend Tonic Trouble". Idle with random
 idles, run (default on keyboard) / walk (Shift), start/stop transitions, jump/air/land, turning, the stick attack
@@ -733,8 +737,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   response: back to the start with zero velocity and last frame's contacts (MEC_004bdeee / be074). Sweep FUN_0043bff0
   -> contact record (0x7C): [0] 1 static / 2 perso, [1] own zone type (FUN_0043bf70: 1 for mechanics zones), [2] t
   0..1, [3..5] normal, [6..8] point, +0x30 obstacle material, +0x4C own material, +0x78 moving shape, +0x7A contact
-  kind (FUN_00460230 callers: for the sphere-like shape 0 / 3 / 4, likely face / edge / vertex; 2 only for other
-  shapes). Two sweeps with zone masks 1 and ~1: a mask-1 hit counts only on floors with normal z >= 0.93
+  kind (corrected 2026-10-28, docs/DECOMP.md "The collision library": for a sphere 1 face, 2 edge, 0 corner). Two sweeps with zone masks 1 and ~1: a mask-1 hit counts only on floors with normal z >= 0.93
   (DAT_004dc9bc); not ported (one sweep of all spheres).
 - **Classification MEC_004bc477** by n . up with the card (+0x1C/+0x20/+0x24/+0x28; no card: cos 45/60/120/135):
   ground (1) / steep slope (2) -> MEC_004bb904; wall (4) -> MEC_004bbc4c; overhang (8) / ceiling (0x10) ->
@@ -1208,6 +1211,8 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   code. **Next step: observe the original.** GAM_PlayAnim_00415c00 prints every state change with OutputDebugStringA
   ("change state trame", "Next state trame") when the byte at 0x4EC6AC is non-zero: patch it (or poke it at run time)
   and run under Wine with WINEDEBUG=+debugstr, ride into a wall, read which state plays; then trace its trigger.
+- **2026-10-28: all three stopgaps below are removed** (user: he slides on anything in the original; the exe's
+  collision, docs/DECOMP.md, no longer pins him). Kept for the history.
 - **Stopgap in the port (2026-10-24, not from the exe):** tc_ed_ai ski_unstick(): a wall hit from above 8 u/s that
   leaves under 30 % of the speed keeps half of it along the wall (a dead-on hit: along the wall towards the drift) and
   puts the skier 5 cm off it, so he slides on instead of sticking. No animation (forcing B9 would cost a hit point).
@@ -1235,6 +1240,10 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   LAND_MORT liquid): the skier loses a life (state 206), Ed underwater goes to B61.
 
 ### Hanging from the hang spheres (.ttai v12, 2026-10-27; built, aicheck only, not yet run by the user)
+**Superseded 2026-10-28 (docs/DECOMP.md "Ledge hang, found and ported"): wrong trigger.** GroundMaterialIs tests Ed's
+*own* part's material (record +0x70), not the floor's: the hang is his zone 9 hand point (flag 8) landing on a ledge
+top. The spheres' obstacle id 0x8 is read by nothing; the CLID chunk and the per-triangle ids are gone. Kept for the
+B82 / R10 script notes below.
 - **Trigger:** reflexes R0 / R25 / R26 `GroundMaterialIs(0x8)` -> B19 (velocity 0, state 46) -> **B82 + R10** (the hang).
   B82: stick sideways -> states 48 / 49 (shimmy, Proc10 rate), stick back (> 140 deg) -> state 44 + B90 (drop), stick
   forward -> FUNC 162 probe from (0, 0, 4.4) along (0, -1, 0), clear beyond 2.25 -> **B43** (climb up, states 153/154).
@@ -1253,6 +1262,8 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   (B82 compares a unit direction with 2.25), hit point in those axes. FUNC 13 = vector length (as used).
 - `AI_SCRIPT=hang AI_START=38.5,29.4,-19.4,90 aicheck files/out/ttlv Land` (AI_START takes an optional heading in
   degrees): grabs at 0.28 s (B82, states 197/47 hold steadily), climb and shimmy run.
+- **2026-10-28:** found: the hand point (above). An "edge riding" candidate from the first pass was the port's error
+  (grip 1 on the body spheres) and is gone.
 - **Not found: the generic hop onto a ledge just above Ed** (user: he shimmies over any surface a bit higher than him).
   Not in Ed's scripts (no air behaviour or reflex reacts to a wall that way; R6's AgainstWall -> state 134 is the
   climb out of water; R25's dsg64 only scales air steering); the exe's step-up (MEC_004bbc4c -> MEC_004bb06e) needs

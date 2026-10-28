@@ -42,8 +42,11 @@ static tc_vec3 rd_vec3(reader *r) {
     return v;
 }
 
-/* v6: portals, names, places, screen transitions (tools/ttre/ai.py). */
-static void load_v6(reader *r, tc_ai_model *m) {
+/* Chunks (tools/ttre/ai.py): SCPT, STAT, BTNS, STRS, VECS, PRSO, CARD, BODY, ZDMF, TRIG, PORT, PLAC, TRAN, SNDS, WATR, WPTS,
+ * MECE, ZONE, FSND, DRYB, LINK; all required. Each is read to its exact end (chunk_end). */
+#define CHUNK_END(r) do { if ((e = chunk_end(r)) != TC_OK) goto fail; } while (0)
+
+static void rd_portals(reader *r, tc_ai_model *m) {
     uint32_t i, k;
     m->portal_count = rd_u16(r);
     (void)rd_u16(r);
@@ -86,14 +89,10 @@ static void load_v6(reader *r, tc_ai_model *m) {
                 r->error = TC_ERR_TRUNCATED;
         }
     }
-    m->place_count = rd_u16(r);
-    (void)rd_u16(r);
-    m->places = (tc_ai_place *)rd_array(r, m->place_count, sizeof(tc_ai_place), 18);
-    for (i = 0; m->places && i < m->place_count; i++) {
-        m->places[i].name = rd_string(r);
-        m->places[i].position = rd_vec3(r);
-        m->places[i].heading = rd_f32(r);
-    }
+}
+
+static void rd_transitions(reader *r, tc_ai_model *m) {
+    uint32_t i, k;
     m->transitions.cover_threshold = rd_u16(r);
     m->transitions.cover_range = rd_u16(r);
     m->transitions.reveal_threshold = rd_u16(r);
@@ -116,271 +115,335 @@ static void free_strings(char **s, uint32_t n) {
 }
 
 tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
-    reader r = {data, size, 0, TC_OK};
-    uint32_t i, k, version;
+    chunks cs;
+    reader rr, *r = &rr;
+    uint32_t i, k;
+    tc_result e;
     memset(m, 0, sizeof(*m));
-    if (size < 8 || memcmp(data, "TTAI", 4) != 0) return TC_ERR_BAD_MAGIC;
-    r.offset = 4;
-    version = rd_u32(&r);
-    if (version < 1 || version > 12) return TC_ERR_UNSUPPORTED_VERSION;
+    if ((e = chunks_open(&cs, data, size, "TTAI")) != TC_OK) return e;
+    chunk_stamp(&cs, m->converter, sizeof m->converter);
 
-    m->node_count = rd_u32(&r);
-    m->nodes = (tc_ai_node *)rd_array(&r, m->node_count, sizeof(tc_ai_node), 8);
+    chunk_need(&cs, "SCPT", r);
+    m->node_count = rd_u32(r);
+    m->nodes = (tc_ai_node *)rd_array(r, m->node_count, sizeof(tc_ai_node), 8);
     for (i = 0; m->nodes && i < m->node_count; i++) {
-        m->nodes[i].param = rd_u32(&r);
-        m->nodes[i].type = rd_u8(&r);
-        m->nodes[i].depth = rd_u8(&r);
-        (void)rd_u16(&r);
+        m->nodes[i].param = rd_u32(r);
+        m->nodes[i].type = rd_u8(r);
+        m->nodes[i].depth = rd_u8(r);
+        (void)rd_u16(r);
     }
-    m->script_count = rd_u32(&r);
-    m->scripts = (uint32_t *)rd_array(&r, m->script_count, 4, 4);
+    m->script_count = rd_u32(r);
+    m->scripts = (uint32_t *)rd_array(r, m->script_count, 4, 4);
     for (i = 0; m->scripts && i < m->script_count; i++) {
-        m->scripts[i] = rd_u32(&r);
-        if (m->scripts[i] >= m->node_count) r.error = TC_ERR_TRUNCATED;
+        m->scripts[i] = rd_u32(r);
+        if (m->scripts[i] >= m->node_count) r->error = TC_ERR_TRUNCATED;
     }
-    m->normal_count = rd_u16(&r);
-    m->reflex_count = rd_u16(&r);
+    m->normal_count = rd_u16(r);
+    m->reflex_count = rd_u16(r);
     k = (uint32_t)m->normal_count + m->reflex_count;
-    m->behaviours = (tc_ai_behaviour *)rd_array(&r, k, sizeof(tc_ai_behaviour), 8);
+    m->behaviours = (tc_ai_behaviour *)rd_array(r, k, sizeof(tc_ai_behaviour), 8);
     for (i = 0; m->behaviours && i < k; i++) {
         tc_ai_behaviour *b = &m->behaviours[i];
-        b->schedule = rd_i32(&r);
-        b->first_script = rd_u16(&r);
-        b->script_count = rd_u16(&r);
+        b->schedule = rd_i32(r);
+        b->first_script = rd_u16(r);
+        b->script_count = rd_u16(r);
         if ((uint32_t)b->first_script + b->script_count > m->script_count ||
             (b->schedule >= 0 && (uint32_t)b->schedule >= m->script_count))
-            r.error = TC_ERR_TRUNCATED;
+            r->error = TC_ERR_TRUNCATED;
         if (b->script_count > m->max_rules) m->max_rules = b->script_count;
     }
-    m->initial_normal = rd_u16(&r);
-    m->initial_reflex = rd_u16(&r);
-    rd_dsg_def(&r, &m->dsg);
+    m->initial_normal = rd_u16(r);
+    m->initial_reflex = rd_u16(r);
+    rd_dsg_def(r, &m->dsg);
+    CHUNK_END(r);
 
-    m->state_count = rd_u16(&r);
-    m->initial_state = rd_u16(&r);
-    m->states = (tc_ai_state *)rd_array(&r, m->state_count, sizeof(tc_ai_state), 20);
+    chunk_need(&cs, "STAT", r);
+    m->state_count = rd_u16(r);
+    m->initial_state = rd_u16(r);
+    m->states = (tc_ai_state *)rd_array(r, m->state_count, sizeof(tc_ai_state), 24);
     for (i = 0; m->states && i < m->state_count; i++) {
         tc_ai_state *s = &m->states[i];
-        s->next = rd_i16(&r);
-        s->frames = rd_u16(&r);
-        s->speed = rd_u8(&r);
-        s->flags = rd_u8(&r);
-        s->transition_count = rd_u16(&r);
-        s->prohibited_count = rd_u16(&r);
-        s->repeats = rd_u8(&r);
-        (void)rd_u8(&r);
-        s->anim = rd_u16(&r);
-        s->card = rd_u16(&r);
-        if (version < 2) s->card = TC_AI_NONE16;
-        s->ground = rd_f32(&r);
-        s->drop = version >= 3 ? rd_f32(&r) : 0;
-        s->root_first = 0;
-        s->root_count = 0;
-        s->spheres = TC_AI_NONE16;
-        s->transitions = (tc_ai_transition *)rd_array(&r, s->transition_count, sizeof(tc_ai_transition), 4);
+        s->next = rd_i16(r);
+        s->frames = rd_u16(r);
+        s->speed = rd_u8(r);
+        s->flags = rd_u8(r);
+        s->transition_count = rd_u16(r);
+        s->prohibited_count = rd_u16(r);
+        s->repeats = rd_u8(r);
+        (void)rd_u8(r);
+        s->anim = rd_u16(r);
+        s->card = rd_u16(r);
+        s->ground = rd_f32(r);
+        s->drop = rd_f32(r);
+        s->transitions = (tc_ai_transition *)rd_array(r, s->transition_count, sizeof(tc_ai_transition), 4);
         for (k = 0; s->transitions && k < s->transition_count; k++) {
-            s->transitions[k].target = rd_u16(&r);
-            s->transitions[k].via = rd_u16(&r);
+            s->transitions[k].target = rd_u16(r);
+            s->transitions[k].via = rd_u16(r);
         }
-        s->prohibited = (uint16_t *)rd_array(&r, s->prohibited_count, 2, 2);
-        for (k = 0; s->prohibited && k < s->prohibited_count; k++) s->prohibited[k] = rd_u16(&r);
+        s->prohibited = (uint16_t *)rd_array(r, s->prohibited_count, 2, 2);
+        for (k = 0; s->prohibited && k < s->prohibited_count; k++) s->prohibited[k] = rd_u16(r);
     }
-    m->button_count = rd_u16(&r);
-    (void)rd_u16(&r);
-    m->buttons = (tc_ai_button *)rd_array(&r, m->button_count, sizeof(tc_ai_button), 8);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "BTNS", r);
+    m->button_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->buttons = (tc_ai_button *)rd_array(r, m->button_count, sizeof(tc_ai_button), 8);
     for (i = 0; m->buttons && i < m->button_count; i++) {
-        m->buttons[i].inputs = rd_u16(&r);
-        m->buttons[i].analog = rd_u8(&r);
-        (void)rd_u8(&r);
-        m->buttons[i].lo = rd_i16(&r);
-        m->buttons[i].hi = rd_i16(&r);
+        m->buttons[i].inputs = rd_u16(r);
+        m->buttons[i].analog = rd_u8(r);
+        (void)rd_u8(r);
+        m->buttons[i].lo = rd_i16(r);
+        m->buttons[i].hi = rd_i16(r);
     }
-    m->string_count = rd_u16(&r);
-    m->strings = (char **)rd_array(&r, m->string_count, sizeof(char *), 2);
-    for (i = 0; m->strings && i < m->string_count; i++) m->strings[i] = rd_string(&r);
-    m->vector_count = rd_u16(&r);
-    m->vectors = (tc_vec3 *)rd_array(&r, m->vector_count, sizeof(tc_vec3), 12);
-    for (i = 0; m->vectors && i < m->vector_count; i++) {
-        m->vectors[i].x = rd_f32(&r);
-        m->vectors[i].y = rd_f32(&r);
-        m->vectors[i].z = rd_f32(&r);
-    }
-    m->other_count = rd_u16(&r);
-    (void)rd_u16(&r);
-    m->others = (tc_ai_other *)rd_array(&r, m->other_count, sizeof(tc_ai_other), 12);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "STRS", r);
+    m->string_count = rd_u16(r);
+    m->strings = (char **)rd_array(r, m->string_count, sizeof(char *), 2);
+    for (i = 0; m->strings && i < m->string_count; i++) m->strings[i] = rd_string(r);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "VECS", r);
+    m->vector_count = rd_u16(r);
+    m->vectors = (tc_vec3 *)rd_array(r, m->vector_count, sizeof(tc_vec3), 12);
+    for (i = 0; m->vectors && i < m->vector_count; i++) m->vectors[i] = rd_vec3(r);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "PRSO", r);
+    m->other_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->others = (tc_ai_other *)rd_array(r, m->other_count, sizeof(tc_ai_other), 12);
     for (i = 0; m->others && i < m->other_count; i++) {
-        m->others[i].id = rd_u16(&r);
-        m->others[i].role = rd_u8(&r);
-        (void)rd_u8(&r);
-        rd_dsg_def(&r, &m->others[i].dsg);
+        m->others[i].id = rd_u16(r);
+        m->others[i].role = rd_u8(r);
+        (void)rd_u8(r);
+        rd_dsg_def(r, &m->others[i].dsg);
     }
-    if (version >= 2) {
-        m->card_count = rd_u16(&r);
-        (void)rd_u16(&r);
-        m->cards = (tc_ai_card *)rd_array(&r, m->card_count, sizeof(tc_ai_card), 8);
-        for (i = 0; m->cards && i < m->card_count; i++) {
-            tc_ai_card *c = &m->cards[i];
-            c->type = rd_u32(&r);
-            c->word_count = rd_u32(&r);
-            if (c->word_count > 19) { r.error = TC_ERR_TRUNCATED; break; }
-            for (k = 0; k < c->word_count; k++) c->words[k] = rd_u32(&r);
-        }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "CARD", r);
+    m->card_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->cards = (tc_ai_card *)rd_array(r, m->card_count, sizeof(tc_ai_card), 8);
+    for (i = 0; m->cards && i < m->card_count; i++) {
+        tc_ai_card *c = &m->cards[i];
+        c->type = rd_u32(r);
+        c->word_count = rd_u32(r);
+        if (c->word_count > 19) { r->error = TC_ERR_TRUNCATED; break; }
+        for (k = 0; k < c->word_count; k++) c->words[k] = rd_u32(r);
     }
-    if (version >= 4) {
-        m->root_count = rd_u32(&r);
-        m->root = (tc_vec3 *)rd_array(&r, m->root_count, sizeof(tc_vec3), 12);
-        for (i = 0; m->root && i < m->root_count; i++) {
-            m->root[i].x = rd_f32(&r);
-            m->root[i].y = rd_f32(&r);
-            m->root[i].z = rd_f32(&r);
-        }
-        for (i = 0; m->states && i < m->state_count; i++) {
-            tc_ai_state *s = &m->states[i];
-            s->root_first = rd_u32(&r);
-            s->root_count = rd_u16(&r);
-            s->spheres = rd_u16(&r);
-            if ((uint64_t)s->root_first + s->root_count > m->root_count) r.error = TC_ERR_TRUNCATED;
-        }
-        m->sphere_set_count = rd_u16(&r);
-        (void)rd_u16(&r);
-        m->sphere_sets = (tc_ai_sphere_set *)rd_array(&r, m->sphere_set_count, sizeof(tc_ai_sphere_set), 4);
-        for (i = 0; m->sphere_sets && i < m->sphere_set_count; i++) {
-            tc_ai_sphere_set *z = &m->sphere_sets[i];
-            z->count = rd_u16(&r);
-            (void)rd_u16(&r);
-            if (z->count > TC_AI_MAX_SPHERES) { r.error = TC_ERR_TRUNCATED; break; }
-            for (k = 0; k < z->count; k++) {
-                z->spheres[k].center.x = rd_f32(&r);
-                z->spheres[k].center.y = rd_f32(&r);
-                z->spheres[k].center.z = rd_f32(&r);
-                z->spheres[k].radius = rd_f32(&r);
-            }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "BODY", r);
+    m->root_count = rd_u32(r);
+    m->root = (tc_vec3 *)rd_array(r, m->root_count, sizeof(tc_vec3), 12);
+    for (i = 0; m->root && i < m->root_count; i++) m->root[i] = rd_vec3(r);
+    for (i = 0; m->states && i < m->state_count; i++) {
+        tc_ai_state *s = &m->states[i];
+        s->root_first = rd_u32(r);
+        s->root_count = rd_u16(r);
+        s->spheres = rd_u16(r);
+        if ((uint64_t)s->root_first + s->root_count > m->root_count) r->error = TC_ERR_TRUNCATED;
+    }
+    m->sphere_set_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->sphere_sets = (tc_ai_sphere_set *)rd_array(r, m->sphere_set_count, sizeof(tc_ai_sphere_set), 4);
+    for (i = 0; m->sphere_sets && i < m->sphere_set_count; i++) {
+        tc_ai_sphere_set *z = &m->sphere_sets[i];
+        z->count = rd_u16(r);
+        (void)rd_u16(r);
+        if (z->count > TC_AI_MAX_SPHERES) { r->error = TC_ERR_TRUNCATED; break; }
+        for (k = 0; k < z->count; k++) {
+            z->spheres[k].center = rd_vec3(r);
+            z->spheres[k].radius = rd_f32(r);
         }
     }
-    if (version >= 5) {
-        m->trigger_count = rd_u16(&r);
-        (void)rd_u16(&r);
-        m->triggers = (tc_ai_trigger *)rd_array(&r, m->trigger_count, sizeof(tc_ai_trigger), 24);
-        for (i = 0; m->triggers && i < m->trigger_count; i++) {
-            tc_ai_trigger *t = &m->triggers[i];
-            t->position.x = rd_f32(&r);
-            t->position.y = rd_f32(&r);
-            t->position.z = rd_f32(&r);
-            t->radius = rd_f32(&r);
-            t->behaviour = rd_u16(&r);
-            t->guard = rd_u16(&r);
-            t->sleep_ms = rd_u32(&r);
-            if (t->behaviour >= m->normal_count) r.error = TC_ERR_TRUNCATED;
+    CHUNK_END(r);
+
+    chunk_need(&cs, "ZDMF", r);
+    if (rd_u16(r) != m->sphere_set_count) r->error = TC_ERR_TRUNCATED;
+    for (i = 0; !r->error && m->sphere_sets && i < m->sphere_set_count; i++) {
+        tc_ai_sphere_set *z = &m->sphere_sets[i];
+        if (rd_u16(r) != z->count) r->error = TC_ERR_TRUNCATED;
+        for (k = 0; k < z->count; k++) {
+            z->spheres[k].flags = rd_u16(r);
+            z->spheres[k].point = rd_u16(r) == 5; /* the collide element type: 7 sphere, 5 point */
+            z->spheres[k].rebound = rd_f32(r);
+            z->spheres[k].grip = rd_f32(r);
         }
     }
-    if (version >= 6) load_v6(&r, m);
-    if (version >= 7) {
-        m->sound_count = rd_u32(&r);
-        m->sounds = (tc_ai_sound *)rd_array(&r, m->sound_count, sizeof(tc_ai_sound), 4);
-        for (i = 0; m->sounds && i < m->sound_count; i++) {
-            m->sounds[i].frame = rd_u16(&r);
-            m->sounds[i].event = rd_u16(&r);
-        }
-        for (i = 0; m->states && i < m->state_count; i++) {
-            m->states[i].sound_first = rd_u32(&r);
-            m->states[i].sound_count = rd_u16(&r);
-            (void)rd_u16(&r);
-            if ((uint64_t)m->states[i].sound_first + m->states[i].sound_count > m->sound_count) r.error = TC_ERR_TRUNCATED;
+    CHUNK_END(r);
+
+    chunk_need(&cs, "TRIG", r);
+    m->trigger_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->triggers = (tc_ai_trigger *)rd_array(r, m->trigger_count, sizeof(tc_ai_trigger), 24);
+    for (i = 0; m->triggers && i < m->trigger_count; i++) {
+        tc_ai_trigger *t = &m->triggers[i];
+        t->position = rd_vec3(r);
+        t->radius = rd_f32(r);
+        t->behaviour = rd_u16(r);
+        t->guard = rd_u16(r);
+        t->sleep_ms = rd_u32(r);
+        if (t->behaviour >= m->normal_count) r->error = TC_ERR_TRUNCATED;
+    }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "PORT", r);
+    rd_portals(r, m);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "PLAC", r);
+    m->place_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->places = (tc_ai_place *)rd_array(r, m->place_count, sizeof(tc_ai_place), 18);
+    for (i = 0; m->places && i < m->place_count; i++) {
+        m->places[i].name = rd_string(r);
+        m->places[i].position = rd_vec3(r);
+        m->places[i].heading = rd_f32(r);
+    }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "TRAN", r);
+    rd_transitions(r, m);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "SNDS", r);
+    m->sound_count = rd_u32(r);
+    m->sounds = (tc_ai_sound *)rd_array(r, m->sound_count, sizeof(tc_ai_sound), 8);
+    for (i = 0; m->sounds && i < m->sound_count; i++) {
+        m->sounds[i].frame = rd_u16(r);
+        m->sounds[i].event = rd_u16(r);
+        m->sounds[i].first = rd_u8(r);
+        m->sounds[i].period = rd_u8(r);
+        (void)rd_u16(r);
+    }
+    for (i = 0; m->states && i < m->state_count; i++) {
+        m->states[i].sound_first = rd_u32(r);
+        m->states[i].sound_count = rd_u16(r);
+        (void)rd_u16(r);
+        if ((uint64_t)m->states[i].sound_first + m->states[i].sound_count > m->sound_count) r->error = TC_ERR_TRUNCATED;
+    }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "MECE", r);
+    m->mech_event_count = rd_u32(r);
+    m->mech_events = (tc_ai_mech_event *)rd_array(r, m->mech_event_count, sizeof(tc_ai_mech_event), 8);
+    for (i = 0; m->mech_events && i < m->mech_event_count; i++) {
+        m->mech_events[i].frame = rd_u16(r);
+        m->mech_events[i].mode = rd_u16(r);
+        m->mech_events[i].first = rd_u8(r);
+        m->mech_events[i].period = rd_u8(r);
+        (void)rd_u16(r);
+    }
+    for (i = 0; m->states && i < m->state_count; i++) {
+        m->states[i].mech_first = rd_u32(r);
+        m->states[i].mech_count = rd_u16(r);
+        (void)rd_u16(r);
+        if ((uint64_t)m->states[i].mech_first + m->states[i].mech_count > m->mech_event_count) r->error = TC_ERR_TRUNCATED;
+    }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "WATR", r);
+    m->water_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->water = (tc_ai_water *)rd_array(r, m->water_count, sizeof(tc_ai_water), 20);
+    for (i = 0; m->water && i < m->water_count; i++) {
+        tc_ai_water *w = &m->water[i];
+        w->z = rd_f32(r);
+        w->gravity = rd_f32(r);
+        w->density = rd_f32(r);
+        w->drag = rd_f32(r);
+        w->box_count = rd_u16(r);
+        (void)rd_u16(r);
+        w->boxes = (tc_vec3 *)rd_array(r, (size_t)w->box_count * 2, sizeof(tc_vec3), 12);
+        for (k = 0; w->boxes && k < (uint32_t)w->box_count * 2; k++) w->boxes[k] = rd_vec3(r);
+    }
+    CHUNK_END(r);
+
+    chunk_need(&cs, "WPTS", r);
+    m->water_point_set_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->water_point_sets = (tc_ai_water_points *)rd_array(r, m->water_point_set_count, sizeof(tc_ai_water_points), 4);
+    for (i = 0; m->water_point_sets && i < m->water_point_set_count; i++) {
+        tc_ai_water_points *w = &m->water_point_sets[i];
+        uint8_t n = (uint8_t)rd_u16(r);
+        (void)rd_u16(r);
+        for (k = 0; k < n; k++) {
+            uint8_t kind = (uint8_t)rd_u32(r);
+            tc_vec3 v = rd_vec3(r);
+            if (w->count < TC_AI_MAX_WATER_POINTS) w->kind[w->count] = kind, w->point[w->count++] = v;
         }
     }
-    if (version >= 8) {
-        m->water_count = rd_u16(&r);
-        (void)rd_u16(&r);
-        m->water = (tc_ai_water *)rd_array(&r, m->water_count, sizeof(tc_ai_water), 20);
-        for (i = 0; m->water && i < m->water_count; i++) {
-            tc_ai_water *w = &m->water[i];
-            w->z = rd_f32(&r);
-            w->gravity = rd_f32(&r);
-            w->density = rd_f32(&r);
-            w->drag = rd_f32(&r);
-            w->box_count = rd_u16(&r);
-            (void)rd_u16(&r);
-            w->boxes = (tc_vec3 *)rd_array(&r, (size_t)w->box_count * 2, sizeof(tc_vec3), 12);
-            for (k = 0; w->boxes && k < (uint32_t)w->box_count * 2; k++) {
-                w->boxes[k].x = rd_f32(&r);
-                w->boxes[k].y = rd_f32(&r);
-                w->boxes[k].z = rd_f32(&r);
-            }
-        }
+    for (i = 0; m->states && i < m->state_count; i++) {
+        m->states[i].water_points = rd_u16(r);
+        if (m->states[i].water_points != TC_AI_NONE16 && m->states[i].water_points >= m->water_point_set_count)
+            r->error = TC_ERR_TRUNCATED;
     }
-    for (i = 0; m->states && i < m->state_count; i++) m->states[i].water_points = TC_AI_NONE16;
-    if (version >= 8) {
-        m->water_point_set_count = rd_u16(&r);
-        (void)rd_u16(&r);
-        m->water_point_sets = (tc_ai_water_points *)rd_array(&r, m->water_point_set_count, sizeof(tc_ai_water_points), 4);
-        for (i = 0; m->water_point_sets && i < m->water_point_set_count; i++) {
-            tc_ai_water_points *w = &m->water_point_sets[i];
-            uint8_t n = (uint8_t)rd_u16(&r);
-            (void)rd_u16(&r);
-            for (k = 0; k < n; k++) {
-                uint8_t kind = (uint8_t)rd_u32(&r);
-                tc_vec3 v = rd_vec3(&r);
-                if (w->count < TC_AI_MAX_WATER_POINTS) w->kind[w->count] = kind, w->point[w->count++] = v;
-            }
-        }
-        for (i = 0; m->states && i < m->state_count; i++) {
-            m->states[i].water_points = rd_u16(&r);
-            if (m->states[i].water_points != TC_AI_NONE16 && m->states[i].water_points >= m->water_point_set_count)
-                r.error = TC_ERR_TRUNCATED;
-        }
-    }
-    if (version >= 9) {
-        uint16_t n = rd_u16(&r);
-        (void)rd_u16(&r);
-        if (n != m->portal_count) r.error = TC_ERR_TRUNCATED;
-        for (i = 0; !r.error && m->portals && i < n; i++) {
+    CHUNK_END(r);
+
+    chunk_need(&cs, "ZONE", r);
+    {
+        uint16_t n = rd_u16(r);
+        (void)rd_u16(r);
+        if (n != m->portal_count) r->error = TC_ERR_TRUNCATED;
+        for (i = 0; !r->error && m->portals && i < n; i++) {
             tc_ai_portal *p = &m->portals[i];
-            uint16_t prims = rd_u16(&r);
-            (void)rd_u16(&r);
+            uint16_t prims = rd_u16(r);
+            (void)rd_u16(r);
             if (!prims) continue;
-            for (k = 0; k < 12; k++) p->zone_inverse[k] = rd_f32(&r);
+            for (k = 0; k < 12; k++) p->zone_inverse[k] = rd_f32(r);
             for (k = 0; k < prims; k++) {
                 tc_ai_zone_prim z;
-                z.kind = rd_u32(&r);
-                z.a = rd_vec3(&r);
-                z.b = rd_vec3(&r);
+                z.kind = rd_u32(r);
+                z.a = rd_vec3(r);
+                z.b = rd_vec3(r);
                 if (p->zone_count < TC_AI_MAX_ZONE_PRIMS) p->zone[p->zone_count++] = z;
             }
         }
     }
-    if (version >= 10) {
-        m->floor_sound_count = rd_u32(&r);
-        m->floor_sounds = (uint8_t *)rd_array(&r, m->floor_sound_count, 1, 1);
-        for (i = 0; m->floor_sounds && i < m->floor_sound_count; i++) m->floor_sounds[i] = rd_u8(&r);
-        for (i = m->floor_sound_count; i % 4; i++) (void)rd_u8(&r);
-    }
-    if (version >= 11) {
-        m->dry_box_count = rd_u16(&r);
-        (void)rd_u16(&r);
-        m->dry_boxes = (tc_vec3 *)rd_array(&r, (size_t)m->dry_box_count * 2, sizeof(tc_vec3), 12);
-        for (i = 0; m->dry_boxes && i < (uint32_t)m->dry_box_count * 2; i++) {
-            m->dry_boxes[i].x = rd_f32(&r);
-            m->dry_boxes[i].y = rd_f32(&r);
-            m->dry_boxes[i].z = rd_f32(&r);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "FSND", r);
+    m->floor_sound_count = rd_u32(r);
+    m->floor_sounds = (uint8_t *)rd_array(r, m->floor_sound_count, 1, 1);
+    for (i = 0; m->floor_sounds && i < m->floor_sound_count; i++) m->floor_sounds[i] = rd_u8(r);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "DRYB", r);
+    m->dry_box_count = rd_u16(r);
+    (void)rd_u16(r);
+    m->dry_boxes = (tc_vec3 *)rd_array(r, (size_t)m->dry_box_count * 2, sizeof(tc_vec3), 12);
+    for (i = 0; m->dry_boxes && i < (uint32_t)m->dry_box_count * 2; i++) m->dry_boxes[i] = rd_vec3(r);
+    CHUNK_END(r);
+
+    chunk_need(&cs, "LINK", r);
+    m->link_triangles = rd_u32(r);
+    m->link_crc = rd_u32(r);
+    CHUNK_END(r);
+
+    for (i = 0; m->states && i < m->state_count; i++) {
+        if ((m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) ||
+            (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count)) {
+            e = TC_ERR_TRUNCATED;
+            goto fail;
         }
     }
-    if (version >= 12) {
-        m->collide_id_count = rd_u32(&r);
-        m->collide_ids = (uint16_t *)rd_array(&r, m->collide_id_count, 2, 2);
-        for (i = 0; m->collide_ids && i < m->collide_id_count; i++) m->collide_ids[i] = rd_u16(&r);
-        if (m->collide_id_count % 2) (void)rd_u16(&r);
-    }
-    for (i = 0; !r.error && m->states && i < m->state_count; i++) {
-        if (m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) r.error = TC_ERR_TRUNCATED;
-        if (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count) r.error = TC_ERR_TRUNCATED;
-    }
-    if (!r.error && m->node_count && m->nodes[m->node_count - 1].type != TC_AI_END) r.error = TC_ERR_TRUNCATED;
-    if (r.error) {
-        tc_result e = r.error;
-        tc_ai_model_free(m);
-        return e;
-    }
+    if (m->node_count && m->nodes[m->node_count - 1].type != TC_AI_END) { e = TC_ERR_TRUNCATED; goto fail; }
     return TC_OK;
+
+fail:
+    tc_ai_model_free(m);
+    return e;
+}
+#undef CHUNK_END
+
+void tc_ai_model_link(tc_ai_model *m, const tc_level *level) {
+    if (m->link_triangles == level->collision_triangle_count && m->link_crc == level->collision_crc) return;
+    tc_free(m->floor_sounds);
+    m->floor_sounds = NULL;
+    m->floor_sound_count = 0;
 }
 
 void tc_ai_model_free(tc_ai_model *m) {
@@ -396,12 +459,12 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->sphere_sets);
     tc_free(m->triggers);
     tc_free(m->sounds);
+    tc_free(m->mech_events);
     for (i = 0; m->water && i < m->water_count; i++) tc_free(m->water[i].boxes);
     tc_free(m->water);
     tc_free(m->dry_boxes);
     tc_free(m->water_point_sets);
     tc_free(m->floor_sounds);
-    tc_free(m->collide_ids);
     for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);
     tc_free(m->portals);
     free_strings(m->names, m->name_count);
@@ -565,7 +628,7 @@ static tc_vec3 global_to_local(const tc_ai_perso *p, tc_vec3 v) {
     float c = cosf(p->heading), s = sinf(p->heading);
     return tc_v3(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
 }
-/* A level perso's placement, where the model knows it: the portals (.ttai v6), whose perso Ed's dsg99 holds while he
+/* A level perso's placement, where the model knows it: the portals (.ttai PORT), whose perso Ed's dsg99 holds while he
  * walks in. rows: its 3x3, row-major. */
 static bool perso_frame(const tc_ai_perso *p, int32_t perso, tc_vec3 *position, const float **rows) {
     uint16_t k;
@@ -603,7 +666,33 @@ static bool state_allowed(const tc_ai_perso *p, uint32_t target, uint32_t *play)
     return cur->flags != 1;
 }
 
-static void state_play(tc_ai_perso *p, uint32_t s) {
+static void play_sound(tc_ai_perso *p, uint32_t event);
+static void queue_mech_request(tc_ai_perso *p, int mode);
+
+/* An animation event reached: fire on a 0 counter and reload it, else count down (0xFF stays). FUN_004366c0. */
+static bool event_due(uint8_t *counter, uint8_t period) {
+    if (*counter == 0) { *counter = period; return true; }
+    if (*counter != 0xFF) (*counter)--;
+    return false;
+}
+
+/* A new state's animation (FUN_00436600 then FUN_00436560): when a script changed the state (by_script), the old
+ * state's events with first 0xFF fire (FUN_00436600 with 1; a natural next state passes 0); the new state's counters
+ * start at their first. */
+static void state_play_from(tc_ai_perso *p, uint32_t s, bool by_script) {
+    const tc_ai_state *old = &p->model->states[p->state], *st = &p->model->states[s];
+    uint32_t k;
+    if (by_script) {
+        for (k = 0; k < old->sound_count; k++)
+            if (p->model->sounds[old->sound_first + k].first == 0xFF) play_sound(p, p->model->sounds[old->sound_first + k].event);
+        for (k = 0; k < old->mech_count; k++)
+            if (p->model->mech_events[old->mech_first + k].first == 0xFF)
+                queue_mech_request(p, p->model->mech_events[old->mech_first + k].mode);
+    }
+    for (k = 0; k < st->sound_count && k < TC_AI_MAX_STATE_EVENTS; k++)
+        p->sound_counter[k] = p->model->sounds[st->sound_first + k].first;
+    for (k = 0; k < st->mech_count && k < TC_AI_MAX_STATE_EVENTS; k++)
+        p->mech_counter[k] = p->model->mech_events[st->mech_first + k].first;
     p->state = (uint16_t)s;
     p->state_frame = 0;
     p->frame_rate = p->model->states[s].speed ? p->model->states[s].speed : 30;
@@ -612,13 +701,15 @@ static void state_play(tc_ai_perso *p, uint32_t s) {
     p->state_changes++;
 }
 
+static void state_play(tc_ai_perso *p, uint32_t s) { state_play_from(p, s, false); }
+
 static bool change_state(tc_ai_perso *p, uint32_t target) {
     uint32_t play;
     if (target >= p->model->state_count) return false;
     if (target == p->wanted_state && !p->state_ended) return true;
     if (!state_allowed(p, target, &play)) return false;
     p->wanted_state = (uint16_t)target;
-    state_play(p, play < p->model->state_count ? play : target);
+    state_play_from(p, play < p->model->state_count ? play : target, true);
     return true;
 }
 
@@ -631,12 +722,26 @@ static void play_sound(tc_ai_perso *p, uint32_t event) {
     if (event <= 0xFFFF && p->sound_count < TC_AI_MAX_SOUNDS) p->sounds[p->sound_count++] = (uint16_t)event;
 }
 
-/* The animation's sound events at frames in [from, to) of the playing state. */
+/* A mechanics request for this frame (REQ_Push_0047a370: up to 8, a full queue drops it), without the AI's
+ * persistent mode: an animation event (FUN_00436910) only queues. */
+static void queue_mech_request(tc_ai_perso *p, int mode) {
+    if (p->motion.mode_count < 8) p->motion.modes[p->motion.mode_count++] = (int8_t)mode;
+}
+
+/* The animation's events at frames in [from, to) of the playing state: sounds, mechanics requests. */
 static void state_sounds(tc_ai_perso *p, const tc_ai_state *s, float from, float to) {
     uint32_t k;
     for (k = 0; k < s->sound_count; k++) {
         const tc_ai_sound *e = &p->model->sounds[s->sound_first + k];
-        if ((float)e->frame >= from && (float)e->frame < to) play_sound(p, e->event);
+        if ((float)e->frame >= from && (float)e->frame < to &&
+            (k >= TC_AI_MAX_STATE_EVENTS || event_due(&p->sound_counter[k], e->period)))
+            play_sound(p, e->event);
+    }
+    for (k = 0; k < s->mech_count; k++) {
+        const tc_ai_mech_event *e = &p->model->mech_events[s->mech_first + k];
+        if ((float)e->frame >= from && (float)e->frame < to &&
+            (k >= TC_AI_MAX_STATE_EVENTS || event_due(&p->mech_counter[k], e->period)))
+            queue_mech_request(p, e->mode);
     }
 }
 
@@ -1072,7 +1177,20 @@ static uint32_t procedure(run *r, uint32_t i) {
         return 0;
     }
     case 7: { uint32_t s = arg_param(r, i, 0); p->change_level = s == TC_AI_NONE ? -1 : (int32_t)s; return 0; }
-    case 34: p->motion.stop = true; memset(pr, 0, sizeof(p->motion.proposal)); return 0;
+    case 34: p->motion.stop = true; return 0; /* the speeds (+0x38.., +0x25C..), not the proposal */
+    case 35: /* PROC_DynamicsOnEtc_00488cd0 case 0x23: the velocity (+0x38), world axes; spin cleared */
+        p->motion.velocity = argv3(r, i, 0);
+        p->motion.velocity_set = true;
+        return 0;
+    case 47: { /* ProposalVecD = AI_004881d0: [4..6] turns half way to v, keeping its length; unset (zero) stays so */
+        tc_vec3 d = tc_v3(pr[4], pr[5], pr[6]), v = argv3(r, i, 0);
+        float l = tc_v3_length(d);
+        if (l != 0 && (v.x != 0 || v.y != 0 || v.z != 0)) {
+            d = tc_v3_scale(tc_v3_add(tc_v3_scale(d, 1 / l), tc_v3_scale(v, 1 / tc_v3_length(v))), l);
+            pr[4] = d.x, pr[5] = d.y, pr[6] = d.z;
+        }
+        return 0;
+    }
     case 38: {
         tc_vec3 a = argv3(r, i, 0), b = argv3(r, i, 2);
         pr[1] = a.x; pr[2] = a.y; pr[3] = a.z; pr[0x11] = argf(r, i, 1); pr[0x12] = b.x; pr[0x13] = b.y; pr[0x14] = b.z;
@@ -1368,8 +1486,8 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     p->g_armed = 1;
     p->state = p->wanted_state = m->initial_state < m->state_count ? m->initial_state : 0;
     if (m->state_count) {
-        p->frame_rate = m->states[p->state].speed ? m->states[p->state].speed : 30;
-        p->repeats_left = m->states[p->state].repeats;
+        state_play(p, p->state); /* its animation's event counters */
+        p->state_changes = 0;
     }
     p->motion.mech_mode = -1;
     return m->state_count ? TC_OK : TC_ERR_TRUNCATED;
@@ -1415,11 +1533,16 @@ static void update_buttons(tc_ai_perso *p) {
 void tc_ai_step(tc_ai_perso *p, float dt) {
     tc_vec3 axes[3];
     int32_t mode = p->motion.mech_mode;
+    float proposal[32];
     memcpy(axes, p->motion.axes, sizeof(axes));
+    memcpy(proposal, p->motion.proposal, sizeof(proposal));
     memset(&p->motion, 0, sizeof(p->motion));
     p->sound_count = 0;
     p->motion.mech_mode = mode;          /* the mechanics mode stays until the AI picks another */
     memcpy(p->motion.axes, axes, sizeof(axes));
+    /* The proposal lives in the dynamics (+0x314) and keeps its values: ProposalVecA in one frame, the mode 7 request of
+     * the jump animation's event (or SetMechMode7) applies it; the *_set flags say what changed this frame. */
+    memcpy(p->motion.proposal, proposal, sizeof(proposal));
     p->dt = dt;
     p->time_ms += (uint32_t)(dt * 1000 + 0.5f);
     update_buttons(p);

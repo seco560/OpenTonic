@@ -13,11 +13,12 @@ static void quad(tc_vec3 a, tc_vec3 b, tc_vec3 c, tc_vec3 d) {
     vertex_count += 6;
 }
 
-/* A box on the floor from x0 to x1 (any y in -5..5), h high; faces wound both ways on purpose. */
+/* A box on the floor from x0 to x1 (any y in -5..5), h high; its faces point out, as the levels' do (a face collides
+ * only from its front, FUN_00465b60). */
 static void box(float x0, float x1, float h) {
     quad(tc_v3(x0, -5, h), tc_v3(x1, -5, h), tc_v3(x1, 5, h), tc_v3(x0, 5, h));
-    quad(tc_v3(x0, -5, 0), tc_v3(x0, 5, 0), tc_v3(x0, 5, h), tc_v3(x0, -5, h));
-    quad(tc_v3(x1, -5, h), tc_v3(x1, 5, h), tc_v3(x1, 5, 0), tc_v3(x1, -5, 0));
+    quad(tc_v3(x0, -5, h), tc_v3(x0, 5, h), tc_v3(x0, 5, 0), tc_v3(x0, -5, 0));
+    quad(tc_v3(x1, -5, 0), tc_v3(x1, 5, 0), tc_v3(x1, 5, h), tc_v3(x1, -5, h));
 }
 
 static tc_ai_card card_of(uint32_t type, const float *f, uint32_t n) {
@@ -88,10 +89,15 @@ int main(void) {
     /* Ed's ground card (state 1) and fall card (44), words after the type: mass, step height, ..., gravity factor */
     static const float ground[15] = {120, 1, 0, 0, 50, 192, 0.6428f, 0.342f, -0.5f, -0.9962f, 0.1219f, 0.9397f, 0.4f, 1, 0};
     static const float fall[15] = {120, 0, 0, 0, 100, 628.3f, 0.6428f, 0.342f, -0.5f, -0.9848f, 0.9998f, 0.9998f, 0.3f, 3, 0};
-    const tc_ai_sphere_set body = {4, {{{0, 0, 0.25f}, 0.25f}, {{0, -0.1f, 0.75f}, 0.375f},
-                                       {{0, -0.15f, 1.28f}, 0.53f}, {{0, -0.3f, 1.95f}, 0.3f}}};
+    /* Ed standing (bar's ZDM zones 0, 1, 16, 2), with their collide flags: the feet may step up (1) */
+    /* (and their own mechanics materials: rebound, grip; the feet and head have none: 1, 1) */
+    const tc_ai_sphere_set body = {4, {{{0, 0, 0.25f}, 0.25f, 1, 0, 1, 1}, {{0, -0.1f, 0.75f}, 0.375f, 2, 0, 0.85f, 0},
+                                       {{0, -0.15f, 1.28f}, 0.53f, 2, 0, 0.85f, 0}, {{0, -0.3f, 1.95f}, 0.3f, 4, 0, 1, 1}}};
     tc_ai_card g = card_of(0, ground, 15), air = card_of(4, fall, 15);
-    const float heights[3] = {0.5f, 0.9f, 1.5f};
+    /* Steps: only a flag 1 sphere (the feet) may step up (MEC_004bbc4c), so Ed walks up what his feet meet first: up
+     * to about 0.45. Higher, his middle sphere (flag 2, own grip 0) meets the step's edge first: no step-up, and as a
+     * ground contact it has no grip (obstacle x own), so he stops in front of it. */
+    const float heights[4] = {0.3f, 0.45f, 0.5f, 1.5f};
     tc_collision w;
     tc_mec_walk mw;
     tc_vec3 p, v;
@@ -108,25 +114,25 @@ int main(void) {
     check(p.x > 8.8f && p.x < 9.2f && p.z > 0 && p.z < 0.05f && (tc_mec_walk_contacts(&mw) & TC_AI_CONTACT_GROUND), what);
     tc_collision_free(&w);
 
-    for (k = 0; k < 3; k++) {
+    for (k = 0; k < 4; k++) {
         float h = heights[k];
         vertex_count = 0;
         quad(tc_v3(-50, -50, 0), tc_v3(50, -50, 0), tc_v3(50, 50, 0), tc_v3(-50, 50, 0));
         box(2, 6, h);
         tc_collision_init(&w, vertices, (uint32_t)vertex_count, NULL);
         p = run(&w, &g, &body, tc_v3(0, 0, 0.01f), 0.45f, &mw);
-        if (h < 1) {
-            snprintf(what, sizeof(what), "step %.1f (card +8 = 1): on top after 0.45 s, x %.2f z %.2f", (double)h, (double)p.x,
-                     (double)p.z);
+        if (h < 0.48f) {
+            snprintf(what, sizeof(what), "step %.2f (card +8 = 1): on top after 0.45 s, x %.2f z %.2f", (double)h,
+                     (double)p.x, (double)p.z);
             check(p.x > 2 && p.z > h - 0.02f && p.z < h + 0.05f, what);
             p = run(&w, &g, &body, tc_v3(0, 0, 0.01f), 1.5f, &mw);
-            snprintf(what, sizeof(what), "step %.1f: across and down the far side, x %.2f z %.2f", (double)h, (double)p.x,
+            snprintf(what, sizeof(what), "step %.2f: across and down the far side, x %.2f z %.2f", (double)h, (double)p.x,
                      (double)p.z);
             check(p.x > 9 && p.z < 0.05f, what);
         } else {
-            snprintf(what, sizeof(what), "wall %.1f: stops in front of it, x %.2f z %.2f, no blocked frames (%u)", (double)h,
-                     (double)p.x, (double)p.z, mw.blocked);
-            check(p.x < 2 && p.x > 1.2f && p.z < 0.05f && mw.blocked == 0, what);
+            snprintf(what, sizeof(what), "step / wall %.2f: stops in front of it (at most on its edge), x %.2f z %.2f, "
+                     "no blocked frames (%u)", (double)h, (double)p.x, (double)p.z, mw.blocked);
+            check(p.x < 2 && p.x > 1.2f && p.z < 0.2f && mw.blocked == 0, what);
         }
         tc_collision_free(&w);
     }

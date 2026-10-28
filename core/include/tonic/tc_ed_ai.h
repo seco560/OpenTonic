@@ -2,9 +2,9 @@
  * buttons and the camera, then its motion requests go to the mechanics of the playing state's ID card:
  *   types 0 / 4 (ground, air; tc_mec_walk, the exe's FUN_004aa6af with its collide-and-move): ground speed = the
  *           state animation's root motion x its frame rate, or SetMoveDirection under mode 12; ProposalVecA = the
- *           jump's velocity; turns change the heading; the body is the state's ZDM spheres (.ttai v4);
+ *           jump's velocity; turns change the heading; the body is the state's ZDM spheres (.ttai BODY);
  *   type 5 (flight) and type 2 (the skier's board): tc_mec_fly / tc_mec_ski moved by tc_player.
- * Without the v4 data (older .ttai, or a state without spheres) the ground falls back to tc_player with the animation
+ * Without spheres (a state that has none) the ground falls back to tc_player with the animation
  * stride x run_scale / walk_scale (the hand tuning from before the mechanics were decoded). */
 #ifndef TONIC_TC_ED_AI_H
 #define TONIC_TC_ED_AI_H
@@ -32,18 +32,13 @@ typedef struct tc_ed_ai {
     tc_player *player;           /* physics, owned by the caller */
     tc_ai_perso ai;
     int camera;                  /* index into ai.model->others of the camera perso, -1 none */
-    /* Fallback only (no v4 data): factors on the stride-derived ground speed, for run cycles (> 4 u/s at their own
+    /* Fallback only (a state without spheres): factors on the stride-derived ground speed, for run cycles (> 4 u/s at their own
      * frame rate: states 10, 25, 30, 96) and the rest (walks). Defaults 2 and 1. */
     float run_scale, walk_scale;
     uint32_t card_type;          /* type of the playing state's ID card last frame (TC_AI_NONE16: none) */
     tc_mec_fly fly;
     tc_mec_swim swim;            /* card type 1 */
     float env_depth;             /* below a water surface (the scripts' EnvHeight), from last frame's mechanics */
-    /* ski_unpin (a stopgap): seconds without progress, from where; time since a wall touched and its normal; the
-     * rescues in a row at one spot and where the last was */
-    float ski_pinned, ski_wall_age;
-    tc_vec3 ski_anchor, ski_wall_normal, ski_rescue_at;
-    int ski_rescues;
     tc_mec_ski ski;
     tc_mec_walk walk;            /* card types 0 / 4 (ground, air) when the .ttai has the state's collision spheres */
     uint32_t contacts;           /* what the AI sees next frame (TC_AI_CONTACT_*) */
@@ -54,7 +49,7 @@ typedef struct tc_ed_ai {
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;
     tc_mec_env env;
-    /* Portals (.ttai v6): the one in progress (-1 none), whether its fire condition has held, its next fire op and
+    /* Portals (.ttai PORT): the one in progress (-1 none), whether its fire condition has held, its next fire op and
      * when that may run; per portal whether the player has left its radius since it last captured him. */
     int portal;
     bool portal_firing;
@@ -71,6 +66,11 @@ void tc_ed_ai_free(tc_ed_ai *e);
  * Runs the portals before the AI: capture when the player comes within a portal's radius (its guards holding), then its
  * fire ops once its condition holds (see events). */
 void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera);
+/* The game's tick: Tonic Trouble ran at 30 frames per second and its scripts count on it. B89's air control, for
+ * example, sets the vertical speed to 0.95 x vz + 0.1 x (ticks the jump is held) every tick: at 30 ticks a held jump
+ * glides down, at 60 Ed keeps rising (docs/DECOMP.md "Jumps, air control and root motion"). Step Ed with this dt and
+ * interpolate between ticks for drawing (tc_viewer does). */
+#define TC_ED_AI_TICK (1.0f / 30)
 /* Only the portals, for a host that moves the player itself (the viewer's simple controller): capture and fire as in
  * tc_ed_ai_step, the AI not stepped. */
 void tc_ed_ai_run_portals(tc_ed_ai *e, float dt);

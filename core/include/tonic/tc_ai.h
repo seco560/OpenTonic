@@ -54,16 +54,18 @@ typedef struct tc_ai_state {
     uint16_t anim;               /* animation key: the .ttlv Ed animation named "s<anim>" */
     float ground;                /* units per animation frame Ed walks forward on the ground (0 = in place) */
     uint16_t card;               /* mechanics ID card (State +0x30): index into model->cards, TC_AI_NONE16 none */
-    float drop;                  /* how far the state's pose reaches below the perso's origin (v3; 0 before) */
-    /* v4: root motion, one row per animation frame in model->root (root_count 0 = none): the A3D frame's own vector,
+    float drop;                  /* how far the state's pose reaches below the perso's origin (STAT) */
+    /* BODY: root motion, one row per animation frame in model->root (root_count 0 = none): the A3D frame's own vector,
      * units per animation frame in the perso's axes (front = -Y). Times the frame rate = the ground speed. */
     uint32_t root_first;
     uint16_t root_count;
-    uint16_t spheres;            /* v4: mechanics collision spheres (ZDM): index into model->sphere_sets, or none */
-    uint16_t water_points;       /* v8: the state's water sample points (State +0x34): index into
+    uint16_t spheres;            /* BODY: mechanics collision spheres (ZDM): index into model->sphere_sets, or none */
+    uint16_t water_points;       /* WPTS: the state's water sample points (State +0x34): index into
                                     model->water_point_sets, or none */
-    uint32_t sound_first;        /* v7: the animation's sound events, model->sounds[sound_first ..] */
+    uint32_t sound_first;        /* SNDS: the animation's sound events, model->sounds[sound_first ..] */
     uint16_t sound_count;
+    uint32_t mech_first;         /* MECE: the animation's mechanics requests, model->mech_events[mech_first ..] */
+    uint16_t mech_count;
     uint16_t transition_count, prohibited_count;
     tc_ai_transition *transitions; /* target -> state actually played first */
     uint16_t *prohibited;
@@ -76,10 +78,21 @@ typedef struct tc_ai_other { uint16_t id; uint8_t role; tc_ai_dsg_def dsg; } tc_
  * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
 typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
 /* A state's mechanics collision body (the collide set's ZDM zones active in it): spheres in the perso's axes. */
-#define TC_AI_MAX_SPHERES 8
-typedef struct tc_ai_sphere { tc_vec3 center; float radius; } tc_ai_sphere;
+#define TC_AI_MAX_SPHERES 12
+/* One part of the mechanics body: a sphere, or a point (point = 1, radius 0: collide element type 5, e.g. Ed's hand
+ * point 1.3 ahead and 2.0 up that catches ledges). flags: its collide material identifier (GameMaterial +0xC -> u16
+ * +2; a point's from its vertex's material; ZDMF chunk): 0x10 = no collision, 8 = floors only (a separate sweep),
+ * 1 = may step up (zone type 1). The material conditions (GroundMaterialIs ...) test the flags of the part that made
+ * the contact. See tc_mec_sweep. */
+typedef struct tc_ai_sphere {
+    tc_vec3 center;
+    float radius;
+    uint16_t flags;
+    uint8_t point;
+    float rebound, grip; /* its own mechanics material ([1], [2]; none: 1, 1), times the obstacle's in the responses */
+} tc_ai_sphere;
 typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX_SPHERES]; } tc_ai_sphere_set;
-/* v5: another perso's effect on this one, extracted from its script (ai.proximity_triggers): while this perso is within
+/* TRIG: another perso's effect on this one, extracted from its script (ai.proximity_triggers): while this perso is within
  * radius of position (3D, origins) and the guard dsgvar of this perso is 0, its normal behaviour becomes behaviour;
  * then the trigger sleeps sleep_ms (0: until this perso has left the radius). Totalski's trees, cacti and standing
  * icicles -> the skier's crash, B9. */
@@ -89,7 +102,7 @@ typedef struct tc_ai_trigger {
     uint16_t behaviour, guard;
     uint32_t sleep_ms;
 } tc_ai_trigger;
-/* .ttai v6: a portal (docs/PORTALS.md): a level perso that moves the player elsewhere, reduced by the converter to
+/* .ttai PORT: a portal (docs/PORTALS.md): a level perso that moves the player elsewhere, reduced by the converter to
  * op lists (tools/ttre/ai.py portals()). Capture ops run once when the player comes within radius (after any GUARD
  * ops hold); fire ops when `fire` holds: 0 = the player's dsgvar fire_dsg == fire_value (Ed's B106 sets dsg103 once
  * the cover is done), 1 = the screen is covered, 2 = never (capture only: the player's own scripts do the rest). */
@@ -105,13 +118,13 @@ enum {
     TC_AI_POP_LEVEL        /* change level to names[b]; c != NONE: arrive at place names[c], camera at names[a] (PROC_29) */
 };
 typedef struct tc_ai_portal_op { uint8_t op, kind; uint16_t a; uint32_t b, c; tc_vec3 v; } tc_ai_portal_op;
-/* v9: a zone primitive in the zone perso's axes (ZDD; COND_13): kind 7 sphere (a centre, b.x radius), 8 box (a min, b max). */
+/* ZONE: a zone primitive in the zone perso's axes (ZDD; COND_13): kind 7 sphere (a centre, b.x radius), 8 box (a min, b max). */
 typedef struct tc_ai_zone_prim { uint32_t kind; tc_vec3 a, b; } tc_ai_zone_prim;
 #define TC_AI_MAX_ZONE_PRIMS 8
 typedef struct tc_ai_portal {
     tc_vec3 position;
     float radius;                /* the capture distance, unless the portal has a zone */
-    uint8_t zone_count;          /* v9: the capture is the player's origin inside the perso's ZDD zone (COND_13) */
+    uint8_t zone_count;          /* ZONE: the capture is the player's origin inside the perso's ZDD zone (COND_13) */
     float zone_inverse[12];      /* row-major 3x4: world -> the perso's axes */
     tc_ai_zone_prim zone[TC_AI_MAX_ZONE_PRIMS];
     float rows[9];               /* the portal's axes, row-major (its local -Y faces the way in) */
@@ -122,8 +135,15 @@ typedef struct tc_ai_portal {
     uint16_t capture_count, fire_count;
     tc_ai_portal_op *ops;        /* capture_count capture ops, then fire_count fire ops */
 } tc_ai_portal;
-/* A sound event at an animation frame (v7). event = global sound event (Bnk_0's event index; tools/ttre/sfx.py). */
-typedef struct tc_ai_sound { uint16_t frame, event; } tc_ai_sound;
+/* A sound event at an animation frame (SNDS). event = global sound event (Bnk_0's event index; tools/ttre/sfx.py). */
+/* An animation event's counter (event +0xB / +0xC): it starts at `first` when the state starts; when the event's frame
+ * is reached a counter of 0 fires it and reloads `period`, another counts down, 0xFF stays (FUN_00436560,
+ * FUN_004366c0, FUN_00436820). first 0xFF: the event fires only when a script changes the state (FUN_00436600). Ed's
+ * jump: first 0, period 0xFF: once per jump, not on every loop of state 43. */
+typedef struct tc_ai_sound { uint16_t frame, event; uint8_t first, period; } tc_ai_sound;
+/* A mechanics request at an animation frame (event type 1, FUN_00436910): mode, with the state's card. */
+typedef struct tc_ai_mech_event { uint16_t frame, mode; uint8_t first, period; } tc_ai_mech_event;
+#define TC_AI_MAX_STATE_EVENTS 32 /* counters kept per playing state; events beyond fire every time */
 #define TC_AI_MAX_SOUNDS 16
 /* The footstep switch (Bnk_0 event 49, id 0x390000) and the step sounds by floor sound type v (1..23): the sound events
  * the core reports for them are TC_AI_STEP_SOUND + v (tools/ttre/sfx.py writes those rows into events.tsv). */
@@ -143,7 +163,7 @@ typedef struct tc_ai_transitions {
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
 
-/* .ttai v8: a water surface (docs/NOTES.md "Swimming"): a horizontal plane at z with the mechanical environment below
+/* .ttai WATR: a water surface (docs/NOTES.md "Swimming"): a horizontal plane at z with the mechanical environment below
  * it, counted only inside the bounding boxes of the sectors that list it (the exe asks the perso's sector; the port
  * has no sectors). boxes = box_count x {min xyz, max xyz}. */
 typedef struct tc_ai_water {
@@ -153,7 +173,7 @@ typedef struct tc_ai_water {
     tc_vec3 *boxes;
 } tc_ai_water;
 
-/* v8: a state's water sample points (State +0x34 list, GAM_00437900): kind 1..6 (the head down to the feet) and a point
+/* WPTS: a state's water sample points (State +0x34 list, GAM_00437900): kind 1..6 (the head down to the feet) and a point
  * in the perso's axes; each frame the water flag of the environment there (MecEnv +0x28) is the zone value of its kind. */
 #define TC_AI_MAX_WATER_POINTS 8
 typedef struct tc_ai_water_points {
@@ -163,6 +183,7 @@ typedef struct tc_ai_water_points {
 } tc_ai_water_points;
 
 typedef struct tc_ai_model {
+    char converter[16];          /* the converter's stamp (STMP), for log lines */
     uint32_t node_count;
     tc_ai_node *nodes;
     uint32_t script_count;
@@ -181,42 +202,45 @@ typedef struct tc_ai_model {
     tc_vec3 *vectors;
     uint16_t other_count;
     tc_ai_other *others;         /* other persos the scripts reference (role 1 = camera) */
-    uint16_t card_count;         /* 0 in a version 1 file */
+    uint16_t card_count;
     tc_ai_card *cards;
-    uint32_t root_count;         /* v4 (0 before) */
+    uint32_t root_count;
     tc_vec3 *root;
-    uint16_t sphere_set_count;   /* v4 (0 before) */
+    uint16_t sphere_set_count;
     tc_ai_sphere_set *sphere_sets;
-    uint16_t trigger_count;      /* v5 (0 before) */
+    uint16_t trigger_count;
     tc_ai_trigger *triggers;
-    uint16_t portal_count;       /* v6 (0 before) */
+    uint16_t portal_count;
     tc_ai_portal *portals;
-    uint16_t name_count;         /* v6: level and place names the portal ops refer to */
+    uint16_t name_count;         /* level and place names the portal ops refer to */
     char **names;
-    uint16_t place_count;        /* v6 */
+    uint16_t place_count;
     tc_ai_place *places;
-    bool has_transitions;        /* v6 */
+    bool has_transitions;
     tc_ai_transitions transitions;
-    uint32_t sound_count;        /* v7: the states' animation sound events, by state (tc_ai_state.sound_first) */
+    uint32_t sound_count;        /* the states' animation sound events, by state (tc_ai_state.sound_first) */
     tc_ai_sound *sounds;
-    uint16_t water_count;        /* v8 (0 before) */
+    uint32_t mech_event_count;   /* MECE: {frame, mode} rows, by state (tc_ai_state.mech_first) */
+    tc_ai_mech_event *mech_events;
+    uint16_t water_count;
     tc_ai_water *water;
-    uint16_t dry_box_count;      /* v11: the boxes of sectors without water (min, max pairs); the smallest box holding a
+    uint16_t dry_box_count;      /* the boxes of sectors without water (min, max pairs); the smallest box holding a
                                   * point decides (tc_mec_env_at) */
     tc_vec3 *dry_boxes;
-    uint16_t water_point_set_count; /* v8 */
+    uint16_t water_point_set_count;
     tc_ai_water_points *water_point_sets;
-    /* v10: per collision triangle (the .ttlv's order, tc_tri.source) its floor's sound type (GameMaterial +8; 0xFF
+    /* per collision triangle (the .ttlv's order, tc_tri.source) its floor's sound type (GameMaterial +8; 0xFF
      * none): the footstep switch picks step sound 0x390002 + it (docs/NOTES.md "Footsteps"). */
     uint32_t floor_sound_count;
     uint8_t *floor_sounds;
-    /* v12: per collision triangle (as v10) its collide material's identifier (0 none): GroundMaterialIs and the other
-     * material conditions test it against their mask (FUN_00497890). 0x8 = the spheres Ed hangs from. */
-    uint32_t collide_id_count;
-    uint16_t *collide_ids;
+    /* The level collision floor_sounds indexes (LINK: triangle count, CRC-32 of the .ttlv's COLL chunk). */
+    uint32_t link_triangles, link_crc;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
+/* Drops the per-triangle table (floor sounds) unless it was written for this level's collision: an
+ * imported level runs a donor level's .ttai. Call once after loading both files. */
+void tc_ai_model_link(tc_ai_model *model, const tc_level *level);
 void tc_ai_model_free(tc_ai_model *model);
 
 /* What the AI asks the mechanics for this frame (the exe's "dynamics proposal"). The host's controller
@@ -259,7 +283,9 @@ typedef struct tc_ai_perso {
     float heading;               /* as tc_player: local -Y points along (sin, -cos) */
     uint32_t contacts;           /* TC_AI_CONTACT_* */
     struct tc_collision *world;  /* host-fed: FUNC 162's probe (NULL: nothing in the way) */
-    uint16_t ground_material, wall_material; /* the collide identifiers (v12) of the ground and wall contacts, 0 none */
+    /* The collide flags of the body part (tc_ai_sphere.flags) that made the ground and wall contacts, 0 none: the
+     * material conditions read these (ContactRecord +0x70, the own material; COND 44-49, FUN_00497890). */
+    uint16_t ground_material, wall_material;
     float report_2bc, report_2c0; /* dynamics +0x2BC / +0x2C0 (FUNC 91 / 92): in flight the lagged attack / bank, rad */
     bool has_axes;               /* host-fed: the perso's drawn axes (its world matrix's columns: tilted in flight and
                                     swimming); FUNC 102 / 103 (point LocalToGlobal / GlobalToLocal) use them */
@@ -295,6 +321,7 @@ typedef struct tc_ai_perso {
     uint8_t repeats_left;
     bool state_ended;            /* the animation finished with no repeat and no next state (exe +0x161) */
     uint32_t state_changes;      /* incremented on every new animation, so the host can restart it */
+    uint8_t sound_counter[TC_AI_MAX_STATE_EVENTS], mech_counter[TC_AI_MAX_STATE_EVENTS]; /* the playing state's events */
     tc_ai_motion motion;         /* reset at the start of every step */
     bool display_flag8;          /* PROC_204 sets, PROC_203 clears (paired with opaque/translucent) */
     uint8_t transparency;        /* 255 opaque */

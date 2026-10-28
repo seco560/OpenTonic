@@ -10,11 +10,10 @@ static void rd_mat34(reader *r, tc_mat34 *m) {
     for (i = 0; i < 12; i++) m->m[i] = rd_f32(r);
 }
 
-static void rd_surface(reader *r, tc_surface *s, int v2) {
+static void rd_surface(reader *r, tc_surface *s) {
     uint32_t i, n;
     s->texture = rd_i32(r);
     s->flags = rd_u32(r);
-    if (!v2) return;
     s->scroll[0] = rd_f32(r);
     s->scroll[1] = rd_f32(r);
     n = rd_u16(r);
@@ -25,9 +24,9 @@ static void rd_surface(reader *r, tc_surface *s, int v2) {
     for (i = 0; i < n; i++) { s->frames[i].texture = rd_i32(r); s->frames[i].seconds = rd_f32(r); }
 }
 
-static void rd_geometry(reader *r, tc_mesh *m, uint32_t words) {
+static void rd_geometry(reader *r, tc_mesh *m) {
     uint32_t nv = rd_u32(r), ni = rd_u32(r), i, k;
-    m->vertices = (tc_vertex *)rd_array(r, nv, sizeof(tc_vertex), (size_t)words * 4);
+    m->vertices = (tc_vertex *)rd_array(r, nv, sizeof(tc_vertex), sizeof(tc_vertex));
     if (r->error) return;
     m->vertex_count = m->vertices ? nv : 0;
     for (i = 0; i < m->vertex_count; i++) {
@@ -36,13 +35,9 @@ static void rd_geometry(reader *r, tc_mesh *m, uint32_t words) {
         for (k = 0; k < 3; k++) v->normal[k] = rd_f32(r);
         v->uv[0] = rd_f32(r);
         v->uv[1] = rd_f32(r);
-        for (k = 0; k < 3 && k + 8 < words; k++) v->color[k] = rd_u32(r);
-        if (words >= 13) {
-            v->uv2[0] = rd_f32(r);
-            v->uv2[1] = rd_f32(r);
-        } else {
-            v->uv2[0] = v->uv2[1] = -1;
-        }
+        for (k = 0; k < 3; k++) v->color[k] = rd_u32(r);
+        v->uv2[0] = rd_f32(r);
+        v->uv2[1] = rd_f32(r);
     }
     m->indices = (uint32_t *)rd_array(r, ni, sizeof(uint32_t), 4);
     if (r->error) return;
@@ -50,9 +45,9 @@ static void rd_geometry(reader *r, tc_mesh *m, uint32_t words) {
     for (i = 0; i < m->index_count; i++) m->indices[i] = rd_u32(r);
 }
 
-static void rd_mesh(reader *r, tc_mesh *m, int v2, uint32_t words) {
-    rd_surface(r, &m->surface, v2);
-    rd_geometry(r, m, words);
+static void rd_mesh(reader *r, tc_mesh *m) {
+    rd_surface(r, &m->surface);
+    rd_geometry(r, m);
 }
 
 /* n_samples x n_channels matrices, then the same count of u16 objects. */
@@ -100,50 +95,47 @@ void tc_level_free(tc_level *level) {
     memset(level, 0, sizeof *level);
 }
 
+/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP (optional), TEXS, MESH, PRSO, COLL, FLOR, EDPL (optional: no player). */
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
+    chunks cs;
     reader rr, *r = &rr;
-    uint32_t i, k, n, words;
-    int v2;
+    uint32_t i, k, n;
+    tc_result e;
     tc_ed *ed;
 
     memset(level, 0, sizeof *level);
-    level->light_set_count = 1;
     level->ed.static_perso = -1;
-    rr.data = data; rr.size = data ? size : 0; rr.offset = 0; rr.error = TC_OK;
+    if ((e = chunks_open(&cs, data, size, "TTLV")) != TC_OK) return e;
+    chunk_stamp(&cs, level->converter, sizeof level->converter);
 
-    if (!have(r, 4)) return TC_ERR_BAD_MAGIC;
-    if (memcmp(data, "TTLV", 4) != 0) return TC_ERR_BAD_MAGIC;
-    r->offset = 4;
-    level->version = rd_u32(r);
-    if (r->error) return r->error;
-    if (level->version < 1 || level->version > 8) return TC_ERR_UNSUPPORTED_VERSION;
-    v2 = level->version >= 2;
-    if (level->version >= 4) level->light_set_count = rd_u32(r);
-    if (level->version >= 5) (void)rd_u32(r); /* play_offset: for seeking tools; read sequentially here */
-    if (level->version >= 7) {
-        level->fog_near = rd_f32(r);
-        level->fog_far = rd_f32(r);
-        level->fog_rgb[0] = rd_f32(r);
-        level->fog_rgb[1] = rd_f32(r);
-        level->fog_rgb[2] = rd_f32(r);
-    }
-    if (level->version >= 8) {
+    chunk_need(&cs, "LEVL", r);
+    level->light_set_count = rd_u32(r);
+    level->fog_near = rd_f32(r);
+    level->fog_far = rd_f32(r);
+    for (i = 0; i < 3; i++) level->fog_rgb[i] = rd_f32(r);
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
+
+    if (chunk_need(&cs, "LMAP", r)) {
         level->lightmap_atlas = rd_string(r);
         if (level->lightmap_atlas && !level->lightmap_atlas[0]) { tc_free(level->lightmap_atlas); level->lightmap_atlas = NULL; }
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
-    words = level->version >= 8 ? 13 : level->version >= 4 ? 11 : level->version >= 3 ? 9 : 8; /* vertex size in 4-byte words */
 
+    chunk_need(&cs, "TEXS", r);
     n = rd_u32(r);
     level->textures = (char **)rd_array(r, n, sizeof(char *), 2);
     if (level->textures) level->texture_count = n;
     for (i = 0; i < level->texture_count && !r->error; i++) level->textures[i] = rd_string(r);
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
 
+    chunk_need(&cs, "MESH", r);
     n = rd_u32(r);
     level->meshes = (tc_mesh *)rd_array(r, n, sizeof(tc_mesh), 16);
     if (level->meshes) level->mesh_count = n;
-    for (i = 0; i < level->mesh_count && !r->error; i++) rd_mesh(r, &level->meshes[i], v2, words);
-    if (!v2 || r->error) goto done;
+    for (i = 0; i < level->mesh_count && !r->error; i++) rd_mesh(r, &level->meshes[i]);
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
 
+    chunk_need(&cs, "PRSO", r);
     n = rd_u32(r);
     level->persos = (tc_perso *)rd_array(r, n, sizeof(tc_perso), 60);
     if (level->persos) level->perso_count = n;
@@ -161,12 +153,14 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         for (k = 0; k < p->part_count && !r->error; k++) {
             p->parts[k].channel = rd_u16(r);
             p->parts[k].object = rd_u16(r);
-            rd_mesh(r, &p->parts[k].mesh, v2, words);
+            rd_mesh(r, &p->parts[k].mesh);
         }
         rd_samples(r, (uint32_t)p->sample_count * p->channel_count, &p->transforms, &p->shown);
     }
-    if (level->version < 5 || r->error) goto done;
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
 
+    chunk_need(&cs, "COLL", r);
+    level->collision_crc = tc_crc32(r->data, r->size);
     n = rd_u32(r);
     level->collision = (tc_vec3 *)rd_array(r, n, 3 * sizeof(tc_vec3), 36);
     if (level->collision) level->collision_triangle_count = n;
@@ -175,9 +169,12 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         level->collision[i].y = rd_f32(r);
         level->collision[i].z = rd_f32(r);
     }
-    if (level->version >= 6) {
-        tc_floor *table;
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
+
+    chunk_need(&cs, "FLOR", r);
+    {
         uint32_t floor_count = rd_u16(r);
+        tc_floor *table;
         (void)rd_u16(r);
         table = (tc_floor *)rd_array(r, floor_count, sizeof(tc_floor), 8);
         for (i = 0; i < floor_count && table; i++) {
@@ -186,14 +183,15 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         }
         level->collision_floors = (tc_floor *)rd_array(r, level->collision_triangle_count, sizeof(tc_floor), 2);
         for (i = 0; i < level->collision_triangle_count && level->collision_floors; i++) {
-            uint16_t k = rd_u16(r);
-            if (k < floor_count && table) level->collision_floors[i] = table[k];
+            uint16_t f = rd_u16(r);
+            if (f < floor_count && table) level->collision_floors[i] = table[f];
             else { level->collision_floors[i].grip = 1; level->collision_floors[i].rebound = 1; }
         }
-        if (level->collision_triangle_count % 2) (void)rd_u16(r);
         tc_free(table);
     }
-    if (rd_u32(r) != 1 || r->error) goto done;
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
+
+    if (!chunk_need(&cs, "EDPL", r)) return TC_OK;
     ed = &level->ed;
     rd_mat34(r, &ed->start);
     ed->static_perso = rd_i32(r);
@@ -203,7 +201,7 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     for (i = 0; i < ed->part_count && !r->error; i++) {
         ed->parts[i].object = rd_u16(r);
         (void)rd_u16(r);
-        rd_mesh(r, &ed->parts[i].mesh, v2, words);
+        rd_mesh(r, &ed->parts[i].mesh);
     }
     n = rd_u16(r);
     (void)rd_u16(r);
@@ -221,15 +219,13 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         a->ground_speed = rd_f32(r);
         rd_samples(r, (uint32_t)a->sample_count * a->channel_count, &a->transforms, &a->shown);
     }
-    if (!r->error) level->has_ed = 1;
-
-done:
-    if (r->error) {
-        tc_result e = r->error;
-        tc_level_free(level);
-        return e;
-    }
+    if ((e = chunk_end(r)) != TC_OK) goto fail;
+    level->has_ed = 1;
     return TC_OK;
+
+fail:
+    tc_level_free(level);
+    return e;
 }
 
 void tc_level_bounds(const tc_level *level, tc_vec3 *lo, tc_vec3 *hi) {
@@ -257,9 +253,9 @@ int tc_ed_find_anim(const tc_ed *ed, const char *name) {
 const char *tc_result_string(tc_result r) {
     switch (r) {
     case TC_OK: return "ok";
-    case TC_ERR_BAD_MAGIC: return "not a .ttlv file (bad magic)";
-    case TC_ERR_UNSUPPORTED_VERSION: return "unsupported .ttlv version";
-    case TC_ERR_TRUNCATED: return "truncated .ttlv file";
+    case TC_ERR_BAD_MAGIC: return "not a .ttlv / .ttai file (bad magic)";
+    case TC_ERR_STALE: return "made by another version of the converter: re-run the conversion (docs/BUILD.md)";
+    case TC_ERR_TRUNCATED: return "truncated or damaged file";
     case TC_ERR_OUT_OF_MEMORY: return "out of memory";
     }
     return "unknown error";

@@ -39,10 +39,18 @@ for l in $(ls files/sources/GAMEDATA/WORLD/LEVELS | grep -v '\.'); do
 done
 ```
 Each line should end in `0 not found` (all textures resolved; build_all.sh checks this). Lightmapped levels (bar, death, PharmMap, pyr_fou,
-SpyCarota, spynorth) also get a `<level>_lightmap.png` atlas next to their .ttlv. The format is documented at the top of
-`tools/ttre/ttlv.py`; re-run this step whenever the exporter changes. The .ttai (format in `tools/ttre/ai.py`) also
-writes `<level>_ai.txt` (node-indexed scripts, for debugging); .ttlv and .ttai of a
-level must come from the same exporter run (the .ttai points at the .ttlv's `s<k>` state animations).
+SpyCarota, spynorth) also get a `<level>_lightmap.png` atlas next to their .ttlv. The .ttai also writes
+`<level>_ai.txt` (node-indexed scripts, for debugging). .ttlv and .ttai of a level must come from the same exporter
+run (the .ttai points at the .ttlv's `s<k>` state animations).
+
+**Formats.** Both files are chunk containers (`tools/ttre/chunks.py`; chunk lists at the top of `tools/ttre/ttlv.py` and
+`tools/ttre/ai.py`). There are no version numbers. The files are build outputs, so a reader asks for the chunks it needs
+and refuses a file that lacks one or whose layout differs: "made by another version of the converter: re-run the
+conversion". Every file carries the converter's stamp, a hash of `tools/ttre/*.py`. The build scripts re-export the
+levels whose stamp differs from the current sources, so after pulling exporter changes a plain `tools/build_all.sh`
+(or `build_linux.sh`) is enough. `python3 -m tools.ttre.chunks files/out/ttlv/*.ttlv` lists each file's stamp
+(current or stale) and chunks. After re-exporting, rebuild the app bundle (`tools/make_app.sh`): it carries its own
+copy of `files/out/ttlv`.
 
 ## 5. Music (optional)
 `tools/music.tsv` maps levels to tracks named `Bnk_<bank>_<subsong>.wav` (one loop each):
@@ -83,7 +91,10 @@ pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
   (landing, wall runs without tunnelling, jump).
 - `make -C core mechcheck`: the game's ground/air mechanics on hand-made geometry (no game data needed).
 - `make -C core aicheck` (Ed's AI on bar; `AI_SCRIPT=fly|ski|wander`, see tests/aicheck.c) and
-  `make -C core crashcheck` (Totalski: the skier crashes into a tree).
+  `make -C core crashcheck` (Totalski: the skier crashes into a tree). `AI_PATH=<file>` logs every frame's position.
+- Oracle tests (the exe's own functions under an emulator against the core's ports; needs the unpacked exe, docs/EXE.md):
+  `python3 -m venv tools/bin/oracle-venv && tools/bin/oracle-venv/bin/pip install unicorn` once, then
+  `tools/bin/oracle-venv/bin/python -m tools.exe.oracle` (docs/DECOMP.md).
 
 ## Importing other models (optional)
 Any glTF 2.0 model (`.gltf` + `.bin`, or `.glb`) becomes a level to walk around as Ed:
@@ -98,7 +109,8 @@ the viewer's sun lights it. Ed (meshes, animations, AI) comes from `--ed`'s leve
 cutscene level, so no portals or triggers). He starts on the highest upward-facing surface at the model's centre
 (sky domes and ceilings face down, so they are skipped), or at `--spawn` (glTF coordinates: Y is up). Re-importing
 under the same name overwrites the level; delete `files/out/Imported/<name>/` first if the model changed a lot, or
-old PNGs stay behind. Good test levels: Sponza from Khronos' glTF sample assets, CC-licensed downloadable scenes on
+old PNGs stay behind. Imported levels are not part of the game data, so the build scripts never re-export them; after
+a format change, re-run their import. Good test levels: Sponza from Khronos' glTF sample assets, CC-licensed downloadable scenes on
 Sketchfab (glTF export), Kenney / Quaternius kits (CC0); game rips only from your own copies, never redistributed.
 
 `python3 -m tools.concept_foyer` (needs numpy) rebuilds Tonic Adventure 2000's Concept Art 3 (the hall with the

@@ -179,10 +179,10 @@ static void level(const char *folder, const char *name) {
 
     snprintf(path, sizeof path, "%s/%s", folder, name);
     data = read_file(path, &size);
-    if (!data || tc_level_load(&lv, data, size) != TC_OK || lv.version < 5 || !lv.has_ed) {
+    if (!data || tc_level_load(&lv, data, size) != TC_OK || !lv.has_ed) {
         if (data) tc_level_free(&lv);
         free(data);
-        printf("%s: not v5 / no Ed\n", name);
+        printf("%s: does not load / no Ed\n", name);
         failures++;
         return;
     }

@@ -18,7 +18,7 @@ static float box_volume(const tc_vec3 *b) {
 }
 
 /* The surface nearest in height among those whose boxes hold p. The exe asks the perso's sector; without sectors, a
- * .ttai v11 dry box holding p that is smaller than every water box holding it stands for a dry sector there. */
+ * .ttai DRYB dry box holding p that is smaller than every water box holding it stands for a dry sector there. */
 float tc_mec_env_at(const tc_ai_model *m, tc_vec3 p, tc_mec_env *env) {
     const tc_ai_water *best = NULL;
     float best_d = 0, wet_v = INFINITY, depth;

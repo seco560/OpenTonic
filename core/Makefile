@@ -10,7 +10,9 @@
 CC ?= cc
 AR ?= ar
 CFLAGS ?= -O2
-CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude
+# -ffp-contract=off: no fused multiply-adds, so floats round as the exe's do (x87, single precision) on every platform;
+# tools/exe/oracle.py checks the ports against the exe with it (and Package.swift has it too).
+CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -ffp-contract=off -Iinclude
 LDLIBS += -lm
 BUILD := build
 SRC := $(wildcard src/*.c)

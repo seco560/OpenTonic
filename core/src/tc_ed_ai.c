@@ -10,7 +10,7 @@ static bool same_name(const char *a, const char *b) {
     return *a == *b;
 }
 
-/* Is p within the portal's capture: inside its zone (v9: COND_13, the origin in the perso's ZDD zone, taken into its
+/* Is p within the portal's capture: inside its zone (ZONE: COND_13, the origin in the perso's ZDD zone, taken into its
  * axes), else within its radius. */
 static bool portal_inside(const tc_ai_portal *g, tc_vec3 p) {
     const float *m = g->zone_inverse;
@@ -224,60 +224,94 @@ static tc_vec3 root_motion(const tc_ai_perso *a) {
     return a->model->root[st->root_first + f];
 }
 
-static uint16_t collide_id(const tc_ai_model *m, uint32_t tri) {
-    return tri < m->collide_id_count ? m->collide_ids[tri] : 0;
-}
-
-/* Card type 11 (Ed hanging from a sphere: states 46-49, 197, 238-245; FUN_004adb4d, request FUN_004b2793): no grip. The motion is the animation's root motion (or mode 12's move direction, along the contact's plane), moved
- * by collide-and-move without turning. FUN_004c6993's force list is not decoded: a ground re-snap (within 0.1) stands
- * in for it, keeping the sphere under him a ground contact every frame, which R10 needs (it lets go 200 ms after
- * GroundMaterialIs(0x8) fails). */
+/* Card type 11 (Ed hanging by his hand point, zone 9: states 46-49, 197, 238-245; FUN_004adb4d, request FUN_004b2793,
+ * forces FUN_004c6993): collide-and-move without a card (flags 1). The motion: mode 12's move direction x speed, else
+ * the animation's root motion (the port's stand-in for mode 12, as for walking), along the ground's plane
+ * (FUN_004c1541). While grounded (the hand point on the ledge) the grip cancels last frame's velocity and
+ * FUN_004a7b71 presses the body into the ground by 0.0125 every frame (a force -0.0125 m / dt^2 along its normal): the
+ * hand touches the ledge again each frame, which R10 needs (it lets go 200 ms after GroundMaterialIs(8) fails).
+ * Not ported: FUN_004c6993's alignment (FUN_0043cf80 -> FUN_00463940 finds the ledge's edge near card +0x14 and turns
+ * Ed square to it at card +0xC from it, at rate card +0x2C); gravity, which here loses its part along the contact
+ * normal and is negligible in the air (x dt^2) before R10 drops Ed. */
 static void hang(tc_ed_ai *e, const tc_ai_sphere_set *body, float dt) {
     tc_player *p = e->player;
     tc_ai_perso *a = &e->ai;
     const tc_ai_motion *m = &a->motion;
-    tc_vec3 v;
+    bool grounded = (tc_mec_walk_contacts(&e->walk) & 3) != 0;
+    tc_vec3 v, n = e->walk.ground_normal;
     if (m->turning) p->heading += m->turn_speed * dt;
-    if (m->stop) {
+    if (m->stop)
         v = tc_v3(0, 0, 0);
-    } else if (m->direction_set && m->mech_mode == 12) {
-        tc_vec3 n = e->walk.ground_normal;
+    else if (m->direction_set && m->mech_mode == 12)
         v = tc_v3_scale(local_to_global(p->heading, tc_v3(m->proposal[7], m->proposal[8], m->proposal[9])), m->proposal[10]);
-        v = tc_v3_sub(v, tc_v3_scale(n, tc_v3_dot(v, n)));
-    } else {
+    else
         v = tc_v3_scale(local_to_global(p->heading, root_motion(a)), (float)a->frame_rate);
+    if (grounded) {
+        v = tc_v3_sub(v, tc_v3_scale(n, tc_v3_dot(v, n)));
+        if (dt > 0) v = tc_v3_add(v, tc_v3_scale(n, -0.0125f / dt)); /* FUN_004a7b71 */
     }
-    if (!(tc_mec_collide_move(&e->walk, NULL, p->world, body, p->heading, dt, &p->position, &v) &
-          (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)))
-        tc_mec_resnap(&e->walk, p->world, body, p->heading, 0.1f, 0.64278764f, &p->position);
+    tc_mec_collide_move(&e->walk, NULL, p->world, body, p->heading, dt, &p->position, &v);
     p->velocity = v;
     e->contacts = tc_mec_walk_contacts(&e->walk) & 0x1F;
     p->grounded = (e->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
     p->against_wall = (e->contacts & TC_AI_CONTACT_WALL) != 0;
 }
 
-/* Card types 0 and 4 (tc_mec_walk; card NULL: a card type not decoded yet): what the request handlers make of the
- * AI's requests, then the integrator.
- * Ground speed: SetMoveDirection under mode 12 (proposal [7..9] x [10], capped by card +0x14), else the
- * animation's root motion x its frame rate. ProposalVecA: the jump's velocity (mode 7 replaces the old one). */
+/* Card type 8 (FUN_004ac62b, request FUN_004af04e; Ed's climb onto a ledge, state 153, and the skier's crash): no forces
+ * (FUN_004c4aa4 empties the list), so the velocity is exactly the request's: mode 12 the move direction x speed in
+ * world axes, mode 13 ProposalVecA, any other mode none (the port takes the root motion as mode 12's, as for walking).
+ * Nothing projects it on the ground, no gravity, no re-snap: the climb's root motion lifts Ed onto the ledge. Then
+ * collide-and-move without a card (MEC_004bedd6, card 0). */
+static void kinematic(tc_ed_ai *e, const tc_ai_sphere_set *body, float dt) {
+    tc_player *p = e->player;
+    tc_ai_perso *a = &e->ai;
+    const tc_ai_motion *m = &a->motion;
+    tc_vec3 v;
+    if (m->turning) p->heading += m->turn_speed * dt;
+    if (m->stop) v = tc_v3(0, 0, 0);
+    else if (m->direction_set && m->mech_mode == 12)
+        v = tc_v3_scale(local_to_global(p->heading, tc_v3(m->proposal[7], m->proposal[8], m->proposal[9])), m->proposal[10]);
+    else if (m->speed_set && m->mech_mode == 13)
+        v = tc_v3(m->proposal[1], m->proposal[2], m->proposal[3]);
+    else
+        v = tc_v3_scale(local_to_global(p->heading, root_motion(a)), (float)a->frame_rate);
+    tc_mec_collide_move(&e->walk, NULL, p->world, body, p->heading, dt, &p->position, &v);
+    p->velocity = v;
+    e->contacts = tc_mec_walk_contacts(&e->walk) & 0x1F;
+    p->grounded = (e->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
+    p->against_wall = (e->contacts & TC_AI_CONTACT_WALL) != 0;
+}
+
+/* Card types 0 and 4 (tc_mec_walk; card NULL: a card type not decoded yet): what the request handlers make of this
+ * frame's requests (the AI's SetMechMode*, the animation's events, the root motion's mode 12), then the integrator.
+ * PROC 35 / the Velocity field set the velocity itself (B89's air steering, every frame of a jump).
+ * Ground (FUN_004ae392): mode 12 = the move direction x speed (capped by card +0x14), or the animation's root motion
+ * (FUN_0042a8d0 pushes it as mode 12); the proposal's vectors are never used. Air (FUN_004b0f2a): modes 6 / 7 / 21 zero
+ * the velocity and want ProposalVecA in Ed's axes (the jump: state 43's animation pushes mode 7 at frame 0), 8 wants it
+ * without the reset, 9 wants ProposalVecD; mode 12 and the root motion mean nothing in the air. */
 static void walk(tc_ed_ai *e, const tc_ai_card *card, const tc_ai_sphere_set *body, float dt) {
     tc_player *p = e->player;
     tc_ai_perso *a = &e->ai;
     const tc_ai_motion *m = &a->motion;
-    tc_vec3 wanted = tc_v3(0, 0, 0), jump;
+    const float *pr = m->proposal;
+    bool air = card && card->type == 4;
+    tc_vec3 wanted = tc_v3(0, 0, 0), jump = tc_v3(0, 0, 0);
     const tc_vec3 *impulse = NULL;
-    if (card && card->type == 4) tc_mec_walk_air(&e->walk);
+    uint32_t k;
+    if (air) tc_mec_walk_air(&e->walk);
     if (m->turning) p->heading += m->turn_speed * dt;
     if (m->velocity_set) p->velocity = m->velocity;
-    if (m->speed_set) {
-        jump = local_to_global(p->heading, tc_v3(m->proposal[1], m->proposal[2], m->proposal[3]));
-        impulse = &jump;
-        /* Taking off: an impulse away from the ground leaves it, as the type 4 handler's mode 7 does by clearing the
-         * contact reports. Under a ground card (the pogo's launch, state 59) the stale report would still count as
-         * ground next frame: full grip drops the velocity, the move is skipped and Ed hovers until the state ends. */
-        if (tc_v3_dot(jump, e->walk.ground_normal) > 0) tc_mec_walk_air(&e->walk);
-    }
-    if (m->stop) {
+    if (air) {
+        for (k = 0; k < m->mode_count; k++) {
+            tc_vec3 va = local_to_global(p->heading, tc_v3(pr[1], pr[2], pr[3]));
+            switch (m->modes[k]) {
+            case 6: case 7: case 21: jump = va; impulse = &jump; wanted = tc_v3(0, 0, 0); break;
+            case 8: wanted = tc_v3_add(wanted, va); break;
+            case 9: wanted = tc_v3_add(wanted, local_to_global(p->heading, tc_v3(pr[4], pr[5], pr[6]))); break;
+            default: break;
+            }
+        }
+    } else if (m->stop) {
         p->velocity = tc_v3(0, 0, 0);
     } else if (m->direction_set && m->mech_mode == 12) {
         float speed = m->proposal[10], cap = card ? tc_ai_card_f32(card, card->type == 0 ? 0x14 : 0x10) : 0;
@@ -286,7 +320,8 @@ static void walk(tc_ed_ai *e, const tc_ai_card *card, const tc_ai_sphere_set *bo
     } else {
         wanted = tc_v3_scale(local_to_global(p->heading, root_motion(a)), (float)a->frame_rate);
     }
-    tc_mec_walk_step(&e->walk, card, e->env, p->world, body, p->heading, wanted, card && card->type == 4, impulse, dt,
+    if (air && m->stop) p->velocity = tc_v3(0, 0, 0);
+    tc_mec_walk_step(&e->walk, card, e->env, p->world, body, p->heading, wanted, air, impulse, dt,
                      &p->position, &p->velocity);
     e->contacts = tc_mec_walk_contacts(&e->walk) & 0x1F;
     p->grounded = (e->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
@@ -303,101 +338,12 @@ static void walk(tc_ed_ai *e, const tc_ai_card *card, const tc_ai_sphere_set *bo
 /* The skier's move (FUN_004ab91d after its forces): the collide set's single sphere around his origin, swept with
  * no card (MEC_004bedd6 gets none: default contact classes, no step-up); when nothing was touched and last frame
  * had ground, the re-snap within 0.7 onto ground within 45.6 deg of up (cos 0.7). */
-/* Stopgap, not from the exe (docs/NOTES.md "Sliding stages"): in the original the skier riding into a wall fast
- * stumbles and keeps going; the port's collision response stops him dead and he sticks. Until the original's reaction
- * is traced: a wall hit from above 8 u/s that leaves under 30 % of the speed keeps half the speed along the wall (for a
- * dead-on hit, along the wall towards the side he drifted to) and puts him 5 cm off it. */
-static void ski_unstick(tc_ed_ai *e, tc_vec3 before, tc_vec3 *v) {
-    tc_player *p = e->player;
-    tc_vec3 n = tc_v3(e->walk.wall_normal.x, e->walk.wall_normal.y, 0), t;
-    float in = tc_v3_length(before), along;
-    if (!(e->walk.report & TC_AI_CONTACT_WALL) || in < 8 || tc_v3_length(*v) >= 0.3f * in || tc_v3_length(n) < 1e-3f) return;
-    n = tc_v3_normalize(n);
-    t = tc_v3_sub(before, tc_v3_scale(n, tc_v3_dot(before, n)));
-    t.z = fminf(t.z, 0);
-    along = tc_v3_length(t);
-    if (along < 0.2f * in) { /* head-on: along the wall, towards the side of the drift (or the board's right) */
-        tc_vec3 side = tc_v3(-n.y, n.x, 0);
-        float s = tc_v3_dot(before, side);
-        if (fabsf(s) < 1e-3f) s = tc_v3_dot(e->ski.x, side);
-        t = tc_v3_scale(side, (s < 0 ? -1.0f : 1.0f) * 0.2f * in);
-        along = 0.2f * in;
-    }
-    *v = tc_v3_scale(t, 0.5f * fmaxf(along, 0.3f * in) / along);
-    p->position = tc_v3_add(p->position, tc_v3_scale(n, 0.05f));
-}
-
-/* Second stopgap: no progress near a wall (under 0.75 u in 0.4 s, a wall touched within 0.5 s, on a slope or in the
- * air; the flat start and finish never trigger it). Corners flicker between wall and no contact, and a board still
- * facing into the corner rides straight back in, so the skier is turned to the most open of 16 directions (free
- * distance by rays at three heights, preferring downhill and away from the wall) and sent off at 7 u/s. Pockets (Totalski:
- * a dead end downhill, a groove open only above the knees) bring him back, so a rescue within 2 u of the last one
- * escalates: the second moves him up to 2 u out along the most open way, the third and later lift him 1.2 first. */
-static void ski_unpin(tc_ed_ai *e, tc_vec3 *v, float dt) {
-    static const float heights[3] = {0.2f, 0.6f, 1.4f};
-    tc_player *p = e->player;
-    tc_vec3 g = e->walk.ground_normal, down, away, best = tc_v3(0, 0, 0);
-    float best_score = -INFINITY, best_free = 0, h, lift = 0;
-    int k, level;
-    if (e->walk.report & TC_AI_CONTACT_WALL) {
-        e->ski_wall_age = 0;
-        e->ski_wall_normal = e->walk.wall_normal;
-    } else {
-        e->ski_wall_age += dt;
-    }
-    down = (e->walk.report & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) ? tc_v3(g.x, g.y, 0) : tc_v3(0, 0, 0);
-    if (tc_v3_length(tc_v3_sub(p->position, e->ski_anchor)) > 0.75f || e->ski_wall_age > 0.5f ||
-        (tc_v3_length(down) < 0.1f && (e->walk.report & TC_AI_CONTACT_GROUND))) {
-        e->ski_anchor = p->position;
-        e->ski_pinned = 0;
-        return;
-    }
-    e->ski_pinned += dt;
-    if (e->ski_pinned < 0.4f) return;
-    e->ski_rescues = tc_v3_length(tc_v3_sub(p->position, e->ski_rescue_at)) < 2 ? e->ski_rescues + 1 : 1;
-    e->ski_rescue_at = p->position;
-    level = e->ski_rescues;
-    if (level >= 3) lift = 1.2f;
-    down = tc_v3_length(down) > 1e-3f ? tc_v3_normalize(down) : down;
-    away = tc_v3(e->ski_wall_normal.x, e->ski_wall_normal.y, 0);
-    away = tc_v3_length(away) > 1e-3f ? tc_v3_normalize(away) : away;
-    for (k = 0; k < 16; k++) {
-        tc_vec3 d = tc_v3(cosf(k * TC_PI / 8), sinf(k * TC_PI / 8), 0);
-        float free = 6, score;
-        int j;
-        for (j = 0; j < 3; j++) {
-            tc_hit hit;
-            if (tc_collision_raycast(p->world, tc_v3_add(p->position, tc_v3(0, 0, lift + heights[j])), d, 6, &hit))
-                free = fminf(free, hit.distance);
-        }
-        score = free + (level >= 2 ? 0.5f : 2) * tc_v3_dot(d, down) + tc_v3_dot(d, away);
-        if (score > best_score) best_score = score, best = d, best_free = free;
-    }
-    h = atan2f(-best.x, best.y);
-    tc_mec_ski_enter(&e->ski, h);
-    p->heading = h;
-    if (level >= 2)
-        p->position = tc_v3_add(p->position, tc_v3_add(tc_v3_scale(best, fminf(fmaxf(best_free - 0.8f, 0.3f), 2)),
-                                                       tc_v3(0, 0, lift)));
-    else if (e->walk.passes >= 6) /* wedged: the collide loop gave up, a velocity alone would not move him */
-        p->position = tc_v3_add(p->position, tc_v3_add(tc_v3_scale(best, 0.5f), tc_v3(0, 0, 0.3f)));
-    else if (best_free > 1)
-        p->position = tc_v3_add(p->position, tc_v3_scale(best, 0.2f));
-    *v = tc_v3_scale(best, 7);
-    e->ski_anchor = p->position;
-    e->ski_pinned = 0;
-}
-
 static void ski_move(tc_ed_ai *e, const tc_ai_sphere_set *body, tc_vec3 v, float dt) {
     tc_player *p = e->player;
-    tc_vec3 before = v;
     uint32_t had, bits;
-    e->walk.slope_cos = 0.34202f; /* faces up to 70 deg are slopes he slides on, not walls (stopgap) */
     had = e->walk.report;
     bits = tc_mec_collide_move(&e->walk, NULL, p->world, body, 0, dt, &p->position, &v);
     if (!bits && (had & TC_AI_CONTACT_GROUND)) tc_mec_resnap(&e->walk, p->world, body, 0, 0.7f, 0.7f, &p->position);
-    ski_unstick(e, before, &v);
-    ski_unpin(e, &v, dt);
     p->velocity = v;
     e->contacts = tc_mec_walk_contacts(&e->walk) & 0x1F;
     p->grounded = (e->walk.report & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
@@ -411,7 +357,7 @@ static void ski_move(tc_ed_ai *e, const tc_ai_sphere_set *body, tc_vec3 v, float
     }
 }
 
-/* Before .ttai v4: tc_player's capsule with sliding contacts, the origin at the board's underside. */
+/* States without spheres: tc_player's capsule with sliding contacts, the origin at the board's underside. */
 static void ski_move_capsule(tc_ed_ai *e, tc_vec3 v, float dt) {
     tc_player *p = e->player;
     float max_slope = p->max_slope;
@@ -438,7 +384,7 @@ static void ski_move_capsule(tc_ed_ai *e, tc_vec3 v, float dt) {
 }
 
 /* The footstep switch (docs/NOTES.md "Footsteps"): an animation's step sound (Bnk_0 event 49) plays the step of the
- * floor's sound type v (GameMaterial +8, .ttai v10 per triangle): TC_AI_STEP_SOUND + v is added next to Ed's own
+ * floor's sound type v (GameMaterial +8, .ttai FSND per triangle): TC_AI_STEP_SOUND + v is added next to Ed's own
  * step (event 49), which keeps playing (the user hears both in the original). The floor = the triangle under the origin (the exe: the ground contact's material). */
 static void footsteps(tc_ed_ai *e) {
     tc_ai_perso *a = &e->ai;
@@ -516,9 +462,10 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     a->heading = p->heading;
     a->contacts = e->contacts;
     a->world = p->world;
-    /* The contacts' collide materials (v12): the walk's triangles, which flight and swimming do not update */
-    a->ground_material = e->card_type == 1 || e->card_type == 5 ? 0 : collide_id(a->model, e->walk.ground_tri);
-    a->wall_material = e->card_type == 1 || e->card_type == 5 ? 0 : collide_id(a->model, e->walk.wall_tri);
+    /* The material conditions read the collide flags of Ed's own part that made the contact (ContactRecord +0x70):
+     * the walk's, which flight and swimming do not update */
+    a->ground_material = e->card_type == 1 || e->card_type == 5 ? 0 : e->walk.ground_own;
+    a->wall_material = e->card_type == 1 || e->card_type == 5 ? 0 : e->walk.wall_own;
     if (e->camera >= 0) a->other_positions[e->camera] = camera;
     /* dynamics +0x2BC / +0x2C0: the lagged attack / bank in flight, the lagged polar angle / heading swimming */
     a->report_2bc = e->card_type == 1 ? e->swim.polar_lagged : e->fly.attack_lagged;
@@ -555,7 +502,7 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     type = card ? card->type : TC_AI_NONE16;
     if (type != e->card_type && e->card_type == 5)
         p->velocity = tc_v3(0, 0, 0); /* leaving flight (GAM_0042ab20): stop, keep the heading */
-    /* The mechanical environment at the feet (the integrators' lookup at the step's start; water planes: .ttai v8) */
+    /* The mechanical environment at the feet (the integrators' lookup at the step's start; water planes: .ttai WATR) */
     e->env_depth = tc_mec_env_at(a->model, p->position, &e->env);
     if (type == 7) {
         /* Card type 7 (DNM_IntegrateType7_004acb49 / DNM_RequestType7_004b17d1): with the card's gravity factor 0 (all of
@@ -657,8 +604,13 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
         e->card_type = type;
         return;
     }
+    if (type == 8 && st->spheres != TC_AI_NONE16) {
+        kinematic(e, &a->model->sphere_sets[st->spheres], dt);
+        e->card_type = type;
+        return;
+    }
     if (st->spheres != TC_AI_NONE16) {
-        /* Types 0 / 4; other card types (6, 7, 8: the skier's parked, crash and finish states) are not decoded and
+        /* Types 0 / 4; other card types (6, 7: the skier's parked and finish states) are not decoded and
          * run the same way without their card, so the body and its origin stay the same. */
         walk(e, type == 0 || type == 4 ? card : NULL, &a->model->sphere_sets[st->spheres], dt);
         e->card_type = type;
@@ -714,8 +666,8 @@ tc_mat4 tc_ed_ai_model_matrix(const tc_ed_ai *e) {
         }
     }
     if (e->card_type != 2) return tc_player_model_matrix(e->player);
-    /* With the collide set's sphere (v4) the origin is where the exe has it, the board resting on the sphere: no lift.
-     * Before v4 the origin sat on the snow and the pose is lifted by its drop. */
+    /* With the collide set's sphere (BODY) the origin is where the exe has it, the board resting on the sphere: no lift.
+     * Without it the origin sits on the snow and the pose is lifted by its drop. */
     o = e->ai.model->states[e->ai.state].spheres != TC_AI_NONE16
             ? e->player->position
             : tc_v3_add(e->player->position, tc_v3_scale(s->z, e->ai.model->states[e->ai.state].drop));
