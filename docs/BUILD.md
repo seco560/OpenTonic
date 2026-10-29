@@ -7,7 +7,8 @@ Everything below runs from the repository root. Nothing generated here may be co
 - macOS 14+, Xcode or the Swift toolchain (Swift 6), Python 3.
 - `brew install ffmpeg vgmstream` (music and the app icon).
 - Linux (and other SDL3 platforms): the SDL3 frontend in `sdl/`, see docs/SDL3.md for its packages. The
-  conversion steps below are the same; `tools/build_linux.sh` is the Linux quick route (`tools/build_all.sh` is macOS-only).
+  conversion steps below are the same, and so is the quick route (`tools/convert_files.sh` converts the same way on
+  both; `tools/install_linux.sh` builds and installs the SDL build).
 
 ## 2. Game files
 Copy the PC version's `GAMEDATA` folder (installed copy) to `files/sources/GAMEDATA`, and the game's
@@ -17,9 +18,11 @@ Copy the PC version's `GAMEDATA` folder (installed copy) to `files/sources/GAMED
 ## Quick route
 After steps 1 and 2:
 ```sh
-tools/build_all.sh            # steps 3-6: everything in files/out/ (existing outputs are skipped; --force redoes all,
-                              # --check also runs the core checks)
-tools/build_and_package.sh    # the same, then tools/make_app.sh: OpenTonic.app in ~/Applications
+tools/convert_files.sh        # steps 3-6: everything in files/out/ (only what is missing or stale; --force redoes all,
+                              # --check also runs the core checks); builds nothing
+tools/install_macos.sh        # the same, then builds and installs OpenTonic.app in ~/Applications (--force reconverts
+                              # everything, --no-convert bundles files/out as it is, --uninstall removes the app)
+tools/install_linux.sh        # Linux: the same, then builds and installs the SDL build (same flags; docs/SDL3.md)
 ```
 The steps below are what these scripts run, for doing parts by hand.
 
@@ -38,7 +41,7 @@ for l in $(ls files/sources/GAMEDATA/WORLD/LEVELS | grep -v '\.'); do
   python3 -m tools.ttre level-ttai "$l" "files/out/ttlv/$l.ttai"   # Ed's AI (optional: without it, the simple controller)
 done
 ```
-Each line should end in `0 not found` (all textures resolved; build_all.sh checks this). Lightmapped levels (bar, death, PharmMap, pyr_fou,
+Each line should end in `0 not found` (all textures resolved; convert_files.sh checks this). Lightmapped levels (bar, death, PharmMap, pyr_fou,
 SpyCarota, spynorth) also get a `<level>_lightmap.png` atlas next to their .ttlv. The .ttai also writes
 `<level>_ai.txt` (node-indexed scripts, for debugging). .ttlv and .ttai of a level must come from the same exporter
 run (the .ttai points at the .ttlv's `s<k>` state animations).
@@ -46,11 +49,17 @@ run (the .ttai points at the .ttlv's `s<k>` state animations).
 **Formats.** Both files are chunk containers (`tools/ttre/chunks.py`; chunk lists at the top of `tools/ttre/ttlv.py` and
 `tools/ttre/ai.py`). There are no version numbers. The files are build outputs, so a reader asks for the chunks it needs
 and refuses a file that lacks one or whose layout differs: "made by another version of the converter: re-run the
-conversion". Every file carries the converter's stamp, a hash of `tools/ttre/*.py`. The build scripts re-export the
-levels whose stamp differs from the current sources, so after pulling exporter changes a plain `tools/build_all.sh`
-(or `build_linux.sh`) is enough. `python3 -m tools.ttre.chunks files/out/ttlv/*.ttlv` lists each file's stamp
-(current or stale) and chunks. After re-exporting, rebuild the app bundle (`tools/make_app.sh`): it carries its own
-copy of `files/out/ttlv`.
+conversion". Every file carries the converter's stamp, a hash of the converter's code (`tools/ttre/__main__.py` and the
+modules it imports, comments and docstrings aside, so editing those changes nothing). The other outputs' stamps are
+recorded in `files/out/.stamps`: textures and loading screens (cnt.py, gf.py), sound effects (sfx.py), the intro and
+the icon (their scripts) are redone when that code changes; music tracks are converted when missing, and
+`files/out/audio/music.tsv` (yours to edit) is replaced only when `tools/music.tsv` changes, the old one kept as
+`music.tsv.bak`. The build scripts re-export the
+levels whose stamp differs from the current sources, so after pulling exporter changes a plain `tools/convert_files.sh`
+(or either install script) is enough. `python3 -m tools.ttre.chunks files/out/ttlv/*.ttlv` lists each file's stamp
+(current or stale) and chunks. The app bundle carries its own copy of `files/out/ttlv`:
+`tools/install_macos.sh` re-exports stale levels itself before bundling (and warns about stale ones with `--no-convert`
+or without the game's files).
 
 ## 5. Music (optional)
 `tools/music.tsv` maps levels to tracks named `Bnk_<bank>_<subsong>.wav` (one loop each):
@@ -83,8 +92,8 @@ pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
 - `swift run -c release OpenTonic`, or open `Package.swift` in Xcode and run the OpenTonic scheme.
   The viewer finds `files/out/ttlv` by itself (working directory, or the checkout it was built from), so no
   copying into DerivedData is needed. A folder or .ttlv can also be passed as the first argument.
-- `tools/make_app.sh` builds a self-contained `OpenTonic.app` into `~/Applications` (personal use only:
-  it bundles the converted assets).
+- `tools/install_macos.sh` brings files/out up to date and builds a self-contained `OpenTonic.app` into
+  `~/Applications` (personal use only: it bundles the converted assets). Re-running only re-encodes changed music.
 
 ## 8. Checks
 - `make -C core check` (or `swift run -c release CorePlayCheck files/out/ttlv`): the simple controller on every level

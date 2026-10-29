@@ -79,7 +79,6 @@ final class RainbowBar: NSView {
 final class LoadingScreen: NSView {
     private let image = NSImageView()
     private let bar: RainbowBar
-    private let label = NSTextField(labelWithString: "")
     private var level = ""
     let vignettes: URL
 
@@ -90,10 +89,7 @@ final class LoadingScreen: NSView {
             .appendingPathComponent("Textures/Sud0/o_zarbi_auntxy.png"))
         super.init(frame: frame)
         image.imageScaling = .scaleProportionallyUpOrDown
-        label.font = .systemFont(ofSize: 18, weight: .semibold)
-        label.textColor = .white
-        label.alignment = .center
-        for v in [image, bar, label] as [NSView] { addSubview(v) }
+        for v in [image, bar] as [NSView] { addSubview(v) }
         autoresizingMask = [.width, .height]
     }
 
@@ -102,7 +98,6 @@ final class LoadingScreen: NSView {
     func show(level: String, progress: Float) {
         if level != self.level {
             self.level = level
-            label.stringValue = "Loading \(level)"
             // Vignette names differ in case from the level names (Cock01.png / cock01).
             let files = (try? FileManager.default.contentsOfDirectory(at: vignettes, includingPropertiesForKeys: nil)) ?? []
             image.image = files.first { $0.deletingPathExtension().lastPathComponent.lowercased() == level.lowercased() }
@@ -116,7 +111,6 @@ final class LoadingScreen: NSView {
         super.layout()
         let b = bounds, w = min(b.width * 0.8, (b.height - 120) * 4 / 3), h = w * 3 / 4
         image.frame = NSRect(x: (b.width - w) / 2, y: (b.height - h) / 2 + 40, width: w, height: h)
-        label.frame = NSRect(x: 0, y: image.frame.minY - 44, width: b.width, height: 26)
         bar.frame = NSRect(x: (b.width - w * 0.6) / 2, y: image.frame.minY - 74, width: w * 0.6, height: 18)
     }
 }
@@ -202,8 +196,16 @@ final class GameView: MTKView {
         guard let v = viewer else { super.keyDown(with: event); return }
         if event.keyCode == 120 {  // F2: antialiasing off / 2x / 4x / 8x (as far as the GPU goes), kept for next time
             if !event.isARepeat, let r = renderer {
-                try? r.setMSAA(r.nextMSAA, view: self)
+                try? r.setMSAA(r.nextMSAA)
                 Renderer.preferredMSAA = r.msaa
+                updateTitle()
+            }
+            return
+        }
+        if event.keyCode == 99 {  // F3: supersampling off / 1.5x / 2x (as the SDL build's F3), kept for next time
+            if !event.isARepeat, let r = renderer {
+                r.setScale(r.nextScale)
+                Renderer.preferredScale = r.scale
                 updateTitle()
             }
             return
@@ -252,7 +254,9 @@ final class GameView: MTKView {
     func updateTitle() {
         guard let viewer = renderer?.viewer, let w = window else { return }
         let base = w.title.components(separatedBy: "  ·  ").first ?? w.title
-        let aa = renderer.map { $0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off" } ?? ""
+        let aa = renderer.map {
+            ($0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off") + ($0.scale > 100 ? ", SS \($0.scale >= 200 ? "2x" : "1.5x")" : "")
+        } ?? ""
         w.title = base + "  ·  " + viewer.status(extra: aa)
     }
 
@@ -278,7 +282,7 @@ final class GameView: MTKView {
     private var nextLevel: (url: URL, screen: LoadingScreen, start: CFTimeInterval, full: Bool)?
     private var nextLevelTimer: Timer?
     /// Default data, first that exists: inside OpenTonic.app (Contents/Resources/data/ttlv, built by
-    /// tools/make_app.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
+    /// tools/install_macos.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
     /// up without copying); out/ttlv in the working directory (older layout).
     private var levelFolder: URL = {

@@ -12,24 +12,80 @@ needs to read an old one. The tags are the schema:
 Each format lists its chunks in its own module docstring (ttlv.py, ai.py).
 
 Every file starts with a STMP chunk: the converter's stamp (`stamp()`), a hash of the tools/ttre sources that wrote
-it. tools/build_all.sh regenerates a level whose stamp differs from the current one, and the core keeps it for log
+it (comments and docstrings aside). tools/convert_files.sh regenerates a level whose stamp differs from the current one, and the core keeps it for log
 lines. CONTAINER (100) changes only if the framing above changes. The numbered formats before it used 1-12 at that
 offset, so the core reports those files as stale too.
 """
-import glob
 import hashlib
+import io
 import os
+import re
 import struct
 import sys
+import tokenize
 
 CONTAINER = 100
 
 
-def stamp():
-    """12 hex digits: a hash of every tools/ttre/*.py (the code that decides the files' contents)."""
+def _imports(path):
+    """The tools/ttre modules a module imports (`from . import a, b`, `from .a import x`, `from tools.ttre import a`)."""
+    names = set()
+    for m in re.finditer(r'^[ \t]*from[ \t]+(?:\.|tools\.ttre)(\.?\w*)[ \t]+import[ \t]+(?:\(([^)]*)\)|([\w \t,]+))',
+                         open(path).read(), re.M):
+        sub = m.group(1).lstrip('.')
+        listed = re.sub(r'\bas\s+\w+', '', m.group(2) or m.group(3))
+        names.update([sub] if sub else re.findall(r'\w+', listed))
+    return names
+
+
+def _code(path):
+    """A module's source without comments, docstrings and blank lines, so editing those doesn't make every level stale.
+    Only COMMENT tokens and bare string statements are cut from the text, so the result is the same on every Python 3."""
+    src = open(path, 'rb').read()
+    toks = [t for t in tokenize.tokenize(io.BytesIO(src).readline) if t.type not in (tokenize.NL, tokenize.ENCODING)]
+    lines = src.decode('utf-8').splitlines(keepends=True)
+    cut = []  # (start, end) positions to blank
+    for i, t in enumerate(toks):
+        if t.type == tokenize.COMMENT:
+            cut.append((t.start, t.end))
+        elif t.type == tokenize.STRING:
+            prev = next((p for p in reversed(toks[:i]) if p.type != tokenize.COMMENT), None)
+            after = next((n for n in toks[i + 1:] if n.type != tokenize.COMMENT), None)
+            if (prev is None or prev.type in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)) and \
+                    (after is None or after.type in (tokenize.NEWLINE, tokenize.ENDMARKER)):
+                cut.append((t.start, t.end))
+    for (sr, sc), (er, ec) in reversed(cut):
+        if sr == er:
+            lines[sr - 1] = lines[sr - 1][:sc] + lines[sr - 1][ec:]
+        else:
+            lines[sr - 1] = lines[sr - 1][:sc] + '\n'
+            for r in range(sr, er - 1):
+                lines[r] = '\n'
+            lines[er - 1] = lines[er - 1][ec:]
+    return ''.join(l.rstrip() + '\n' for l in lines if l.strip())
+
+
+def stamp(modules=('__init__', '__main__'), files=()):
+    """12 hex digits: a hash of the code that decides a build output's contents, without comments, docstrings and blank
+    lines. By default the levels': the package, the converter's entry point (__main__.py) and every tools/ttre module
+    they import, directly or not (so import_gltf.py, which doesn't feed them, doesn't count). `modules` picks other
+    tools/ttre roots, `files` adds scripts (their '#' comment lines don't count): tools/convert_files.sh keeps these
+    for its other steps in files/out/.stamps."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    seen, todo = set(), list(modules)
+    while todo:
+        m = todo.pop()
+        p = os.path.join(here, m + '.py')
+        if m in seen or not os.path.exists(p):
+            continue
+        seen.add(m)
+        todo.extend(_imports(p))
     h = hashlib.sha256()
-    for p in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), '*.py'))):
-        h.update(os.path.basename(p).encode() + b'\0' + open(p, 'rb').read())
+    for m in sorted(seen):
+        h.update(m.encode() + b'\0' + _code(os.path.join(here, m + '.py')).encode())
+    for f in files:
+        text = ''.join(l for l in open(f) if l.strip() and not l.lstrip().startswith('#'))
+        h.update(os.path.basename(f).encode() + b'\0' + text.encode())
     return h.hexdigest()[:12]
 
 
@@ -39,11 +95,14 @@ def chunk(tag, payload):
 
 
 def write(path, magic, chunks):
-    """chunks: [(tag, payload bytes)] in file order; the STMP chunk is added first."""
+    """chunks: [(tag, payload bytes)] in file order; the STMP chunk is added first. Written next to `path` and renamed
+    over it, so an interrupted run never leaves a cut-off file carrying a current stamp."""
     s = stamp().encode()
-    with open(path, 'wb') as f:
+    tmp = path + '.partial'
+    with open(tmp, 'wb') as f:
         f.write(magic.encode() + struct.pack('<I', CONTAINER) + chunk('STMP', struct.pack('<H', len(s)) + s)
                 + b''.join(chunk(t, p) for t, p in chunks))
+    os.replace(tmp, path)
 
 
 def read(path_or_bytes, magic=None):
@@ -75,6 +134,12 @@ def file_stamp(path):
 
 if __name__ == '__main__':
     # python3 -m tools.ttre.chunks [FILE ...]: the current stamp, or each file's stamp and chunks
+    # python3 -m tools.ttre.chunks --inputs NAME ...: the stamp of other outputs' code (tools/ttre module names, and
+    #   paths of scripts: anything with a '/')
+    if sys.argv[1:2] == ['--inputs']:
+        names = sys.argv[2:]
+        print(stamp([n for n in names if '/' not in n], [n for n in names if '/' in n]))
+        sys.exit()
     if len(sys.argv) == 1:
         print(stamp())
     for p in sys.argv[1:]:

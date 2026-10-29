@@ -3,10 +3,10 @@ import MetalKit
 import simd
 import TonicCore
 
-/// Draws one converted level. The drawable always matches the view's backing pixels
-/// (native Retina resolution). The core's tc_viewer (`Viewer`) owns the cameras, play mode, settings and
-/// what to draw each frame; this uploads its mesh table and the level's textures once, then packs its shading
-/// values into `Uniforms` and draws its list.
+/// Draws one converted level. The drawable always matches the view's backing pixels (native Retina resolution); the
+/// level is drawn into the renderer's own targets (MSAA, supersampling) and ends up in it. The core's tc_viewer
+/// (`Viewer`) owns the cameras, play mode, settings and what to draw each frame; this uploads its mesh table and the
+/// level's textures once, then packs its shading values into `Uniforms` and draws its list.
 @MainActor final class Renderer: NSObject, MTKViewDelegate {
     /// One tc_viewer_mesh on the GPU.
     private struct GPUMesh {
@@ -38,6 +38,17 @@ import TonicCore
         var billboard: UInt32  // TC_FLAG_BILLBOARD sprite quads
     }
 
+    /// Ed's shadow disc (matches ShadowParams in Shaders.metal).
+    private struct ShadowParams {
+        var viewProjection: float4x4
+        var center: SIMD4<Float>  // xyz on the ground, w radius
+        var axisU: SIMD4<Float>
+        var axisV: SIMD4<Float>
+        var normal: SIMD4<Float>  // w: the share of the radius at full darkness
+        var fog: SIMD4<Float>     // near, far, enabled, darkness (alpha)
+        var eye: SIMD4<Float>
+    }
+
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let library: MTLLibrary
@@ -52,6 +63,12 @@ import TonicCore
     private let blendedDepthState: MTLDepthStencilState
     /// Screen transitions and the loading screen's black (docs/PORTALS.md): 2D quads over the frame.
     private var overlayPipeline: MTLRenderPipelineState!
+    /// Ed's round shadow (tc_viewer_shadow): blended, depth-tested without writing, biased towards the camera. Optional:
+    /// the level draws without it.
+    private var shadowPipeline: MTLRenderPipelineState?
+    private let shadowDepthState: MTLDepthStencilState
+    /// Filters a supersampled frame down into the drawable (one sample, no depth).
+    private let downsamplePipeline: MTLRenderPipelineState
     /// Multisample antialiasing: 1 (off), 2, 4 or 8 samples, as far as the GPU goes; F2 cycles it. Kept across levels and
     /// launches (UserDefaults "msaa", default 8).
     private(set) var msaa = 1
@@ -59,6 +76,21 @@ import TonicCore
         get { UserDefaults.standard.object(forKey: "msaa") as? Int ?? 8 }
         set { UserDefaults.standard.set(newValue, forKey: "msaa") }
     }
+    /// Supersampling, percent of the drawable's pixels per axis: 100 (off), 150, 200; F3 cycles it. The level is drawn
+    /// at that size (on top of the MSAA) into `scaled`, then filtered down into the drawable (at 200 a 2 x 2 box
+    /// filter). Kept across levels and launches (UserDefaults "supersampling", default 200); off for this run when its
+    /// targets can't be made.
+    private(set) var scale = 100
+    static var preferredScale: Int {
+        get { UserDefaults.standard.object(forKey: "supersampling") as? Int ?? 200 }
+        set { UserDefaults.standard.set(newValue, forKey: "supersampling") }
+    }
+    var nextScale: Int { scale >= 200 ? 100 : scale >= 150 ? 200 : 150 }
+    /// The 3D targets: depth and, with MSAA, the multisampled colour (both memoryless on Apple GPUs: they live in tile
+    /// memory and cost nothing), and when supersampling the single-sampled colour they resolve into.
+    private var depth: MTLTexture?, msaaColor: MTLTexture?, scaled: MTLTexture?
+    private var targetKey = (width: 0, height: 0, samples: 0)
+    private let memoryless: Bool
     private let overlayDepthState: MTLDepthStencilState
     private let depthState: MTLDepthStencilState
     private let sampler: MTLSamplerState
@@ -90,16 +122,18 @@ import TonicCore
         self.queue = queue
         view.device = device
         view.colorPixelFormat = .bgra8Unorm
-        view.depthStencilPixelFormat = .depth32Float
-        view.clearColor = MTLClearColor(red: 0.08, green: 0.09, blue: 0.14, alpha: 1)
+        // The view only provides the drawable: depth and multisampling are the renderer's own targets (ensureTargets).
+        view.depthStencilPixelFormat = .invalid
+        view.sampleCount = 1
         view.preferredFramesPerSecond = 120
+        memoryless = device.supportsFamily(.apple7)  // Apple silicon
 
         // Inside OpenTonic.app the shader sits in Contents/Resources; `swift run` builds use the SwiftPM bundle.
         let shaderURL = Bundle.main.url(forResource: "Shaders", withExtension: "metal")
             ?? Bundle.module.url(forResource: "Shaders", withExtension: "metal")!
         library = try device.makeLibrary(source: String(contentsOf: shaderURL, encoding: .utf8), options: nil)
         colorFormat = view.colorPixelFormat
-        depthFormat = view.depthStencilPixelFormat
+        depthFormat = .depth32Float
 
         let vd = vertexDescriptor
         vd.attributes[0].format = .float3; vd.attributes[0].offset = 0
@@ -117,8 +151,16 @@ import TonicCore
         depthState = device.makeDepthStencilState(descriptor: ds)!
         ds.isDepthWriteEnabled = false
         blendedDepthState = device.makeDepthStencilState(descriptor: ds)!
+        ds.depthCompareFunction = .lessEqual
+        shadowDepthState = device.makeDepthStencilState(descriptor: ds)!
         ds.depthCompareFunction = .always
         overlayDepthState = device.makeDepthStencilState(descriptor: ds)!
+
+        let dd = MTLRenderPipelineDescriptor()
+        dd.vertexFunction = library.makeFunction(name: "downsample_vertex")
+        dd.fragmentFunction = library.makeFunction(name: "downsample_fragment")
+        dd.colorAttachments[0].pixelFormat = colorFormat
+        downsamplePipeline = try device.makeRenderPipelineState(descriptor: dd)
 
         let sd = MTLSamplerDescriptor()
         sd.minFilter = .linear; sd.magFilter = .linear; sd.mipFilter = .linear
@@ -126,7 +168,8 @@ import TonicCore
         sd.maxAnisotropy = 16  // sharp floors and walls at grazing angles
         sampler = device.makeSamplerState(descriptor: sd)!
         super.init()
-        try setMSAA(Renderer.preferredMSAA, view: view)
+        try setMSAA(Renderer.preferredMSAA)
+        setScale(Renderer.preferredScale)
     }
 
     /// The largest supported sample count up to `wanted` (1, 2, 4, 8).
@@ -137,8 +180,8 @@ import TonicCore
     /// The next setting after the current one: off -> 2x -> 4x -> 8x -> off, skipping what the GPU lacks.
     var nextMSAA: Int { [2, 4, 8, 1].first { $0 > msaa && supported($0) == $0 } ?? 1 }
 
-    /// Switches multisampling: the view's targets and every pipeline (they must match its sample count).
-    func setMSAA(_ wanted: Int, view: MTKView) throws {
+    /// Switches multisampling: the 3D targets and every pipeline (they must match its sample count).
+    func setMSAA(_ wanted: Int) throws {
         let n = supported(wanted)
         func pipeline(_ fragment: String, blended: Bool = false, coverage: Bool = false) throws -> MTLRenderPipelineState {
             let d = MTLRenderPipelineDescriptor()
@@ -172,8 +215,65 @@ import TonicCore
         texturedPipeline = try pipeline("level_fragment_textured", coverage: true)
         flatPipeline = try pipeline("level_fragment_flat")
         blendedPipeline = try pipeline("level_fragment_textured", blended: true)
-        view.sampleCount = n
+        let sd = MTLRenderPipelineDescriptor()
+        sd.vertexFunction = library.makeFunction(name: "shadow_vertex")
+        sd.fragmentFunction = library.makeFunction(name: "shadow_fragment")
+        let c = sd.colorAttachments[0]!
+        c.pixelFormat = colorFormat
+        c.isBlendingEnabled = true
+        c.sourceRGBBlendFactor = .sourceAlpha
+        c.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        c.sourceAlphaBlendFactor = .one
+        c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        sd.depthAttachmentPixelFormat = depthFormat
+        sd.rasterSampleCount = n
+        shadowPipeline = try? device.makeRenderPipelineState(descriptor: sd)
         msaa = n
+        releaseTargets()
+    }
+
+    /// Switches supersampling (100, 150 or 200 % of the drawable's pixels per axis; anything else rounds down).
+    func setScale(_ percent: Int) {
+        let p = percent >= 200 ? 200 : percent >= 150 ? 150 : 100
+        guard p != scale else { return }
+        scale = p
+        releaseTargets()
+    }
+
+    private func releaseTargets() {
+        depth = nil; msaaColor = nil; scaled = nil
+        targetKey = (0, 0, 0)
+    }
+
+    /// The 3D targets for a drawable of w x h: at scale % of it, msaa samples. Supersampling goes off when they can't be
+    /// made (too big for the GPU).
+    private func ensureTargets(_ w: Int, _ h: Int) -> Bool {
+        let sw = w * scale / 100, sh = h * scale / 100
+        if depth != nil, targetKey == (sw, sh, msaa) { return true }
+        releaseTargets()
+        func make(_ format: MTLPixelFormat, samples: Int, kept: Bool) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: sw, height: sh, mipmapped: false)
+            d.textureType = samples > 1 ? .type2DMultisample : .type2D
+            d.sampleCount = samples
+            d.usage = kept ? [.renderTarget, .shaderRead] : .renderTarget
+            d.storageMode = kept ? .private : memoryless ? .memoryless : .private
+            return device.makeTexture(descriptor: d)
+        }
+        let limit = 16384  // the largest 2D texture on every Mac GPU Metal runs on
+        if sw <= limit, sh <= limit {
+            depth = make(depthFormat, samples: msaa, kept: false)
+            if msaa > 1 { msaaColor = make(colorFormat, samples: msaa, kept: false) }
+            if scale > 100 { scaled = make(colorFormat, samples: 1, kept: true) }
+        }
+        if depth != nil, msaa == 1 || msaaColor != nil, scale == 100 || scaled != nil {
+            targetKey = (sw, sh, msaa)
+            return true
+        }
+        NSLog("3D targets (%d x %d, %dx MSAA) could not be made", sw, sh, msaa)
+        guard scale > 100 else { return false }
+        NSLog("supersampling off")
+        setScale(100)
+        return ensureTargets(w, h)
     }
 
     func load(_ viewer: Viewer) {
@@ -300,9 +400,27 @@ import TonicCore
         let size = view.drawableSize
         var f = tc_view_frame()
         tc_viewer_frame(v, Float(size.width / max(size.height, 1)), &f)
-        view.clearColor = MTLClearColor(red: Double(f.clear_color.0), green: Double(f.clear_color.1), blue: Double(f.clear_color.2), alpha: 1)
-        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard size.width >= 1, size.height >= 1, ensureTargets(Int(size.width), Int(size.height)),
+              let drawable = view.currentDrawable, let cmd = queue.makeCommandBuffer() else { return }
+        // Draw multisampled and resolve, into the drawable or the supersampled target (filtered into the drawable after).
+        let pass = MTLRenderPassDescriptor()
+        let color = pass.colorAttachments[0]!
+        color.clearColor = MTLClearColor(red: Double(f.clear_color.0), green: Double(f.clear_color.1), blue: Double(f.clear_color.2), alpha: 1)
+        color.loadAction = .clear
+        let out = scaled ?? drawable.texture
+        if let msaaColor {
+            color.texture = msaaColor
+            color.resolveTexture = out
+            color.storeAction = .multisampleResolve
+        } else {
+            color.texture = out
+            color.storeAction = .store
+        }
+        pass.depthAttachment.texture = depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .dontCare
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         var uniforms = Uniforms(viewProjection: float4x4(f.view_projection), lightDirection: SIMD3(f.light_direction),
                                 ambient: f.ambient, time: f.time, bakedScale: f.baked_scale, lightSet: f.light_set, gamma: f.gamma,
                                 fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, 0),
@@ -316,11 +434,8 @@ import TonicCore
 
         var count: UInt32 = 0, opaque: UInt32 = 0
         let draws = tc_viewer_draws(v, &count, &opaque)!
-        for i in 0..<Int(count) {
-            // Opaque draws first, then the transparent ones: alpha blended, no depth writes.
-            if i == Int(opaque) { enc.setDepthStencilState(blendedDepthState) }
-            let d = draws[i]
-            guard let m = meshes[Int(d.mesh)] else { continue }
+        func drawMesh(_ d: tc_view_draw) {
+            guard let m = meshes[Int(d.mesh)] else { return }
             let transparent = d.flags & TC_FLAG_TRANSPARENT != 0
             var flags = SIMD2<UInt32>(d.flags, !transparent && msaa > 1 ? 1 : 0)  // coverage: as the textured pipeline
             if d.texture >= 0, let tex = textures[Int(d.texture)] {
@@ -337,8 +452,26 @@ import TonicCore
             enc.setVertexBuffer(m.vertices, offset: 0, index: 0)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: m.indexCount, indexType: .uint32, indexBuffer: m.indices, indexBufferOffset: 0)
         }
+        // Opaque draws, Ed's shadow on them, then the transparent ones (alpha blended, no depth writes): water drawn
+        // over shallow ground stays on top of the shadow.
+        for i in 0..<Int(opaque) { drawMesh(draws[i]) }
+        drawShadow(enc, v, f)
+        enc.setDepthStencilState(blendedDepthState)
+        for i in Int(opaque)..<Int(count) { drawMesh(draws[i]) }
         drawOverlay(enc, viewer!)
         enc.endEncoding()
+        if let scaled {  // supersampled: filter it down into the drawable
+            let p = MTLRenderPassDescriptor()
+            p.colorAttachments[0].texture = drawable.texture
+            p.colorAttachments[0].loadAction = .dontCare
+            p.colorAttachments[0].storeAction = .store
+            if let down = cmd.makeRenderCommandEncoder(descriptor: p) {
+                down.setRenderPipelineState(downsamplePipeline)
+                down.setFragmentTexture(scaled, index: 0)
+                down.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                down.endEncoding()
+            }
+        }
         cmd.present(drawable)
         cmd.commit()
         if !pendingSent, let carry = viewer?.pendingLevel {
@@ -346,6 +479,28 @@ import TonicCore
             let send = onPendingLevel
             DispatchQueue.main.async { send(carry) }  // opening a level replaces this renderer: not from inside draw
         }
+    }
+
+    /// Ed's round shadow (tc_viewer_shadow, after tc_viewer_draws), as the SDL build's gpu_draw_shadow: a disc on the
+    /// ground under him, faded by the fog. Restores nothing but the depth bias: every level draw sets its own state.
+    private func drawShadow(_ enc: MTLRenderCommandEncoder, _ v: UnsafeMutablePointer<tc_viewer>, _ f: tc_view_frame) {
+        var s = tc_view_shadow()
+        guard let shadowPipeline, tc_viewer_shadow(v, &s), s.alpha > 0, s.radius > 0 else { return }
+        // two axes along the ground: across the normal, from whichever world axis is least along it
+        let n = SIMD3<Float>(s.normal)
+        let across = cross(n, abs(n.x) < 0.9 ? SIMD3<Float>(1, 0, 0) : SIMD3<Float>(0, 1, 0))
+        guard length(across) > 0 else { return }
+        let u = normalize(across), w = cross(n, u)
+        var p = ShadowParams(viewProjection: float4x4(f.view_projection), center: SIMD4(SIMD3(s.position), s.radius),
+                             axisU: SIMD4(u, 0), axisV: SIMD4(w, 0), normal: SIMD4(n, s.inner),
+                             fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, s.alpha), eye: SIMD4(SIMD3(f.eye), 0))
+        enc.setRenderPipelineState(shadowPipeline)
+        enc.setDepthStencilState(shadowDepthState)
+        enc.setDepthBias(-2, slopeScale: -2, clamp: 0)  // pulled towards the camera: no fighting the ground it lies on
+        enc.setVertexBytes(&p, length: MemoryLayout<ShadowParams>.stride, index: 3)
+        enc.setFragmentBytes(&p, length: MemoryLayout<ShadowParams>.stride, index: 3)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        enc.setDepthBias(0, slopeScale: 0, clamp: 0)
     }
 
     private struct OverlayVertex { var position: SIMD2<Float>; var uv: SIMD2<Float> }

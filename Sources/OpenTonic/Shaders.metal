@@ -164,3 +164,58 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant OverlayPar
     }
     return float4(0, 0, 0, a);
 }
+
+// ---- Ed's round shadow (tc_viewer_shadow; the SDL build's shaders/shadow.vert/.frag) ----
+// A disc lying on the ground under him, 6 vertices, no vertex buffer; drawn after the opaque draws, alpha blended,
+// depth-tested without writing, biased towards the camera. Must match ShadowParams in Renderer.swift.
+struct ShadowParams {
+    float4x4 viewProjection;
+    float4 center;           // xyz on the ground, w radius
+    float4 axisU;            // two axes along the ground (unit), w unused
+    float4 axisV;
+    float4 normal;           // the ground's normal, w the share of the radius at full darkness
+    float4 fog;              // near, far, enabled (0/1), darkness (alpha)
+    float4 eye;              // camera position
+};
+struct ShadowOut { float4 position [[position]]; float2 local; float3 world; };  // local: -1..1 across the disc
+
+constant float2 shadowCorners[6] = {float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, -1), float2(1, 1), float2(-1, 1)};
+
+vertex ShadowOut shadow_vertex(uint vid [[vertex_id]], constant ShadowParams &s [[buffer(3)]]) {
+    float2 c = shadowCorners[vid];
+    // a few centimetres off the ground (the depth bias does the rest)
+    float3 p = s.center.xyz + (s.axisU.xyz * c.x + s.axisV.xyz * c.y) * s.center.w + s.normal.xyz * 0.04;
+    ShadowOut out;
+    out.position = s.viewProjection * float4(p, 1.0);
+    out.local = c;
+    out.world = p;
+    return out;
+}
+
+// Black, darkest in the middle, soft towards the rim, faded by the level's fog.
+fragment float4 shadow_fragment(ShadowOut in [[stage_in]], constant ShadowParams &s [[buffer(3)]]) {
+    float r = length(in.local);
+    if (r >= 1.0) discard_fragment();
+    float a = s.fog.w * (1.0 - smoothstep(s.normal.w, 1.0, r));
+    if (s.fog.z > 0.5 && s.fog.y > s.fog.x)
+        a *= 1.0 - saturate((distance(in.world, s.eye.xyz) - s.fog.x) / (s.fog.y - s.fog.x));
+    return float4(0.0, 0.0, 0.0, a);
+}
+
+// ---- Supersampling: the level's frame, drawn at scale x the drawable's pixels, filtered down into it ----
+// One full-screen triangle; linear filtering at the destination's pixel centres (at 2x a 2 x 2 box filter), as the
+// SDL build's linear blit.
+struct DownsampleOut { float4 position [[position]]; float2 uv; };
+
+vertex DownsampleOut downsample_vertex(uint vid [[vertex_id]]) {
+    float2 uv = float2((vid << 1) & 2, vid & 2);
+    DownsampleOut out;
+    out.position = float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1);
+    out.uv = uv;
+    return out;
+}
+
+fragment float4 downsample_fragment(DownsampleOut in [[stage_in]], texture2d<float> tex [[texture(0)]]) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    return tex.sample(s, in.uv);
+}

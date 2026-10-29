@@ -14,7 +14,7 @@ final class ControlsView: NSView {
             case .ed: return "Ed: jump, act, shoot, side-step"
             case .fly: return "Free-fly up / down"
             case .mode: return "Play as Ed / free-fly viewer / simple walking"
-            case .view: return "View: speed, lighting, gamma, FOV, fog, AA"
+            case .view: return "View: speed, lighting, gamma, FOV, fog, AA, SS"
             case .app: return "App: music, mouse, help, full screen"
             }
         }
@@ -41,7 +41,7 @@ final class ControlsView: NSView {
 
     /// A US layout, as compact as the bindings allow. Gaps are keys with an empty label and width.
     private static let rows: [[Key]] = [
-        [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3"), k("F4"), k("", 0.5),
+        [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4"), k("", 0.5),
          k("F5"), k("F6"), k("F7"), k("F8"), k("", 0.5), k("F9"), k("F10"), k("F11"), k("F12")],
         [k("`"), k("1", 1, .view, "light 1"), k("2", 1, .view, "light 2"), k("3", 1, .view, "light 3"), k("4", 1, .view),
          k("5", 1, .view), k("6", 1, .view), k("7", 1, .view), k("8", 1, .view), k("9", 1, .view), k("0"),

@@ -20,8 +20,8 @@ make -C sdl            # -> sdl/build/opentonic
 - The core is built through its own Makefile (`make -C core lib`).
 
 ## Converting the game files
-`tools/build_linux.sh` is the Linux counterpart of `tools/build_all.sh` (docs/BUILD.md steps 3-6, then `make -C sdl`;
-`--no-build` converts only, `--check` adds the core checks, `--force` redoes everything). It needs `python3`; music
+`tools/convert_files.sh` converts on Linux as on macOS (docs/BUILD.md steps 3-6; `--check` adds the core checks,
+`--force` redoes everything); then `make -C sdl`, or `tools/install_linux.sh`, which runs both. It needs `python3`; music
 needs `vgmstream-cli`, which apt doesn't package: put the official prebuilt `vgmstream-cli` from
 https://github.com/vgmstream/vgmstream/releases (`vgmstream-linux.zip`) on the PATH or in `tools/bin/` (git-ignored;
 the script looks there). The app icon needs `ffmpeg` (`sudo apt install ffmpeg`); the intro movie needs both
@@ -35,7 +35,7 @@ case-insensitively; if a level fails with "not found", check letter case first.
 working directory, then relative to the binary in the checkout, then in the checkout it was built from. Converted data
 as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails, portal loading screens), `Textures/Effects`
 (screen transitions), `audio/` (music, `sfx/` sound effects) and `icon/` next to it. Levels from another converter
-version do not load ("re-run the conversion"): `tools/build_linux.sh` re-exports exactly those (docs/BUILD.md "Formats").
+version do not load ("re-run the conversion"): `tools/convert_files.sh` re-exports exactly those (docs/BUILD.md "Formats").
 
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
 alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,
@@ -47,15 +47,16 @@ draw at the window's size). Sharper textures, distant detail and foliage cutouts
 shadow (a stand-in until the game's own is read): `tc_viewer_shadow` casts straight down from him and gives the ground
 point, its normal, a radius that shrinks with his height (to 35 % at 6 units: a jump shows), darkness and softness;
 shaders/shadow.vert/.frag draw it as a soft disc on the ground after the opaque draws, faded by the fog. None while
-swimming, with Ed hidden (portals) or over wall-steep faces. The Swift app does not draw it yet. It costs memory: at
+swimming, with Ed hidden (portals) or over wall-steep faces. The Swift app has both (Renderer.swift; F3, kept in
+UserDefaults "supersampling", default 2x; its MSAA targets are memoryless on Apple silicon). Supersampling costs memory: at
 1366 x 768, 2x with 8x MSAA is about 270 MB of targets; if they can't be made it falls back to off.
 `TONIC_GPU_DEBUG=1` turns on the GPU backend's validation layers (when installed).
 
 ## Installing
-`tools/install_linux.sh [--force] [--no-convert] [dest]` first brings files/out up to date (`tools/build_linux.sh
---no-build`: converts what is missing and re-exports levels from an older converter; `--force` reconverts everything,
+`tools/install_linux.sh [--force] [--no-convert] [dest]` first brings files/out up to date (`tools/convert_files.sh`:
+converts what is missing and re-exports levels from an older converter; `--force` reconverts everything,
 `--no-convert` skips the step, and without `files/sources/GAMEDATA` it is skipped too), then builds the frontend and
-installs it for the current user, as `tools/make_app.sh` makes the .app: the binary and its data in `~/.local/share/opentonic` (`opentonic` + `data/`, the files/out layout: ttlv
+installs it for the current user, as `tools/install_macos.sh` makes the .app: the binary and its data in `~/.local/share/opentonic` (`opentonic` + `data/`, the files/out layout: ttlv
 without the `*_ai.txt` listings, Textures, Vignette/Level, audio with music and sfx, video/intro.mpg, icon, Imported),
 a menu entry `~/.local/share/applications/org.opentonic.sdl.desktop` (named after the app ID the binary gives
 `SDL_SetAppMetadata`, which SDL uses as the Wayland app ID / X11 class, so the desktop pairs window and entry) and its
@@ -123,7 +124,7 @@ sdl/
   uploaded with the level. After the 3D pass, a 2D pass draws `tc_viewer_overlay`: the mask wipe (alpha test
   `a <= threshold`, black), the spinning logo (black x the texture's alpha on the core's rotated quad), or black, in
   their own `overlay` pipeline; for the loading screen, the vignette (`Vignette/Level/<level>.png`, matched
-  case-insensitively), "Loading <level>" in the debug font and the bar on top, laid out as main.swift's
+  case-insensitively; no caption, as in the original) and the bar under it, laid out as main.swift's
   `LoadingScreen`. The bar is main.swift's `RainbowBar` in one quad (`gpu_loading_bar`, shaders/bar.frag): a
   translucent capsule filled with sud0's rainbow pool (`Textures/Sud0/o_zarbi_auntxy.png`, plain white without it),
   scrolling and waving in 3-point strips, with a gloss and an outline. Once `tc_viewer_pending_level` is set (after
@@ -158,7 +159,7 @@ sdl/
   a fringe. ~1.6 ms per cutout texture at load.
 
 ## Not done yet
-- `tools/make_app.sh` stays macOS-only; its Linux counterpart is `tools/install_linux.sh` (see Installing). **Same
+- `tools/install_macos.sh` stays macOS-only; its Linux counterpart is `tools/install_linux.sh` (see Installing). **Same
   rule as the app: never redistribute anything containing converted assets.**
 
 Parity check once data is converted: screenshot `bar` (lightmaps + fog) and one radiosity-lit level in both builds

@@ -86,8 +86,8 @@ the **reveal** transition after every level load (`GAM_Initeng_0040de70`) and af
 
 ### Loading screen
 The VIG module shows the level's vignette (Vignette.cnt, `files/out/Vignette/Level/<Level>.png`) while the level
-loads. Ours loads in a fraction of a second, so per the user: **the vignette for 3 s with a progress bar and
-"Loading <level>"** (`TC_VIEWER_LOADING_SECONDS`). Both frontends also show it after the intro, before Totalski,
+loads. Ours loads in a fraction of a second, so per the user: **the vignette for 3 s with a progress bar**
+(`TC_VIEWER_LOADING_SECONDS`), no level name (the original shows none; the vignette says where you are going). Both frontends also show it after the intro, before Totalski,
 whether the intro was watched or skipped.
 
 ## Design

@@ -68,16 +68,17 @@ typedef struct app {
     bool help;
     SDL_GPUTexture *help_text;
     int help_w, help_h;
-    /* A red portal's loading screen (docs/PORTALS.md): the coming level's vignette and its caption. */
+    /* A red portal's loading screen (docs/PORTALS.md): the coming level's vignette (no caption: the original has none,
+     * the vignette shows where you are going). */
     char loading_level[64];
-    SDL_GPUTexture *loading_vignette, *loading_text;
-    int vignette_w, vignette_h, loading_text_w, loading_text_h;
-    Uint64 loading_start_ns;     /* when the caption last changed: the bar's animation clock */
+    SDL_GPUTexture *loading_vignette;
+    int vignette_w, vignette_h;
+    Uint64 loading_start_ns;     /* when the level last changed: the bar's animation clock */
     SDL_GPUTexture *loading_bar; /* the bar's rainbow pool (Textures/Sud0/o_zarbi_auntxy.png), loaded once */
     bool loading_bar_tried;
     /* After the intro: Totalski opens after the loading screen, as a portal's (the level select stays underneath). */
     char *next_level;            /* its .ttlv, or NULL */
-    char next_name[64];          /* the caption's level name */
+    char next_name[64];          /* its level name (for the vignette) */
     float next_time;             /* seconds into its loading screen */
     char title_base[512];
     char title[1024];
@@ -120,8 +121,7 @@ static char *audio_dir(const app *a) { return path_join(a->data_dir, "audio"); }
 
 static void loading_free(app *a) {
     if (a->loading_vignette) SDL_ReleaseGPUTexture(a->g.device, a->loading_vignette);
-    if (a->loading_text) SDL_ReleaseGPUTexture(a->g.device, a->loading_text);
-    a->loading_vignette = a->loading_text = NULL;
+    a->loading_vignette = NULL;
     a->loading_level[0] = 0;
 }
 
@@ -597,15 +597,12 @@ static void draw_help(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
                      (SDL_FColor){0.92f, 0.93f, 0.96f, 1});
 }
 
-/* The loading screen's vignette and caption for `level`, made when it changes (before the frame: uploads). */
+/* The loading screen's vignette for `level`, made when it changes (before the frame: uploads). */
 static void loading_prepare(app *a, const char *level) {
     if (!level || SDL_strcmp(level, a->loading_level) == 0) return;
     loading_free(a);
     SDL_strlcpy(a->loading_level, level, sizeof a->loading_level);
     a->loading_start_ns = SDL_GetTicksNS();
-    char caption[96];
-    SDL_snprintf(caption, sizeof caption, "Loading %s", level);
-    a->loading_text = gpu_text(&a->g, caption, 1, &a->loading_text_w, &a->loading_text_h);
     /* Vignette names differ in case from the level names (Cock01.png / cock01). */
     char *vignette = path_join(a->data_dir, "Vignette");
     char *dir = vignette ? path_join(vignette, "Level") : NULL;
@@ -638,8 +635,8 @@ static void loading_prepare(app *a, const char *level) {
     SDL_free(vignette);
 }
 
-/* Over the overlay's black, laid out as main.swift's LoadingScreen: the vignette (4:3, 80 % wide at most), "Loading
- * <level>" under it, then the rainbow progress bar. */
+/* Over the overlay's black, laid out as main.swift's LoadingScreen: the vignette (4:3, 80 % wide at most), then the
+ * rainbow progress bar under it. */
 static void draw_loading(app *a, gpu_frame *f, SDL_GPURenderPass *pass, float progress) {
     float k = SDL_GetWindowDisplayScale(a->window), W = (float)f->width, H = (float)f->height;
     float w = SDL_min(W * 0.8f, (H - 120 * k) * 4 / 3), h = w * 3 / 4;
@@ -650,13 +647,6 @@ static void draw_loading(app *a, gpu_frame *f, SDL_GPURenderPass *pass, float pr
         float iw = (float)a->vignette_w * s, ih = (float)a->vignette_h * s;
         gpu_quad(&a->g, f, pass, a->loading_vignette, (SDL_FRect){x + (w - iw) / 2, y + (h - ih) / 2, iw, ih}, NULL,
                  (SDL_FColor){1, 1, 1, 1});
-    }
-    if (a->loading_text) {  /* the 8x8 font at twice the display scale */
-        float t = (float)SDL_max(1, (int)SDL_roundf(2 * k));
-        float tw = (float)a->loading_text_w * t, th = (float)a->loading_text_h * t;
-        gpu_quad_sampled(&a->g, f, pass, a->loading_text, a->g.nearest_sampler,
-                         (SDL_FRect){SDL_floorf((W - tw) / 2), SDL_floorf(y + h + 18 * k + (26 * k - th) / 2), tw, th}, NULL,
-                         (SDL_FColor){1, 1, 1, 1});
     }
     float bw = SDL_floorf(w * 0.6f), bh = SDL_roundf(18 * k), bx = SDL_floorf((W - bw) / 2), by = SDL_floorf(y + h + 56 * k);
     float t = (float)(SDL_GetTicksNS() - a->loading_start_ns) / 1e9f;

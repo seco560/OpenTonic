@@ -1,11 +1,11 @@
 #!/bin/sh
-# Linux counterpart of tools/make_app.sh: brings files/out up to date (tools/build_linux.sh: converts what is missing,
+# Linux counterpart of tools/install_macos.sh: brings files/out up to date (tools/convert_files.sh: converts what is missing,
 # re-exports levels a changed converter made stale), builds the SDL3 frontend and installs it for the current user
 # with its data and an applications menu entry. Re-running converts, rebuilds and updates the install in place (only
-# changed files are copied; files gone from files/out are removed). Like the .app, the install is full of converted Ubisoft assets: it
-# must stay on this machine, never be redistributed.
+# changed files are copied; files gone from files/out are removed). Like the .app, the install is full of converted
+# Ubisoft assets: it must stay on this machine, never be redistributed.
 #
-# Needs: the game's files in files/sources/GAMEDATA (docs/BUILD.md step 2) and what tools/build_linux.sh needs, or an
+# Needs: the game's files in files/sources/GAMEDATA (docs/BUILD.md step 2) and what tools/convert_files.sh needs, or an
 # already converted files/out (without the sources the conversion is skipped); rsync; ffmpeg for the menu icon sizes
 # (else the full-size icon is used).
 # Installs:
@@ -16,7 +16,7 @@
 #   ~/.local/share/icons/hicolor/<size>/apps/org.opentonic.sdl.png
 # Usage (from the repo root): tools/install_linux.sh [--force] [--no-convert] [dest]
 #                              tools/install_linux.sh --uninstall [dest]
-#   --force       reconvert everything (tools/build_linux.sh --force)
+#   --force       reconvert everything (tools/convert_files.sh --force)
 #   --no-convert  install files/out as it is
 set -e
 [ -e tools/ttre/__main__.py ] || { echo "run this from the repository root" >&2; exit 1; }
@@ -57,12 +57,12 @@ fi
 
 OUT=files/out
 if [ "$CONVERT" = 1 ] && [ -d files/sources/GAMEDATA ]; then
-  echo "== convert (tools/build_linux.sh)"
-  tools/build_linux.sh --no-build $FORCE  # sdl/ is built below
+  echo "== convert (tools/convert_files.sh)"
+  tools/convert_files.sh $FORCE
 elif [ "$CONVERT" = 1 ]; then
   echo "== convert: no files/sources/GAMEDATA, installing $OUT as it is"
 fi
-[ -d "$OUT/ttlv" ] || { echo "no $OUT/ttlv: convert the game first (tools/build_linux.sh)" >&2; exit 1; }
+[ -d "$OUT/ttlv" ] || { echo "no $OUT/ttlv: convert the game first (tools/convert_files.sh)" >&2; exit 1; }
 command -v rsync >/dev/null 2>&1 || { echo "missing: rsync (sudo apt install rsync)" >&2; exit 1; }
 # The icon: files/out/icon/OpenTonic.png (tools/make_icon.sh), or the one made before the rename.
 ICON="$OUT/icon/OpenTonic.png"; [ -e "$ICON" ] || ICON="$OUT/icon/TonicViewer.png"
