@@ -47,8 +47,10 @@
 - **Radiosity** = {u32 n_lod, ptr lods}; lod = {u32 n_colors, ptr colors}; colour = **i16 r, g, b, 0** (8 bytes). raymap reads the same Radiosity/RadiosityLOD shape but never loads it.
   - n_colors = the LOD-0 vertex count for every IPO, except 8 (bar, cock01, marmite, pyramide) whose ISI +0 is not a radiosity. Those keep the fallback lighting.
   - Values are signed. Medians are 20–100, typical range 0–400, outliers -5100..2400. Negative = darker.
-- **sud0 sets = lighting configurations:** A = dusk (red sky), B = day (blue sky, (-43, 184, 393)), C = night (dark blue). Previews: `out/scratch/light_sud0_set{1,2}.png`. Land's B is biased around 25600, so not plain colours.
-  - Which set the game selects (and whether it blends them into IPO+4) is **not traced**. The export uses A everywhere.
+- **sud0 sets = lighting configurations:** A = dusk (red sky), B = day (blue sky, (-43, 184, 393)), C = night (dark blue). Previews: `out/scratch/light_sud0_set{1,2}.png`. Land's B is biased around 25600, so not plain colours: it is the white flash of Land's lightning.
+  - Which set shows: traced and ported 2026-10-29 (DECOMP.md "sud0's day / night cycle"): level persos call
+    SetLightSet (sud0's day / night cycle, Land's lightning); the core runs their scripts (.ttlv LAIS) and the shaders
+    blend two sets (the exe blends them into IPO+4). Every other level stays on A.
 - **Combine (guessed visually, not from the exe):** light = clamp(rgb, 0, 255) / 128, texture × light, saturated (so up to 2× overbright).
   - At /255, bar and Land are too dark, but sector lights and ambient (stage 3) may add to this. Re-check the scale once those exist.
   - Tunable: `level.RADIOSITY_ONE` (Python preview) and `bakedScale` (viewer uniform).
@@ -218,7 +220,7 @@ headless tests, and ask before large explorations.
 - Open: the real collide flags (zdm/zdd/zde for persos, type 7/8 elements, collide materials of persos), water/lava/death surfaces, Ed's real speeds and jump arc (MEC IDCard; State +0x2C read as null for all of Ed's states, so the offset is probably wrong), state transitions instead of hand-picked clips, slopes > 50° and ledge grabbing.
 
 ## Plan update (2026-10-19, user decision)
-- Lighting stages 2 (which baked set the game picks / day-night transitions) and 3 (sector lights, fog) are **parked**:
+- Lighting stages 2 (which baked set the game picks / day-night transitions; done 2026-10-29) and 3 (sector lights, fog) are **parked**:
   the transition logic is expected to be tricky and the budget is limited. The viewer exposes all baked sets instead
   (ttlv v4: 3 rgba8 sets per vertex; number keys pick the set, -/= adjust gamma).
 - **Next: basic playable Ed in the viewer** (an optional mode): decode static collision geometry (PhysicalObject

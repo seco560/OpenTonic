@@ -130,6 +130,117 @@ static void play_destroy(tc_viewer_play *p) {
     tc_free(p);
 }
 
+/* ---- baked light sets ---- */
+
+/* The level persos that set the light (tc_level.light_persos), run by the interpreter on whole milliseconds of the
+ * game clock: sud0's day / night cycle, Land's lightning. */
+struct tc_viewer_light {
+    uint32_t count;
+    tc_ai_model *models;
+    tc_ai_perso *persos;
+    double clock;          /* seconds they have run */
+    uint64_t stepped_ms;   /* of it, stepped */
+};
+
+static void light_destroy(tc_viewer_light *l) {
+    uint32_t i;
+    if (!l) return;
+    for (i = 0; i < l->count; i++) {
+        tc_ai_free(&l->persos[i]);
+        tc_ai_model_free(&l->models[i]);
+    }
+    tc_free(l->models);
+    tc_free(l->persos);
+    tc_free(l);
+}
+
+/* NULL when the level has none (or one set only); *oom on running out of memory. Persos whose scripts don't load
+ * are left out. Each gets its own random stream from the viewer's. */
+static tc_viewer_light *light_create(tc_viewer *v, const tc_level *l, bool *oom) {
+    tc_viewer_light *lt;
+    uint32_t i;
+    *oom = false;
+    if (!l->light_perso_count || v->light_set_count < 2) return NULL;
+    lt = (tc_viewer_light *)tc_calloc(1, sizeof(*lt));
+    if (lt) {
+        lt->models = (tc_ai_model *)tc_calloc(l->light_perso_count, sizeof(tc_ai_model));
+        lt->persos = (tc_ai_perso *)tc_calloc(l->light_perso_count, sizeof(tc_ai_perso));
+    }
+    if (!lt || !lt->models || !lt->persos) { light_destroy(lt); *oom = true; return NULL; }
+    for (i = 0; i < l->light_perso_count; i++) {
+        tc_result e = tc_ai_model_load_scripts(&lt->models[lt->count], l->light_persos[i].scripts, l->light_persos[i].size);
+        if (e == TC_OK && (e = tc_ai_init(&lt->persos[lt->count], &lt->models[lt->count])) != TC_OK)
+            tc_ai_model_free(&lt->models[lt->count]);
+        if (e == TC_ERR_OUT_OF_MEMORY) { light_destroy(lt); *oom = true; return NULL; }
+        if (e != TC_OK) continue;
+        v->rng = v->rng * 1103515245u + 12345u;
+        lt->persos[lt->count].rng = v->rng;
+        lt->count++;
+    }
+    if (!lt->count) { light_destroy(lt); return NULL; }
+    return lt;
+}
+
+static uint32_t light_mod(const tc_viewer *v, int32_t n) {
+    int32_t c = (int32_t)v->light_set_count;
+    return (uint32_t)(((n % c) + c) % c);
+}
+
+/* SetLightSet(n, duration, absolute), 0x449ad0: refused while a change runs; duration 0 switches at once (to n if
+ * absolute, else n sets on); otherwise the target is n or n sets on, and the radiosity blends set by set (next =
+ * current + 1) at sets to go / duration. */
+static void set_light(tc_viewer *v, const tc_ai_light_call *c) {
+    uint32_t target, to_go;
+    if (v->light_rate > 0) return;
+    target = light_mod(v, c->absolute ? c->set : (int32_t)v->light_set + c->set);
+    if (c->duration_ms <= 0) {
+        v->light_set = v->light_next = v->light_target = target;
+        v->light_blend = 0;
+        return;
+    }
+    to_go = (target + v->light_set_count - v->light_set) % v->light_set_count;
+    if (!to_go) return;
+    v->light_target = target;
+    v->light_next = (v->light_set + 1) % v->light_set_count;
+    v->light_blend = 0;
+    v->light_rate = (float)to_go * 1000.0f / (float)c->duration_ms;
+}
+
+/* FUN_00449860's blend: on to the next set at 1, until the target. */
+static void blend_light(tc_viewer *v, float dt) {
+    if (v->light_rate <= 0) return;
+    v->light_blend += v->light_rate * dt;
+    while (v->light_blend >= 1) {
+        v->light_set = v->light_next;
+        v->light_blend -= 1;
+        if (v->light_set == v->light_target) {
+            v->light_blend = 0;
+            v->light_rate = 0;
+            return;
+        }
+        v->light_next = (v->light_next + 1) % v->light_set_count;
+    }
+}
+
+static void update_light(tc_viewer *v, float dt) {
+    tc_viewer_light *lt = v->light;
+    if (lt && dt > 0) {
+        uint64_t ms;
+        uint32_t i, k;
+        lt->clock += dt;
+        ms = (uint64_t)(lt->clock * 1000) - lt->stepped_ms;
+        if (ms > 0) {
+            lt->stepped_ms += ms;
+            for (i = 0; i < lt->count; i++) {
+                tc_ai_perso *p = &lt->persos[i];
+                tc_ai_step(p, (float)ms / 1000);
+                for (k = 0; k < p->light_call_count && v->light_scripted; k++) set_light(v, &p->light_calls[k]);
+            }
+        }
+    }
+    blend_light(v, dt);
+}
+
 /* Distance to the nearest hit along the segment, or -1. */
 static float raycast(tc_viewer_play *p, tc_vec3 origin, tc_vec3 dir, float max_distance) {
     tc_hit hit;
@@ -521,6 +632,15 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     v->ed_clip = ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
+    {
+        bool oom;
+        v->light = light_create(v, l, &oom);
+        v->light_scripted = v->light != NULL;
+        if (oom) {
+            tc_viewer_free(v);
+            return TC_ERR_OUT_OF_MEMORY;
+        }
+    }
     if (ai_model(v) && !collect_effects(v, ai_model(v))) {
         tc_viewer_free(v);
         return TC_ERR_OUT_OF_MEMORY;
@@ -545,6 +665,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
 void tc_viewer_free(tc_viewer *v) {
     uint32_t i;
     play_destroy(v->play);
+    light_destroy(v->light);
     tc_free((void *)v->effects);
     tc_free(v->carry);
     tc_free((void *)v->meshes);
@@ -695,6 +816,8 @@ bool tc_viewer_can_play(const tc_viewer *v) { return v->play != NULL; }
 bool tc_viewer_has_ai(const tc_viewer *v) { return v->play && v->play->has_driver; }
 
 bool tc_viewer_ai_active(const tc_viewer *v) { return v->playing && tc_viewer_has_ai(v) && v->play->use_ai; }
+
+bool tc_viewer_status_live(const tc_viewer *v) { return tc_viewer_ai_active(v) || (v->light && v->light_scripted); }
 
 const tc_player *tc_viewer_player(const tc_viewer *v) { return v->play ? &v->play->player : NULL; }
 
@@ -895,6 +1018,7 @@ void tc_viewer_update(tc_viewer *v, float dt) {
     else if (v->playing) update_play(v, dt);
     else fly(v, dt);
     update_portals(v, v->paused ? 0 : dt);
+    update_light(v, v->paused ? 0 : dt); /* the game clock, as Ed's AI */
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
 
@@ -913,8 +1037,13 @@ void tc_viewer_step_speed(tc_viewer *v, int dir) {
 void tc_viewer_toggle_pause(tc_viewer *v) { v->paused = !v->paused; }
 
 void tc_viewer_set_light_set(tc_viewer *v, uint32_t n) {
-    if (n < v->light_set_count) v->light_set = n;
+    if (n >= v->light_set_count) return;
+    v->light_set = v->light_next = v->light_target = n;
+    v->light_blend = v->light_rate = 0;
+    v->light_scripted = false;
 }
+
+void tc_viewer_follow_light(tc_viewer *v) { v->light_scripted = v->light != NULL; }
 
 void tc_viewer_step_gamma(tc_viewer *v, bool up) {
     v->gamma = fmaxf(0.5f, fminf(2.5f, v->gamma * (up ? 1.1f : 1 / 1.1f)));
@@ -945,7 +1074,11 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     } while (0)
     APPEND("anim %.2f\xc3\x97, gamma %.2f, FOV %.0f\xc2\xb0%s", (double)v->animation_speed, (double)v->gamma,
            (double)(v->camera.vertical_fov * 180 / TC_PI), extra ? extra : "");
-    if (v->light_set_count > 1) APPEND(", light %u/%u", (unsigned)v->light_set + 1, (unsigned)v->light_set_count);
+    if (v->light_set_count > 1 && v->light_rate > 0)
+        APPEND(", light %u\xe2\x86\x92%u", (unsigned)v->light_set + 1, (unsigned)v->light_next + 1);
+    else if (v->light_set_count > 1)
+        APPEND(", light %u/%u", (unsigned)v->light_set + 1, (unsigned)v->light_set_count);
+    if (v->light_set_count > 1 && v->light && !v->light_scripted) APPEND("%s", " held");
     if (v->has_fog) APPEND("%s", v->fog_enabled ? ", fog on" : ", fog off");
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
@@ -1123,6 +1256,8 @@ void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
     out->time = v->animation_time;
     out->baked_scale = 255.0f / 128.0f;
     out->light_set = v->light_set;
+    out->light_next = v->light_rate > 0 ? v->light_next : v->light_set;
+    out->light_blend = v->light_rate > 0 ? v->light_blend : 0;
     out->gamma = v->gamma;
     out->fog_on = fog_on;
     if (v->has_fog) {

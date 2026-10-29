@@ -114,16 +114,9 @@ static void free_strings(char **s, uint32_t n) {
     tc_free(s);
 }
 
-tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
-    chunks cs;
-    reader rr, *r = &rr;
+/* The SCPT chunk: nodes, scripts, behaviours, the initial behaviours and the perso's dsgvars. */
+static void rd_scpt(reader *r, tc_ai_model *m) {
     uint32_t i, k;
-    tc_result e;
-    memset(m, 0, sizeof(*m));
-    if ((e = chunks_open(&cs, data, size, "TTAI")) != TC_OK) return e;
-    chunk_stamp(&cs, m->converter, sizeof m->converter);
-
-    chunk_need(&cs, "SCPT", r);
     m->node_count = rd_u32(r);
     m->nodes = (tc_ai_node *)rd_array(r, m->node_count, sizeof(tc_ai_node), 8);
     for (i = 0; m->nodes && i < m->node_count; i++) {
@@ -155,6 +148,19 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     m->initial_normal = rd_u16(r);
     m->initial_reflex = rd_u16(r);
     rd_dsg_def(r, &m->dsg);
+}
+
+tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
+    chunks cs;
+    reader rr, *r = &rr;
+    uint32_t i, k;
+    tc_result e;
+    memset(m, 0, sizeof(*m));
+    if ((e = chunks_open(&cs, data, size, "TTAI")) != TC_OK) return e;
+    chunk_stamp(&cs, m->converter, sizeof m->converter);
+
+    chunk_need(&cs, "SCPT", r);
+    rd_scpt(r, m);
     CHUNK_END(r);
 
     chunk_need(&cs, "STAT", r);
@@ -438,6 +444,22 @@ fail:
     return e;
 }
 #undef CHUNK_END
+
+tc_result tc_ai_model_load_scripts(tc_ai_model *m, const uint8_t *data, size_t size) {
+    reader r;
+    tc_result e;
+    memset(m, 0, sizeof(*m));
+    r.data = data;
+    r.size = size;
+    r.offset = 0;
+    r.error = TC_OK;
+    rd_scpt(&r, m);
+    if ((e = chunk_end(&r)) == TC_OK && (!m->node_count || m->nodes[m->node_count - 1].type != TC_AI_END ||
+                                         !m->normal_count))
+        e = TC_ERR_TRUNCATED;
+    if (e != TC_OK) tc_ai_model_free(m);
+    return e;
+}
 
 void tc_ai_model_link(tc_ai_model *m, const tc_level *level) {
     if (m->link_triangles == level->collision_triangle_count && m->link_crc == level->collision_crc) return;
@@ -749,7 +771,7 @@ static void state_sounds(tc_ai_perso *p, const tc_ai_state *s, float from, float
  * the next state (the requested state, InState, stays); with no next state hold the last frame, "ended". */
 static void advance_state(tc_ai_perso *p, float dt) {
     int guard;
-    if (p->state_ended) return;
+    if (p->state_ended || !p->model->state_count) return;
     float frames = dt * p->frame_rate;
     for (guard = 0; guard < 8; guard++) {
         const tc_ai_state *s = &p->model->states[p->state];
@@ -1011,8 +1033,8 @@ static bool condition(run *r, uint32_t i) {
     case 73: return !in_water(p) || (p->zone[2] >= 0 ? p->zone[2] != 1 : !(p->zone[1] != 0));
     case 74: { int k; for (k = 0; k < 7; k++) if (p->zone[k] == 1) return false; return true; }
     case 69: { /* FUN_00497690: falling: a type 4 or 10 card, no contacts, not rising */
-        const tc_ai_state *st = &p->model->states[p->state];
-        uint32_t type = st->card != TC_AI_NONE16 ? p->model->cards[st->card].type : TC_AI_NONE16;
+        const tc_ai_state *st = p->model->state_count ? &p->model->states[p->state] : NULL;
+        uint32_t type = st && st->card != TC_AI_NONE16 ? p->model->cards[st->card].type : TC_AI_NONE16;
         return (type == 4 || type == 10) && p->contacts == 0 && p->velocity.z <= 0;
     }
     case 90: { uint32_t n = (uint32_t)as_int(arg(r, i, 0)); return n < 32 ? (p->global_flags >> n) & 1 : (p->global_flags & n) != 0; }
@@ -1049,8 +1071,10 @@ static value function(run *r, uint32_t i) {
     case 24: return v_float(cosf(argf(r, i, 0) * TC_PI / 180));
     case 25: { float x = argf(r, i, 0); return v_float(x * x); }
     case 26: return v_float(sqrtf(fmaxf(argf(r, i, 0), 0)));
-    case 27: { int32_t lo = as_int(arg(r, i, 0)), hi = as_int(arg(r, i, 1));
-               return v_int(hi > lo ? lo + (int32_t)(rnd(p) * (float)(hi - lo + 1)) : lo); }
+    case 27: { /* FUN_00450070: min + t (max - min) / (n - 1), t from a shuffled table of 0..n-1: max only for the
+                * table's last value, so in effect [min, max) */
+               int32_t lo = as_int(arg(r, i, 0)), hi = as_int(arg(r, i, 1));
+               return v_int(hi > lo ? lo + (int32_t)(rnd(p) * (float)(hi - lo)) : lo); }
     case 28: { float lo = argf(r, i, 0), hi = argf(r, i, 1); return v_float(lo + rnd(p) * (hi - lo)); }
     case 29: return v_float(fminf(argf(r, i, 0), argf(r, i, 1)));
     case 30: return v_float(fmaxf(argf(r, i, 0), argf(r, i, 1)));
@@ -1172,7 +1196,7 @@ static uint32_t procedure(run *r, uint32_t i) {
     switch (c) {
     case 9: p->g_flags = (uint8_t)as_int(arg(r, i, 0)); p->g_armed = 1; return 0;
     case 10: { /* GAM_0041ec90: frame rate = state rate * percent / 100, as a byte */
-        uint32_t rate = (uint32_t)p->model->states[p->state].speed * (uint32_t)as_int(arg(r, i, 0)) / 100;
+        uint32_t rate = p->model->state_count ? (uint32_t)p->model->states[p->state].speed * (uint32_t)as_int(arg(r, i, 0)) / 100 : 0;
         p->frame_rate = (uint8_t)rate;
         return 0;
     }
@@ -1253,6 +1277,14 @@ static uint32_t procedure(run *r, uint32_t i) {
     case 204: p->display_flag8 = true; return 0;
     case 205: p->transparency = (uint8_t)as_int(arg(r, i, 0)); return 0;
     case 239: case 240: return change_behaviour(r, c == 240, arg_param(r, i, 0));
+    case 283: /* SetLightSet(set, duration ms, absolute) = PROC_283_0048ca60 -> 0x449ad0: the host applies it */
+        if (p->light_call_count < TC_AI_MAX_LIGHT_CALLS) {
+            tc_ai_light_call *l = &p->light_calls[p->light_call_count++];
+            l->set = as_int(arg(r, i, 0));
+            l->duration_ms = as_int(arg(r, i, 1));
+            l->absolute = as_int(arg(r, i, 2)) != 0;
+        }
+        return 0;
     case 244: p->motion.jump = true; p->motion.jump_vector = argv3(r, i, 0); p->motion.jump_height = argf(r, i, 1);
         set_mech_mode(p, 9);
         return 0;
@@ -1510,7 +1542,7 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
         p->state_changes = 0;
     }
     p->motion.mech_mode = -1;
-    return m->state_count ? TC_OK : TC_ERR_TRUNCATED;
+    return TC_OK;
 }
 
 void tc_ai_free(tc_ai_perso *p) {
@@ -1558,6 +1590,7 @@ void tc_ai_step(tc_ai_perso *p, float dt) {
     memcpy(proposal, p->motion.proposal, sizeof(proposal));
     memset(&p->motion, 0, sizeof(p->motion));
     p->sound_count = 0;
+    p->light_call_count = 0;
     p->motion.mech_mode = mode;          /* the mechanics mode stays until the AI picks another */
     memcpy(p->motion.axes, axes, sizeof(axes));
     /* The proposal lives in the dynamics (+0x314) and keeps its values: ProposalVecA in one frame, the mode 7 request of

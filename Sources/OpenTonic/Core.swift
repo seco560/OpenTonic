@@ -84,6 +84,8 @@ final class Viewer {
     var playing: Bool { raw.pointee.playing }
     var canPlay: Bool { tc_viewer_can_play(raw) }
     var aiActive: Bool { tc_viewer_ai_active(raw) }
+    /// The title's status changes by itself (the AI, the light persos): refresh it often.
+    var statusLive: Bool { tc_viewer_status_live(raw) }
     var stats: tc_view_stats { raw.pointee.stats }
 
     /// What to draw over the frame this frame (screen transitions, black, the loading screen).

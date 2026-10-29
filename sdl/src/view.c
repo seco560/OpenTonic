@@ -9,18 +9,22 @@ typedef struct gpu_uniforms {
     float ambient;
     float time;
     float baked_scale;   /* vertex colour (0..1) -> light factor: 255/128, see level.RADIOSITY_ONE */
-    uint32_t light_set;  /* baked set shown (number keys); falls back to set 0 per vertex */
+    uint32_t light_set;  /* baked set shown (light persos, number keys); falls back to set 0 per vertex */
     float gamma;         /* display gamma (- / = keys), 1 = unchanged */
     float fog[4];        /* near, far, enabled, unused */
     float fog_color[4];
     float eye[4];
     float cam_right[4];  /* camera axes, for billboards */
     float cam_up[4];
+    uint32_t light_next; /* the set a change blends towards */
+    float light_blend;   /* 0..1 */
+    float pad[2];
 } gpu_uniforms;
 _Static_assert(offsetof(gpu_uniforms, light_direction) == 64, "std140: vec3 at 64");
 _Static_assert(offsetof(gpu_uniforms, ambient) == 76, "std140: float packs after the vec3");
 _Static_assert(offsetof(gpu_uniforms, fog) == 96, "std140: vec4 at 96");
-_Static_assert(sizeof(gpu_uniforms) == 176, "gpu_uniforms must match shaders/level_common.glsl");
+_Static_assert(offsetof(gpu_uniforms, light_next) == 176, "std140: uint after the last vec4");
+_Static_assert(sizeof(gpu_uniforms) == 192, "gpu_uniforms must match shaders/level_common.glsl");
 
 /* Must match the DrawParams block in shaders/level.vert (std140, padded to 16). */
 typedef struct gpu_draw_params {
@@ -231,6 +235,8 @@ void view_draw_frame(view *v, gpu_frame *f) {
     u.time = fr.time;
     u.baked_scale = fr.baked_scale;
     u.light_set = fr.light_set;
+    u.light_next = fr.light_next;
+    u.light_blend = fr.light_blend;
     u.gamma = fr.gamma;
     u.fog[0] = fr.fog_near;
     u.fog[1] = fr.fog_far;

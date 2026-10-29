@@ -214,10 +214,16 @@ final class GameView: MTKView {
             if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
             return
         }
-        // 1-9: baked lighting set (day/night variants, only some levels); - / =: display gamma.
+        // 1-9: hold a baked lighting set (sud0 and Land have three); 0: the level's own light again (sud0's day /
+        // night cycle, Land's lightning); - / =: display gamma.
         let digits: [UInt16: UInt32] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
         if let n = digits[event.keyCode] {
             tc_viewer_set_light_set(v, n)
+            updateTitle()
+            return
+        }
+        if event.keyCode == 29 {
+            tc_viewer_follow_light(v)
             updateTitle()
             return
         }
@@ -509,7 +515,7 @@ final class GameView: MTKView {
         titleTimer?.invalidate()
         titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in
             MainActor.assumeIsolated {
-                if let v = view, v.renderer?.viewer?.aiActive == true { v.updateTitle() }
+                if let v = view, v.renderer?.viewer?.statusLive == true { v.updateTitle() }
             }
         }
         print("Loaded \(url.lastPathComponent): \(s.meshes) meshes, \(s.persos) persos (\(s.parts) parts), \(s.triangles) triangles, \(r.textureCount) textures, \(r.missingTextures) missing")

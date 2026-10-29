@@ -31,6 +31,7 @@ static bool portal_inside(const tc_ai_portal *g, tc_vec3 p) {
 tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player, const char *level_name) {
     tc_result r = tc_ai_init(&e->ai, model);
     uint32_t i;
+    if (r == TC_OK && !model->state_count) r = TC_ERR_TRUNCATED; /* Ed needs his states */
     e->player = player;
     e->camera = -1;
     e->run_scale = 2.0f;  /* run (state 10) 4.5 -> 9.0 u/s: a little under the old controller's 9.9 (user) */

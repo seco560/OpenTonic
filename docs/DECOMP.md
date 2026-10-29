@@ -351,8 +351,25 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   B1 (once): PROC_283(RandomInt(0, 3), 0, 1), start the hold timer, -> B0; B0: when TimeElapsed(dsg0, dsg1):
   dsg2 = RandomInt(10000, 60000), PROC_283(1, dsg2, 0) (one set on over 10-60 s), wait dsg2 + 500, dsg1 =
   RandomInt(dsg3, dsg4) (hold 90-180 s), dsg0 = GetTime. So: a random start set, then forever one set on every
-  hold + transition. No other level calls PROC_283 (Land stays on set 0). Not ported: the viewer shows one set
-  (number keys); the vertices already carry all three sets, so the shaders can blend two.
+  hold + transition. **Correction (2026-10-29, later):** Land calls it too: perso 225 (genLand / YBA_LightMaker /
+  YBA_Lighter, no geometry) is **lightning**: B0 waits RandomInt(2000, 5000) ms, then B1 forever: when
+  TimeElapsed(dsg3, dsg0): dsg2 = RandomInt(1, 3), SetLightSet(1, 0, 1), wait RandomInt(50, 70), SetLightSet(2, 0,
+  1), wait RandomInt(50, 150), the flash pair again if dsg2 > 1 (and if dsg2 > 2), SetLightSet(1, 1000, 0) (set 2 ->
+  0 over 1 s), wait 1500, dsg0 = RandomInt(5000, 15000). Land's set 1 (the "biased" one, raw ~25600) is the white
+  flash. No other level (all 21 scanned, `ai.light_persos`). The user had forgotten the lightning and asked for it.
+- **RandomInt (FUN_00450070), read:** min + t x (max - min) / (n - 1), t from a table of 0..n-1 shuffled at start
+  (FUN_0044ff50: srand(GetTickCount), swaps; FUN_0044ffe0 subtracts the minimum, n - 1 = the largest), stepping one
+  entry per call per channel. So max comes up only for the table's last entry: in effect [min, max). The interpreter
+  had max inclusive (hi - lo + 1), which gave sud0's RandomInt(0, 3) start set a 1-in-4 chance of a set 3 that doesn't
+  exist; fixed in tc_ai.c (it changes every RandomInt of Ed's AI slightly too).
+- **Ported (2026-10-29): both run from their own scripts.** The .ttlv's LAIS chunk holds the SCPT block (nodes,
+  behaviours, dsgvars) of every perso calling PROC_283; the viewer runs them with the AI interpreter (models without
+  states: scripts only) on the game clock (real time, stopped by P), and applies their SetLightSet calls as 0x449ad0
+  does (refused while a change runs; duration 0 = at once; else set by set at sets to go / duration). The shaders
+  blend the shown set and the next (both frontends). Difference left: the exe lerps the raw i16 radiosity, then
+  clamps; ours lerps the clamped bytes (the same wherever both ends are within 0..255; Land's flash set is far above,
+  so its 1 s fade starts dimming later in the exe than in ours). Number keys hold a set; 0 follows the scripts
+  again.
 - **User observations (2026-10-29, the original in Wine):** Totalski's sky is bright ("inundated with fog": its fog
   is light blue, near 200 / far 400, so the sky dome is fully fogged whatever its light); some spots on the slope
   are very dark in the port and lit in the original (matches the ambient-light sectors sct12v..15v, sct27v,

@@ -1,11 +1,15 @@
 """.ttlv, a level for the core (reader: core/src/tc_level.c), in the chunk container of chunks.py. Little-endian.
 
 Chunks, in file order (* = only when the level has one; every other chunk is required):
-  LEVL  u32 light_set_count (baked radiosity sets per vertex, 1-3: set 0 everywhere, 1-2 only in Land / sud0; number
-        keys pick the set), f32 fog_near, f32 fog_far, f32 fog_rgb[3] (linear by view depth; fog_far <= fog_near = no
-        fog; LevelData.fog: the visual environment most sectors use)
+  LEVL  u32 light_set_count (baked radiosity sets per vertex, 1-3: set 0 everywhere, 1-2 only in Land / sud0; LAIS
+        persos change the set shown, number keys pick one), f32 fog_near, f32 fog_far, f32 fog_rgb[3] (linear by view
+        depth; fog_far <= fog_near = no fog; LevelData.fog: the visual environment most sectors use)
   LMAP* u16 len + utf8 path (relative to the .ttlv) of the per-triangle lightmap atlas PNG: 32x32 tiles in a square
         power of two. The lightmap value replaces the baked light (same x255/128 scale).
+  LAIS* the level persos that set the baked light set (ai.light_persos: sud0's day / night cycle, Land's lightning),
+        run by the core: u16 n, u16 0, n x { u32 size, size bytes = a .ttai SCPT chunk's body (their scripts,
+        behaviours and dsgvars; ai.py), padded to 4 }. Their SetLightSet (PROC_283) changes the set and blends to it;
+        without them a level stays on set 0.
   TEXS  u32 n, n x { u16 len, utf8 path relative to the .ttlv }
   MESH  u32 n, n x { surface, geometry }: the static world, engine world space
   PRSO  u32 n, n x {
@@ -56,7 +60,7 @@ import math
 import os
 import struct
 
-from . import chunks, export, gf, level
+from . import ai, chunks, export, gf, level
 
 ALPHA_TEST = 1 << 0  # TC_FLAG_ALPHA_TEST: a cut-out (texture flags 0x12, see surface())
 TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8, see surface())
@@ -344,11 +348,18 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                 + struct.pack('<2H', len(recs), 0) + b''.join(recs))
 
     n_sets = max((len(getattr(so, 'color_sets', ())) for so in data.walk()), default=1)
+    lais = []
+    for a in ai.light_persos(data) if n_sets > 1 else ():
+        body, unresolved = ai.export(a, None)
+        if unresolved:
+            data.warnings.append(f'light perso {a.perso[1]:#x}: unresolved script references {unresolved}')
+        lais.append(struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4))
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
     mesh = struct.pack('<I', len(meshes)) + b''.join(fitted_surface(m) + geometry(m) for m in meshes.values())
     out = [('LEVL', struct.pack('<I5f', max(1, n_sets), fog[0], fog[1], *fog[2])),
            ('LMAP', struct.pack('<H', len(atlas_rel.encode())) + atlas_rel.encode()) if atlas_rel else None,
+           ('LAIS', struct.pack('<HH', len(lais), 0) + b''.join(lais)) if lais else None,
            ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None]
     chunks.write(path, 'TTLV', [c for c in out if c])

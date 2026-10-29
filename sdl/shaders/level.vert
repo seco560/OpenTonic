@@ -25,6 +25,12 @@ layout(location = 2) out vec4 vColor;
 layout(location = 3) out vec3 vWorld;   // world position, for fog
 layout(location = 4) out vec2 vUV2;     // lightmap atlas coordinates; x < 0: none
 
+// A baked set's colour; objects without that set keep set 0.
+vec4 baked(uint s) {
+    vec4 c = s == 1u ? inColor1 : s == 2u ? inColor2 : inColor;
+    return c.a > 0.5 ? c : inColor;
+}
+
 void main() {
     vec4 world = d.model * vec4(inPosition, 1.0);
     vNormal = (d.model * vec4(inNormal, 0.0)).xyz;  // shade() renormalises
@@ -36,6 +42,5 @@ void main() {
     vWorld = world.xyz;
     vUV2 = inUV2;
     vUV = inUV + fract(d.scroll * u.time);             // textures repeat, so wrap to keep precision
-    vec4 c = u.lightSet == 1u ? inColor1 : u.lightSet == 2u ? inColor2 : inColor;
-    vColor = c.a > 0.5 ? c : inColor;  // objects without that variant keep set 0
+    vColor = mix(baked(u.lightSet), baked(u.lightNext), u.lightBlend);  // a change between sets: their lerp
 }

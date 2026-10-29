@@ -70,7 +70,7 @@ scripts make the stick camera-relative themselves.
   As built for the desktop (step 1): Start opens the level select directly (the pause menu comes with step 4), R3
   toggles free-fly, Triangle plays the intro from the level select.
 
-  The keyboard-only viewer settings (`[ ]`, `- =`, `, .`, G, I, Tab, 1-9) move into that pause menu on the Vita;
+  The keyboard-only viewer settings (`[ ]`, `- =`, `, .`, G, I, Tab, 0-9) move into that pause menu on the Vita;
   the desktop builds keep their keys.
 
 ### 2. Fewer draws (core; all frontends benefit)

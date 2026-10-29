@@ -84,6 +84,8 @@ void tc_level_free(tc_level *level) {
     tc_free(level->collision);
     tc_free(level->collision_floors);
     tc_free(level->lightmap_atlas);
+    for (i = 0; i < level->light_perso_count; i++) tc_free(level->light_persos[i].scripts);
+    tc_free(level->light_persos);
     for (i = 0; i < level->ed.part_count; i++) free_mesh(&level->ed.parts[i].mesh);
     tc_free(level->ed.parts);
     for (i = 0; i < level->ed.anim_count; i++) {
@@ -95,7 +97,7 @@ void tc_level_free(tc_level *level) {
     memset(level, 0, sizeof *level);
 }
 
-/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP (optional), TEXS, MESH, PRSO, COLL, FLOR, EDPL (optional: no player). */
+/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP and LAIS (optional), TEXS, MESH, PRSO, COLL, FLOR, EDPL (optional: no player). */
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     chunks cs;
     reader rr, *r = &rr;
@@ -118,6 +120,25 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     if (chunk_need(&cs, "LMAP", r)) {
         level->lightmap_atlas = rd_string(r);
         if (level->lightmap_atlas && !level->lightmap_atlas[0]) { tc_free(level->lightmap_atlas); level->lightmap_atlas = NULL; }
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "LAIS", r)) {
+        n = rd_u16(r);
+        (void)rd_u16(r);
+        level->light_persos = (tc_light_perso *)rd_array(r, n, sizeof(tc_light_perso), 4);
+        if (level->light_persos) level->light_perso_count = n;
+        for (i = 0; i < level->light_perso_count && !r->error; i++) {
+            tc_light_perso *lp = &level->light_persos[i];
+            uint32_t size = rd_u32(r);
+            if (!have(r, size)) break;
+            lp->scripts = (uint8_t *)tc_alloc(size ? size : 1);
+            if (!lp->scripts) { r->error = TC_ERR_OUT_OF_MEMORY; break; }
+            memcpy(lp->scripts, r->data + r->offset, size);
+            lp->size = size;
+            r->offset += size + (4 - size % 4) % 4;
+            if (r->offset > r->size) r->error = TC_ERR_TRUNCATED;
+        }
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 

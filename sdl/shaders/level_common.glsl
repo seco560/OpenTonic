@@ -7,11 +7,13 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform Uniforms {
     float ambient;
     float time;            // animation clock in seconds (paused with P)
     float bakedScale;      // vertex colour -> light factor (255/128: radiosity 128 = texture unchanged)
-    uint lightSet;         // baked set to show (0-2)
+    uint lightSet;         // baked set shown (0-2), blended towards lightNext by lightBlend
     float gamma;           // display gamma, 1 = unchanged
     vec4 fog;              // near, far (view depth), enabled (0/1), unused
     vec4 fogColor;         // rgb, unused
     vec4 eye;              // camera position (world), unused
     vec4 camRight;         // camera axes (world), for billboards
     vec4 camUp;
+    uint lightNext;        // the set a change blends towards (= lightSet when none runs)
+    float lightBlend;      // 0..1
 } u;

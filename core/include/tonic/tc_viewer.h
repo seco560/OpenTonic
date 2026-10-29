@@ -58,7 +58,9 @@ typedef struct tc_view_frame {
     float ambient;            /* 0.45 */
     float time;               /* animation clock (UV scroll) */
     float baked_scale;        /* vertex colour (0..1) -> light factor: 255/128, see level.RADIOSITY_ONE */
-    uint32_t light_set;       /* baked set shown; shaders fall back to set 0 per vertex */
+    uint32_t light_set;       /* baked set shown, blended towards light_next by light_blend (0..1: the original's */
+    uint32_t light_next;      /* lerp of the radiosity, FUN_00449860); shaders fall back to set 0 per vertex */
+    float light_blend;
     float gamma;              /* display gamma, 1 = unchanged */
     bool fog_on;
     float fog_near, fog_far;  /* 0 when the level has no fog */
@@ -109,6 +111,7 @@ typedef enum tc_viewer_phase {
 } tc_viewer_phase;
 
 typedef struct tc_viewer_play tc_viewer_play;  /* private: collision, Ed's controller and AI at stable addresses */
+typedef struct tc_viewer_light tc_viewer_light; /* private: the light persos' AI */
 
 /* Fields are readable; change them through the functions below so every frontend behaves the same. */
 typedef struct tc_viewer {
@@ -121,7 +124,14 @@ typedef struct tc_viewer {
     bool paused;              /* animation clock and Ed's AI stopped */
     float animation_speed;    /* viewer-only playback rate for comparing against the original; 1 = engine speed */
     float animation_time;     /* seconds */
-    uint32_t light_set, light_set_count;  /* baked lighting variant (day/night levels have more than one) */
+    /* Baked lighting (light_set_count sets per vertex: 3 in sud0 and Land). light_set is shown, blending towards
+     * light_next by light_blend while a change runs (light_rate sets per second, on to light_target; 0 = none). The
+     * level's light persos (sud0's day / night cycle, Land's lightning) change it with SetLightSet while
+     * light_scripted; a number key picks a set and stops following them, 0 follows them again. */
+    uint32_t light_set, light_set_count, light_next, light_target;
+    float light_blend, light_rate;
+    bool light_scripted;
+    tc_viewer_light *light;   /* NULL: the level has no light persos */
     float gamma;
     bool has_fog, fog_enabled;  /* the level's fog (.ttlv LEVL) and its toggle */
     float fog_near, fog_far, fog_color[3];
@@ -243,7 +253,8 @@ uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events);
 /* Settings (keys in the Swift and SDL frontends in brackets). */
 void tc_viewer_step_speed(tc_viewer *v, int dir);   /* [ ]: 1/4, 1/3, 1/2, 2/3, 3/4, 1, 1.5, 2 */
 void tc_viewer_toggle_pause(tc_viewer *v);          /* P */
-void tc_viewer_set_light_set(tc_viewer *v, uint32_t n);  /* 1-9; ignored past light_set_count */
+void tc_viewer_set_light_set(tc_viewer *v, uint32_t n);  /* 1-9: that set, held; ignored past light_set_count */
+void tc_viewer_follow_light(tc_viewer *v);   /* 0: the level's light persos set the light again (if it has any) */
 void tc_viewer_step_gamma(tc_viewer *v, bool up);   /* - =: x1.1, 0.5-2.5 */
 void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps, 30-100 */
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
@@ -258,12 +269,15 @@ void tc_viewer_toggle_ai(tc_viewer *v);
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */
 bool tc_viewer_has_ai(const tc_viewer *v);     /* ... with Ed's AI */
 bool tc_viewer_ai_active(const tc_viewer *v);  /* playing with the AI: its status changes every frame */
+/* The status line changes by itself (the AI is active, or the light persos change the light): refresh it often. */
+bool tc_viewer_status_live(const tc_viewer *v);
 /* Ed's physics state, NULL without a play session. */
 const tc_player *tc_viewer_player(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
- * "anim 1.00×, gamma 1.00, FOV 55°<extra>[, light 1/2][, fog on|off][, free-fly][, simple controller]" (the modes only
- * when not the default: playing as Ed with his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
+ * "anim 1.00×, gamma 1.00, FOV 55°<extra>[, light 1/2|1→2[ held]][, fog on|off][, free-fly][, simple controller]"
+ * (light: the set shown, or the change running; held = a number key's pick in a level with light persos; the modes
+ * only when not the default: playing as Ed with his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
  * Returns the length snprintf would have written. */
 size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t size);
 

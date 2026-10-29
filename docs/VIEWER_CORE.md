@@ -83,7 +83,9 @@ the skier's board tilts); and the AI status string for the title bar (`B<n> R<n>
 ### 4. Settings and the title readout
 State in the viewer, changed through small functions so both frontends behave the same:
 - `tc_viewer_step_speed(v, +1/-1)`: steps 1/4, 1/3, 1/2, 2/3, 3/4, 1, 1.5, 2; `tc_viewer_toggle_pause`.
-- `tc_viewer_set_light_set(v, n)` (only below `light_set_count`), `tc_viewer_step_gamma(v, up)` (x1.1, 0.5-2.5),
+- `tc_viewer_set_light_set(v, n)` (only below `light_set_count`; holds it), `tc_viewer_follow_light(v)` (key 0: the
+  level's light persos again: sud0's day / night cycle, Land's lightning, run from their scripts in the .ttlv's
+  LAIS; `tc_viewer_status_live` says when to refresh the title), `tc_viewer_step_gamma(v, up)` (x1.1, 0.5-2.5),
   `tc_viewer_step_fov(v, +1/-1)` (5 degree steps, 30-100), `tc_viewer_toggle_fog`.
 - `tc_viewer_wheel(v, y)`: orbit zoom while playing, fly speed (0.5-500) in free-fly, both x1.1 per notch.
 - `tc_viewer_status(v, buf, size)`: the UTF-8 readout both title bars show today: `view: anim 1.00×, gamma 1.00,
@@ -127,7 +129,8 @@ typedef struct tc_view_frame {
     tc_vec3 light_direction;    /* normalize(0.4, -0.3, 0.85) */
     float ambient;              /* 0.45 */
     float time, baked_scale;    /* animation clock; 255 / 128 */
-    uint32_t light_set;
+    uint32_t light_set, light_next;  /* the shaders lerp the two baked sets */
+    float light_blend;
     float gamma;
     float fog_near, fog_far;
     bool fog_on;

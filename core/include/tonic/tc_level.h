@@ -101,11 +101,17 @@ typedef struct tc_ed {
     tc_ed_anim *anims;
 } tc_ed;
 
+/* A level perso that sets the baked light set: its scripts, behaviours and dsgvars (the body of a .ttai SCPT chunk,
+ * for tc_ai_model_load_scripts). */
+typedef struct tc_light_perso { uint32_t size; uint8_t *scripts; } tc_light_perso;
+
 typedef struct tc_level {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
     uint32_t light_set_count;    /* baked sets per vertex, 1-3 */
     float fog_near, fog_far;     /* linear fog by view depth (as the original's driver); fog_far <= fog_near: none */
     float fog_rgb[3];
+    uint32_t light_perso_count;  /* .ttlv LAIS: sud0's day / night cycle, Land's lightning (SetLightSet callers) */
+    tc_light_perso *light_persos;
     char *lightmap_atlas;        /* per-triangle lightmaps packed into one image, path relative to the .ttlv (NULL: none) */
     uint32_t texture_count;
     char **textures;             /* NUL-terminated UTF-8 paths relative to the .ttlv */

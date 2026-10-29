@@ -87,7 +87,7 @@ FUNC	23	SinDeg	0x49a770
 FUNC	24	CosDeg	0x49a770
 FUNC	25	Square	0x49a770
 FUNC	26	Sqrt	0x49a770
-FUNC	27	RandomInt	0x49a770	(min, max) FUN_00450070
+FUNC	27	RandomInt	0x49a770	(min, max) FUN_00450070: min + t (max - min) / (n - 1), t from a shuffled table of 0..n-1: in effect [min, max)
 FUNC	28	RandomReal	0x49a770	(min, max) FUN_004500c0; Ed's random idles
 FUNC	29	Min	0x49a770
 FUNC	30	Max	0x49a770
@@ -198,6 +198,7 @@ PROC	238	ForceReflex	0x48b800	(perso, reflex): set another perso's reflex
 PROC	242	SetHeading	0x48ba00	(deg): rotation about Z = deg x pi / 180 - pi / 2 (docs/PORTALS.md)
 PROC	291	Mode291	0x48cc20	0x123: func_0x0042cf00(0, perso, n) + GAM_00414xxx per n (0-3); camera/inventory mode?
 PROC	292	Mode292	0x48cc20	0x124: func_0x0042cf00(1, perso, n) (0-2)
+PROC	283	SetLightSet	0x48ca60	(set, duration ms, absolute) -> 0x449ad0: the baked light set (sud0's day / night cycle, Land's lightning)
 NODE	0	Keyword	0x48e5b0	node handlers: table 0x4E43F8 (41 x 4 B) by node type, called by AI_EvalNode_0048e930(me, node, result); keyword table fn(me, node + 1, result)
 NODE	1	Condition	0x48e5e0	condition fn(me, node + 1, &int); result := {int != 0, type 6}
 NODE	2	Operator	0x48e660

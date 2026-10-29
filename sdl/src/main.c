@@ -296,9 +296,15 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
         if (!k->repeat) { tc_viewer_step_speed(v, sc == SDL_SCANCODE_RIGHTBRACKET ? 1 : -1); update_title(a); }
         return;
     }
-    /* 1-9: baked lighting set (day/night variants, only some levels); - / =: display gamma. */
+    /* 1-9: hold a baked lighting set (sud0 and Land have three); 0: the level's own light again (sud0's day / night
+     * cycle, Land's lightning); - / =: display gamma. */
     if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
         tc_viewer_set_light_set(v, (uint32_t)(sc - SDL_SCANCODE_1));
+        update_title(a);
+        return;
+    }
+    if (sc == SDL_SCANCODE_0) {
+        tc_viewer_follow_light(v);
         update_title(a);
         return;
     }
@@ -799,8 +805,8 @@ int main(int argc, char **argv) {
             const uint16_t *sounds;
             uint32_t n = tc_viewer_sounds(&a.view->viewer, &sounds);
             if (n > 0) sfx_play(sounds, n);
-            /* Refresh the AI's behaviour/state in the title while playing. */
-            if (tc_viewer_ai_active(&a.view->viewer) && now - a.last_title_ns > 250000000) {
+            /* Refresh the AI's behaviour/state and the light changes in the title. */
+            if (tc_viewer_status_live(&a.view->viewer) && now - a.last_title_ns > 250000000) {
                 a.last_title_ns = now;
                 update_title(&a);
             }

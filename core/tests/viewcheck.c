@@ -105,6 +105,76 @@ static void report(const tc_viewer *v, const char *label) {
 
 #define BIT(a) (1u << (a))
 
+/* The light persos (.ttlv LAIS) run without Ed: Land's lightning (YBA_LightMaker: sets 1 and 2 flashed, then a 1 s
+ * blend back to 0, every 5-15 s), sud0's day / night cycle (a start set, then one set on over 10-60 s every 90-180
+ * s). A number key holds a set, 0 follows them again. */
+static void light_scenario(const char *dir, const char *name) {
+    char path[1024], status[512];
+    size_t size;
+    uint8_t *data;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    float t, first_change = -1, longest = 0, blend_start = -1;
+    uint32_t start, changes = 0, flashes = 0, prev, wrong_next = 0, still;
+    int blends = 0;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no %s: light skipped)\n", name); return; }
+    free(data);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.level_name = name;
+    desc.seed = 7;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { tc_level_free(&level); return; }
+    if (!v.light) {
+        printf("  (%s: no light persos in the .ttlv: re-export; light skipped)\n", name);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+        return;
+    }
+    printf("  %s: %u light set(s), %u light perso(s)\n", name, v.light_set_count, level.light_perso_count);
+    frame(&v, 0.02f);
+    start = prev = v.light_set;
+    for (t = 0.02f; t < 400; t += 0.02f) { /* 50 frames a second: Land's 50 ms flashes last two or three */
+        frame(&v, 0.02f);
+        if (v.light_rate > 0 && blend_start < 0) { blend_start = t; blends++; }
+        if (v.light_rate > 0 && v.light_next != (v.light_set + 1) % v.light_set_count) wrong_next++;
+        if (v.light_rate <= 0 && blend_start >= 0) { longest = fmaxf(longest, t - blend_start); blend_start = -1; }
+        if (v.light_set != prev) {
+            changes++;
+            if (first_change < 0) first_change = t;
+            if (v.light_set != 0) flashes++;
+            prev = v.light_set;
+        }
+    }
+    printf("  %s: start set %u, first change at %.1f s, %u changes, %d blends (longest %.1f s), %u to sets 1-2\n", name,
+           start + 1, first_change, changes, blends, longest, flashes);
+    check(wrong_next == 0, "light: a change blends set by set (next = shown + 1)");
+    if (strcmp(name, "Land") == 0) {
+        check(start == 0 && first_change >= 2 && first_change <= 5.1f, "Land: set 0, first lightning after 2-5 s");
+        check(changes >= 40 && flashes >= changes / 2 && longest > 0.9f && longest < 1.1f,
+              "Land: lightning keeps flashing sets 1 and 2, fading back to 0 over 1 s");
+    } else {
+        check(start < 3 && first_change >= 90 && first_change <= 240, "sud0: a start set, the first change after 90-180 s + its blend");
+        check(changes >= 1 && changes <= 4 && longest >= 10 && longest <= 60.1f, "sud0: changes blend over 10-60 s");
+    }
+    tc_viewer_set_light_set(&v, 1);
+    still = v.light_set;
+    for (t = 0; t < 200; t += 0.1f) frame(&v, 0.1f);
+    check(v.light_set == still && v.light_rate == 0 && !v.light_scripted, "light: a number key holds its set");
+    tc_viewer_status(&v, NULL, status, sizeof(status));
+    printf("  status: %s\n", status);
+    check(strstr(status, "light 2/3 held") != NULL, "status: the held set");
+    tc_viewer_follow_light(&v);
+    for (t = 0, changes = 0; t < 250; t += 0.02f) {
+        frame(&v, 0.02f);
+        if (v.light_set != still || v.light_rate > 0) changes++;
+    }
+    check(v.light_scripted && changes > 0, "0: the light persos set the light again");
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
 /* Portals through the viewer (docs/PORTALS.md): Ed walks into sud0's Cocktail arch; the overlay must go cover ->
  * black -> loading screen, then the level change is pending: the arch leads to the cutscene level bar, so cock01
  * (tc_level_after_cutscene). bar's viewer, started with the carry, reveals and Ed steps out (state 229). */
@@ -337,6 +407,8 @@ int main(int argc, char **argv) {
 
 done:
     portal_scenario(dir);
+    light_scenario(dir, "Land");
+    light_scenario(dir, "sud0");
     check(bad_frames == 0, "every frame's draw list is valid");
     tc_viewer_free(&v);
     tc_level_free(&level);

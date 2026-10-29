@@ -238,6 +238,9 @@ typedef struct tc_ai_model {
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);
+/* A model of scripts only (no states, buttons or other persos): the body of a SCPT chunk, as the .ttlv's LAIS holds
+ * for the level persos that set the light (tc_level.light_persos). */
+tc_result tc_ai_model_load_scripts(tc_ai_model *model, const uint8_t *data, size_t size);
 /* Drops the per-triangle table (floor sounds) unless it was written for this level's collision: an
  * imported level runs a donor level's .ttai. Call once after loading both files. */
 void tc_ai_model_link(tc_ai_model *model, const tc_level *level);
@@ -273,6 +276,10 @@ typedef struct tc_ai_intel {
     uint32_t schedule_pos;       /* node the schedule resumes at (TC_AI_NONE: its start) */
     tc_ai_slot *slots;           /* [0] schedule, [1 + k] rule k */
 } tc_ai_intel;
+
+/* SetLightSet (PROC_283) calls of one step, in order (sud0's day / night cycle, Land's lightning: tc_viewer). */
+#define TC_AI_MAX_LIGHT_CALLS 4
+typedef struct tc_ai_light_call { int32_t set, duration_ms; bool absolute; } tc_ai_light_call;
 
 typedef struct tc_ai_perso {
     const tc_ai_model *model;
@@ -332,6 +339,8 @@ typedef struct tc_ai_perso {
     /* Sound events started this step (animation events passed, PlaySound3D): global event indices; reset each step. */
     uint16_t sounds[TC_AI_MAX_SOUNDS];
     uint8_t sound_count;
+    tc_ai_light_call light_calls[TC_AI_MAX_LIGHT_CALLS]; /* SetLightSet calls this step; reset each step */
+    uint8_t light_call_count;
     uint8_t g_flags, g_armed;    /* Proc9's deferred result (exe DAT_0051b019 / DAT_0051b018) */
 
     /* Diagnostics: use counts of the primitives the interpreter skipped, [kind * TC_AI_UNKNOWN_STRIDE + index]
@@ -342,6 +351,7 @@ typedef struct tc_ai_perso {
     void *trace_user;
 } tc_ai_perso;
 
+/* A model without states runs its scripts only (no animation clock). */
 tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *model);
 void tc_ai_free(tc_ai_perso *p);
 /* One engine frame: buttons, reflex then normal intelligence, then the state's animation clock. */

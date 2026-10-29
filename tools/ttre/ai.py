@@ -1118,6 +1118,27 @@ def transition_config(d):
     return (un(0xC), un(0x10)), (un(0x20), un(0x24)), effects
 
 
+def light_persos(d):
+    """The level persos whose scripts call PROC_283 = SetLightSet(set, duration ms, absolute) (DECOMP.md "sud0's day /
+    night cycle"), as AIs: they drive the baked light set, and the core runs their scripts (the .ttlv's LAIS). sud0:
+    perso 325, the day / night cycle (a random start set, then one set on over 10-60 s every 90-180 s); Land: perso
+    225 YBA_LightMaker, lightning (sets 1 and 2 flashed for 50-150 ms, once or twice every 5-15 s (three times only when
+    RandomInt(1, 3) gives its max), then back to set 0 over 1 s). No other level has one."""
+    def calls(ns):
+        return any((n.type == 4 and n.param == 283) or calls(n.children) for n in ns)
+    out = []
+    for p in d.persos():
+        if not d.lv.ptr(p.loc, 0xC):
+            continue
+        try:
+            a = AI(d, p.loc)
+        except Exception:
+            continue
+        if any(calls(s) for b in a.behaviours for s in b.scripts + ([b.schedule] if b.schedule else [])):
+            out.append(a)
+    return out
+
+
 def started_by_others(ai):
     """(normal, reflex) behaviour locations another perso puts this perso in when it takes over from the fix Ed, or
     None each: a schedule that deactivates the fix Ed (PROC_6) and sets this perso's behaviours with PROC_237 /
@@ -1142,7 +1163,8 @@ def started_by_others(ai):
 
 
 def export(ai, path):
-    """Write the perso's AI as .ttai (format above). Returns a summary dict."""
+    """Write the perso's AI as .ttai (format above). Returns a summary dict. path None: returns (the SCPT chunk's
+    body, unresolved references by node type) without writing anything (a perso that runs only its scripts)."""
     d, lv = ai.d, ai.lv
     beh_index = {}
     lists = []
@@ -1244,6 +1266,24 @@ def export(ai, path):
         return out + buf + b'\0' * (-len(buf) % 4), len(dsg)
     own_dsg, n_dsg = dsg_block(ai.perso)
 
+    out, parts = bytearray(), []
+
+    def cut(tag):  # the bytes since the last cut become chunk `tag`
+        parts.append((tag, bytes(out)))
+        out.clear()
+    out += struct.pack('<I', len(nodes))
+    for param, typ, depth in nodes:
+        out += struct.pack('<IBBH', param & 0xFFFFFFFF, typ, depth, 0)
+    out += struct.pack('<I', len(scripts)) + b''.join(struct.pack('<I', s) for s in scripts)
+    out += struct.pack('<HH', *lists)
+    for sched, first, n in behs:
+        out += struct.pack('<iHH', sched, first, n)
+    out += struct.pack('<HH', *initial)
+    out += own_dsg
+    cut('SCPT')
+    if path is None:  # only the scripts (a level perso for the .ttlv's LAIS: ttlv.py)
+        return parts[0][1], dict(unresolved)
+
     # states (family list order = state index)
     from .level import forward_stride
     keys = d.state_anim_keys(ai.states)
@@ -1279,21 +1319,6 @@ def export(ai, path):
     p3d = lv.ptr(ai.perso)
     init_state = ai.state_index.get(lv.ptr(p3d, 0), 0) if p3d else 0
 
-    out, parts = bytearray(), []
-
-    def cut(tag):  # the bytes since the last cut become chunk `tag`
-        parts.append((tag, bytes(out)))
-        out.clear()
-    out += struct.pack('<I', len(nodes))
-    for param, typ, depth in nodes:
-        out += struct.pack('<IBBH', param & 0xFFFFFFFF, typ, depth, 0)
-    out += struct.pack('<I', len(scripts)) + b''.join(struct.pack('<I', s) for s in scripts)
-    out += struct.pack('<HH', *lists)
-    for sched, first, n in behs:
-        out += struct.pack('<iHH', sched, first, n)
-    out += struct.pack('<HH', *initial)
-    out += own_dsg
-    cut('SCPT')
     out += struct.pack('<HH', len(st_rows), init_state)
     for nxt, nf, speed, flags, trans, prohib, repeats, anim, ground, card, drop in st_rows:
         out += struct.pack('<hHBBHHBBHHff', nxt, nf, speed, flags, len(trans), len(prohib), repeats, 0, anim, card, ground,

@@ -22,13 +22,15 @@ import TonicCore
         var ambient: Float
         var time: Float
         var bakedScale: Float  // vertex colour (0..1) -> light factor: 255/128, see level.RADIOSITY_ONE
-        var lightSet: UInt32   // baked set shown (number keys); falls back to set 0 per vertex
+        var lightSet: UInt32   // baked set shown (light persos, number keys); falls back to set 0 per vertex
         var gamma: Float       // display gamma (- / = keys), 1 = unchanged
         var fog: SIMD4<Float>  // near, far, enabled, unused (matches Shaders.metal)
         var fogColor: SIMD4<Float>
         var eye: SIMD4<Float>
         var camRight: SIMD4<Float>  // camera axes, for billboards
         var camUp: SIMD4<Float>
+        var lightNext: UInt32  // the set a change blends towards
+        var lightBlend: Float  // 0..1
     }
 
     /// Per-draw vertex constants (matches DrawParams in Shaders.metal).
@@ -430,7 +432,8 @@ import TonicCore
                                 ambient: f.ambient, time: f.time, bakedScale: f.baked_scale, lightSet: f.light_set, gamma: f.gamma,
                                 fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, 0),
                                 fogColor: SIMD4(f.fog_color.0, f.fog_color.1, f.fog_color.2, 0), eye: SIMD4(SIMD3(f.eye), 0),
-                                camRight: SIMD4(SIMD3(f.cam_right), 0), camUp: SIMD4(SIMD3(f.cam_up), 0))
+                                camRight: SIMD4(SIMD3(f.cam_right), 0), camUp: SIMD4(SIMD3(f.cam_up), 0),
+                                lightNext: f.light_next, lightBlend: f.light_blend)
         enc.setDepthStencilState(depthState)
         enc.setCullMode(.none)  // winding of OpenSpace elements not yet confirmed
         enc.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)

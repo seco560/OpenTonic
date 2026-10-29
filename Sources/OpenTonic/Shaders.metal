@@ -17,13 +17,15 @@ struct Uniforms {
     float ambient;
     float time;              // animation clock in seconds (paused with P)
     float bakedScale;        // vertex colour -> light factor (255/128: radiosity 128 = texture unchanged)
-    uint lightSet;           // baked set to show (0-2)
+    uint lightSet;           // baked set shown (0-2), blended towards lightNext by lightBlend
     float gamma;             // display gamma, 1 = unchanged
     float4 fog;              // near, far (view depth), enabled (0/1), unused
     float4 fogColor;         // rgb, unused
     float4 eye;              // camera position (world), unused
     float4 camRight;         // camera axes (world), for billboards
     float4 camUp;
+    uint lightNext;          // the set a change blends towards (= lightSet when none runs)
+    float lightBlend;        // 0..1
 };
 
 struct DrawParams {
@@ -41,6 +43,12 @@ struct VertexOut {
     float2 uv2;              // lightmap atlas coordinates; x < 0: none
 };
 
+// A baked set's colour; objects without that set keep set 0.
+static float4 baked(VertexIn in, uint s) {
+    float4 c = s == 1 ? in.color1 : s == 2 ? in.color2 : in.color;
+    return c.a > 0.5 ? c : in.color;
+}
+
 vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[buffer(1)]],
                               constant DrawParams &d [[buffer(2)]]) {
     VertexOut out;
@@ -54,8 +62,7 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
     out.world = world.xyz;
     out.uv2 = in.uv2;
     out.uv = in.uv + fract(d.scroll * u.time);             // textures repeat, so wrap to keep precision
-    float4 c = u.lightSet == 1 ? in.color1 : u.lightSet == 2 ? in.color2 : in.color;
-    out.color = c.a > 0.5 ? c : in.color;  // objects without that variant keep set 0
+    out.color = mix(baked(in, u.lightSet), baked(in, u.lightNext), u.lightBlend);  // a change between sets: their lerp
     return out;
 }
 
