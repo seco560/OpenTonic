@@ -11,6 +11,8 @@
 #include "overlay_vert.h"
 #include "overlay_frag.h"
 #include "bar_frag.h"
+#include "shadow_vert.h"
+#include "shadow_frag.h"
 
 static SDL_GPUShader *shader(gpu *g, const uint32_t *code, size_t size, SDL_GPUShaderStage stage, Uint32 samplers,
                              Uint32 uniform_buffers) {
@@ -143,8 +145,40 @@ static SDL_GPUSampler *sampler(gpu *g, SDL_GPUSamplerAddressMode address, bool a
     return SDL_CreateGPUSampler(g->device, &info);
 }
 
+/* Ed's shadow: no vertex buffer (the disc is made in the vertex shader), alpha-blended over the level, depth-tested
+ * without writing, pulled towards the camera so it does not fight the ground it lies on. */
+static SDL_GPUGraphicsPipeline *shadow_pipeline(gpu *g) {
+    SDL_GPUColorTargetDescription color;
+    SDL_zero(color);
+    color.format = g->swapchain_format;
+    color.blend_state = alpha_blend();
+    SDL_GPUGraphicsPipelineCreateInfo info;
+    SDL_zero(info);
+    info.vertex_shader = g->shadow_vs;
+    info.fragment_shader = g->shadow_fs;
+    info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    info.rasterizer_state.enable_depth_clip = true;
+    info.rasterizer_state.enable_depth_bias = true;
+    info.rasterizer_state.depth_bias_constant_factor = -2;
+    info.rasterizer_state.depth_bias_slope_factor = -2;
+    info.multisample_state.sample_count = sample_count(g->msaa);
+    info.depth_stencil_state.enable_depth_test = true;
+    info.depth_stencil_state.enable_depth_write = false;
+    info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    info.target_info.color_target_descriptions = &color;
+    info.target_info.num_color_targets = 1;
+    info.target_info.depth_stencil_format = g->depth_format;
+    info.target_info.has_depth_stencil_target = true;
+    SDL_GPUGraphicsPipeline *p = SDL_CreateGPUGraphicsPipeline(g->device, &info);
+    if (!p) SDL_Log("shadow pipeline: %s", SDL_GetError());
+    return p;
+}
+
 static void release_level_pipelines(gpu *g) {
-    SDL_GPUGraphicsPipeline **pipelines[] = {&g->textured, &g->flat, &g->textured_blended, &g->flat_no_depth_write};
+    SDL_GPUGraphicsPipeline **pipelines[] = {&g->textured, &g->flat, &g->textured_blended, &g->flat_no_depth_write,
+                                             &g->shadow};
     for (size_t i = 0; i < SDL_arraysize(pipelines); i++) {
         if (*pipelines[i]) SDL_ReleaseGPUGraphicsPipeline(g->device, *pipelines[i]);
         *pipelines[i] = NULL;
@@ -158,6 +192,7 @@ static bool level_pipelines(gpu *g) {
     g->flat = level_pipeline(g, g->level_vs, g->flat_fs, false, true, false);
     g->textured_blended = level_pipeline(g, g->level_vs, g->textured_fs, true, false, false);
     g->flat_no_depth_write = level_pipeline(g, g->level_vs, g->flat_fs, false, false, false);
+    g->shadow = g->shadow_vs && g->shadow_fs ? shadow_pipeline(g) : NULL; /* optional: the level draws without it */
     if (g->textured && g->flat && g->textured_blended && g->flat_no_depth_write) return true;
     release_level_pipelines(g);
     return false;
@@ -199,6 +234,7 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
                           ? SDL_GPU_TEXTUREFORMAT_D32_FLOAT : SDL_GPU_TEXTUREFORMAT_D24_UNORM;
 
     /* The largest supported sample count up to the wanted one. */
+    g->scale = 100;
     g->msaa = 1;
     for (int s = 2; s <= msaa; s *= 2)
         if (msaa_supported(g, s)) g->msaa = s;
@@ -207,6 +243,8 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
     g->level_vs = shader(g, level_vert, sizeof level_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 2);
     g->textured_fs = shader(g, level_frag, sizeof level_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 2);
     g->flat_fs = shader(g, level_flat_frag, sizeof level_flat_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    g->shadow_vs = shader(g, shadow_vert, sizeof shadow_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    g->shadow_fs = shader(g, shadow_frag, sizeof shadow_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 1);
     SDL_GPUShader *ui_vs = shader(g, ui_vert, sizeof ui_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     SDL_GPUShader *ui_fs = shader(g, ui_frag, sizeof ui_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
     SDL_GPUShader *overlay_vs = shader(g, overlay_vert, sizeof overlay_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
@@ -253,7 +291,7 @@ void gpu_quit(gpu *g) {
     if (g->ui) SDL_ReleaseGPUGraphicsPipeline(g->device, g->ui);
     if (g->overlay) SDL_ReleaseGPUGraphicsPipeline(g->device, g->overlay);
     if (g->bar) SDL_ReleaseGPUGraphicsPipeline(g->device, g->bar);
-    SDL_GPUShader *shaders[] = {g->level_vs, g->textured_fs, g->flat_fs};
+    SDL_GPUShader *shaders[] = {g->level_vs, g->textured_fs, g->flat_fs, g->shadow_vs, g->shadow_fs};
     for (size_t i = 0; i < SDL_arraysize(shaders); i++)
         if (shaders[i]) SDL_ReleaseGPUShader(g->device, shaders[i]);
     SDL_GPUSampler *samplers[] = {g->repeat_sampler, g->clamp_sampler, g->ui_sampler, g->nearest_sampler};
@@ -262,6 +300,7 @@ void gpu_quit(gpu *g) {
     if (g->white) SDL_ReleaseGPUTexture(g->device, g->white);
     if (g->depth) SDL_ReleaseGPUTexture(g->device, g->depth);
     if (g->msaa_color) SDL_ReleaseGPUTexture(g->device, g->msaa_color);
+    if (g->scaled) SDL_ReleaseGPUTexture(g->device, g->scaled);
     if (g->window) SDL_ReleaseWindowFromGPUDevice(g->device, g->window);
     SDL_DestroyGPUDevice(g->device);
     SDL_zerop(g);
@@ -496,12 +535,34 @@ bool gpu_frame_begin(gpu *g, gpu_frame *f) {
     return true;
 }
 
-/* Depth, and with MSAA the multisampled colour target, at the swapchain's size and g->msaa samples. */
-static bool ensure_targets(gpu *g, Uint32 w, Uint32 h) {
-    if (g->depth && g->target_w == w && g->target_h == h && g->target_samples == g->msaa) return true;
+static void release_targets(gpu *g) {
     if (g->depth) SDL_ReleaseGPUTexture(g->device, g->depth);
     if (g->msaa_color) SDL_ReleaseGPUTexture(g->device, g->msaa_color);
-    g->depth = g->msaa_color = NULL;
+    if (g->scaled) SDL_ReleaseGPUTexture(g->device, g->scaled);
+    g->depth = g->msaa_color = g->scaled = NULL;
+    g->target_w = g->target_h = 0;
+}
+
+void gpu_set_scale(gpu *g, int percent) {
+    percent = percent >= 200 ? 200 : percent >= 150 ? 150 : 100;
+    if (percent == g->scale) return;
+    SDL_WaitForGPUIdle(g->device);
+    release_targets(g);
+    g->scale = percent;
+}
+
+int gpu_next_scale(const gpu *g) { return g->scale >= 200 ? 100 : g->scale >= 150 ? 200 : 150; }
+
+/* Depth, with MSAA the multisampled colour target, and when supersampling the target it resolves into: at the
+ * swapchain's size x g->scale %, g->msaa samples. */
+static bool ensure_targets(gpu *g, Uint32 w, Uint32 h) {
+    Uint32 window_w = w, window_h = h;
+    if (g->scale > 100) {
+        w = (Uint32)((Uint64)w * (Uint64)g->scale / 100);
+        h = (Uint32)((Uint64)h * (Uint64)g->scale / 100);
+    }
+    if (g->depth && g->target_w == w && g->target_h == h && g->target_samples == g->msaa) return true;
+    release_targets(g);
     SDL_GPUTextureCreateInfo info;
     SDL_zero(info);
     info.type = SDL_GPU_TEXTURETYPE_2D;
@@ -518,11 +579,23 @@ static bool ensure_targets(gpu *g, Uint32 w, Uint32 h) {
         info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
         g->msaa_color = SDL_CreateGPUTexture(g->device, &info);
     }
+    if (g->scale > 100) {  /* single-sampled, filtered down by the blit (which samples it) */
+        info.format = g->swapchain_format;
+        info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+        g->scaled = SDL_CreateGPUTexture(g->device, &info);
+    }
     g->target_w = w;
     g->target_h = h;
     g->target_samples = g->msaa;
-    if (g->depth && (g->msaa == 1 || g->msaa_color)) return true;
-    SDL_Log("GPU: 3D targets: %s", SDL_GetError());
+    if (g->depth && (g->msaa == 1 || g->msaa_color) && (g->scale <= 100 || g->scaled)) return true;
+    SDL_Log("GPU: 3D targets (%u x %u, %dx MSAA): %s", w, h, g->msaa, SDL_GetError());
+    if (g->scale > 100) {  /* too big for this GPU: back to the window's size */
+        SDL_Log("GPU: supersampling off");
+        release_targets(g);
+        g->scale = 100;
+        return ensure_targets(g, window_w, window_h);
+    }
     return false;
 }
 
@@ -532,14 +605,17 @@ SDL_GPURenderPass *gpu_pass_3d(gpu *g, gpu_frame *f, SDL_FColor clear) {
     SDL_zero(color);
     color.clear_color = clear;
     color.load_op = SDL_GPU_LOADOP_CLEAR;
-    if (g->msaa > 1) {  /* draw multisampled, resolve into the swapchain (overlays then draw on that) */
+    /* Draw multisampled and resolve, into the swapchain (overlays then draw on that) or the supersampled target. */
+    SDL_GPUTexture *out = g->scaled ? g->scaled : f->target;
+    if (g->msaa > 1) {
         color.texture = g->msaa_color;
         color.store_op = SDL_GPU_STOREOP_RESOLVE;
-        color.resolve_texture = f->target;
+        color.resolve_texture = out;
         color.cycle = true;
     } else {
-        color.texture = f->target;
+        color.texture = out;
         color.store_op = SDL_GPU_STOREOP_STORE;
+        color.cycle = out == g->scaled;
     }
     SDL_GPUDepthStencilTargetInfo depth;
     SDL_zero(depth);
@@ -551,6 +627,22 @@ SDL_GPURenderPass *gpu_pass_3d(gpu *g, gpu_frame *f, SDL_FColor clear) {
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
     depth.cycle = true;
     return SDL_BeginGPURenderPass(f->cmd, &color, 1, &depth);
+}
+
+void gpu_pass_3d_end(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass) {
+    SDL_EndGPURenderPass(pass);
+    if (!g->scaled) return;
+    SDL_GPUBlitInfo b;
+    SDL_zero(b);
+    b.source.texture = g->scaled;
+    b.source.w = g->target_w;
+    b.source.h = g->target_h;
+    b.destination.texture = f->target;
+    b.destination.w = f->width;
+    b.destination.h = f->height;
+    b.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    b.filter = SDL_GPU_FILTER_LINEAR;
+    SDL_BlitGPUTexture(f->cmd, &b);
 }
 
 SDL_GPURenderPass *gpu_pass_2d(gpu *g, gpu_frame *f, bool clear, SDL_FColor clear_color) {
@@ -629,5 +721,41 @@ void gpu_loading_bar(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTextu
     SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
     SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);
     SDL_PushGPUFragmentUniformData(f->cmd, 0, &b, sizeof b);
+    SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
+}
+
+/* Must match the Shadow block in shaders/shadow.vert / .frag (std140). */
+typedef struct shadow_params { float view_projection[16], center[4], axis_u[4], axis_v[4], normal[4], fog[4], eye[4]; } shadow_params;
+_Static_assert(sizeof(shadow_params) == 160, "shadow_params must match shaders/shadow.vert");
+
+void gpu_draw_shadow(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, const gpu_shadow *s) {
+    if (!g->shadow || s->alpha <= 0 || s->radius <= 0) return;
+    shadow_params q;
+    SDL_zero(q);
+    SDL_memcpy(q.view_projection, s->view_projection, sizeof q.view_projection);
+    /* two axes along the ground: across the normal, from whichever world axis is least along it */
+    float n[3] = {s->normal[0], s->normal[1], s->normal[2]};
+    float ref[3] = {SDL_fabsf(n[0]) < 0.9f ? 1.0f : 0.0f, SDL_fabsf(n[0]) < 0.9f ? 0.0f : 1.0f, 0};
+    float u[3] = {n[1] * ref[2] - n[2] * ref[1], n[2] * ref[0] - n[0] * ref[2], n[0] * ref[1] - n[1] * ref[0]};
+    float l = SDL_sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    if (l <= 0) return;
+    for (int k = 0; k < 3; k++) u[k] /= l;
+    float v[3] = {n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]};
+    for (int k = 0; k < 3; k++) {
+        q.center[k] = s->center[k];
+        q.axis_u[k] = u[k];
+        q.axis_v[k] = v[k];
+        q.normal[k] = n[k];
+        q.eye[k] = s->eye[k];
+    }
+    q.center[3] = s->radius;
+    q.normal[3] = s->inner;
+    q.fog[0] = s->fog_near;
+    q.fog[1] = s->fog_far;
+    q.fog[2] = s->fog_on ? 1.0f : 0.0f;
+    q.fog[3] = s->alpha;
+    SDL_BindGPUGraphicsPipeline(pass, g->shadow);
+    SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);
+    SDL_PushGPUFragmentUniformData(f->cmd, 0, &q, sizeof q);
     SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
 }

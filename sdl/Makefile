@@ -32,7 +32,7 @@ endif
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 # SPIR-V embedded as C arrays (glslangValidator --vn): build/shaders/<name>.h
-SHADERS := level_vert level_frag level_flat_frag ui_vert ui_frag overlay_vert overlay_frag bar_frag
+SHADERS := level_vert level_frag level_flat_frag ui_vert ui_frag overlay_vert overlay_frag bar_frag shadow_vert shadow_frag
 SHADER_H := $(SHADERS:%=$(BUILD)/shaders/%.h)
 
 all: $(BUILD)/opentonic
@@ -63,6 +63,10 @@ $(BUILD)/shaders/overlay_frag.h: shaders/overlay.frag | $(BUILD)/shaders
 	$(GLSLANG) -V --target-env vulkan1.0 -S frag --vn overlay_frag -o $@ $<
 $(BUILD)/shaders/bar_frag.h: shaders/bar.frag | $(BUILD)/shaders
 	$(GLSLANG) -V --target-env vulkan1.0 -S frag --vn bar_frag -o $@ $<
+$(BUILD)/shaders/shadow_vert.h: shaders/shadow.vert | $(BUILD)/shaders
+	$(GLSLANG) -V --target-env vulkan1.0 -S vert --vn shadow_vert -o $@ $<
+$(BUILD)/shaders/shadow_frag.h: shaders/shadow.frag | $(BUILD)/shaders
+	$(GLSLANG) -V --target-env vulkan1.0 -S frag --vn shadow_frag -o $@ $<
 
 sdl3: $(SDL_PREFIX)/lib/libSDL3.a
 

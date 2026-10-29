@@ -40,7 +40,15 @@ version do not load ("re-run the conversion"): `tools/build_linux.sh` re-exports
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
 alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,
 and V plays the intro movie (Esc, Space or Enter skip). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
-MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 8).
+MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 8). F3 cycles supersampling off / 1.5x / 2x (`TONIC_SCALE=100|150|200` sets where it
+starts, default off: on the Celeron J4125 it is too heavy): the level is drawn at that many times the window's pixels per axis, on top of the MSAA, into an
+offscreen target that a linear blit filters down into the window (at 2x a 2 x 2 box filter; overlays and menus still
+draw at the window's size). Sharper textures, distant detail and foliage cutouts, nothing restyled. Ed has a simple round
+shadow (a stand-in until the game's own is read): `tc_viewer_shadow` casts straight down from him and gives the ground
+point, its normal, a radius that shrinks with his height (to 35 % at 6 units: a jump shows), darkness and softness;
+shaders/shadow.vert/.frag draw it as a soft disc on the ground after the opaque draws, faded by the fog. None while
+swimming, with Ed hidden (portals) or over wall-steep faces. The Swift app does not draw it yet. It costs memory: at
+1366 x 768, 2x with 8x MSAA is about 270 MB of targets; if they can't be made it falls back to off.
 `TONIC_GPU_DEBUG=1` turns on the GPU backend's validation layers (when installed).
 
 ## Installing

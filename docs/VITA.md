@@ -77,6 +77,12 @@ scripts make the stick camera-relative themselves.
 - **Static batching** at `tc_viewer_init`: merge static meshes that share texture, flags and UV scroll into one mesh
   (animated textures and water meshes stay separate). The mesh table keeps its contract; it just gets shorter.
 - **Frustum culling** in `tc_viewer_draws`: per-mesh bounds against the frame's view-projection.
+- **Lead (user's hunch, 2026-10-29): the game draws only parts of a level.** It loads the whole level but renders by
+  sector: OpenSpace sectors carry lists of the sectors to draw (and to keep active) from them. sud0's sector data
+  (seen while chasing the ghost water) has several {head, tail, count} lists after the environments and surfaces,
+  e.g. 14 entries at +0x1C in marmite's sctV01a, plausibly that. Reading which list the renderer walks (GLI is 0 %
+  read, docs/DECOMP.md) would give the game's own visibility, better than plain culling, and the sector choice the
+  water needs too (docs/NOTES.md "Ghost water").
 - Measure with `viewcheck` (draws per frame, level by level). Target: a few hundred at most in the largest levels.
 - Alpha bleed into `tools/ttre` (converter), removing it from both frontends' texture loading.
 
@@ -133,6 +139,26 @@ Optional: music to Ogg Vorbis (`stb_vorbis` in both SDL builds) to shrink the 34
 A debug readout (fps, draws, ms in update / draw, free memory) in the pause menu; pool sizes, shader cache, frame
 pacing (30 fps target with vsync, 60 where the level allows). Vita3K (the emulator) may help for quick checks, but real
 hardware is the reference for performance and shaders.
+
+## The same renderer for old PCs: the Asus EEE PC 1101HA (noted 2026-10-29, not started)
+The user's netbook: Intel Atom Z520 (32-bit x86, one core with Hyper-Threading, 1.33 GHz, SSE3), Intel GMA 500 (a
+PowerVR SGX535), 2 GB RAM, 1366 x 768; Linux Mint 32-bit and Windows 7, which runs basic 3D games well.
+- **The CPU is no blocker:** the core is plain C11 kept buildable for the 32-bit Vita, SDL3 builds for 32-bit; the
+  core's update is ~0.13 ms on the Celeron, so even 5x slower is nothing. Not yet compiled for 32-bit x86 (the Linux
+  box lacks gcc-multilib); `-march=bonnell -mfpmath=sse` for the build.
+- **The GPU is, under Linux:** the GMA 500 has no 3D driver there (gma500_gfx is modesetting only; Mesa never supported
+  the SGX535), so SDL_GPU's Vulkan could only be Mesa's software lavapipe on the Atom: a slideshow. Dropped.
+- **Windows 7 has the hardware drivers (Direct3D 9, OpenGL 2.0) but SDL_GPU needs D3D12 or Vulkan.** So the EEE needs
+  the same kind of renderer as the Vita: GLES2-level (shaders in GLSL ES 1.00 style, GL state instead of pipelines).
+- **Plan: make step 4's renderer generic, not Vita-only.** One `gpu.h` backend over a GLES2 subset of GL, built
+  against vitaGL on the Vita and desktop OpenGL 2.x on Windows (32-bit, SDL3 for the window and context, input,
+  audio). If the GMA 500's OpenGL driver is too weak (it has that reputation), the same GLES2 code can run on ANGLE's
+  Direct3D 9 backend (older ANGLE releases have it). PowerVR's tile-based GPUs do MSAA cheaply: keep 2x antialiasing
+  (user's wish) as the EEE default, with a render scale below 100 % if needed.
+- **Specific to the EEE:** a Windows platform shell and a build/packaging script (32-bit MinGW cross-compile from the
+  Linux box, or MSVC), low default settings, the intro from `pl_mpeg` at a lower resolution if the Atom can't decode
+  800 x 480 at 25 fps. Data: `files/out` converted on the Linux box and copied over, as for the Vita.
+- Step 2 (batching, culling: up to ~1,450 draws a frame today) matters as much here as on the Vita.
 
 ## Effort
 | step | size | testable on |

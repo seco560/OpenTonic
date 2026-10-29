@@ -205,6 +205,11 @@ Each item is marked in the code or in docs/NOTES.md.
 6. **Skier** (8): the state-change trace of the original under Wine (docs/NOTES.md "Sliding stages"). Wine is not
    installed on this Mac; the user's Linux box has it.
 
+7. **Sectors** (user, 2026-10-29: the ghost water is the port misreading which sector Ed is in). Read who sets a perso's
+   current sector (SectorInfo +4: the integrators' 4th argument, the env lookup's input) and which of the sector data's
+   {head, tail, count} lists the renderer walks for visibility (GLI); export sectors and track the current one in the
+   core. Replaces the water's box rules (docs/NOTES.md "Ghost water") and gives the game's own culling (docs/VITA.md).
+
 ## Rendering and lighting
 GLI (29 KB) is 0 % read. Everything lighting does now is inferred from the data, not read from the code:
 - the radiosity combine (x 255 / 128, overbright x 2)

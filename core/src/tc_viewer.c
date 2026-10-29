@@ -862,6 +862,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
     draw_list dl = {0, 0};
     uint32_t i, k, first = v->perso_first;
     float t = v->animation_time;
+    v->ed_draw_count = 0;
 
     for (i = 0; i < l->mesh_count; i++) add_draw(v, &dl, i, &identity);
 
@@ -901,7 +902,10 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
             m = tc_channel_matrix(a->transforms, a->shown, nch, s, ch);
             world = tc_mat4_mul(&model, &m);
             for (k = 0; k < l->ed.part_count; k++)
-                if (l->ed.parts[k].object == obj) add_draw(v, &dl, v->ed_first + k, &world);
+                if (l->ed.parts[k].object == obj) {
+                    add_draw(v, &dl, v->ed_first + k, &world);
+                    v->ed_draw_count++;
+                }
         }
     }
 
@@ -942,4 +946,28 @@ void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
         out->clear_color[1] = 0.09f;
         out->clear_color[2] = 0.14f;
     }
+}
+
+bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {
+    tc_viewer_play *p = v->play;
+    tc_vec3 o;
+    tc_hit hit;
+    float h, k, s;
+    memset(out, 0, sizeof(*out));
+    if (!p || !v->playing || v->ed_draw_count == 0) return false;
+    if (p->use_ai && p->has_driver && (p->driver.card_type == 1 || p->driver.card_type == 7)) return false; /* swimming */
+    /* Where he is drawn (between the AI's ticks), as the camera's target */
+    o = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
+    if (!tc_collision_raycast(&p->world, tc_v3_add(o, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1), TC_VIEW_SHADOW_REACH + 0.5f, &hit))
+        return false;
+    out->normal = hit.normal.z < 0 ? tc_v3_scale(hit.normal, -1) : hit.normal; /* the raycast is two-sided */
+    if (out->normal.z < 0.34f) return false; /* a wall-steep face (beyond ~70 degrees): no disc stuck to it */
+    h = fmaxf(0, hit.distance - 0.5f);  /* his feet's height above the ground */
+    s = fmaxf(0, 1 - h / 6);            /* 1 on the ground, 0 from 6 up: the size and the edge */
+    k = 1 - h / TC_VIEW_SHADOW_REACH;   /* the darkness, gone at the reach */
+    out->position = tc_v3(o.x, o.y, o.z + 0.5f - hit.distance);
+    out->radius = 0.62f * (0.35f + 0.65f * s);
+    out->alpha = 0.55f * k * (0.35f + 0.65f * s);
+    out->inner = 0.1f + 0.35f * s;      /* a firm core on the ground, softer as he rises */
+    return true;
 }

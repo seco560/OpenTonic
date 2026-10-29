@@ -36,7 +36,8 @@ static const char *controls_text =
     "Lighting variant:  1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain)\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
     "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 8)\n"
-    "(speed, gamma, field of view, lighting variant, antialiasing and play mode are shown in the title bar)\n"
+    "Supersampling:  F3  off / 1.5x / 2x  (draws the level at that many times the window's pixels; TONIC_SCALE=150|200)\n"
+    "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
     "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level\n"
@@ -90,9 +91,10 @@ typedef struct app {
 static void update_title(app *a) {
     view *v = a->view;
     if (!v) return;
-    char aa[16], status[512], s[1024];
+    char aa[32], status[512], s[1024];
     if (a->g.msaa > 1) SDL_snprintf(aa, sizeof aa, ", AA %dx", a->g.msaa);
     else SDL_snprintf(aa, sizeof aa, ", AA off");
+    if (a->g.scale > 100) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", SS %s", a->g.scale >= 200 ? "2x" : "1.5x");
     tc_viewer_status(&v->viewer, aa, status, sizeof status);
     SDL_snprintf(s, sizeof s, "%s  \xc2\xb7  %s", a->title_base, status);
     if (SDL_strcmp(s, a->title) != 0) {
@@ -381,6 +383,14 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
         if (!k->repeat) {
             int samples = gpu_next_msaa(&a->g);
             if (gpu_set_msaa(&a->g, samples)) SDL_Log("Antialiasing: %dx MSAA", samples);
+            update_title(a);
+        }
+        return;
+    }
+    if (sc == SDL_SCANCODE_F3) {  /* F3: supersampling off / 1.5x / 2x */
+        if (!k->repeat) {
+            gpu_set_scale(&a->g, gpu_next_scale(&a->g));
+            SDL_Log("Supersampling: %d %%", a->g.scale);
             update_title(a);
         }
         return;
@@ -720,6 +730,12 @@ static char *default_level_folder(void) {
     return found ? found : SDL_strdup("files/out/ttlv");
 }
 
+/* TONIC_SCALE=100/150/200: the level's starting supersampling (F3 cycles it), percent of the window's pixels per axis. */
+static int scale_setting(void) {
+    const char *e = SDL_getenv("TONIC_SCALE");
+    return e ? SDL_atoi(e) : 100;
+}
+
 /* TONIC_MSAA=1/2/4/8: the level's starting antialiasing (F2 cycles it). */
 static int msaa_setting(void) {
     const char *e = SDL_getenv("TONIC_MSAA");
@@ -746,6 +762,7 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
+    gpu_set_scale(&a.g, scale_setting());
 
     const char *level_file = NULL;
     if (argc > 1 && path_is_file(argv[1])) {
@@ -772,7 +789,7 @@ int main(int argc, char **argv) {
     SDL_free(icon_path);
 
     SDL_Log("Controls: WASD move, arrow keys look, R/F up/down, Shift fast; click to capture mouse-look, Esc to release; "
-            "wheel = fly speed / play-mode zoom; , / . field of view; P pause animation; F2 antialiasing; starts as Ed when the level has "
+            "wheel = fly speed / play-mode zoom; , / . field of view; P pause animation; F2 antialiasing; F3 supersampling; starts as Ed when the level has "
             "him, Tab toggles free-fly (Space jump); Ctrl+L level select; F1 controls; F11 fullscreen");
     if (!level_file || !open_level(&a, level_file, NULL)) show_picker(&a);
 

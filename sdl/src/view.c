@@ -218,7 +218,7 @@ void view_draw_frame(view *v, gpu_frame *f) {
     SDL_FColor clear = {fr.clear_color[0], fr.clear_color[1], fr.clear_color[2], 1};
     SDL_GPURenderPass *pass = gpu_pass_3d(v->g, f, clear);
     if (!pass) return;
-    if (!v->vertices || !v->indices) { SDL_EndGPURenderPass(pass); return; }
+    if (!v->vertices || !v->indices) { gpu_pass_3d_end(v->g, f, pass); return; }
 
     gpu_uniforms u;
     SDL_zero(u);
@@ -245,12 +245,27 @@ void view_draw_frame(view *v, gpu_frame *f) {
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
     SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
-    /* Opaque draws, then the transparent ones (their pipelines don't write depth). */
+    /* Opaque draws, Ed's shadow on them, then the transparent ones (their pipelines don't write depth): water drawn
+     * over shallow ground stays on top of the shadow. */
     draw_ctx c = {v, f->cmd, pass, NULL};
     uint32_t count, opaque;
     const tc_view_draw *draws = tc_viewer_draws(&v->viewer, &count, &opaque);
-    for (uint32_t i = 0; i < count; i++) draw_mesh(&c, &draws[i]);
-    SDL_EndGPURenderPass(pass);
+    for (uint32_t i = 0; i < opaque; i++) draw_mesh(&c, &draws[i]);
+    tc_view_shadow sh;
+    if (tc_viewer_shadow(&v->viewer, &sh)) {
+        gpu_shadow s = {{0}, {sh.position.x, sh.position.y, sh.position.z}, sh.radius, {sh.normal.x, sh.normal.y, sh.normal.z},
+                        sh.inner, sh.alpha, fr.fog_near, fr.fog_far, fr.fog_on, {fr.eye.x, fr.eye.y, fr.eye.z}};
+        SDL_memcpy(s.view_projection, fr.view_projection.m, sizeof s.view_projection);
+        gpu_draw_shadow(v->g, f, pass, &s);
+        /* the shadow bound its own pipeline and replaced the frame's uniforms: the level's again for the rest */
+        c.bound = NULL;
+        SDL_PushGPUVertexUniformData(f->cmd, 0, &u, sizeof u);
+        SDL_PushGPUFragmentUniformData(f->cmd, 0, &u, sizeof u);
+        SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+        SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+    }
+    for (uint32_t i = opaque; i < count; i++) draw_mesh(&c, &draws[i]);
+    gpu_pass_3d_end(v->g, f, pass);
 }
 
 void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_view_overlay *o) {

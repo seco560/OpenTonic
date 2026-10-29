@@ -18,6 +18,10 @@ typedef struct gpu {
      * so alpha-tested cutouts (foliage, fences, sprites) are antialiased too. */
     int msaa;
     SDL_GPUShader *level_vs, *textured_fs, *flat_fs;  /* kept to rebuild the level pipelines for another msaa */
+    /* Ed's round shadow (shaders/shadow.*): blended, depth-tested without writing, biased towards the camera; rebuilt
+     * with the level pipelines (the same sample count). */
+    SDL_GPUGraphicsPipeline *shadow;
+    SDL_GPUShader *shadow_vs, *shadow_fs;
     SDL_GPUGraphicsPipeline *ui;      /* 2D quads, alpha-blended, no depth */
     SDL_GPUGraphicsPipeline *overlay; /* screen transitions (docs/PORTALS.md): free-cornered quads, as ui */
     SDL_GPUGraphicsPipeline *bar;     /* the loading screen's rainbow bar (shaders/bar.frag), as ui */
@@ -26,7 +30,11 @@ typedef struct gpu {
     SDL_GPUSampler *ui_sampler;       /* thumbnails and text: trilinear, clamp */
     SDL_GPUSampler *nearest_sampler;  /* text drawn at an integer multiple of its size */
     SDL_GPUTexture *white;            /* 1x1, for untextured quads and levels without a lightmap */
-    SDL_GPUTexture *depth, *msaa_color;  /* 3D targets: msaa samples, the swapchain's size */
+    SDL_GPUTexture *depth, *msaa_color;  /* 3D targets: msaa samples, the swapchain's size x scale */
+    /* Supersampling: the level drawn at scale percent of the swapchain's size (100, 150, 200) into `scaled`, then
+     * filtered down into the swapchain (a linear blit: at 200 % a 2 x 2 box filter). On top of the MSAA. */
+    int scale;
+    SDL_GPUTexture *scaled;
     Uint32 target_w, target_h;
     int target_samples;
 } gpu;
@@ -70,8 +78,12 @@ typedef struct gpu_frame {
 } gpu_frame;
 
 bool gpu_frame_begin(gpu *g, gpu_frame *f);
-/* Clears colour and depth. */
+/* Clears colour and depth. End it with gpu_pass_3d_end (it filters a supersampled frame down into the swapchain). */
 SDL_GPURenderPass *gpu_pass_3d(gpu *g, gpu_frame *f, SDL_FColor clear);
+void gpu_pass_3d_end(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass);
+/* The level's supersampling, percent of the window's pixels per axis: 100 (off), 150, 200. */
+void gpu_set_scale(gpu *g, int percent);
+int gpu_next_scale(const gpu *g);
 /* No depth; clear = false keeps what earlier passes drew (overlays). */
 SDL_GPURenderPass *gpu_pass_2d(gpu *g, gpu_frame *f, bool clear, SDL_FColor clear_color);
 void gpu_frame_end(gpu *g, gpu_frame *f);
@@ -89,6 +101,18 @@ void gpu_quad_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUText
  * uv in viewport units (0..1, y down), triangles 0 1 2 and 1 3 2; NULL = the whole viewport and texture. */
 void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, const float corners[4][2],
                  const float uv[4][2], int mode, float threshold);
+
+/* Ed's shadow disc (tc_viewer_shadow) in the level's 3D pass, after the opaque draws. */
+typedef struct gpu_shadow {
+    float view_projection[16];
+    float center[3], radius;
+    float normal[3], inner;
+    float alpha;
+    float fog_near, fog_far;
+    bool fog_on;
+    float eye[3];
+} gpu_shadow;
+void gpu_draw_shadow(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, const gpu_shadow *s);
 
 /* The loading screen's bar (main.swift's RainbowBar) over rect, in target pixels, in a 2D pass: tex the rainbow pool
  * (sud0's o_zarbi_auntxy.png, sampled repeating), NULL = plain white; scale = pixels per point; time in seconds. */

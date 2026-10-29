@@ -156,6 +156,7 @@ typedef struct tc_viewer {
     int walk_in;              /* simple controller at a portal: 1 the step-in clip, 2 the cover and the portal firing */
     int walk_clip;            /* the step-in clip (state 228's animation), -1 none */
     uint16_t sounds[TC_AI_MAX_SOUNDS]; /* sound events started by the last update */
+    uint32_t ed_draw_count;   /* Ed's parts in the last tc_viewer_draws (0: hidden, e.g. stepped into a portal) */
     uint32_t sound_count;
 
     /* Mesh table and this frame's draw list. */
@@ -197,6 +198,19 @@ void tc_viewer_update(tc_viewer *v, float dt);
  * everything opaque without depth writes. Storage is the viewer's, valid until the next call. */
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out);
+
+/* A simple round shadow under Ed (a stand-in until the game's own is read): where straight down from him meets the
+ * ground, within TC_VIEW_SHADOW_REACH. With his height above it the disc shrinks (to 35 % by 6 units up: a jump
+ * shows), lightens and softens, gone at the reach. false while not playing, with none of Ed drawn (call after
+ * tc_viewer_draws), while swimming, over nothing or over a wall-steep face. */
+#define TC_VIEW_SHADOW_REACH 12.0f
+typedef struct tc_view_shadow {
+    tc_vec3 position, normal; /* on the ground, its normal (facing up) */
+    float radius;
+    float alpha;              /* darkness in the middle, 0..1 */
+    float inner;              /* share of the radius at full darkness; the rest fades to the rim */
+} tc_view_shadow;
+bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out);
 
 /* Screen transitions and portals. Load the effect textures once (paths relative to the level folder, as the level's
  * textures); each frame draw the overlay over the 3D frame. When tc_viewer_pending_level returns non-NULL (after the
