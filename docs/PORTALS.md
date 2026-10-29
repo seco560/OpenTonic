@@ -36,6 +36,8 @@ Land 5, Transit 2, BigBoss 1; none in the cutscene-only levels (bar, death, mamm
 spynorth; `tc_level_is_cutscene`). Gap: Totalski and skymap are played as the skier, a level perso, and
 `portals()` only runs for the fix Ed, so their way back to sud0 (`GIZ_ArcheRetourneDansSud0`, `NBD_ArcheGagneSkymap`)
 is not exported yet.
+| `genplainesud/HEG_GenTransitionFade` (walk-in passages, 2026-10-29) | sud0: Doc's house (TransMaison01/02, 03/04, its stairs Nik_Actor2/3), the tower (TransTour01/02), the ice (TransGlace01/02) | Ed in its ZDD zone (COND_13(Me, 1, Ed)): dsg57 := Me, dsg101 / dsg102, B75 + R4 (Ed turns along the passage, TurnTowardPoint = PROC 247, and walks on); the port starts the cover here | covered: camera to own dsg0, Ed to the other end (own dsg1, a SuperObject) + dsg4 facing out of it, dsg57 := the other end, dsg101 := 2 (walks out), 2 s, B103 (control back). The exe fades Ed (SetTransparency) and alternates Ed.dsg43 between entering and arriving; the port does both in one record and disarms portals at the arrival point until Ed leaves them |
+
 Left out (they don't start the walk-in or the cover): `GenTransitionSubMap` (zone test COND_13), `ChangeMapDebut/Fin`
 (falling off Land -> bigboss), canyon's retry warp, Doc and the training spies, the game-over screen.
 
@@ -85,7 +87,8 @@ the **reveal** transition after every level load (`GAM_Initeng_0040de70`) and af
 ### Loading screen
 The VIG module shows the level's vignette (Vignette.cnt, `files/out/Vignette/Level/<Level>.png`) while the level
 loads. Ours loads in a fraction of a second, so per the user: **the vignette for 3 s with a progress bar and
-"Loading <level>"**.
+"Loading <level>"** (`TC_VIEWER_LOADING_SECONDS`). Both frontends also show it after the intro, before Totalski,
+whether the intro was watched or skipped.
 
 ## Design
 Same split as the rest: the converter reduces other persos' scripts to data (like `ai.proximity_triggers`), the

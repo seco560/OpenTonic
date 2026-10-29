@@ -1105,6 +1105,42 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   are whatever Ed's scripts do with the zones (checked only by the aicheck run above); the swim collision body (the
   exe sweeps no card, flags 0x10 / 4; the port uses tc_player's capsule).
 
+### Water at a pool's floor (2026-10-29, Linux session; BUGS.md "Water Jump Buoyancy")
+- **Symptom (cavedoc, the pool in front of Ed's arrival from sud0: surface -48.25, floor -51.14, box (-25.4, -136.7,
+  -51.1)-(18.0, -96.2, -38.5)):** a running jump in reached the bottom, Ed then "surface swam" (B2, state 5) on the
+  floor, walked along it (B7 / B9, ground) and jumped off it (state 43).
+- **Cause: the port's sector boxes, not the physics.** The exe looks the water up in the perso's sector (the
+  integrators get the sector), so a sector's water does not end at its floor. The port stands in for sectors with
+  their bounding boxes, which stop at the geometry (cavedoc's 0.04 above the collision floor), and the swim forces
+  probe 0.5 below Ed's origin (FUN_004c4af0). Within 0.5 of the floor the probe left the box, so he had no buoyancy,
+  no drag and depth 0, which his scripts read as the surface. **Fix:** `box_holds` (tc_mec.c) counts points up to one
+  body size (1.0) below a box's bottom as inside it, for water and dry boxes alike.
+- **The deep plunge is the original's.** The air card has no water forces (DNM_WalkForces: weight only); R25 hands
+  over to the water reflexes only when ZoneTest fails, i.e. with sample point 2 (1.7 above the origin) under; the card
+  change keeps the velocity (DNM_CardTypeInit_004a7459 converts it between a carrier's frame and the world, nothing
+  else). So Ed enters the swim card ~2 below the surface at ~12 u/s and the drag stops him ~0.7 further down.
+- Check: `AI_SCRIPT=hang AI_START=-19.94,-136.57,-47.63,172.5 aicheck files/out/ttlv cavedoc` (run and jump into the
+  pool): state 5 at z -48.19 (was -51.14, then on the floor). wander: 20 levels identical, cavedoc 0 stalls (was 1).
+
+### Ghost water (2026-10-29, Linux session; BUGS.md "Ghost Water Bodies")
+- **Cause:** the port bounds each water plane by the boxes of the sectors listing it (the exe asks the perso's sector,
+  which the port lacks), so dry places inside or under those boxes counted as water. Found with a scan of every level's
+  walkable floor (wet by the lookup, no drawn water straight above). The exe's water really is an unbounded plane
+  within a sector: FUN_00451b90 walks the sector's surfaces, FUN_0045d880 is a pure height difference.
+- **Fix 1 (core, user's observation: the ghosts lie under actual water):** `tc_mec_env_at` takes the collision; a
+  point with a ceiling (a face turned down) straight above it, below the surface, is dry. sud0: the cave 16 under the
+  river, the cave under the well, the frozen pond (ice slab over the water, so Ed walks on it); pyramide's lower
+  chambers.
+- **Fix 2 (exporter, ai.dry_boxes):** a dry sector wholly inside a water box stays dry unless a water surface's
+  triangle overlaps it seen from above (the old rule kept every such sector wet for the rocks in the river). sud0: the
+  tunnel under Doc's house (sctsud17, inside the river's sector sctsud22b; its ceiling, -3.3, is above the river's
+  -5.2, so fix 1 cannot see it). Needs a re-export.
+- **Result** (sud0 / pyramide / skymap ghost floor samples): 3519 -> 854, 793 -> 335, 449 -> 61; every visible water
+  triangle keeps its water except the frozen pond's; wander identical on all water levels but cavedoc (the pool-floor
+  fix). **Left:** the pit 100 below sud0's falls and under the well shaft (open to the water above); marmite's sctV01a
+  (the sector lists the surface over all of it); BigBoss. cock01's water depends on gameplay (Ed changes its level).
+- A drawn-water footprint test (wet only under drawn water) was tried and dropped: it dried large parts of Land.
+
 ### ZDx zones, read with types (2026-10-24, typing step 3; COND_13 for portals ported, see the last bullet)
 - **List numbering** (GAM_ZoneList_00431520): 0 = ZDD (collide set +0), 1 = ZDM (+8), 2 = ZDE (+4), 3 = ZDR (+0xC);
   ai.py's order of the pointers is right, the exe's index differs. GAM_ActiveZones_004316d0(list, collset) = the list's

@@ -242,13 +242,15 @@ static void update_portals(tc_viewer *v, float dt) {
             copy_text(c->camera_place, sizeof(c->camera_place), after ? NULL : ev->camera_place);
             c->dsg_size = m->dsg.size <= TC_VIEWER_CARRY_DSG && e->ai.dsg ? m->dsg.size : 0;
             if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
+            c->vertical_fov = v->camera.vertical_fov;
+            c->orbit_distance = v->orbit_distance;
             v->carry = c;
             v->phase = TC_VP_LOADING;
             v->loading_time = 0;
         }
         ev->level = ev->place = ev->camera_place = NULL;
     }
-    if (v->phase == TC_VP_LOADING && (v->loading_time += dt) >= 3) v->phase = TC_VP_PENDING;
+    if (v->phase == TC_VP_LOADING && (v->loading_time += dt) >= TC_VIEWER_LOADING_SECONDS) v->phase = TC_VP_PENDING;
     if (v->phase == TC_VP_REVEAL && tc_transition_step(&v->transition, dt)) v->phase = TC_VP_PLAY;
 }
 
@@ -266,7 +268,7 @@ void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out) {
     case TC_VP_BLACK: out->kind = TC_VO_BLACK; return;
     case TC_VP_LOADING: case TC_VP_PENDING:
         out->kind = TC_VO_LOADING;
-        out->progress = fminf(1, v->loading_time / 3);
+        out->progress = fminf(1, v->loading_time / TC_VIEWER_LOADING_SECONDS);
         out->level = v->carry ? v->carry->level : NULL;
         return;
     case TC_VP_COVER: case TC_VP_REVEAL: {
@@ -393,6 +395,8 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->fly_speed = fmaxf(2, size / 40);
     /* Start as Ed when the level has him (Tab still switches to free-fly). */
     if (v->play) tc_viewer_toggle_play(v);
+    if (desc->carry && desc->carry->vertical_fov > 0) v->camera.vertical_fov = desc->carry->vertical_fov;
+    if (desc->carry && desc->carry->orbit_distance > 0) v->orbit_distance = desc->carry->orbit_distance;
     if (desc->carry && v->play) arrive(v, desc->carry);
     return TC_OK;
 }
@@ -664,7 +668,9 @@ static void step_ai(tc_viewer *v, float dt) {
     if (p->clip_prev == p->clip_cur && p->clip_cur >= 0) {
         float count = (float)v->level->ed.anims[p->clip_cur].sample_count, d = p->phase_cur - p->phase_prev;
         if (d < 0 && p->loop_cur) d += count; /* wrapped round the loop */
-        if (d >= 0 && d < count / 2) v->ed_phase = fmodf(p->phase_prev + d * t, count);
+        /* Only a loop wraps: an ended state holds its last frame at phase == count (the portal step-in, Ed hidden),
+         * which wrapped to 0 drew him whole again where the step-in began. */
+        if (d >= 0 && d < count / 2) v->ed_phase = p->loop_cur ? fmodf(p->phase_prev + d * t, count) : p->phase_prev + d * t;
     }
 }
 

@@ -35,7 +35,7 @@ static const char *controls_text =
     "Animation:  P pause / resume  -  [ slower  -  ] faster\n"
     "Lighting variant:  1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain)\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
-    "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 4)\n"
+    "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 8)\n"
     "(speed, gamma, field of view, lighting variant, antialiasing and play mode are shown in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
@@ -71,6 +71,13 @@ typedef struct app {
     char loading_level[64];
     SDL_GPUTexture *loading_vignette, *loading_text;
     int vignette_w, vignette_h, loading_text_w, loading_text_h;
+    Uint64 loading_start_ns;     /* when the caption last changed: the bar's animation clock */
+    SDL_GPUTexture *loading_bar; /* the bar's rainbow pool (Textures/Sud0/o_zarbi_auntxy.png), loaded once */
+    bool loading_bar_tried;
+    /* After the intro: Totalski opens after the loading screen, as a portal's (the level select stays underneath). */
+    char *next_level;            /* its .ttlv, or NULL */
+    char next_name[64];          /* the caption's level name */
+    float next_time;             /* seconds into its loading screen */
     char title_base[512];
     char title[1024];
     Uint64 last_title_ns;
@@ -248,7 +255,8 @@ static void play_intro(app *a) {
     set_title(a, "Open Tonic \xe2\x80\x94 intro");
 }
 
-/* At the end, or skipped: the ski slope, as the original game starts it (the level select if it isn't converted). */
+/* At the end, or skipped: the ski slope, as the original game starts it, after its loading screen (the level select if
+ * it isn't converted). */
 static void finish_intro(app *a) {
     if (!a->intro) return;
     intro_close(a->intro);
@@ -256,8 +264,23 @@ static void finish_intro(app *a) {
     int n = 0;
     char **levels = SDL_GlobDirectory(a->level_folder, "totalski.ttlv", SDL_GLOB_CASEINSENSITIVE, &n);
     char *path = levels && n > 0 ? path_join(a->level_folder, levels[0]) : NULL;
+    if (path) {
+        SDL_strlcpy(a->next_name, levels[0], sizeof a->next_name);
+        char *dot = SDL_strrchr(a->next_name, '.');
+        if (dot) *dot = 0;
+    }
     SDL_free(levels);
-    if (!path || !open_level(a, path, NULL)) show_picker(a);
+    if (!path) { show_picker(a); return; }
+    a->next_level = path;
+    a->next_time = 0;
+    set_title(a, "Open Tonic");
+}
+
+/* The loading screen after the intro is done (drawn at least once at full progress): open the level. */
+static void finish_loading(app *a) {
+    char *path = a->next_level;
+    a->next_level = NULL;
+    if (!open_level(a, path, NULL)) show_picker(a);
     SDL_free(path);
 }
 
@@ -338,14 +361,20 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
     bool ctrl = (k->mod & SDL_KMOD_CTRL) != 0, alt = (k->mod & SDL_KMOD_ALT) != 0;
     if (ctrl && sc == SDL_SCANCODE_Q) { a->quit = true; return; }
     if (ctrl && sc == SDL_SCANCODE_L) { if (!k->repeat && a->view) show_picker(a); return; }
-    if (a->intro) {  /* Esc, Space, Return, keypad Enter skip; M, F11 and Ctrl+Q as everywhere */
+    /* The intro: Esc, Space, Return, keypad Enter skip; M, F11 and Ctrl+Q as everywhere (only those on the loading
+     * screen after it). */
+    if (a->intro || a->next_level) {
         if (k->repeat) return;
         bool enter = sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER;
-        if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_SPACE || (enter && !alt)) {
+        if (a->intro && (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_SPACE || (enter && !alt))) {
             finish_intro(a);
             return;
         }
-        if (sc == SDL_SCANCODE_M) { music_set_muted(!music_muted()); intro_set_muted(a->intro, music_muted()); return; }
+        if (sc == SDL_SCANCODE_M) {
+            music_set_muted(!music_muted());
+            if (a->intro) intro_set_muted(a->intro, music_muted());
+            return;
+        }
         if (sc != SDL_SCANCODE_F11 && !(alt && enter)) return;
     }
     if (sc == SDL_SCANCODE_F2) {  /* F2: antialiasing off / 2x / 4x / 8x (what the GPU supports) */
@@ -395,6 +424,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
             finish_intro(a);
         return;
     }
+    if (a->next_level) return;  /* the loading screen after it */
     if (button == SDL_GAMEPAD_BUTTON_BACK) {  /* Select: the controls (F1) */
         a->help = !a->help;
         if (a->help) set_captured(a, false);
@@ -435,7 +465,7 @@ static float pad_axis(SDL_Gamepad *g, SDL_GamepadAxis axis) {
  * moves the selection, repeating while held, and the right one scrolls. */
 static void pad_update(app *a, float dt) {
     SDL_Gamepad *g = a->pad ? SDL_GetGamepadFromID(a->pad) : NULL;
-    if (!g || a->intro) return;
+    if (!g || a->intro || a->next_level) return;
     float lx = pad_axis(g, SDL_GAMEPAD_AXIS_LEFTX), ly = -pad_axis(g, SDL_GAMEPAD_AXIS_LEFTY);  /* SDL: y down */
     float rx = pad_axis(g, SDL_GAMEPAD_AXIS_RIGHTX), ry = -pad_axis(g, SDL_GAMEPAD_AXIS_RIGHTY);
     if (a->view) {
@@ -507,7 +537,7 @@ static void handle(app *a, const SDL_Event *e) {
         }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro) break;
+        if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro || a->next_level) break;
         if (a->view) set_captured(a, true);
         else if (a->picker_open) {
             int i = picker_hit(&a->picker, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
@@ -523,7 +553,7 @@ static void handle(app *a, const SDL_Event *e) {
     case SDL_EVENT_MOUSE_MOTION:
         if (a->view && a->captured) {
             tc_viewer_mouse_look(&a->view->viewer, e->motion.xrel, e->motion.yrel);
-        } else if (a->picker_open && !a->intro) {
+        } else if (a->picker_open && !a->intro && !a->next_level) {
             picker_set_hover(&a->picker, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y));
         }
         break;
@@ -531,7 +561,7 @@ static void handle(app *a, const SDL_Event *e) {
         float y = e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e->wheel.y : e->wheel.y;
         if (a->view) {
             tc_viewer_wheel(&a->view->viewer, y);  /* camera zoom in play mode, fly speed in free-fly */
-        } else if (a->picker_open && !a->intro) {
+        } else if (a->picker_open && !a->intro && !a->next_level) {
             picker_scroll(&a->picker, -y * 80 * a->picker.scale);
         }
         break;
@@ -562,6 +592,7 @@ static void loading_prepare(app *a, const char *level) {
     if (!level || SDL_strcmp(level, a->loading_level) == 0) return;
     loading_free(a);
     SDL_strlcpy(a->loading_level, level, sizeof a->loading_level);
+    a->loading_start_ns = SDL_GetTicksNS();
     char caption[96];
     SDL_snprintf(caption, sizeof caption, "Loading %s", level);
     a->loading_text = gpu_text(&a->g, caption, 1, &a->loading_text_w, &a->loading_text_h);
@@ -573,12 +604,24 @@ static void loading_prepare(app *a, const char *level) {
     int n = 0;
     char **found = dir ? SDL_GlobDirectory(dir, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
     char *path = found && n > 0 ? path_join(dir, found[0]) : NULL;
+    /* The bar's texture: out/Textures/Sud0, next to out/Vignette (without it the bar fills plain white). */
+    char *textures = a->loading_bar_tried ? NULL : path_join(a->data_dir, "Textures");
+    char *pool = textures ? path_join(textures, "Sud0/o_zarbi_auntxy.png") : NULL;
+    a->loading_bar_tried = true;
     gpu_upload u;
-    if (path && gpu_upload_begin(&a->g, &u)) {
-        a->loading_vignette = gpu_upload_png(&a->g, &u, path, true, &a->vignette_w, &a->vignette_h);
-        if (!a->loading_vignette) SDL_Log("vignette %s: %s", path, SDL_GetError());
+    if ((path || pool) && gpu_upload_begin(&a->g, &u)) {
+        if (path) {
+            a->loading_vignette = gpu_upload_png(&a->g, &u, path, true, &a->vignette_w, &a->vignette_h);
+            if (!a->loading_vignette) SDL_Log("vignette %s: %s", path, SDL_GetError());
+        }
+        if (pool && path_is_file(pool)) {
+            a->loading_bar = gpu_upload_png(&a->g, &u, pool, true, NULL, NULL);
+            if (!a->loading_bar) SDL_Log("loading bar %s: %s", pool, SDL_GetError());
+        }
         gpu_upload_end(&a->g, &u);
     }
+    SDL_free(pool);
+    SDL_free(textures);
     SDL_free(path);
     SDL_free(found);
     SDL_free(dir);
@@ -586,7 +629,7 @@ static void loading_prepare(app *a, const char *level) {
 }
 
 /* Over the overlay's black, laid out as main.swift's LoadingScreen: the vignette (4:3, 80 % wide at most), "Loading
- * <level>" under it, then the progress bar. */
+ * <level>" under it, then the rainbow progress bar. */
 static void draw_loading(app *a, gpu_frame *f, SDL_GPURenderPass *pass, float progress) {
     float k = SDL_GetWindowDisplayScale(a->window), W = (float)f->width, H = (float)f->height;
     float w = SDL_min(W * 0.8f, (H - 120 * k) * 4 / 3), h = w * 3 / 4;
@@ -605,10 +648,9 @@ static void draw_loading(app *a, gpu_frame *f, SDL_GPURenderPass *pass, float pr
                          (SDL_FRect){SDL_floorf((W - tw) / 2), SDL_floorf(y + h + 18 * k + (26 * k - th) / 2), tw, th}, NULL,
                          (SDL_FColor){1, 1, 1, 1});
     }
-    float bw = w * 0.6f, bh = SDL_roundf(6 * k), bx = SDL_floorf((W - bw) / 2), by = SDL_floorf(y + h + 56 * k + (16 * k - bh) / 2);
-    gpu_quad(&a->g, f, pass, NULL, (SDL_FRect){bx, by, bw, bh}, NULL, (SDL_FColor){0.25f, 0.26f, 0.3f, 1});
-    gpu_quad(&a->g, f, pass, NULL, (SDL_FRect){bx, by, bw * SDL_clamp(progress, 0.0f, 1.0f), bh}, NULL,
-             (SDL_FColor){0.25f, 0.52f, 0.96f, 1});
+    float bw = SDL_floorf(w * 0.6f), bh = SDL_roundf(18 * k), bx = SDL_floorf((W - bw) / 2), by = SDL_floorf(y + h + 56 * k);
+    float t = (float)(SDL_GetTicksNS() - a->loading_start_ns) / 1e9f;
+    gpu_loading_bar(&a->g, f, pass, a->loading_bar, (SDL_FRect){bx, by, bw, bh}, progress, t, k);
 }
 
 static void draw(app *a) {
@@ -617,6 +659,8 @@ static void draw(app *a) {
     if (a->view) {
         tc_viewer_overlay(&a->view->viewer, &o);
         if (o.kind == TC_VO_LOADING) loading_prepare(a, o.level);
+    } else if (a->next_level) {
+        loading_prepare(a, a->next_name);
     }
     gpu_frame f;
     if (!gpu_frame_begin(&a->g, &f)) { SDL_Delay(16); return; }  /* minimised */
@@ -624,6 +668,12 @@ static void draw(app *a) {
         intro_upload(a->intro, &f);
         SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, true, (SDL_FColor){0, 0, 0, 1});
         if (pass) { intro_draw(a->intro, &f, pass); SDL_EndGPURenderPass(pass); }
+    } else if (a->next_level) {  /* the loading screen after the intro, on black */
+        SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, true, (SDL_FColor){0, 0, 0, 1});
+        if (pass) {
+            draw_loading(a, &f, pass, SDL_min(1.0f, a->next_time / TC_VIEWER_LOADING_SECONDS));
+            SDL_EndGPURenderPass(pass);
+        }
     } else if (a->view) {
         view_draw_frame(a->view, &f);
         if (o.kind != TC_VO_NONE || a->help) {  /* screen transition or loading screen, then the controls */
@@ -673,7 +723,7 @@ static char *default_level_folder(void) {
 /* TONIC_MSAA=1/2/4/8: the level's starting antialiasing (F2 cycles it). */
 static int msaa_setting(void) {
     const char *e = SDL_getenv("TONIC_MSAA");
-    int n = e ? SDL_atoi(e) : 4;
+    int n = e ? SDL_atoi(e) : 8;
     return n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 1;
 }
 
@@ -735,6 +785,7 @@ int main(int argc, char **argv) {
         float dt = SDL_min((float)(now - last) / 1e9f, 0.1f);
         last = now;
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
+        if (a.next_level) a.next_time += dt;
         pad_update(&a, dt);
         if (a.view) {
             tc_viewer_update(&a.view->viewer, dt);
@@ -751,6 +802,8 @@ int main(int argc, char **argv) {
         /* After a red portal's loading screen (drawn at least once at full progress): the next level. */
         const tc_viewer_carry *pending = a.view ? tc_viewer_pending_level(&a.view->viewer) : NULL;
         if (pending) open_portal_level(&a, pending);
+        /* The same after the intro's loading screen: Totalski. */
+        if (a.next_level && a.next_time >= TC_VIEWER_LOADING_SECONDS) finish_loading(&a);
     }
 
     music_stop();
@@ -758,7 +811,11 @@ int main(int argc, char **argv) {
     intro_close(a.intro);
     close_level(&a);
     close_picker(&a);
+    SDL_WaitForGPUIdle(a.g.device);
+    loading_free(&a);  /* quitting on the loading screen after the intro (no level holds it then) */
+    if (a.loading_bar) SDL_ReleaseGPUTexture(a.g.device, a.loading_bar);
     if (a.help_text) SDL_ReleaseGPUTexture(a.g.device, a.help_text);
+    SDL_free(a.next_level);
     gpu_quit(&a.g);
     SDL_DestroyWindow(a.window);
     SDL_free(a.level_folder);

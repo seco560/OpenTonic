@@ -131,6 +131,11 @@ static bool portal_op(tc_ed_ai *e, const tc_ai_portal *g, const tc_ai_portal_op 
         tc_mec_walk_reset(&e->walk);
         e->contacts = 0;
         e->events.teleported = true;
+        { /* as at the start: a portal the player arrives in captures only once he has left it (a passage's far end) */
+            uint16_t k;
+            for (k = 0; e->portal_armed && k < m->portal_count; k++)
+                if (portal_inside(&m->portals[k], o->v)) e->portal_armed[k] = 0;
+        }
         break;
     }
     case TC_AI_POP_CAMERA: e->events.camera_set = true; e->events.camera = o->v; break;
@@ -417,7 +422,7 @@ static void water_zones(tc_ed_ai *e) {
     bool mixed = false;
     int k;
     for (k = 0; k < 7; k++) a->zone[k] = -1;
-    a->zone[0] = tc_mec_env_at(a->model, e->player->position, &env) > 0;
+    a->zone[0] = tc_mec_env_at(a->model, e->player->world, e->player->position, &env) > 0;
     if (st->water_points != TC_AI_NONE16 && a->model->water_count) {
         const tc_ai_water_points *w = &a->model->water_point_sets[st->water_points];
         tc_mat4 m = tc_ed_ai_model_matrix(e);
@@ -425,7 +430,7 @@ static void water_zones(tc_ed_ai *e) {
             tc_vec3 q = w->point[k], p = tc_v3(m.m[0] * q.x + m.m[4] * q.y + m.m[8] * q.z + m.m[12],
                                              m.m[1] * q.x + m.m[5] * q.y + m.m[9] * q.z + m.m[13],
                                              m.m[2] * q.x + m.m[6] * q.y + m.m[10] * q.z + m.m[14]);
-            if (w->kind[k] >= 1 && w->kind[k] <= 6) a->zone[w->kind[k]] = tc_mec_env_at(a->model, p, &env) > 0;
+            if (w->kind[k] >= 1 && w->kind[k] <= 6) a->zone[w->kind[k]] = tc_mec_env_at(a->model, e->player->world, p, &env) > 0;
         }
     } else if (st->water_points != TC_AI_NONE16) {
         const tc_ai_water_points *w = &a->model->water_point_sets[st->water_points];
@@ -503,7 +508,7 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     if (type != e->card_type && e->card_type == 5)
         p->velocity = tc_v3(0, 0, 0); /* leaving flight (GAM_0042ab20): stop, keep the heading */
     /* The mechanical environment at the feet (the integrators' lookup at the step's start; water planes: .ttai WATR) */
-    e->env_depth = tc_mec_env_at(a->model, p->position, &e->env);
+    e->env_depth = tc_mec_env_at(a->model, p->world, p->position, &e->env);
     if (type == 7) {
         /* Card type 7 (DNM_IntegrateType7_004acb49 / DNM_RequestType7_004b17d1): with the card's gravity factor 0 (all of
          * Ed's: surface swimming 5 / 18 / 19, the portal walk-in 228, the skier's finish 321) the velocity is kept and the
@@ -535,7 +540,7 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
         if (e->card_type != 1) tc_mec_swim_enter(&e->swim, p->heading);
         if (m->mode_count == 0) tc_mec_swim_request(&e->swim, card, 0, m->proposal, dt);
         for (k = 0; k < m->mode_count; k++) tc_mec_swim_request(&e->swim, card, m->modes[k], m->proposal, dt);
-        v = tc_mec_swim_velocity(&e->swim, card, a->model, p->position, v, dt, &e->env_depth);
+        v = tc_mec_swim_velocity(&e->swim, card, a->model, p->world, p->position, v, dt, &e->env_depth);
         tc_player_move(p, dt, v);
         p->heading = e->swim.heading_lagged + TC_PI / 2; /* the swim heading's front, in tc_player's terms */
         e->card_type = type;

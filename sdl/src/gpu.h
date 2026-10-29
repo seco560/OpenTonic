@@ -20,6 +20,7 @@ typedef struct gpu {
     SDL_GPUShader *level_vs, *textured_fs, *flat_fs;  /* kept to rebuild the level pipelines for another msaa */
     SDL_GPUGraphicsPipeline *ui;      /* 2D quads, alpha-blended, no depth */
     SDL_GPUGraphicsPipeline *overlay; /* screen transitions (docs/PORTALS.md): free-cornered quads, as ui */
+    SDL_GPUGraphicsPipeline *bar;     /* the loading screen's rainbow bar (shaders/bar.frag), as ui */
     SDL_GPUSampler *repeat_sampler;   /* level textures: trilinear, repeat, 16x anisotropy */
     SDL_GPUSampler *clamp_sampler;    /* lightmap atlas: linear, clamp to edge */
     SDL_GPUSampler *ui_sampler;       /* thumbnails and text: trilinear, clamp */
@@ -88,5 +89,10 @@ void gpu_quad_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUText
  * uv in viewport units (0..1, y down), triangles 0 1 2 and 1 3 2; NULL = the whole viewport and texture. */
 void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, const float corners[4][2],
                  const float uv[4][2], int mode, float threshold);
+
+/* The loading screen's bar (main.swift's RainbowBar) over rect, in target pixels, in a 2D pass: tex the rainbow pool
+ * (sud0's o_zarbi_auntxy.png, sampled repeating), NULL = plain white; scale = pixels per point; time in seconds. */
+void gpu_loading_bar(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, SDL_FRect rect, float progress,
+                     float time, float scale);
 
 #endif

@@ -68,6 +68,9 @@ typedef struct tc_view_frame {
 } tc_view_frame;
 
 /* What to draw over the frame (docs/PORTALS.md): a screen transition, black, or the loading screen. */
+/* How long the loading screen shows its bar filling (it is not tied to real loading: the frontends also show it
+ * after the intro, before Totalski). */
+#define TC_VIEWER_LOADING_SECONDS 3
 typedef enum tc_view_overlay_kind { TC_VO_NONE, TC_VO_MASK, TC_VO_LOGO, TC_VO_BLACK, TC_VO_LOADING } tc_view_overlay_kind;
 typedef struct tc_view_overlay {
     tc_view_overlay_kind kind;
@@ -88,6 +91,8 @@ typedef struct tc_viewer_carry {
     char camera_place[64];
     uint32_t dsg_size;        /* 0: no dsgvars carried */
     uint8_t dsg[TC_VIEWER_CARRY_DSG];
+    float vertical_fov;       /* the camera's field of view (, .) kept across the change, radians; 0 = the default */
+    float orbit_distance;     /* the play camera's zoom (wheel) kept across the change; 0 = the default */
 } tc_viewer_carry;
 
 typedef struct tc_viewer_desc {

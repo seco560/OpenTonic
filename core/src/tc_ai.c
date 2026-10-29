@@ -1178,10 +1178,18 @@ static uint32_t procedure(run *r, uint32_t i) {
     }
     case 7: { uint32_t s = arg_param(r, i, 0); p->change_level = s == TC_AI_NONE ? -1 : (int32_t)s; return 0; }
     case 34: p->motion.stop = true; return 0; /* the speeds (+0x38.., +0x25C..), not the proposal */
-    case 35: /* PROC_DynamicsOnEtc_00488cd0 case 0x23: the velocity (+0x38), world axes; spin cleared */
-        p->motion.velocity = argv3(r, i, 0);
+    case 35: { /* PROC_DynamicsOnEtc_00488cd0 case 0x23: the velocity (+0x38), world axes; spin cleared */
+        tc_vec3 v = argv3(r, i, 0);
+        /* Port deviation (docs/DECOMP.md, user's choice): Ed's jump reflex R26 zeroes the velocity at the apex and after
+         * 750 ms (rules 9 and 5), and the fall (B90) only sets it again while a direction is held, so letting go of the
+         * keys on the way up dropped him straight down from the apex (the exe does this too). A reflex's zero in the air
+         * keeps the horizontal speed. The only other literal zeros are B19's (the hang grab), a normal behaviour. */
+        if (r->intel == &p->reflex && v.x == 0 && v.y == 0 && v.z == 0 && p->contacts == 0)
+            v = tc_v3(p->velocity.x, p->velocity.y, 0);
+        p->motion.velocity = v;
         p->motion.velocity_set = true;
         return 0;
+    }
     case 47: { /* ProposalVecD = AI_004881d0: [4..6] turns half way to v, keeping its length; unset (zero) stays so */
         tc_vec3 d = tc_v3(pr[4], pr[5], pr[6]), v = argv3(r, i, 0);
         float l = tc_v3_length(d);
@@ -1255,6 +1263,18 @@ static uint32_t procedure(run *r, uint32_t i) {
         p->motion.turning = true;
         pr[0xD] = a; /* AI_00492140: proposal +0x34, then mode 3 */
         set_mech_mode(p, 3);
+        return 0;
+    }
+    case 247: { /* TurnTowardPoint(perso, x, y, z) (0x48be20): face the point at that offset in the perso's axes (at once,
+                 * as TurnTowardOverFrames; Ed's B75 / B98 walking through the sud0 passages, HEG_GenTransitionFade) */
+        value who = arg(r, i, 0);
+        tc_vec3 pos, off = tc_v3(argf(r, i, 1), argf(r, i, 2), argf(r, i, 3));
+        const float *m3;
+        if (who.type == V_PERSO && perso_frame(p, who.i, &pos, &m3)) {
+            p->motion.heading_set = true;
+            p->motion.heading = heading_to(p, tc_v3_add(pos, tc_v3(m3[0] * off.x + m3[1] * off.y + m3[2] * off.z,
+                                                                   m3[3] * off.x + m3[4] * off.y + m3[5] * off.z, 0)));
+        }
         return 0;
     }
     case 249: return change_state(p, arg_param(r, i, 0)) ? 0 : F_ABORT;

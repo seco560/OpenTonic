@@ -121,6 +121,15 @@ final class LoadingScreen: NSView {
     }
 }
 
+/// The black behind the loading screen after the intro. Takes the keys (a loading screen can't be skipped), but M
+/// mutes as in a level.
+final class LoadingBackdrop: NSView {
+    override var acceptsFirstResponder: Bool { true }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 46, !event.isARepeat { Music.shared.muted.toggle() }
+    }
+}
+
 /// Open Tonic: the native macOS app (began as Tonic Viewer, a level viewer and collision tester).
 final class GameView: MTKView {
     var renderer: Renderer?
@@ -265,6 +274,9 @@ final class GameView: MTKView {
     var renderer: Renderer?
     private var gameView: GameView?
     private var titleTimer: Timer?  // refreshes the AI's behaviour/state in the title while playing
+    /// The loading screen after the intro: Totalski opens when its bar is full (shown full for a tick first, as a portal's).
+    private var nextLevel: (url: URL, screen: LoadingScreen, start: CFTimeInterval, full: Bool)?
+    private var nextLevelTimer: Timer?
     /// Default data, first that exists: inside OpenTonic.app (Contents/Resources/data/ttlv, built by
     /// tools/make_app.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
@@ -370,14 +382,50 @@ final class GameView: MTKView {
         view.start()
     }
 
-    /// After the intro (watched or skipped): Totalski, as the original game; the level select if it isn't converted.
+    /// After the intro (watched or skipped): Totalski, as the original game, after its loading screen (as a red
+    /// portal's, on black); the level select if it isn't converted.
     func startAfterIntro() {
         let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
-        if let ski = files.first(where: { $0.lastPathComponent.lowercased() == "totalski.ttlv" }) {
-            openLevel(ski)
-        } else {
+        guard let ski = files.first(where: { $0.lastPathComponent.lowercased() == "totalski.ttlv" }) else {
             showPicker()
+            return
         }
+        let backdrop = LoadingBackdrop(frame: window.contentLayoutRect)
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = NSColor.black.cgColor
+        let screen = LoadingScreen(frame: backdrop.bounds,
+                                   vignettes: levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level"))
+        backdrop.addSubview(screen)
+        screen.show(level: ski.deletingPathExtension().lastPathComponent, progress: 0)
+        window.contentView = backdrop
+        window.makeFirstResponder(backdrop)
+        window.title = "Open Tonic"
+        nextLevel = (ski, screen, CACurrentMediaTime(), false)
+        nextLevelTimer?.invalidate()
+        nextLevelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.nextLevelTick() }
+        }
+    }
+
+    private func nextLevelTick() {
+        // Gone when something else took the window meanwhile (the level select, Cmd-L).
+        guard let next = nextLevel, window.contentView === next.screen.superview else {
+            nextLevel = nil
+            nextLevelTimer?.invalidate()
+            nextLevelTimer = nil
+            return
+        }
+        if next.full {
+            nextLevel = nil
+            nextLevelTimer?.invalidate()
+            nextLevelTimer = nil
+            openLevel(next.url)
+            if renderer == nil { showPicker() }  // it didn't load (openLevel showed why)
+            return
+        }
+        let progress = min(1, (CACurrentMediaTime() - next.start) / Double(TC_VIEWER_LOADING_SECONDS))
+        next.screen.show(level: next.url.deletingPathExtension().lastPathComponent, progress: Float(progress))
+        nextLevel?.full = progress >= 1
     }
 
     @objc func showControls() {

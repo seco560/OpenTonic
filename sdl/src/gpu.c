@@ -10,6 +10,7 @@
 #include "ui_frag.h"
 #include "overlay_vert.h"
 #include "overlay_frag.h"
+#include "bar_frag.h"
 
 static SDL_GPUShader *shader(gpu *g, const uint32_t *code, size_t size, SDL_GPUShaderStage stage, Uint32 samplers,
                              Uint32 uniform_buffers) {
@@ -210,7 +211,8 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
     SDL_GPUShader *ui_fs = shader(g, ui_frag, sizeof ui_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
     SDL_GPUShader *overlay_vs = shader(g, overlay_vert, sizeof overlay_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     SDL_GPUShader *overlay_fs = shader(g, overlay_frag, sizeof overlay_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
-    bool ok = g->level_vs && g->textured_fs && g->flat_fs && ui_vs && ui_fs && overlay_vs && overlay_fs;
+    SDL_GPUShader *bar_fs = shader(g, bar_frag, sizeof bar_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    bool ok = g->level_vs && g->textured_fs && g->flat_fs && ui_vs && ui_fs && overlay_vs && overlay_fs && bar_fs;
     if (ok && !level_pipelines(g) && g->msaa > 1) {
         SDL_Log("GPU: no pipelines with %dx MSAA, trying without", g->msaa);
         g->msaa = 1;
@@ -218,10 +220,11 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
     }
     if (ok) g->ui = ui_pipeline(g, ui_vs, ui_fs);
     if (ok) g->overlay = ui_pipeline(g, overlay_vs, overlay_fs);
-    SDL_GPUShader *ui_shaders[] = {ui_vs, ui_fs, overlay_vs, overlay_fs};
+    if (ok) g->bar = ui_pipeline(g, ui_vs, bar_fs);
+    SDL_GPUShader *ui_shaders[] = {ui_vs, ui_fs, overlay_vs, overlay_fs, bar_fs};
     for (size_t i = 0; i < SDL_arraysize(ui_shaders); i++)
         if (ui_shaders[i]) SDL_ReleaseGPUShader(g->device, ui_shaders[i]);
-    if (!g->textured || !g->ui || !g->overlay) {
+    if (!g->textured || !g->ui || !g->overlay || !g->bar) {
         SDL_SetError("could not create the pipelines (see the log)");
         return false;
     }
@@ -249,6 +252,7 @@ void gpu_quit(gpu *g) {
     release_level_pipelines(g);
     if (g->ui) SDL_ReleaseGPUGraphicsPipeline(g->device, g->ui);
     if (g->overlay) SDL_ReleaseGPUGraphicsPipeline(g->device, g->overlay);
+    if (g->bar) SDL_ReleaseGPUGraphicsPipeline(g->device, g->bar);
     SDL_GPUShader *shaders[] = {g->level_vs, g->textured_fs, g->flat_fs};
     for (size_t i = 0; i < SDL_arraysize(shaders); i++)
         if (shaders[i]) SDL_ReleaseGPUShader(g->device, shaders[i]);
@@ -609,5 +613,21 @@ void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *
     SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
     SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);
     SDL_PushGPUFragmentUniformData(f->cmd, 0, &p, sizeof p);
+    SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
+}
+
+/* Must match the Params block in shaders/bar.frag (std140). */
+typedef struct bar_params { float size[4], time[4]; } bar_params;
+_Static_assert(sizeof(bar_params) == 32, "bar_params must match shaders/bar.frag");
+
+void gpu_loading_bar(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, SDL_FRect rect, float progress,
+                     float time, float scale) {
+    ui_quad q = {{rect.x, rect.y, rect.w, rect.h}, {0, 0, 1, 1}, {1, 1, 1, 1}, {(float)f->width, (float)f->height, 0, 0}};
+    bar_params b = {{rect.w, rect.h, scale > 0 ? scale : 1, progress}, {time, 0, 0, 0}};
+    SDL_GPUTextureSamplerBinding binding = {tex ? tex : g->white, g->repeat_sampler};
+    SDL_BindGPUGraphicsPipeline(pass, g->bar);
+    SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+    SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);
+    SDL_PushGPUFragmentUniformData(f->cmd, 0, &b, sizeof b);
     SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
 }

@@ -315,6 +315,14 @@ def sphere_triangles(center, r):
     return [tuple(place(p) for p in tri) for tri in tris]
 
 
+# Story gates: sectors the game takes away once a story step is done (docs/BUGS.md). The port has no game progress
+# yet, so while GATES_OPEN (temporary) they are left out of the export, geometry and collision. Set it False (and
+# re-export) to have them back. sud0's sctporte: the wall across the river beside Ed's start, open once Doc's cave is
+# done; sctporte1 / sctporte2 / sctportedroite / sctportegauche: the level's other gates (user's request, 2026-10-29).
+# Level name (lowercase) -> sector names (exact, any case).
+GATES_OPEN = True
+STORY_GATES = {'sud0': ('sctporte', 'sctporte1', 'sctporte2', 'sctportedroite', 'sctportegauche')}
+
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
 
 
@@ -412,6 +420,7 @@ class LevelData:
         self.level_textures = self.read_ptx(lv.ptx)
         self.root = self.read_so(self.father_sector, IDENTITY)
         self.mark_sky()
+        self.mark_gates()
         self.dynamic = self.read_so(self.dynamic_world, IDENTITY)
 
     def un(self, fmt, loc, off=0):
@@ -754,7 +763,7 @@ class LevelData:
             out_floors.extend(col[2])
             out_sounds.extend(col[3])
         for so in self.walk():
-            if so.collide:
+            if so.collide and not getattr(so, 'gated', False):
                 add(so.collide, so.world)
         for p in self.persos():
             if p.collides and p.anim:
@@ -945,6 +954,15 @@ class LevelData:
                 so.colors = [[one] * len(g.vertices) for g in so.lods]
                 so.color_sets = [so.colors] + [[[one] * len(g.vertices) for g in so.lods] for _ in range(n - 1)]
 
+    def mark_gates(self):
+        """so.gated on the IPOs of this level's STORY_GATES sectors while GATES_OPEN: meshes() and collision() leave them
+        out."""
+        names = {n.upper() for n in STORY_GATES.get(self.lv.name.lower(), ())} if GATES_OPEN else set()
+        for sec in self.walk() if names else ():
+            if sec.kind == 'sector' and self.sector_name(sec).upper() in names:
+                for so in self.walk(sec):
+                    so.gated = True
+
     def surfaces(self):
         """Water surfaces: [(loc, Geometric, world 3x4)], each once (several sectors list the same
         one). Sector data +0x10 = {ptr head, ptr tail, u32 n} of nodes {ptr surface, ptr next, ...};
@@ -973,7 +991,7 @@ class LevelData:
         """Yield (key, Geometric LOD 0, world 3x4) for static IPOs, water surfaces and (optionally)
         perso parts, posed at frame 0 or, given t, at t seconds into their animation."""
         for so in self.walk():
-            if so.lods:
+            if so.lods and not getattr(so, 'gated', False):
                 yield so, so.lods[0], so.world
         for loc, geo, m in self.surfaces():
             yield ('surface', loc), geo, m

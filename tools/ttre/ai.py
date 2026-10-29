@@ -476,12 +476,48 @@ def sector_box(d, so):
     return lo, hi
 
 
+def water_surface_triangles(d):
+    """The triangles of the level's water surfaces (LevelData.surfaces: the geometry the sectors list as their surfaces,
+    drawn as the visible water), world space. [((x, y, z) x 3)]."""
+    out = []
+    for _, g, m in d.surfaces():
+        w = [tuple(m[4 * i] * v[0] + m[4 * i + 1] * v[1] + m[4 * i + 2] * v[2] + m[4 * i + 3] for i in range(3))
+             for v in g.vertices]
+        for el in g.elements:
+            out += [(w[a], w[b], w[c]) for a, b, c in el.triangles]
+    return out
+
+
+def covers(box, tri):
+    """Whether a water triangle lies over the box: within its height range (1 of slack) and overlapping it seen from
+    above (separating axes: the box's two, the triangle's three edge normals)."""
+    lo, hi = box
+    if not any(lo[2] - 1 <= p[2] <= hi[2] + 1 for p in tri):
+        return False
+    if max(p[0] for p in tri) < lo[0] or min(p[0] for p in tri) > hi[0] or \
+       max(p[1] for p in tri) < lo[1] or min(p[1] for p in tri) > hi[1]:
+        return False
+    corners = [(lo[0], lo[1]), (hi[0], lo[1]), (lo[0], hi[1]), (hi[0], hi[1])]
+    for k in range(3):
+        a, b = tri[k], tri[(k + 1) % 3]
+        nx, ny = b[1] - a[1], a[0] - b[0]
+        t = [nx * p[0] + ny * p[1] for p in tri]
+        c = [nx * x + ny * y for x, y in corners]
+        if max(c) < min(t) or min(c) > max(t):
+            return False
+    return True
+
+
 def dry_boxes(d):
-    """The boxes of the sectors that list no water surface and reach beyond the water boxes they overlap (v11). The exe
-    looks the environment up in the perso's own sector; the port has no sectors: a point in such a box smaller than the
-    water boxes holding it stays dry (sud0: the way into Doc's cave, under the river's surface height)."""
+    """The boxes of the sectors that list no water surface (v11). The exe looks the environment up in the perso's own
+    sector; the port has no sectors: a point in such a box smaller than the water boxes holding it stays dry (sud0: the
+    way into Doc's cave, under the river's surface height). A dry sector wholly inside a water box is kept only when no
+    visible water lies over it: with water drawn over it, it is a piece of that water's area (sud0: rocks in the
+    river); without, a dry place (sud0's tunnel under Doc's house, sctsud17, inside the river's sector box)."""
     lv, un, out = d.lv, d.un, []
-    water = [b for _, _, boxes in water_planes(d) for b in boxes]
+    planes = water_planes(d)
+    water = [b for _, _, boxes in planes for b in boxes]
+    surface = water_surface_triangles(d) if planes else []
     inside = lambda a, b: all(b[0][k] - 1 <= a[0][k] and a[1][k] <= b[1][k] + 1 for k in range(3))
     for so in d.walk():
         if so.kind != 'sector':
@@ -491,9 +527,10 @@ def dry_boxes(d):
             continue
         lo, hi = sector_box(d, so)
         box = (tuple(lo), tuple(hi))
-        # a sector wholly inside a water box is a piece of that water's area (sud0: rocks in the river), not a
-        # neighbour overlapping its edge: kept wet (the C check under the visible water lost 11 of 63 otherwise)
-        if lo[0] <= hi[0] and not any(inside(box, w) for w in water):
+        # a sector wholly inside a water box with water drawn over it is a piece of that water's area (sud0: rocks in
+        # the river): kept wet (the C check under the visible water lost 11 of 63 otherwise)
+        piece_of_water = any(inside(box, w) for w in water) and any(covers(box, t) for t in surface)
+        if lo[0] <= hi[0] and not piece_of_water:
             out.append(box)
     return out
 
@@ -783,6 +820,11 @@ def portals(ai, strings):
             continue
         pos = tuple(p.world[3::4][:3])
         env = {}
+        if d.perso_names(p.loc)[1] == 'HEG_GenTransitionFade':
+            rec = fade_passage(d, p, persos, normal, reflex)
+            if rec:
+                out.append(rec)
+            continue
 
         def value(n):
             """Static value of an expression: ('int'|'float', v), ('vec', xyz), ('self',), or None."""
@@ -927,6 +969,41 @@ def portals(ai, strings):
         out.append((pos, float(radius), rows, persos[p.loc], fire[0], fire[1], fire[2], cap_ops, fire_ops,
                     d.perso_names(p.loc)[:3:2]))
     return out
+
+
+def fade_passage(d, p, persos, normal, reflex):
+    """One end of a sud0 walk-in passage (HEG_GenTransitionFade: Doc's house 01/02 and 03/04, its stairs Nik_Actor2/3,
+    the tower, the ice; each end's dsg1 is the other end's SuperObject). Its script, in Ed's zone (COND_13(Me, 1, Ed),
+    exported by portal_zones): Ed.dsg57 := Me, dsg101 / dsg102 := the way to walk, Ed forced into B75 (stop, face along
+    the passage, then B108 -> B98: walk on, TurnTowardPoint(dsg57, (0, -/+100, 0)) every tick) with reflex R4; after
+    2 s Ed fades out (SetTransparency 0), moves to the other end + its dsg4 and the camera to its dsg0; arriving, the
+    other end walks him out the other way for 2 s (dsg101 2) and gives him back (B103). Ed.dsg43 alternates between
+    the two branches; the port does both in one record and starts the cover for the fade (the transparency is not
+    modelled). Returns a portals() record, or None."""
+    b75 = next((v for r, v in normal.items() if v == 75), None)
+    b103 = next((v for r, v in normal.items() if v == 103), None)
+    r4 = next((v for r, v in reflex.items() if v == 4), None)
+    t = perso_dsg(d, p.loc, 1)
+    other = d.lv.ptr(t[1], 4) if t and t[0] == 'perso' and t[1] else None  # a SuperObject: its data is the perso
+    q = next((x for x in d.persos() if x.loc == other), None)
+    if q is None or None in (b75, b103, r4) or q.loc not in persos:
+        return None
+    m, n = p.world, q.world
+    off = perso_dsg(d, p.loc, 4)
+    off = off[1] if off and off[0] == 'vec' else (0, 0, 0)
+    arrive = tuple(n[3 + 4 * k] + off[k] for k in range(3))
+    out_dir = (n[1], n[5])  # walking out: towards the other end's local +Y (TurnTowardPoint(dsg57, (0, 100, 0)))
+    heading = math.atan2(out_dir[0], -out_dir[1])
+    cam = perso_dsg(d, p.loc, 0)
+    zero = (0, 0, 0)
+    capture = [(POP_SET, 2, 57, 0, 0, zero), (POP_SET, 0, 101, 1, 0, zero), (POP_SET, 0, 102, 1, 0, zero),
+               (POP_FORCE, 0, b75, 0, 0, zero), (POP_FORCE_REFLEX, 0, r4, 0, 0, zero), (POP_COVER, 0, 0, 0, 0, zero)]
+    fire = ([(POP_CAMERA, 0, 0, 0, 0, tuple(cam[1]))] if cam and cam[0] == 'vec' else []) + [
+        (POP_TELEPORT, 1, 0, 0, struct.unpack('<I', struct.pack('<f', heading))[0], arrive),
+        (POP_SET, 0, 57, persos[q.loc], 0, zero), (POP_SET, 0, 101, 2, 0, zero),
+        (POP_WAIT, 0, 0, 2000, 0, zero), (POP_FORCE, 0, b103, 0, 0, zero)]
+    rows = (m[0:3], m[4:7], m[8:11])
+    return (tuple(m[3::4][:3]), 4.0, rows, persos[p.loc], 1, 0, 0, capture, fire, d.perso_names(p.loc)[:3:2])
 
 
 def ski_portals(ai, strings):

@@ -116,7 +116,7 @@ fi
 if [ "$BUILD" = 1 ]; then
   echo "== sdl"
   make -C sdl
-  echo "done: run sdl/build/opentonic, or install it in the applications menu with tools/install_linux.sh"
+  echo "done: run sdl/build/opentonic, or install it in the applications menu with tools/install_linux.sh (which runs this script too)"
 else
   echo "done: build with 'make -C sdl', then run sdl/build/opentonic"
 fi

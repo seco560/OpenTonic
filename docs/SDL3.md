@@ -40,16 +40,18 @@ version do not load ("re-run the conversion"): `tools/build_linux.sh` re-exports
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
 alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,
 and V plays the intro movie (Esc, Space or Enter skip). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
-MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 4).
+MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 8).
 `TONIC_GPU_DEBUG=1` turns on the GPU backend's validation layers (when installed).
 
 ## Installing
-`tools/install_linux.sh [dest]` builds the frontend and installs it for the current user, as `tools/make_app.sh` makes
-the .app: the binary and its data in `~/.local/share/opentonic` (`opentonic` + `data/`, the files/out layout: ttlv
+`tools/install_linux.sh [--force] [--no-convert] [dest]` first brings files/out up to date (`tools/build_linux.sh
+--no-build`: converts what is missing and re-exports levels from an older converter; `--force` reconverts everything,
+`--no-convert` skips the step, and without `files/sources/GAMEDATA` it is skipped too), then builds the frontend and
+installs it for the current user, as `tools/make_app.sh` makes the .app: the binary and its data in `~/.local/share/opentonic` (`opentonic` + `data/`, the files/out layout: ttlv
 without the `*_ai.txt` listings, Textures, Vignette/Level, audio with music and sfx, video/intro.mpg, icon, Imported),
 a menu entry `~/.local/share/applications/org.opentonic.sdl.desktop` (named after the app ID the binary gives
 `SDL_SetAppMetadata`, which SDL uses as the Wayland app ID / X11 class, so the desktop pairs window and entry) and its
-icon in `~/.local/share/icons/hicolor` (ffmpeg scales it). Re-running it rebuilds and updates the install in place
+icon in `~/.local/share/icons/hicolor` (ffmpeg scales it). Re-running it converts, rebuilds and updates the install in place
 (rsync: only changed files, removed ones deleted); `--uninstall [dest]` removes it all. The binary looks for
 `data/ttlv` next to itself before anything else. About 680 MB, mostly the WAV music (the SDL build plays WAV only).
 
@@ -61,6 +63,7 @@ sdl/
   shaders/level.vert/.frag   # port of Sources/OpenTonic/Shaders.metal (.frag built twice: textured, -DFLAT)
   shaders/ui.vert/.frag      # 2D quads: level picker, controls overlay, loading screen
   shaders/overlay.vert/.frag # screen transitions (Shaders.metal's overlay_vertex / overlay_fragment)
+  shaders/bar.frag           # the loading screen's rainbow bar (main.swift's RainbowBar), on ui.vert
   src/main.c     # window, screens, keys, title bar, controls overlay, loading screen, portal level changes (main.swift)
   src/view.c     # mesh table + texture upload, uniforms, draws the core's list (Renderer.swift)
   src/gpu.c      # SDL_GPU device, pipelines, samplers, uploads, quads, debug-font text
@@ -112,10 +115,14 @@ sdl/
   uploaded with the level. After the 3D pass, a 2D pass draws `tc_viewer_overlay`: the mask wipe (alpha test
   `a <= threshold`, black), the spinning logo (black x the texture's alpha on the core's rotated quad), or black, in
   their own `overlay` pipeline; for the loading screen, the vignette (`Vignette/Level/<level>.png`, matched
-  case-insensitively), "Loading <level>" in the debug font and a progress bar on top, laid out as main.swift's
-  `LoadingScreen`. Once `tc_viewer_pending_level` is set (after a frame of the full bar), the main loop copies the
-  carry and opens that level with it; mouse-look capture stays on across the change. A missing level: a message
-  box, then the level select.
+  case-insensitively), "Loading <level>" in the debug font and the bar on top, laid out as main.swift's
+  `LoadingScreen`. The bar is main.swift's `RainbowBar` in one quad (`gpu_loading_bar`, shaders/bar.frag): a
+  translucent capsule filled with sud0's rainbow pool (`Textures/Sud0/o_zarbi_auntxy.png`, plain white without it),
+  scrolling and waving in 3-point strips, with a gloss and an outline. Once `tc_viewer_pending_level` is set (after
+  a frame of the full bar), the main loop copies the carry and opens that level with it; mouse-look capture stays on
+  across the change. A missing level: a message box, then the level select. After the intro (watched or skipped)
+  the same loading screen shows on black for `TC_VIEWER_LOADING_SECONDS` before Totalski opens (`app.next_level`;
+  only M, F11 and Ctrl+Q work meanwhile), as in the Swift app.
 - **Gamepad.** `SDL_Gamepad`: every pad is opened as it connects; the one last used (a button, or a stick pushed
   past ~40 %) drives the viewer. The sticks go to `tc_viewer_set_move_stick` / `_look_stick` each frame as they are
   (the dead zones are the core's, so the Swift app behaves the same); buttons by position (SOUTH = Cross / A):

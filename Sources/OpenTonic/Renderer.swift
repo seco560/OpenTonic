@@ -53,10 +53,10 @@ import TonicCore
     /// Screen transitions and the loading screen's black (docs/PORTALS.md): 2D quads over the frame.
     private var overlayPipeline: MTLRenderPipelineState!
     /// Multisample antialiasing: 1 (off), 2, 4 or 8 samples, as far as the GPU goes; F2 cycles it. Kept across levels and
-    /// launches (UserDefaults "msaa", default 4).
+    /// launches (UserDefaults "msaa", default 8).
     private(set) var msaa = 1
     static var preferredMSAA: Int {
-        get { UserDefaults.standard.object(forKey: "msaa") as? Int ?? 4 }
+        get { UserDefaults.standard.object(forKey: "msaa") as? Int ?? 8 }
         set { UserDefaults.standard.set(newValue, forKey: "msaa") }
     }
     private let overlayDepthState: MTLDepthStencilState

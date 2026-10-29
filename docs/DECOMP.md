@@ -183,6 +183,16 @@ Each item is marked in the code or in docs/NOTES.md.
    fn1 handlers of types 1, 3, 6, 8 and 12 are not read. They matter for other persos and moving platforms.
 10. **ANIM_TIME_SCALE 0.25** for non-Ed persos contradicts the animation clock as read (the user matched it against
    the original running in Wine).
+11. **Momentum at the jump's apex (deliberate, user's choice 2026-10-29).** Ed's jump reflex R26 (entered through R1,
+   which stamps dsg123 at take-off) runs `PROC_35(0, 0, 0)`, state 44, B90 when he starts falling (`PersoStatus69`) or
+   500 ms in (rule 9), and after 750 ms (rule 5). The fall's air control (B90 rule 7) sets the velocity again only
+   while the stick is past dsg81 (0.25), so with the keys released on the way up the exe drops him straight down
+   from the apex. The port keeps the horizontal speed for a reflex's zero in the air (tc_ai.c, PROC 35). B19's zeros
+   (the hang grab) are a normal behaviour's and stay. `FUNC_164` (`FUN_0049b350` case 4) returns the byte at
+   `0x8C175C`, the **control type** (`InitControlType` / `ChangeControlType`, saved at `0x8F33B4`; `0x8C175B` is
+   the camera type); `PROC_293` (`0x48CC00`) toggles it. The port runs type 0 (camera-relative). Type 1 is
+   Ed-relative and smooths the air control through dsg154 / dsg155, which carries momentum on keys too. It is not
+   ported.
 
 ## Plan, in order (mechanics first)
 1. **The user checks in the game**: the ledge hang (jump at a ledge too high to step on), shimmy, climb; steps

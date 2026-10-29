@@ -10,7 +10,7 @@ layout(location = 2) in vec2 inUV;
 layout(location = 3) in vec4 inColor;   // rgba8 normalised: baked radiosity set 0; a = 0: none (persos)
 layout(location = 4) in vec4 inColor1;  // alternative baked sets (day/night variants); a = 0: absent
 layout(location = 5) in vec4 inColor2;
-layout(location = 6) in vec2 inUV2;     // lightmap atlas coordinates (.ttlv v8); -1 = no lightmap
+layout(location = 6) in vec2 inUV2;     // lightmap atlas coordinates (.ttlv LMAP); -1 = no lightmap
 
 // Must match struct gpu_draw_params in src/renderer.c.
 layout(std140, set = 1, binding = 1) uniform DrawParams {

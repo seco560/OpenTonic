@@ -31,7 +31,7 @@ static void check(int ok, const char *what) {
 
 /* Every draw names a drawable mesh and an existing texture; [opaque, count) are exactly the transparent ones. */
 static int bad_frames;
-static uint32_t last_count, last_opaque;
+static uint32_t last_count, last_opaque, last_ed_draws;
 
 static void frame(tc_viewer *v, float dt) {
     uint32_t count, opaque, i;
@@ -42,6 +42,9 @@ static void frame(tc_viewer *v, float dt) {
     d = tc_viewer_draws(v, &count, &opaque);
     tc_viewer_frame(v, 16.0f / 10, &f);
     if (opaque > count) bad = 1;
+    last_ed_draws = 0;
+    for (i = 0; i < count; i++)
+        if (d[i].mesh >= v->ed_first && d[i].mesh < v->ed_first + v->level->ed.part_count) last_ed_draws++;
     for (i = 0; i < count && !bad; i++) {
         const tc_mesh *m = tc_viewer_mesh(v, d[i].mesh);
         int transparent = (d[i].flags & TC_FLAG_TRANSPARENT) != 0;
@@ -105,7 +108,8 @@ static void portal_scenario(const char *dir) {
     tc_view_overlay o;
     const tc_viewer_carry *pending = NULL;
     const tc_ai_portal *g = NULL;
-    int i, k, seen[5] = {0, 0, 0, 0, 0}, saw_229 = 0;
+    int i, k, seen[5] = {0, 0, 0, 0, 0}, saw_229 = 0, ed_under_cover = 0;
+    float zoom;
     tc_vec3 front;
     snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
     if (!(data = read_file(path, &size)) || tc_level_load(&sud0, data, size) != TC_OK) { printf("  (no sud0: portals skipped)\n"); return; }
@@ -135,11 +139,15 @@ static void portal_scenario(const char *dir) {
     tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(g->position, tc_v3_scale(front, 8)),
                        atan2f(-front.x, front.y));
     v.camera.yaw = TC_PI - tc_viewer_player(&v)->heading;
+    tc_viewer_step_fov(&v, 1); /* 60 degrees and a zoomed-out camera: kept across the level change (the carry) */
+    tc_viewer_wheel(&v, -2);
+    zoom = v.orbit_distance;
     for (i = 0; i < 60 * 25 && !pending; i++) {
         tc_viewer_set_action(&v, TC_VA_FORWARD, i < 60);
         frame(&v, 1.0f / 60);
         tc_viewer_overlay(&v, &o);
         seen[o.kind] = 1;
+        if (o.kind != TC_VO_NONE && last_ed_draws) ed_under_cover++;
         if (o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO) check_overlay_texture(&v, &o);
         pending = tc_viewer_pending_level(&v);
     }
@@ -147,6 +155,8 @@ static void portal_scenario(const char *dir) {
            (double)i / 60, seen[TC_VO_MASK], seen[TC_VO_LOGO], seen[TC_VO_BLACK], seen[TC_VO_LOADING]);
     check(pending && strcmp(pending->level, "cock01") == 0, "sud0 Cocktail arch: bar is a cutscene, cock01 pending");
     check((seen[TC_VO_MASK] || seen[TC_VO_LOGO]) && seen[TC_VO_BLACK] && seen[TC_VO_LOADING], "overlays: cover, black, loading");
+    /* The step-in (state 228) ends with every part hidden and holds that frame: no Ed left at the arch (BUGS.md). */
+    check(ed_under_cover == 0, "sud0: Ed stays gone after stepping in (none of him drawn under the cover)");
     if (pending) carry = *pending;
     tc_viewer_free(&v);
     tc_ai_model_free(&model);
@@ -166,6 +176,12 @@ static void portal_scenario(const char *dir) {
     desc.carry = &carry;
     if (tc_viewer_init(&w, &desc) != TC_OK) { check(0, "bar with the carry"); return; }
     free(ai);
+    check(fabsf(w.camera.vertical_fov - 60 * TC_PI / 180) < 1e-4f, "bar keeps sud0's field of view (60 degrees)");
+    {
+        char what[96];
+        snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default 4.5)", (double)zoom);
+        check(zoom != 4.5f && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
+    }
     tc_viewer_overlay(&w, &o);
     check(o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO, "bar starts with the reveal");
     for (i = 0; i < 60 * 4; i++) {

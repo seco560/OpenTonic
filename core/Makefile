@@ -21,7 +21,8 @@ OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck $(BUILD)/portalcheck
 lib: $(BUILD)/libtoniccore.a
 
-$(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard src/*.h) | $(BUILD)
+# Makefile: a change of flags (as -ffp-contract) rebuilds everything.
+$(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard src/*.h) Makefile | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/libtoniccore.a: $(OBJ)

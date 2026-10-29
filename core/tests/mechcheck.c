@@ -61,7 +61,7 @@ static tc_vec3 swim(float mass, float z, float seconds, int mode, float speed, t
     swim_lo = 1e9f, swim_hi = -1e9f, swim_mean = 0;
     for (i = 0; i < (int)(seconds * fps); i++) {
         tc_mec_swim_request(s, &card, mode, prop, 1 / fps);
-        *v = tc_mec_swim_velocity(s, &card, &m, p, *v, 1 / fps, &depth);
+        *v = tc_mec_swim_velocity(s, &card, &m, NULL, p, *v, 1 / fps, &depth);
         p = tc_v3_add(p, tc_v3_scale(*v, 1 / fps));
         if (i >= (int)((seconds - 10) * fps)) {
             swim_lo = fminf(swim_lo, p.z);

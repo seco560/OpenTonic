@@ -132,6 +132,55 @@ static int run(const char *dir, const char *name, int op, const char *level, int
     return 1;
 }
 
+/* sud0's walk-in passage into Doc's house (HEG_TransMaison01 -> 02, docs/PORTALS.md): Ed walks into its zone from
+ * outside (its local +Y), the cover starts, and once covered he is at the far end and walks out. Returns 1 passed,
+ * 0 failed, -1 when the level has no such passage (data from before it was exported). */
+static int passage(const char *dir) {
+    char path[1024];
+    size_t size;
+    uint8_t *data;
+    tc_level lv;
+    tc_collision world;
+    tc_ai_model model;
+    tc_player player;
+    tc_ed_ai ed;
+    int i, k = -1, covered = 0, ok = 0;
+    float cover_at = -1;
+    snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) return 0;
+    free(data);
+    snprintf(path, sizeof(path), "%s/sud0.ttai", dir);
+    if (!(data = read_file(path, &size)) || tc_ai_model_load(&model, data, size) != TC_OK) return 0;
+    free(data);
+    if (tc_collision_init(&world, lv.collision, 3 * lv.collision_triangle_count, lv.collision_floors) != 0) return 0;
+    for (i = 0; i < model.portal_count; i++)
+        if (fabsf(model.portals[i].position.x - 32.3f) < 0.5f && fabsf(model.portals[i].position.y + 29.0f) < 0.5f) k = i;
+    if (k >= 0) {
+        const tc_ai_portal *g = &model.portals[k];
+        tc_vec3 y = tc_v3_normalize(tc_v3(g->rows[1], g->rows[4], 0)), start = tc_v3_add(g->position, tc_v3_scale(y, 6));
+        start.z += 1;
+        tc_player_init(&player, &world, start, atan2f(-y.x, y.y));
+        if (tc_ed_ai_init(&ed, &model, &player, "sud0") != TC_OK) return 0;
+        for (i = 0; i < 30 * 8; i++) {
+            float t = (float)i * TC_ED_AI_TICK;
+            tc_vec3 eye = tc_v3_add(player.position, tc_v3(sinf(player.heading) * -5, cosf(player.heading) * 5, 2));
+            if (cover_at >= 0 && t >= cover_at + 1.6f) { ed.screen_covered = true; cover_at = -1; covered = 1; }
+            tc_ed_ai_step(&ed, TC_ED_AI_TICK, t < 2 ? 1u << TC_AI_IN_UP : 0, 0, 0, eye);
+            if (ed.events.cover) { ed.events.cover = false; cover_at = t; }
+            if (ed.events.teleported) { ed.events.teleported = false; ed.screen_covered = false; }
+        }
+        /* the far end is HEG_TransMaison02 at (11.6, -28.5); walking out takes him a few units west of it */
+        ok = covered && player.position.x < 12 && player.position.x > 0 && fabsf(player.position.y + 28) < 3;
+        printf("  sud0 passage: Ed ends at (%.1f, %.1f, %.1f)\n", (double)player.position.x, (double)player.position.y,
+               (double)player.position.z);
+        tc_ed_ai_free(&ed);
+    }
+    tc_ai_model_free(&model);
+    tc_collision_free(&world);
+    tc_level_free(&lv);
+    return k < 0 ? -1 : ok;
+}
+
 /* Totalski's holes: for each portal with a zone that sets the skier's fall flag dsg29, the skier at the centre of its
  * first box (taken out of the perso's axes) is captured, 5 above the box he is not (7 of the 11 boxes hold the
  * perso's own origin, so that is no test). Returns holes tested, -1 on
@@ -215,6 +264,11 @@ int main(int argc, char **argv) {
     if (run(dir, "north", TC_AI_POP_TELEPORT, NULL, 2, &r)) {
         check(r.captured && !r.saw_228 && r.covers >= 1 && r.teleport_at >= 0, "north zone portal: cover, no walk-in, teleport");
     } else failures++;
+    {
+        int r = passage(dir);
+        if (r < 0) printf("  (sud0 has no walk-in passages yet: re-export it; passage check skipped)\n");
+        else check(r, "sud0 passage into Doc's house: cover, then out at the far end (HEG_TransMaison02)");
+    }
     {
         int inside, outside, n = holes(dir, &inside, &outside);
         char what[160];
