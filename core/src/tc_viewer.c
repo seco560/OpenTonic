@@ -293,6 +293,136 @@ void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out) {
 
 static bool drawable(const tc_mesh *m) { return m->index_count > 0 && m->vertex_count > 0 && m->vertices && m->indices; }
 
+/* ---- transparent pieces (tc_viewer_draws sorts blended draws back to front) ---- */
+
+/* Piece `group` of static mesh `origin`: its triangles (tri_group[t] == group) with their vertices compacted.
+ * map: one UINT32_MAX per vertex of m on entry, restored on return. */
+static bool add_piece(tc_viewer *v, const tc_mesh *m, uint32_t origin, const uint32_t *tri_group, uint32_t group,
+                      uint32_t *map) {
+    uint32_t t, k, nt = m->index_count / 3, ni = 0, nv = 0;
+    tc_mesh *p;
+    for (t = 0; t < nt; t++)
+        if (tri_group[t] == group) ni += 3;
+    if (v->piece_count == v->piece_cap) {
+        uint32_t cap = v->piece_cap ? v->piece_cap * 2 : 64;
+        tc_mesh *pieces = (tc_mesh *)tc_calloc(cap, sizeof(*pieces));
+        uint32_t *origins = (uint32_t *)tc_calloc(cap, sizeof(*origins));
+        if (!pieces || !origins) {
+            tc_free(pieces);
+            tc_free(origins);
+            return false;
+        }
+        if (v->pieces) memcpy(pieces, v->pieces, v->piece_count * sizeof(*pieces));
+        if (v->piece_origin) memcpy(origins, v->piece_origin, v->piece_count * sizeof(*origins));
+        tc_free(v->pieces);
+        tc_free(v->piece_origin);
+        v->pieces = pieces;
+        v->piece_origin = origins;
+        v->piece_cap = cap;
+    }
+    p = &v->pieces[v->piece_count];
+    memset(p, 0, sizeof(*p));
+    p->surface = m->surface;  /* frames stay the level's */
+    p->indices = (uint32_t *)tc_calloc(ni, sizeof(*p->indices));
+    p->vertices = (tc_vertex *)tc_calloc(ni, sizeof(*p->vertices));  /* at most one new vertex per index */
+    if (!p->indices || !p->vertices) {
+        tc_free(p->indices);
+        tc_free(p->vertices);
+        memset(p, 0, sizeof(*p));
+        return false;
+    }
+    for (t = 0; t < nt; t++) {
+        if (tri_group[t] != group) continue;
+        for (k = 0; k < 3; k++) {
+            uint32_t vi = m->indices[3 * t + k];
+            if (map[vi] == UINT32_MAX) {
+                map[vi] = nv;
+                p->vertices[nv++] = m->vertices[vi];
+            }
+            p->indices[p->index_count++] = map[vi];
+        }
+    }
+    for (t = 0; t < nt; t++)
+        if (tri_group[t] == group)
+            for (k = 0; k < 3; k++) map[m->indices[3 * t + k]] = UINT32_MAX;
+    p->vertex_count = nv;
+    v->piece_origin[v->piece_count++] = origin;
+    return true;
+}
+
+/* The .ttlv holds one mesh per material for the whole level, so a transparent material (water, glass, the OMBRE
+ * shadows) would sort as a single draw. Each transparent static is cut by a grid of TC_VIEW_PIECE_SIZE cells over
+ * its triangles' centroids into pieces with their own vertices; one that fits a single cell stays whole. Triangles
+ * with an index out of range (none in converted levels) go to the first piece. */
+static bool split_transparent(tc_viewer *v) {
+    const tc_level *l = v->level;
+    uint32_t i, t, g;
+    bool ok = true;
+    if (!l->mesh_count) return true;
+    v->split = (uint8_t *)tc_calloc(l->mesh_count, 1);
+    if (!v->split) return false;
+    for (i = 0; ok && i < l->mesh_count; i++) {
+        const tc_mesh *m = &l->meshes[i];
+        uint32_t nt = m->index_count / 3, groups = 0, *tri_group, *map;
+        int32_t *cells;
+        if (!(m->surface.flags & TC_FLAG_TRANSPARENT) || !drawable(m) || nt < 2) continue;
+        tri_group = (uint32_t *)tc_calloc(nt, sizeof(*tri_group));
+        cells = (int32_t *)tc_calloc((size_t)nt * 3, sizeof(*cells));
+        map = (uint32_t *)tc_calloc(m->vertex_count, sizeof(*map));
+        if (!tri_group || !cells || !map) {
+            ok = false;
+        } else {
+            for (t = 0; t < nt; t++) {
+                const uint32_t *ix = &m->indices[3 * t];
+                int32_t c[3];
+                int a;
+                if (ix[0] >= m->vertex_count || ix[1] >= m->vertex_count || ix[2] >= m->vertex_count) {
+                    tri_group[t] = 0;
+                    if (!groups) groups = 1;
+                    continue;
+                }
+                for (a = 0; a < 3; a++)
+                    c[a] = (int32_t)floorf((m->vertices[ix[0]].position[a] + m->vertices[ix[1]].position[a] +
+                                            m->vertices[ix[2]].position[a]) / (3 * TC_VIEW_PIECE_SIZE));
+                for (g = 0; g < groups; g++)
+                    if (cells[3 * g] == c[0] && cells[3 * g + 1] == c[1] && cells[3 * g + 2] == c[2]) break;
+                if (g == groups) memcpy(&cells[3 * groups++], c, sizeof(c));
+                tri_group[t] = g;
+            }
+            if (groups > 1) {
+                for (t = 0; t < m->vertex_count; t++) map[t] = UINT32_MAX;
+                for (g = 0; ok && g < groups; g++) ok = add_piece(v, m, i, tri_group, g, map);
+                v->split[i] = 1;
+            }
+        }
+        tc_free(tri_group);
+        tc_free(cells);
+        tc_free(map);
+    }
+    return ok;
+}
+
+/* The centre of each transparent mesh's vertex bounds (mesh space): what blended draws sort by. */
+static bool mesh_centres(tc_viewer *v) {
+    uint32_t i, k;
+    if (!v->mesh_count) return true;
+    v->mesh_centre = (tc_vec3 *)tc_calloc(v->mesh_count, sizeof(*v->mesh_centre));
+    if (!v->mesh_centre) return false;
+    for (i = 0; i < v->mesh_count; i++) {
+        const tc_mesh *m = v->meshes[i];
+        tc_vec3 lo, hi;
+        if (!(m->surface.flags & TC_FLAG_TRANSPARENT) || !drawable(m)) continue;
+        lo = hi = tc_v3(m->vertices[0].position[0], m->vertices[0].position[1], m->vertices[0].position[2]);
+        for (k = 1; k < m->vertex_count; k++) {
+            tc_vec3 p = tc_v3(m->vertices[k].position[0], m->vertices[k].position[1], m->vertices[k].position[2]);
+            lo = tc_v3_min(lo, p);
+            hi = tc_v3_max(hi, p);
+        }
+        v->mesh_centre[i] = tc_v3_scale(tc_v3_add(lo, hi), 0.5f);
+    }
+    return true;
+}
+
 tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     const tc_level *l = desc->level;
     uint32_t i, k, n = 0;
@@ -319,9 +449,14 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     v->light_set_count = l->light_set_count > 1 ? l->light_set_count : 1;
 
+    if (!split_transparent(v)) {
+        tc_viewer_free(v);
+        return TC_ERR_OUT_OF_MEMORY;
+    }
     v->mesh_count = l->mesh_count;
     for (i = 0; i < l->perso_count; i++) v->mesh_count += l->persos[i].part_count;
     if (l->has_ed) v->mesh_count += l->ed.part_count;
+    v->mesh_count += v->piece_count;
     if (v->mesh_count) {
         v->meshes = (const tc_mesh **)tc_calloc(v->mesh_count, sizeof(*v->meshes));
         if (!v->meshes) {
@@ -352,6 +487,12 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->ed_first = n;
     if (l->has_ed)
         for (i = 0; i < l->ed.part_count; i++) v->meshes[n++] = &l->ed.parts[i].mesh;
+    v->piece_first = n;
+    for (i = 0; i < v->piece_count; i++) v->meshes[n++] = &v->pieces[i];
+    if (!mesh_centres(v)) {
+        tc_viewer_free(v);
+        return TC_ERR_OUT_OF_MEMORY;
+    }
 
     v->play = play_create(v, desc);
     if (ai_model(v) && ai_model(v)->water_count && l->mesh_count) {
@@ -402,6 +543,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
 }
 
 void tc_viewer_free(tc_viewer *v) {
+    uint32_t i;
     play_destroy(v->play);
     tc_free((void *)v->effects);
     tc_free(v->carry);
@@ -409,6 +551,15 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->mesh_water);
     tc_free(v->draws);
     tc_free(v->blended);
+    for (i = 0; i < v->piece_count; i++) {
+        tc_free(v->pieces[i].vertices);
+        tc_free(v->pieces[i].indices);
+    }
+    tc_free(v->pieces);
+    tc_free(v->piece_origin);
+    tc_free(v->split);
+    tc_free(v->mesh_centre);
+    tc_free(v->blended_depth);
     memset(v, 0, sizeof(*v));
 }
 
@@ -839,6 +990,46 @@ static bool reserve(tc_view_draw **p, uint32_t *cap, uint32_t need) {
 
 typedef struct draw_list { uint32_t count, blended_count; } draw_list;
 
+/* A water static, or a piece of one. */
+static bool is_water(const tc_viewer *v, uint32_t mesh) {
+    if (!v->mesh_water) return false;
+    if (v->piece_count && mesh >= v->piece_first && mesh < v->piece_first + v->piece_count)
+        mesh = v->piece_origin[mesh - v->piece_first];
+    return mesh < v->level->mesh_count && v->mesh_water[mesh];
+}
+
+/* The blended draws back to front: farthest centre from the eye first, ties in list order (a stable insertion
+ * sort: a few dozen to a few hundred draws). Left unsorted if the depth buffer can't grow. */
+static void sort_blended(tc_viewer *v, uint32_t n) {
+    uint32_t i, j;
+    tc_vec3 eye = v->camera.position;
+    if (n > v->blended_depth_cap) {
+        float *d = (float *)tc_calloc(n, sizeof(*d));
+        if (!d) return;
+        tc_free(v->blended_depth);
+        v->blended_depth = d;
+        v->blended_depth_cap = n;
+    }
+    for (i = 0; i < n; i++) {
+        const tc_view_draw *d = &v->blended[i];
+        tc_vec3 c = v->mesh_centre ? v->mesh_centre[d->mesh] : tc_v3(0, 0, 0);
+        const float *m = d->model.m;  /* column-major */
+        tc_vec3 w = tc_v3(m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13],
+                          m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14]);
+        v->blended_depth[i] = tc_v3_length_sq(tc_v3_sub(w, eye));
+    }
+    for (i = 1; i < n; i++) {
+        tc_view_draw d = v->blended[i];
+        float key = v->blended_depth[i];
+        for (j = i; j > 0 && v->blended_depth[j - 1] < key; j--) {
+            v->blended[j] = v->blended[j - 1];
+            v->blended_depth[j] = v->blended_depth[j - 1];
+        }
+        v->blended[j] = d;
+        v->blended_depth[j] = key;
+    }
+}
+
 static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model) {
     const tc_mesh *m = v->meshes[mesh];
     tc_view_draw *d;
@@ -852,7 +1043,7 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     }
     d->mesh = mesh;
     d->texture = texture_at(v, &m->surface, v->animation_time);
-    d->flags = m->surface.flags | (v->mesh_water && mesh < v->level->mesh_count && v->mesh_water[mesh] ? TC_FLAG_WATER : 0);
+    d->flags = m->surface.flags | (is_water(v, mesh) ? TC_FLAG_WATER : 0);
     d->model = *model;
 }
 
@@ -864,7 +1055,9 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
     float t = v->animation_time;
     v->ed_draw_count = 0;
 
-    for (i = 0; i < l->mesh_count; i++) add_draw(v, &dl, i, &identity);
+    for (i = 0; i < l->mesh_count; i++)
+        if (!v->split || !v->split[i]) add_draw(v, &dl, i, &identity);  /* split ones: as their pieces */
+    for (i = 0; i < v->piece_count; i++) add_draw(v, &dl, v->piece_first + i, &identity);
 
     for (i = 0; i < l->perso_count; first += l->persos[i].part_count, i++) {
         const tc_perso *p = &l->persos[i];
@@ -910,6 +1103,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
     }
 
     *opaque_count = dl.count;
+    sort_blended(v, dl.blended_count);
     if (dl.blended_count && reserve(&v->draws, &v->draw_cap, dl.count + dl.blended_count)) {
         memcpy(v->draws + dl.count, v->blended, dl.blended_count * sizeof(*v->draws));
         dl.count += dl.blended_count;

@@ -93,7 +93,9 @@ import TonicCore
     private let memoryless: Bool
     private let overlayDepthState: MTLDepthStencilState
     private let depthState: MTLDepthStencilState
-    private let sampler: MTLSamplerState
+    /// Level textures: trilinear, 16x anisotropy; repeating or clamped per axis as the surface's TC_FLAG_WRAP_U / _V
+    /// say (the original's driver addressing, from the texture's name). Index: wrap u | wrap v << 1.
+    private let samplers: [MTLSamplerState]
     /// Per-triangle lightmap atlas (.ttlv LMAP), or a 1x1 white texture for levels without lightmaps.
     private var lightmap: MTLTexture?
     private var textures: [MTLTexture?] = []  // level.textures order; nil = missing
@@ -164,9 +166,12 @@ import TonicCore
 
         let sd = MTLSamplerDescriptor()
         sd.minFilter = .linear; sd.magFilter = .linear; sd.mipFilter = .linear
-        sd.sAddressMode = .repeat; sd.tAddressMode = .repeat
         sd.maxAnisotropy = 16  // sharp floors and walls at grazing angles
-        sampler = device.makeSamplerState(descriptor: sd)!
+        samplers = (0..<4).map { i in
+            sd.sAddressMode = i & 1 != 0 ? .repeat : .clampToEdge
+            sd.tAddressMode = i & 2 != 0 ? .repeat : .clampToEdge
+            return device.makeSamplerState(descriptor: sd)!
+        }
         super.init()
         try setMSAA(Renderer.preferredMSAA)
         setScale(Renderer.preferredScale)
@@ -430,7 +435,6 @@ import TonicCore
         enc.setCullMode(.none)  // winding of OpenSpace elements not yet confirmed
         enc.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
         enc.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-        enc.setFragmentSamplerState(sampler, index: 0)
 
         var count: UInt32 = 0, opaque: UInt32 = 0
         let draws = tc_viewer_draws(v, &count, &opaque)!
@@ -440,6 +444,8 @@ import TonicCore
             var flags = SIMD2<UInt32>(d.flags, !transparent && msaa > 1 ? 1 : 0)  // coverage: as the textured pipeline
             if d.texture >= 0, let tex = textures[Int(d.texture)] {
                 enc.setRenderPipelineState(transparent ? blendedPipeline : texturedPipeline)
+                let wrap = (d.flags & TC_FLAG_WRAP_U != 0 ? 1 : 0) | (d.flags & TC_FLAG_WRAP_V != 0 ? 2 : 0)
+                enc.setFragmentSamplerState(samplers[wrap], index: 0)
                 enc.setFragmentTexture(tex, index: 0)
                 enc.setFragmentTexture(lightmap, index: 1)
                 enc.setFragmentBytes(&flags, length: MemoryLayout<SIMD2<UInt32>>.stride, index: 2)

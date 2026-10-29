@@ -25,7 +25,10 @@ typedef struct gpu {
     SDL_GPUGraphicsPipeline *ui;      /* 2D quads, alpha-blended, no depth */
     SDL_GPUGraphicsPipeline *overlay; /* screen transitions (docs/PORTALS.md): free-cornered quads, as ui */
     SDL_GPUGraphicsPipeline *bar;     /* the loading screen's rainbow bar (shaders/bar.frag), as ui */
-    SDL_GPUSampler *repeat_sampler;   /* level textures: trilinear, repeat, 16x anisotropy */
+    SDL_GPUSampler *repeat_sampler;   /* trilinear, repeat, 16x anisotropy (the loading bar's pool) */
+    /* Level textures: as repeat_sampler, but repeating or clamped per axis as the surface's TC_FLAG_WRAP_U / _V say
+     * (the original's driver addressing, from the texture's name). Index: wrap u | wrap v << 1. */
+    SDL_GPUSampler *level_samplers[4];
     SDL_GPUSampler *clamp_sampler;    /* lightmap atlas: linear, clamp to edge */
     SDL_GPUSampler *ui_sampler;       /* thumbnails and text: trilinear, clamp */
     SDL_GPUSampler *nearest_sampler;  /* text drawn at an integer multiple of its size */

@@ -11,6 +11,7 @@ with REA (Ghidra 12.1.4, dump sha256 `fea1140e…`): forward graph of GAM_0042b5
 | scope | code | documented | dumped | unseen |
 |---|---|---|---|---|
 | Whole exe (3,652 functions) | 700 KB | 151 KB (22 %) | 116 KB (17 %) | 433 KB (62 %) |
+| Whole exe after the full dump (2026-10-29, docs/EXE.md "Full dump") | 700 KB | 160 KB (23 %) | 540 KB (77 %) | 0 |
 | Mechanics closure (726 functions) | 226 KB | 115 KB (51 %) | 66 KB | 45 KB |
 | - DNM integrators + request handlers (4a7-4b9) | 57 KB | 51 KB (89 %) | 2 | 4 |
 | - MEC collide-and-move, responses, step-up, re-snap (4b9-4c1) | 20 KB | 15 KB (72 %) | 6 | 0 |
@@ -219,8 +220,144 @@ GLI (29 KB) is 0 % read. Everything lighting does now is inferred from the data,
 - persos lit by a placeholder key light (sector lights and ambient are not looked up)
 - the material ambient / diffuse coefficients unused
 - additive *_ANU textures drawn as alpha-tested
-- no back-to-front sort for blended geometry
+- no back-to-front sort for blended geometry (done 2026-10-29: tc_viewer_draws sorts them by mesh centre, the
+  transparent statics cut into TC_VIEW_PIECE_SIZE pieces at init)
 
 The GLI front end (Light.c, Material.c, Camera.c) is in the exe and readable. The final rasterising is in
 GliDX6vr.dll; its `GLI_DRV_*` exports are the contract. Suggested order after the mechanics: sector lights and
 ambient for persos (the most visible gap), the radiosity combine scale, blend modes and sorting, then fog.
+
+### Read from GliDX6vr.dll and the exe's GLI (2026-10-29; cut-outs and addressing ported the same day)
+GliDX6vr.dll (sha256 `116f3b45…`, same on disc and installed, not packed; REA/Ghidra 12.1.4, evidence
+`ev_ee8aa4ff…`, `ev_4e919145…`, `ev_924311d9…`, `ev_fe816fba…`, `ev_dd4e95a7…`) does no lighting: vertices arrive
+lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, names from its own strings):
+| preset | when (texture flags at TextureInfo +8, material alpha at +0x335c8) | colour | alpha | blend |
+|---|---|---|---|---|
+| OMD (DAT_1003c978) | opaque | texture x diffuse (MODULATE) | - | off |
+| ATe (DAT_1003c97c) | texture flags & 0x12 | texture x diffuse | texture | off; alpha test GREATEREQUAL **225** |
+| TMT (DAT_1003c960) | flags & 0x8, material alpha 1 | texture x diffuse | texture | SRCALPHA, INVSRCALPHA |
+| AT (DAT_1003c970) | flags & 0x20 (not 0x8), material alpha 1 | texture x diffuse | texture | SRCALPHA, **ONE** (additive) |
+| TMD / TMA | material alpha < 1 (TMA when flags & 0x1a) | texture x diffuse | diffuse / texture x diffuse | SRCALPHA, INVSRCALPHA |
+| AT (DAT_1003c988) | lightmap, single pass | stage 1: **MODULATE2X** (lightmap x stage 0) | - | off |
+- So static geometry is never overbright: MODULATE clamps the vertex colour at 1. Only lightmaps get x 2 (our
+  255/128 = 1.992 is right for them). Our radiosity x 255/128 is a guess that probably stands in for the missing
+  dynamic light (below); where the i16 radiosity becomes the vertex colour is not traced yet.
+- Texture address modes per axis from the driver texture's byte +0x155 (1: wrap V, 2: wrap U, 3: both; else clamp).
+  The exe sets it from the file name (GLIGLOU_Tex_00440c20 -> GLIGLOU_Tex_0043f220): the stem (an "NZ" suffix
+  skipped) ending in TXY / TX / TY gives 3 / 1 / 2, else "_TXY" / "_TX" / "_TY" anywhere, else 0. The same loader
+  sets flag 0x12 (cut-out) for an "NZ" stem or "_NZ...", and 0x20 (additive) for "_AD" anywhere, which no level
+  material has (strings at 0x4ddfec..0x4de064, read with REA, evidence `ev_e214e63a…`). Checked against the data:
+  TY-named textures leave 0..1 along engine u (569 elements, 9 along v), TX along v, so the axes are right in
+  engine UVs.
+- **Ported:** the exporter sets TC_FLAG_ALPHA_TEST from texture flags 0x12, TC_FLAG_TRANSPARENT from 0x8 (in that
+  order; same output as before in all 21 levels: every texture with alpha has one of the two), and
+  TC_FLAG_WRAP_U / _V from the name rule (ttlv.py `tiling`); both renderers pick one of four samplers per draw and
+  alpha-test at 225/255 (TC_ALPHA_REF; the alpha-to-coverage edge is centred there too). **Open:** ~130 elements
+  in the 21 levels have UVs beyond 0..1 on an axis the rule clamps (73 are the LAVAGAIN lava flipbook; MORT, PORTE,
+  NG_04, OMBRE ...), which the original does not show smeared, so something about them is unread; the exporter
+  repeats such an axis (`fitted_surface`) instead. Find what the exe does with them before clamping those.
+- Fog (GLI_DRV_vComputeFogEffect, FUN_1000d8b0): per vertex on the projected vertex's z (view depth, not eye
+  distance), parameters {near, far, ?, density at near (/255), density at far (/255), r, g, b}: linear between the two
+  densities, constant before near and past far; D3D vertex fog (specular alpha) with FOGCOLOR.
+- Dynamic light, exe GLI: the light record is 0x100 bytes (Light.c, GLIGLOU_Light_00443460): +0 on, +8 type
+  (Parallel, Spherical, HotSpot, Ambient: console strings), +0xc far, +0x10 near, +0x14 / +0x18 big / little alpha,
+  +0x24 matrix (0x58), +0x94 colour rgba (default 0.8), +0xa6 / +0xa7 mode bytes (+0xa7 picks one of three
+  accumulators: LAB_00444530 / 004444e0 / 00444470). GLIGLOU_004442c0 applies one light to an element (light
+  position into object space); GLIGLOU_00443a10 is the spherical term: full N.L inside near, falling off linearly in
+  squared distance to far. Callers: GLIGLOU_004451b0 <- FUN_00446050 <- many GAM draw paths. Persos also carry their
+  own light at perso +0x20 ("MS Light", GAM_Commands: "This character has no MS Light"; accessors GAM_004304a0..).
+- **Fog, read (2026-10-29):** FUN_004cee60(near, far, third, rgba) -> FUN_004ceec0 builds the driver block {near,
+  far, third, density 0 at near, 255 at far, rgba} (0x24 bytes, at the shared state +0x335ac; FUN_004cf030 turns it
+  on, per sector from FUN_00451e80). So the fog is linear from none at near to full at far, as ours; the third
+  distance is stored but unused by the driver's formula. The difference was the depth: ported (both shaders fog by
+  view depth, forward = cam_up x cam_right). The level's visual environment record is {u32, ptr, near, far, third,
+  rgb} (Totalski 200 / 400 / 600, light blue; north 80 / 120 / 128, black).
+- **Vertex colour, read (2026-10-29, not ported):** per object, FUN_00446050: a float rgba accumulator per vertex
+  (shared state +0x1fbf0) is zeroed, or seeded from the baked radiosity when draw flag 0x1000 is set
+  (GLIGLOU_00445270 -> FUN_0044d690: i16 x 1/256, constant 0x4d2710); GLIGLOU_004451b0 adds the lights of the list
+  at 0x90baa0 (count 0x90bc30): type 1 Parallel GLIGLOU_00444fc0, 2 Spherical 004442c0, 3 HotSpot 00444630 (range
+  test 00444550), 4 Ambient 00444f60 (into the global ambient G, shared state +0x33470); then the element's material
+  (FUN_00445b50, visual material +4 ambient, +0x14 diffuse: add = ambient + G x diffuse, mul = diffuse) and the
+  conversion (FUN_00448e60 / 00448cf0 / 00448fb0, same formula): byte = clamp(512 x (acc x diffuse + add), 0, 255)
+  (the float-bits trick with 1.5 x 2^14, constant 0x4d26b0). For a baked vertex with no lights:
+  **light = min(1, (R / 256 x diffuse + ambient) x 512 / 255)** per channel, then MODULATE with the texture.
+  Materials: diffuse 0.7 nearly everywhere; ambient 0.1 (sud0, Totalski, LeCanyon) or 0 (north, pyramide, Land).
+  Mean baked light, ours (clamp(R) / 128) vs this: sud0 0.27 / 0.39, Totalski 0.48 / 0.45, LeCanyon 0.51 / 0.47,
+  Land 0.60 / 0.46, north 0.62 / 0.41, pyramide 0.93 / 0.63; ours goes to 2x, the exe clamps at 1.
+- **Lights per draw:** drawing a sector (FUN_00451d80) clears the list, pushes the sector's lights (FUN_00452410:
+  sector data +0x34 always; +0x28 when the draw flags and the sector's flags have 0x8000), draws the sector
+  (FUN_00451e80), then the sectors of one of its lists +0x4c / +0x58 / +0x64 (mode DAT_004fe730) with the same
+  lights: the visibility lists (BUGS.md "Level Sectors"). So the lights depend on the sector being viewed from.
+  Census: +0x34 is nearly empty (Totalski 1 hotspot, north 2 spherical, none in sud0 / LeCanyon / bar / pyramide);
+  +0x28 holds the many (Totalski 360 spherical + 5 hotspot + 7 ambient 0.8 grey, north 140, pyramide 382; sud0 and
+  LeCanyon none): probably the lights for persos (flag 0x8000). Static geometry then gets ~no lights: the formula
+  above holds for it without sectors. **Open:** lightmapped levels (bar, death): every material has ambient 0, so
+  the formula would give their vertex colour 0 (then x lightmap x 2: black), which the game doesn't show: their
+  accumulator is seeded some other way (lights? ISI +0, "not a radiosity" there), unread.
+- **The frame, read (2026-10-29; investigation only, nothing ported).** The draw routine is unanalysed code ending
+  at 0x428e9a (no Ghidra function; REA xref 0x428e45, disassembled with llvm-objdump -D): picks the sector to draw
+  from (mode byte 0x8c1764: 0 = GAM_00424940(1), entry 1 of the table at 0x8c1704, presumably the main character's
+  sector), sets the visibility-list mode (FUN_00451d70, byte 0x8c1765), then FUN_00452c70(camera, viewport,
+  context 0x8bd0e8, sector, mask = *0x8bd080) -> FUN_00451d80 (lights pushed, sector drawn, its listed sectors
+  drawn, lights cleared), then GAM_004149f0 / 00414910 / 00414330 / 00414170 / 00413fc0 / 00415020 and
+  FUN_004568e0 (other passes, mask 0xf7fbfff7 / 0xffffffff). The mask 0x8bd080 is the console's display flags
+  (GAM_Basic_0040f850: case 0 sets all bits or none, case 3 toggles 0x8000, inverted): all bits in normal play, so
+  the sector's +0x28 list does light static geometry too. Its value isn't in the dump (zero there, as 0x8c1764).
+- **Per object:** the scene walk (FUN_00483510, recursive) pushes an object's attached light (SuperObject +0x30,
+  GAM_00437810; null on every static object in sud0 / Totalski / north / bar / pyramide) for it and its children;
+  FUN_00483820 masks with the object's draw flags (SO +0x2c, GAM_004307d0; bits 0x1000 and 0x8000 are set on every
+  IPO and sector in 9 levels, so they don't separate anything). IPOs (type 0xd / 0x15) draw through
+  GLIGLOU_00442840: LOD by distance, then the radiosity of the IPO's runtime buffer (IPO +4), which FUN_00449860
+  fills from the ISI set DAT_004fe5f0, blending towards DAT_004fe5f8 over time (the day / night change).
+  Characters are drawn inside the sector pass, under the same lights.
+- **Lights:** ambient (GLIGLOU_00444f60) adds its colour to G with no range test; light byte +0xa6 = a spherical
+  light without N.L (GLIGLOU_00444100); +0xa7: 0 colour and alpha, 1 alpha only, 2 colour only. Per-character MS
+  lights (perso +0x20 -> +0x2c) are lights characters carry (north: two orange spherical, near 1, far 30: torches);
+  elsewhere one black zero-range hotspot per level.
+- **Materials decide most of the look:** character parts are mostly ambient 0.87 (some 0.36, 0.1), so under the
+  formula most characters are flat at full texture brightness (2 x 0.87 caps at 1; lights only add), the 0.36 ones
+  start at 0.72 and get shaded. Statics are ambient 0.1 (sud0, Totalski) or 0 (north, death, bar).
+- **Still unexplained:** skies (ambient 0.1 / 0, radiosity ~0: the formula makes them dark, the game shows them lit;
+  sud0 has no lights at all), and the lightmapped levels (bar: ambient 0, no readable radiosity, its only light a
+  darkening spherical light, colour -0.3, near 0.5, far 64: the formula gives black). Both point at an input not
+  read yet: what the IPO's runtime radiosity buffer holds for them (bar's ISI +0 is "not a radiosity" to our
+  exporter), or a draw path for them that skips the lighting.
+- **Lightmapped triangles, solved (2026-10-29):** GliDX6vr.dll's vertex setup for a triangle with a lightmap
+  (LAB_100037a0, chosen in xSendElementTIToClip when the element has per-triangle lightmaps and the texture has no
+  0x1a flags) stores 0xFFFFFFFF as the D3D diffuse colour of all three vertices (`orl $-1, %ecx`; the plain one,
+  LAB_10003640, copies the computed colour). So a lightmapped triangle is texture x lightmap x 2 whatever the lights
+  and materials say (bar's darkening light and ambient-0 materials don't matter): what the port does already.
+- **Which baked set, read:** GAM_Initeng_0040de70 reads, as the last values of the level's .gpt stream
+  (SNA_0045ac50: sequential reads, pointers relocated), the current / next / target set (0x4fe5f0 / 5f4 / 5f8, a
+  byte each), a flag (5fc), the set count (600), two u32 and the blend progress and rate (60c, 610). They are the
+  last 21 bytes of the decrypted .gpt: the count is 3 for sud0 and Land and 1 elsewhere (so the reading is right),
+  and **every level starts at set 0**. Nothing else in the exe writes them (only FUN_00449860's own blend), so as far
+  as read the game never leaves set 0.
+- **Skies, narrowed:** raw sky radiosity per set (mean, max): sud0 -13 / 25, 178 / 393, 32 / 51; Land 135, (biased),
+  59; skymap 204; north 32 / 259; Totalski 0; death 2. Under the formula with the sky materials' ambient (0.1 or 0):
+  sud0 set 0 and Totalski, north, death come out dark, Land and skymap lit. Lights only from the sector the frame is
+  drawn from (the neighbour draw FUN_004521b0 pushes only lights attached to objects, null on statics): Totalski's 7
+  ambient lights (0.8) sit in sct12v..15v, sct27v, sctfinish, sctfleche03 (everything full bright while the frame is
+  drawn from those), north's one in sctciel. Open: how the original looks there (the user can check in Wine).
+- **sud0's day / night cycle, found (2026-10-29).** User: only sud0 passes time (starts on set 1, then 2, 0, ...);
+  Land's other sets are leftovers (it uses set 0). The set-change function is unanalysed code at 0x449ad0
+  (`SetLightSet(n, duration, absolute)`; found by searching the raw exe for 0x4fe5f8 / 0x4fe610, disassembled with
+  llvm-objdump -D): refused while a change runs (0x4fe5fc); duration 0 switches at once (to n if absolute, else n
+  sets on); otherwise target = n or current + n, next = current + 1, rate = sets to go / duration per tick of the
+  game clock 0x8bd090 (ms), flag 0x4fe5fc set; FUN_00449860 then blends IPO radiosity current -> next (lerp of the
+  i16 values) and steps on at progress 1 (next = (next + 1) % count) until it reaches the target. Its only caller is
+  AI procedure 283 (PROC_283_0048ca60, g_ai_procedures +0x8d8: args set, duration, absolute). In sud0 one perso
+  calls it: d.persos()[325] (family 18, no geometry, an invisible manager), dsg3 = 90000, dsg4 = 180000, dsg5 = 1:
+  B1 (once): PROC_283(RandomInt(0, 3), 0, 1), start the hold timer, -> B0; B0: when TimeElapsed(dsg0, dsg1):
+  dsg2 = RandomInt(10000, 60000), PROC_283(1, dsg2, 0) (one set on over 10-60 s), wait dsg2 + 500, dsg1 =
+  RandomInt(dsg3, dsg4) (hold 90-180 s), dsg0 = GetTime. So: a random start set, then forever one set on every
+  hold + transition. No other level calls PROC_283 (Land stays on set 0). Not ported: the viewer shows one set
+  (number keys); the vertices already carry all three sets, so the shaders can blend two.
+- **User observations (2026-10-29, the original in Wine):** Totalski's sky is bright ("inundated with fog": its fog
+  is light blue, near 200 / far 400, so the sky dome is fully fogged whatever its light); some spots on the slope
+  are very dark in the port and lit in the original (matches the ambient-light sectors sct12v..15v, sct27v,
+  sctfinish, sctfleche03: sector lights, not ported); north's sky is dark with the stars shining through (matches
+  the formula: ambient 0, radiosity ~32); characters look a little dull in the port, the portals most of all
+  (matches: their materials, ambient mostly 0.87, make them flat at full brightness in the original). The original
+  hides imperfections with a fixed camera; the user keeps the free camera and wants it improved (the camera was one
+  of the game's weaknesses).

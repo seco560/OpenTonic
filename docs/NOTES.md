@@ -443,7 +443,8 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   unused in the levels checked). In TT, texture flag 0x8 alone = blended (effects, *_ANU/*AUN, OMBRE shadows, the sud0
   rainbow water, glass/vitrine, water, LAND_MORT liquid); 0x8|0x2 = hard cut-outs (*_nz teeth, cloth). Exporter sets
   TC_FLAG_TRANSPARENT (and drops ALPHA_TEST) for the former when the PNG has alpha; the viewer draws those after all
-  opaque geometry with source-alpha blending and no depth writes (no back-to-front sorting yet).
+  opaque geometry with source-alpha blending and no depth writes. Sorted back to front since 2026-10-29 (core only:
+  tc_viewer_draws, by each mesh's centre; the per-material transparent statics are cut into 16-unit pieces at init).
 
 ## AI scripts: structure and plan (2026-10-22, session 4)
 - **Path:** perso +0xC brain -> +0 mind -> +0 AI model = {ptr normal behaviours list, ptr reflex list, ptr dsgVar

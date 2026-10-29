@@ -5,7 +5,8 @@
 
 Three tiers per function:
   documented  its address appears in docs/*.md, core/, signatures.tsv, names.tsv or ai_names.tsv (read and used)
-  dumped      only a raw/typed decompile exists (files/out/_decomp_artifacts/decomp, typed/, col/): not yet read
+  dumped      only a raw/typed decompile exists (files/out/_decomp_artifacts/decomp, typed/, col/, and all/ once the
+              full dump is made: tools/ghidra/DumpAll.java, then every function is at least dumped): not yet read
   unseen      neither
 The mechanics closure = everything statically reachable from the per-frame driver GAM_0042b520 plus the 13 handler
 pairs of the 0x8C2240 table (indirect calls, so added by hand). Static closure over-approximates (allocator, sound
@@ -48,7 +49,7 @@ def main(argv):
                             + [os.path.join(ROOT, 'tools/exe', n) for n in
                                ('signatures.tsv', 'names.tsv', 'ai_names.tsv')]))
     dumped = {os.path.basename(p)[:8] for p in glob.glob(os.path.join(ART, 'typed/**/*.c'), recursive=True)
-              + glob.glob(os.path.join(ART, 'col/*.c'))}
+              + glob.glob(os.path.join(ART, 'col/*.c')) + glob.glob(os.path.join(ART, 'all/c/*.c'))}
     for p in glob.glob(os.path.join(ART, 'decomp/*.txt')):
         dumped |= {m.group(1) for m in re.finditer(r'\w*?([0-9a-f]{8})\s*\(', open(p, errors='ignore').read())
                    if m.group(1) in funcs}

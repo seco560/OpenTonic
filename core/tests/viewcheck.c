@@ -29,7 +29,8 @@ static void check(int ok, const char *what) {
     if (!ok) failures++;
 }
 
-/* Every draw names a drawable mesh and an existing texture; [opaque, count) are exactly the transparent ones. */
+/* Every draw names a drawable mesh and an existing texture; [opaque, count) are exactly the transparent ones, back
+ * to front (each mesh centre's distance from the eye never grows); a split static is never drawn itself. */
 static int bad_frames;
 static uint32_t last_count, last_opaque, last_ed_draws;
 
@@ -37,6 +38,7 @@ static void frame(tc_viewer *v, float dt) {
     uint32_t count, opaque, i;
     const tc_view_draw *d;
     tc_view_frame f;
+    float prev;
     int bad = 0;
     tc_viewer_update(v, dt);
     d = tc_viewer_draws(v, &count, &opaque);
@@ -50,6 +52,16 @@ static void frame(tc_viewer *v, float dt) {
         int transparent = (d[i].flags & TC_FLAG_TRANSPARENT) != 0;
         if (!m || m->index_count == 0 || (d[i].flags & ~TC_FLAG_WATER) != m->surface.flags || transparent != (i >= opaque)) bad = 1;
         if (d[i].texture < -1 || d[i].texture >= (int32_t)v->level->texture_count) bad = 1;
+        if (d[i].mesh < v->level->mesh_count && v->split && v->split[d[i].mesh]) bad = 1;
+    }
+    for (i = opaque, prev = INFINITY; i < count && !bad; i++) {
+        tc_vec3 c = v->mesh_centre[d[i].mesh];
+        const float *m = d[i].model.m;
+        tc_vec3 w = tc_v3(m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13],
+                          m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14]);
+        float dist = tc_v3_length_sq(tc_v3_sub(w, v->camera.position));
+        if (dist > prev) bad = 1;
+        prev = dist;
     }
     if (!(f.view_projection.m[0] == f.view_projection.m[0])) bad = 1; /* NaN */
     bad_frames += bad;
@@ -224,6 +236,19 @@ int main(int argc, char **argv) {
     printf("viewcheck: %s: %u meshes in the table; %u statics, %u persos (%u parts), %u tris; ai %s\n", name,
            tc_viewer_mesh_count(&v), v.stats.meshes, v.stats.persos, v.stats.parts, v.stats.triangles,
            tc_result_string(v.ai_result));
+    {   /* every triangle of a split transparent static is in exactly one of its pieces */
+        uint32_t i, k, split = 0, ok = 1;
+        for (i = 0; i < level.mesh_count; i++) {
+            uint32_t tris = 0;
+            if (!v.split || !v.split[i]) continue;
+            split++;
+            for (k = 0; k < v.piece_count; k++)
+                if (v.piece_origin[k] == i) tris += v.pieces[k].index_count / 3;
+            if (tris != level.meshes[i].index_count / 3) ok = 0;
+        }
+        printf("  %u transparent statics split into %u pieces\n", split, v.piece_count);
+        check(ok, "transparent pieces cover their statics' triangles exactly");
+    }
     check(tc_viewer_can_play(&v) && v.playing, "starts in play mode");
     if (!tc_viewer_can_play(&v)) goto done;
     check(!ai || tc_viewer_ai_active(&v), "with Ed's AI when the .ttai loads");

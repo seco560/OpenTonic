@@ -65,6 +65,29 @@ $GHIDRA_INSTALL_DIR/support/analyzeHeadless out/ghidra TonicTrouble -import "Sou
 python3 -m tools.exe.modmap out/exe/index.json out/exe/exports.txt out/exe/modmap.json
 ```
 
+## Full dump (2026-10-29)
+Every function decompiled, with the project's types, and indexed. Made read-only from the typed project (nothing in
+it changes; ~2 minutes on the M1 Pro, all cores):
+```
+export GHIDRA_INSTALL_DIR=/opt/homebrew/opt/ghidra/libexec
+$GHIDRA_INSTALL_DIR/support/analyzeHeadless files/out/_decomp_artifacts/ghidra TonicTrouble -process -noanalysis -readOnly \
+  -scriptPath tools/ghidra -postScript DumpAll.java files/out/_decomp_artifacts/all
+```
+Re-run it after ApplyTypes (docs/TYPES.md) so the dump shows the new types and names.
+- `files/out/_decomp_artifacts/all/c/<addr>_<name>.c`: 3,971 functions, none failed (3,718 from Ghidra's own
+  analysis plus 253 the typing passes created at dispatch-table targets, the AI primitives among them).
+- `all/index.json`, per function: signature, callees, globals read / written / address used, struct fields read /
+  written (typed accesses only: the field written is the last one before an assignment's `=`; conditions count as
+  reads), functions whose address it takes, the data that holds its own address (873 aligned pointers to 387
+  functions: dispatch tables, callbacks), strings; plus the 212 imports by name.
+- Query it with `python3 -m tools.exe.xref` (fn, show, callers, callees, path, taken, field, global, string, grep;
+  `-h` for the list). Untyped accesses (`*(float *)(param_1 + 0xd8)`) are reached with `grep`; indirect calls are
+  not callers (see `taken`).
+- Checked against REA (independent Ghidra 12.1.4 default analysis of the same dump, `fea1140e…`): all 3,718 of its
+  procedures are in the index; callers of GAM_PlayAnim_Update (0x415c00, 6) and MEC_CollideMove (0x4be1bd, 7) and the
+  references to 0x4ec6ac match exactly (evidence `ev_ce5ba4ce…`, `ev_d023d678…`, `ev_9ae218e3…`, `ev_93993f39…`).
+  REA stays the tool for single questions with an evidence trail; the index is for sweeps over the whole exe.
+
 ## Driver DLLs = the platform boundary
 The engine keeps hardware access in swappable DLLs (`DLL/`), selected via Ubi.ini. These are what the port replaces.
 - **Renderer, `GliDX6vr.dll`:** 48 `GLI_DRV_*` exports over DDRAW/D3D6.

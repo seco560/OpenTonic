@@ -11,6 +11,8 @@ layout(set = 2, binding = 0) uniform sampler2D tex;
 layout(set = 2, binding = 1) uniform sampler2D lightmap;
 // flags: TC_FLAG_*. coverage: drawn with alpha to coverage (opaque pipeline, MSAA on; SDL build only).
 layout(std140, set = 3, binding = 1) uniform Flags { uint flags; uint coverage; } f;
+// The original's alpha test for cut-outs: GREATEREQUAL 225 (TC_ALPHA_REF, GliDX6vr.dll; docs/DECOMP.md).
+const float ALPHA_REF = 225.0 / 255.0;
 #endif
 
 layout(location = 0) in vec3 vNormal;
@@ -37,10 +39,13 @@ vec3 light() {
     return shade();
 }
 
-// The level's linear fog (visual environment), applied to the displayed colour.
+// The level's linear fog (visual environment), applied to the displayed colour. By view depth, as the original's
+// driver (GLI_DRV_vComputeFogEffect: the projected vertex's z; docs/DECOMP.md "Read from GliDX6vr.dll"): none at
+// near, full from far. The camera's forward axis is up x right (tc_viewer_frame: up = right x forward).
 vec3 fogged(vec3 rgb) {
     if (u.fog.z < 0.5 || u.fog.y <= u.fog.x) return rgb;
-    float t = clamp((distance(vWorld, u.eye.xyz) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    float depth = dot(vWorld - u.eye.xyz, cross(u.camUp.xyz, u.camRight.xyz));
+    float t = clamp((depth - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
     return mix(rgb, u.fogColor.rgb, t);
 }
 
@@ -74,14 +79,14 @@ void main() {
     float a = c.a;
     if (f.coverage != 0u) {
         // Alpha to coverage: the alpha becomes the share of covered samples, so it must be 1 on opaque
-        // surfaces. Alpha-tested cutouts keep the 0.5 threshold, sharpened to about a pixel wide around it:
-        // a crisp edge as with discard, but antialiased.
+        // surfaces. Alpha-tested cutouts keep the original's threshold, sharpened to about a pixel wide around
+        // it: a crisp edge as with discard, but antialiased.
         a = 1.0;
         if ((f.flags & 1u) != 0u) {
-            a = clamp((c.a - 0.5) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
+            a = clamp((c.a - ALPHA_REF) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
             if (a <= 0.0) discard;
         }
-    } else if ((f.flags & 1u) != 0u && c.a < 0.5) {
+    } else if ((f.flags & 1u) != 0u && c.a < ALPHA_REF) {
         discard;
     }
     vec3 rgb = c.rgb * light();

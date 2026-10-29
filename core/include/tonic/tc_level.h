@@ -17,6 +17,12 @@ extern "C" {
 #define TC_FLAG_BILLBOARD (1u << 2)  /* sprites: vertex = centre, normal.xy = corner offset (camera plane) */
 #define TC_FLAG_WATER (1u << 3)      /* set by tc_viewer on draws: a water material (a triangle flat at a .ttai water
                                         plane): the renderers add the sheen to its upward faces (NOTES "Water surfaces") */
+/* Texture addressing per axis, as the original's driver sets it from the texture's name (tools/ttre/ttlv.py
+ * `tiling`): wrap along u / v when set, clamp to the edge otherwise. */
+#define TC_FLAG_WRAP_U (1u << 4)
+#define TC_FLAG_WRAP_V (1u << 5)
+/* The original's alpha test for cut-outs (GliDX6vr.dll: ALPHAFUNC GREATEREQUAL, ALPHAREF 0xE1). */
+#define TC_ALPHA_REF (225.0f / 255.0f)
 #define TC_HIDDEN 0xFFFFu /* "shown object" value of a hidden channel */
 
 typedef enum tc_result {
@@ -98,7 +104,7 @@ typedef struct tc_ed {
 typedef struct tc_level {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
     uint32_t light_set_count;    /* baked sets per vertex, 1-3 */
-    float fog_near, fog_far;     /* linear fog by eye distance; fog_far <= fog_near: none */
+    float fog_near, fog_far;     /* linear fog by view depth (as the original's driver); fog_far <= fog_near: none */
     float fog_rgb[3];
     char *lightmap_atlas;        /* per-triangle lightmaps packed into one image, path relative to the .ttlv (NULL: none) */
     uint32_t texture_count;

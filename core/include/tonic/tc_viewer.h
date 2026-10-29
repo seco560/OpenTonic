@@ -165,6 +165,17 @@ typedef struct tc_viewer {
     uint32_t mesh_count, perso_first, ed_first;
     tc_view_draw *draws, *blended;
     uint32_t draw_cap, blended_cap;
+    /* Transparent statics drawn as pieces (TC_VIEW_PIECE_SIZE cells), so they sort back to front: the pieces follow
+     * Ed's parts in the mesh table, piece_origin[k] = the static mesh piece k came from, split[i] = 1 when static
+     * mesh i is drawn as its pieces. mesh_centre: per mesh, the centre of its vertex bounds (mesh space), the
+     * point blended draws sort by. */
+    tc_mesh *pieces;
+    uint32_t *piece_origin;
+    uint8_t *split;
+    tc_vec3 *mesh_centre;
+    uint32_t piece_first, piece_count, piece_cap;
+    float *blended_depth;     /* this frame's blended draws: squared distance of their centre from the eye */
+    uint32_t blended_depth_cap;
 } tc_viewer;
 
 /* Sets up the start camera (the middle of the level), the play session (with Ed's AI when ai_data loads) and
@@ -172,8 +183,9 @@ typedef struct tc_viewer {
 tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc);
 void tc_viewer_free(tc_viewer *v);
 
-/* Every drawable mesh, numbered once: the level's statics, each perso's parts, then Ed's parts. Upload them in this
- * order; empty meshes keep their number but are never drawn. */
+/* Every drawable mesh, numbered once: the level's statics, each perso's parts, Ed's parts, then the pieces of the
+ * transparent statics (TC_VIEW_PIECE_SIZE). Upload them in this order; empty meshes keep their number but are never
+ * drawn, and a split static is drawn as its pieces instead. */
 uint32_t tc_viewer_mesh_count(const tc_viewer *v);
 const tc_mesh *tc_viewer_mesh(const tc_viewer *v, uint32_t i);
 
@@ -195,7 +207,12 @@ void tc_viewer_set_look_stick(tc_viewer *v, float x, float y);
 /* One frame: look, free-fly or Ed (AI or simple controller) with the orbit camera, Ed's clip, animation clock. */
 void tc_viewer_update(tc_viewer *v, float dt);
 /* This frame's draws: opaque ones first, then [opaque_count, count) with TC_FLAG_TRANSPARENT, to draw after
- * everything opaque without depth writes. Storage is the viewer's, valid until the next call. */
+ * everything opaque without depth writes, back to front: by the distance of each mesh's centre from the camera,
+ * farthest first (ties keep the list's order). The original sorts its blended elements by depth too
+ * (GliDX6vr.dll's xSendListToViewport walks depth buckets). The .ttlv holds one mesh per material for the whole
+ * level, so transparent statics are cut into pieces of TC_VIEW_PIECE_SIZE cells (by triangle centroid) at init.
+ * Storage is the viewer's, valid until the next call. */
+#define TC_VIEW_PIECE_SIZE 16.0f
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out);
 

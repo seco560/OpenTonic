@@ -191,7 +191,8 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     SDL_GPUTexture *tex = d->texture >= 0 && v->textures ? v->textures[d->texture] : NULL;
     if (tex) {
         bind(c, transparent ? g->textured_blended : g->textured);
-        SDL_GPUTextureSamplerBinding samplers[2] = {{tex, g->repeat_sampler}, {v->lightmap, g->clamp_sampler}};
+        int wrap = (d->flags & TC_FLAG_WRAP_U ? 1 : 0) | (d->flags & TC_FLAG_WRAP_V ? 2 : 0);
+        SDL_GPUTextureSamplerBinding samplers[2] = {{tex, g->level_samplers[wrap]}, {v->lightmap, g->clamp_sampler}};
         SDL_BindGPUFragmentSamplers(c->pass, 0, samplers, 2);
         gpu_flags f = {d->flags, !transparent && g->msaa > 1, {0, 0}};  /* coverage: as the textured pipeline */
         SDL_PushGPUFragmentUniformData(c->cmd, 1, &f, sizeof f);

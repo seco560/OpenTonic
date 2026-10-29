@@ -131,13 +131,15 @@ static SDL_GPUGraphicsPipeline *ui_pipeline(gpu *g, SDL_GPUShader *vs, SDL_GPUSh
     return p;
 }
 
-static SDL_GPUSampler *sampler(gpu *g, SDL_GPUSamplerAddressMode address, bool anisotropy, bool nearest) {
+static SDL_GPUSampler *sampler(gpu *g, SDL_GPUSamplerAddressMode address_u, SDL_GPUSamplerAddressMode address_v,
+                               bool anisotropy, bool nearest) {
     SDL_GPUSamplerCreateInfo info;
     SDL_zero(info);
     info.min_filter = nearest ? SDL_GPU_FILTER_NEAREST : SDL_GPU_FILTER_LINEAR;
     info.mag_filter = nearest ? SDL_GPU_FILTER_NEAREST : SDL_GPU_FILTER_LINEAR;
     info.mipmap_mode = nearest ? SDL_GPU_SAMPLERMIPMAPMODE_NEAREST : SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-    info.address_mode_u = info.address_mode_v = info.address_mode_w = address;
+    info.address_mode_u = info.address_mode_w = address_u;
+    info.address_mode_v = address_v;
     info.min_lod = 0;
     info.max_lod = 1000;
     info.enable_anisotropy = anisotropy;
@@ -267,11 +269,15 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
         return false;
     }
 
-    g->repeat_sampler = sampler(g, SDL_GPU_SAMPLERADDRESSMODE_REPEAT, true, false);
-    g->clamp_sampler = sampler(g, SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, false, false);
-    g->ui_sampler = sampler(g, SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, false, false);
-    g->nearest_sampler = sampler(g, SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, false, true);
+    const SDL_GPUSamplerAddressMode R = SDL_GPU_SAMPLERADDRESSMODE_REPEAT, C = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    g->repeat_sampler = sampler(g, R, R, true, false);
+    g->clamp_sampler = sampler(g, C, C, false, false);
+    g->ui_sampler = sampler(g, C, C, false, false);
+    g->nearest_sampler = sampler(g, C, C, false, true);
+    for (int i = 0; i < 4; i++) g->level_samplers[i] = sampler(g, i & 1 ? R : C, i & 2 ? R : C, true, false);
     if (!g->repeat_sampler || !g->clamp_sampler || !g->ui_sampler || !g->nearest_sampler) return false;
+    for (int i = 0; i < 4; i++)
+        if (!g->level_samplers[i]) return false;
 
     gpu_upload u;
     if (!gpu_upload_begin(g, &u)) return false;
@@ -294,7 +300,8 @@ void gpu_quit(gpu *g) {
     SDL_GPUShader *shaders[] = {g->level_vs, g->textured_fs, g->flat_fs, g->shadow_vs, g->shadow_fs};
     for (size_t i = 0; i < SDL_arraysize(shaders); i++)
         if (shaders[i]) SDL_ReleaseGPUShader(g->device, shaders[i]);
-    SDL_GPUSampler *samplers[] = {g->repeat_sampler, g->clamp_sampler, g->ui_sampler, g->nearest_sampler};
+    SDL_GPUSampler *samplers[] = {g->repeat_sampler, g->clamp_sampler, g->ui_sampler, g->nearest_sampler,
+                                  g->level_samplers[0], g->level_samplers[1], g->level_samplers[2], g->level_samplers[3]};
     for (size_t i = 0; i < SDL_arraysize(samplers); i++)
         if (samplers[i]) SDL_ReleaseGPUSampler(g->device, samplers[i]);
     if (g->white) SDL_ReleaseGPUTexture(g->device, g->white);

@@ -26,7 +26,7 @@ import sys
 
 from tools.ttre import chunks
 
-ALPHA_TEST, TRANSPARENT = 1, 2
+ALPHA_TEST, TRANSPARENT, WRAP_U, WRAP_V = 1, 2, 1 << 4, 1 << 5  # TC_FLAG_* (ttlv.py)
 OUT = 'files/out'
 
 
@@ -132,6 +132,10 @@ def material_texture(doc, base, mi, tex_dir, cache, buffers):
     t = m.get('pbrMetallicRoughness', {}).get('baseColorTexture')
     if t is None:
         return None, flags
+    # glTF samplers repeat unless they say clamp (33071) or mirror (33648, drawn repeating)
+    sampler = doc.get('samplers', [])[doc['textures'][t['index']]['sampler']] \
+        if 'sampler' in doc['textures'][t['index']] else {}
+    flags |= (WRAP_U if sampler.get('wrapS', 10497) != 33071 else 0) | (WRAP_V if sampler.get('wrapT', 10497) != 33071 else 0)
     key = doc['textures'][t['index']]['source']  # one PNG per image, however many materials share it
     img = doc['images'][key]
     if key not in cache:

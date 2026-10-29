@@ -2,7 +2,7 @@
 
 Chunks, in file order (* = only when the level has one; every other chunk is required):
   LEVL  u32 light_set_count (baked radiosity sets per vertex, 1-3: set 0 everywhere, 1-2 only in Land / sud0; number
-        keys pick the set), f32 fog_near, f32 fog_far, f32 fog_rgb[3] (linear by eye distance; fog_far <= fog_near = no
+        keys pick the set), f32 fog_near, f32 fog_far, f32 fog_rgb[3] (linear by view depth; fog_far <= fog_near = no
         fog; LevelData.fog: the visual environment most sectors use)
   LMAP* u16 len + utf8 path (relative to the .ttlv) of the per-triangle lightmap atlas PNG: 32x32 tiles in a square
         power of two. The lightmap value replaces the baked light (same x255/128 scale).
@@ -37,7 +37,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
         ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
 
-  surface  = { i32 texture (-1 = none), u32 flags (TC_FLAG_*), f32 scroll[2] (UV per second: uv' = uv + scroll * t),
+  surface  = { i32 texture (-1 = none), u32 flags (TC_FLAG_*: alpha test / blend, and WRAP_U / WRAP_V: clamped
+               unless set), f32 scroll[2] (UV per second: uv' = uv + scroll * t),
                u16 n_anim, u16 0, n_anim x { i32 texture, f32 seconds } (animated texture loop; 0 = static) }
   geometry = { u32 n_vertices, u32 n_indices, n_vertices x vertex, n_indices x u32 }
   vertex (52 bytes, = tc_vertex) = f32 pos[3], f32 normal[3], f32 uv[2], u32 rgba8 x 3 (the baked sets: radiosity
@@ -57,9 +58,11 @@ import struct
 
 from . import chunks, export, gf, level
 
-ALPHA_TEST = 1 << 0
-TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8 without 0x2, see surface())
+ALPHA_TEST = 1 << 0  # TC_FLAG_ALPHA_TEST: a cut-out (texture flags 0x12, see surface())
+TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8, see surface())
 BILLBOARD = 1 << 2  # TC_FLAG_BILLBOARD: sprite quads, expanded towards the camera by the vertex shader
+WRAP_U = 1 << 4  # TC_FLAG_WRAP_U / _V: the texture repeats along u / v, else it is clamped (see tiling())
+WRAP_V = 1 << 5
 # Empirical: the user compared against the original running in Wine and 0.25x matched.
 # The exe's formula (frame += dt_ms/1000 * state FrameRate @0x3B, FUN_00415fb0) gives 1x, so some
 # unit is still unexplained (open question in NOTES). Applied to persos only, not textures.
@@ -75,6 +78,44 @@ LIGHT_SETS = 3  # baked radiosity sets per vertex (set 0 everywhere; 1-2 only in
 def texture_time_scale(tex):
     name = tex.name.replace('\\', '/').rsplit('/', 1)[-1].upper() if tex else ''
     return next((v for k, v in TEXTURE_TIME_SCALE.items() if name.startswith(k.upper())), 1.0)
+
+
+def tiling(name):
+    """WRAP_U / WRAP_V for a texture (fitted_surface then widens them per mesh), from its file name as the exe's
+    GLIGLOU_Tex_0043f220 reads it (the result goes to the driver's texture +0x155, which GliDX6vr.dll turns into D3D
+    ADDRESSU / ADDRESSV; DECOMP.md "Read from GliDX6vr.dll"). The name's stem (an "NZ" cut-out suffix skipped) ending in TXY repeats both ways, TY repeats u,
+    TX repeats v (raymap's "repeat U" bit agrees); else "_TXY" / "_TX" / "_TY" anywhere in it; anything else is
+    clamped on both axes. The level data's TextureInfo flags_byte agrees for 916 of 922 textures (6 levels); the
+    name is what the exe uses."""
+    s = os.path.splitext(os.path.basename(name.replace('\\', '/')))[0].upper()
+    stem = s[:-2] if s.endswith('NZ') else s
+    if stem.endswith('TXY'):
+        rule = 3
+    elif stem.endswith('TX'):
+        rule = 1
+    elif stem.endswith('TY'):
+        rule = 2
+    else:
+        rule = 3 if '_TXY' in s else 1 if '_TX' in s else 2 if '_TY' in s else 0
+    return (WRAP_U if rule & 2 else 0) | (WRAP_V if rule & 1 else 0)
+
+
+def fitted_surface(m):
+    """m's surface with the wrap flags widened to its geometry: an axis tiling() clamps is repeated anyway where the
+    mesh's UVs leave 0..1 on it, or the surface scrolls. The exe clamps those too as far as read, but ~130 elements
+    in the 21 levels would then smear their edge texels (73 are the LAVAGAIN lava flipbook, also MORT, PORTE, NG_04,
+    OMBRE), which the original doesn't show: some handling of them is still unread (DECOMP.md "Read from
+    GliDX6vr.dll"). Clamping keeps its use where it is safe: no filtering seams along in-range texture edges."""
+    surf = m['surface']
+    tex, flags, su, sv = struct.unpack_from('<iI2f', surf)
+    if tex < 0 or flags & (WRAP_U | WRAP_V) == WRAP_U | WRAP_V:
+        return surf
+    out = lambda k: any(v[k] < -0.01 or v[k] > 1.01 for v in m['verts'])
+    if su or sv or out(6):
+        flags |= WRAP_U
+    if su or sv or out(7):
+        flags |= WRAP_V
+    return surf[:4] + struct.pack('<I', flags) + surf[8:]
 
 
 def has_alpha(png_path, cache={}):
@@ -209,13 +250,18 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
         return tex_ids[png], ALPHA_TEST if has_alpha(png) else 0
 
     def surface(mat):
-        tid, flags = texture_id(mat.texture) if mat else (-1, 0)
-        # raymap's pre-R3 rule: material flag 0x4000000 + texture flags 0x10A = transparent. In TT, texture flag
-        # 0x8 alone marks blended textures (effects, OMBRE shadows, the sud0 rainbow water, *_ANU), while 0x8|0x2
-        # marks hard cut-outs (*_nz teeth, cloth): those keep the alpha test.
+        tid, alpha = texture_id(mat.texture) if mat else (-1, 0)
+        # GliDX6vr.dll's choice (GLI_DRV_vDoOpaqueTextureSelection, DECOMP.md "Read from GliDX6vr.dll"), on the
+        # texture flags: 0x12 (0x2 | 0x10: *_nz teeth, cloth, foliage) = a cut-out, alpha-tested at 225/255, before
+        # anything else; else 0x8 = alpha blended (effects, OMBRE shadows, the sud0 rainbow water, *_ANU); else
+        # opaque, the texture's alpha unused. A texture without alpha can't do either (every texture with alpha has
+        # one of the two flags in all 21 levels). Flag 0x20 (additive, from "_AD" in the name) is in no level.
         t = mat.texture if mat else None
-        if t and mat.flags & 0x4000000 and t.flags & 0x8 and not t.flags & 0x2 and flags & ALPHA_TEST:
-            flags = (flags & ~ALPHA_TEST) | TRANSPARENT
+        flags = 0
+        if t and alpha:
+            flags = ALPHA_TEST if t.flags & 0x12 else TRANSPARENT if t.flags & 0x8 else 0
+        if t:
+            flags |= tiling(t.name)
         su, sv = (s * level.SCROLL_RATE for s in mat.scroll) if mat else (0, 0)
         frames = [(texture_id(t)[0], d / level.SCROLL_RATE / texture_time_scale(t)) for t, d in mat.frames] if mat else []
         return dict(surface=struct.pack('<iI2f2H', tid, flags, -su, sv, len(frames), 0)
@@ -257,7 +303,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                     geo, scale = p.objects[obj]
                     pm = {}
                     add_geometry(pm, None, geo, scale, surface)
-                    parts += [struct.pack('<2H', ch, obj) + mm['surface'] + geometry(mm) for mm in pm.values()]
+                    parts += [struct.pack('<2H', ch, obj) + fitted_surface(mm) + geometry(mm) for mm in pm.values()]
         n_parts += len(parts)
         blobs.append(struct.pack('<12f2Hf', *p.world, len(a.chans), len(poses), a.fps * k * ANIM_TIME_SCALE)
                      + struct.pack(f'<{len(a.chans)}h', *a.parents(0)) + struct.pack('<I', len(parts)) + b''.join(parts)
@@ -282,7 +328,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
             geo, scale = p.objects[obj]
             pm = {}
             add_geometry(pm, None, geo, scale, surface)
-            parts += [struct.pack('<2H', obj, 0) + mm['surface'] + geometry(mm) for mm in pm.values()]
+            parts += [struct.pack('<2H', obj, 0) + fitted_surface(mm) + geometry(mm) for mm in pm.values()]
         recs = []
         for name, a, loop in anims:
             state_anim = name.startswith('s') and name[1:].isdigit()
@@ -300,7 +346,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     n_sets = max((len(getattr(so, 'color_sets', ())) for so in data.walk()), default=1)
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
-    mesh = struct.pack('<I', len(meshes)) + b''.join(m['surface'] + geometry(m) for m in meshes.values())
+    mesh = struct.pack('<I', len(meshes)) + b''.join(fitted_surface(m) + geometry(m) for m in meshes.values())
     out = [('LEVL', struct.pack('<I5f', max(1, n_sets), fog[0], fog[1], *fog[2])),
            ('LMAP', struct.pack('<H', len(atlas_rel.encode())) + atlas_rel.encode()) if atlas_rel else None,
            ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),

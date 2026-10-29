@@ -19,7 +19,7 @@ struct Uniforms {
     float bakedScale;        // vertex colour -> light factor (255/128: radiosity 128 = texture unchanged)
     uint lightSet;           // baked set to show (0-2)
     float gamma;             // display gamma, 1 = unchanged
-    float4 fog;              // near, far (eye distance), enabled (0/1), unused
+    float4 fog;              // near, far (view depth), enabled (0/1), unused
     float4 fogColor;         // rgb, unused
     float4 eye;              // camera position (world), unused
     float4 camRight;         // camera axes (world), for billboards
@@ -76,10 +76,13 @@ static float3 light(VertexOut in, constant Uniforms &u, texture2d<float> lightma
     return shade(in, u);
 }
 
-// The level's linear fog (visual environment), applied to the displayed colour.
+// The level's linear fog (visual environment), applied to the displayed colour. By view depth, as the original's
+// driver (GLI_DRV_vComputeFogEffect: the projected vertex's z; DECOMP.md "Read from GliDX6vr.dll"): none at near,
+// full from far. The camera's forward axis is up x right (tc_viewer_frame: up = right x forward).
 static float3 fogged(float3 rgb, VertexOut in, constant Uniforms &u) {
     if (u.fog.z < 0.5 || u.fog.y <= u.fog.x) return rgb;
-    float f = saturate((distance(in.world, u.eye.xyz) - u.fog.x) / (u.fog.y - u.fog.x));
+    float depth = dot(in.world - u.eye.xyz, cross(u.camUp.xyz, u.camRight.xyz));
+    float f = saturate((depth - u.fog.x) / (u.fog.y - u.fog.x));
     return mix(rgb, u.fogColor.rgb, f);
 }
 
@@ -104,6 +107,9 @@ float4 water_sheen(VertexOut in, constant Uniforms &u) {
     return float4(sky * fresnel * 0.8 + float3(spec), saturate(0.35 + fresnel));
 }
 
+// The original's alpha test for cut-outs: GREATEREQUAL 225 (TC_ALPHA_REF, GliDX6vr.dll; DECOMP.md).
+constant float alphaRef = 225.0 / 255.0;
+
 // f.x: TC_FLAG_*; f.y: drawn with alpha to coverage (the opaque pipeline with MSAA on, as the SDL build).
 fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],
                                         texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],
@@ -113,14 +119,14 @@ fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Unif
     float a = c.a;
     if (f.y != 0u) {
         // Alpha to coverage: the alpha becomes the share of covered samples, so it must be 1 on opaque surfaces.
-        // Alpha-tested cutouts keep the 0.5 threshold, sharpened to about a pixel wide around it: a crisp edge as
-        // with discard, but antialiased.
+        // Alpha-tested cutouts keep the original's threshold, sharpened to about a pixel wide around it: a crisp
+        // edge as with discard, but antialiased.
         a = 1.0;
         if (f.x & 1u) {
-            a = saturate((c.a - 0.5) / max(fwidth(c.a), 1e-4) + 0.5);
+            a = saturate((c.a - alphaRef) / max(fwidth(c.a), 1e-4) + 0.5);
             if (a <= 0.0) discard_fragment();
         }
-    } else if ((f.x & 1u) && c.a < 0.5) {
+    } else if ((f.x & 1u) && c.a < alphaRef) {
         discard_fragment();
     }
     float3 rgb = c.rgb * light(in, u, lightmap);
