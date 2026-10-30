@@ -43,6 +43,7 @@ import TonicCore
         var billboard: UInt32  // TC_FLAG_BILLBOARD sprite quads
         var ambient: SIMD4<Float>  // the material's (tc_view_draw)
         var diffuse: SIMD4<Float>
+        var water: SIMD4<Float>    // x: the water plane, y: 1 under the water effect (tc_view_draw.underwater)
     }
 
     /// Ed's shadow disc (matches ShadowParams in Shaders.metal).
@@ -472,7 +473,8 @@ import TonicCore
             }
             var params = DrawParams(model: float4x4(d.model), scroll: m.scroll, billboard: d.flags & TC_FLAG_BILLBOARD != 0 ? 1 : 0,
                                     ambient: SIMD4(d.ambient.0, d.ambient.1, d.ambient.2, 0),
-                                    diffuse: SIMD4(d.diffuse.0, d.diffuse.1, d.diffuse.2, 0))
+                                    diffuse: SIMD4(d.diffuse.0, d.diffuse.1, d.diffuse.2, 0),
+                                    water: SIMD4(d.water_z, d.underwater != 0 ? 1 : 0, 0, 0))
             enc.setVertexBytes(&params, length: MemoryLayout<DrawParams>.stride, index: 2)
             enc.setVertexBuffer(m.vertices, offset: 0, index: 0)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: Int(d.index_count), indexType: .uint32, indexBuffer: m.indices,

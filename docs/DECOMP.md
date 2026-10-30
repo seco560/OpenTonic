@@ -219,7 +219,7 @@ Each item is marked in the code or in docs/NOTES.md.
 ## Rendering and lighting
 **Ported 2026-10-30** (docs/NOTES.md "Lighting: the original's formula"): the vertex colour formula, the sector lights
 (spherical with the per-object cull, parallel, ambient), the sector / env fog, the material coefficients; not
-hotspots, MS lights, the underwater tint, the surface waves. The list below is the state before that:
+hotspots, MS lights, the surface waves; the water effect (tint, wobble, lift) ported the same day (docs/NOTES.md "The water effect"). The list below is the state before that:
 GLI (29 KB) is 0 % read. Everything lighting does now is inferred from the data, not read from the code:
 - the radiosity combine (x 255 / 128, overbright x 2)
 - which radiosity set is used (A, B or C, and whether they blend)

@@ -52,7 +52,14 @@ typedef struct tc_view_draw {
     uint32_t first_index, index_count;
     tc_mat4 model;
     float ambient[3], diffuse[3]; /* the surface's material (tc_surface), for TC_VL_GAME */
+    /* TC_VL_GAME: drawn under the water effect (the shaders' underwater tint and wobble, GLIGLOU_00442ce0 / 00442ae0)
+     * below the plane z = water_z; 0: not. See TC_VIEW_UNDERWATER_ALL. */
+    uint32_t underwater;
+    float water_z;
 } tc_view_draw;
+
+/* The water plane of a sector whose first environment is already water (FUN_00451e80: z 9000, everything below it). */
+#define TC_VIEW_UNDERWATER_ALL 9000.0f
 
 /* Which sectors are drawn (tc_sector.h), all from Ed's sector: his sector and the sectors of its list (the default: the
  * game's way of drawing, FUN_00451d80, sky included), every sector (the Tonic Viewer's view: the whole level at once),
@@ -238,6 +245,7 @@ typedef struct tc_viewer {
     tc_view_sectors sector_mode;
     tc_sector_track ed_sector;
     uint8_t *sector_shown;        /* this frame's TC_SHOWN_* per sector */
+    float *sector_water;          /* this frame's water plane per sector (tc_view_draw.water_z), NAN: no water effect */
     uint32_t *mesh_ranges;        /* per tc_viewer_mesh: first and count of its index ranges in `ranges` (count 0: one */
     tc_sector_range *ranges;      /* whole, drawn always: persos, Ed; static meshes and the pieces have them) */
     uint32_t range_count, range_cap;

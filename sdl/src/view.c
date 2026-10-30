@@ -38,9 +38,10 @@ typedef struct gpu_draw_params {
     uint32_t pad;
     float ambient[4];    /* the material's (tc_view_draw) */
     float diffuse[4];
+    float water[4];      /* x: the water plane, y: 1 under the water effect (tc_view_draw.underwater) */
 } gpu_draw_params;
 _Static_assert(offsetof(gpu_draw_params, ambient) == 80, "std140: vec4 at 80");
-_Static_assert(sizeof(gpu_draw_params) == 112, "gpu_draw_params must match shaders/level.vert");
+_Static_assert(sizeof(gpu_draw_params) == 128, "gpu_draw_params must match shaders/level.vert");
 
 /* Must match the Lights block in shaders/level.vert (std140): the frame's lights as tc_view_light (3 x vec4 each). */
 typedef struct gpu_lights {
@@ -230,6 +231,7 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     params.pad = 0;
     vec4(params.ambient, tc_v3(d->ambient[0], d->ambient[1], d->ambient[2]), 0);
     vec4(params.diffuse, tc_v3(d->diffuse[0], d->diffuse[1], d->diffuse[2]), 0);
+    vec4(params.water, tc_v3(d->water_z, d->underwater ? 1.0f : 0.0f, 0), 0);
     SDL_PushGPUVertexUniformData(c->cmd, 1, &params, sizeof params);
     SDL_DrawGPUIndexedPrimitives(c->pass, d->index_count, 1, m->first_index + d->first_index, m->vertex_offset, 0);
 }

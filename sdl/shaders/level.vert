@@ -20,6 +20,7 @@ layout(std140, set = 1, binding = 1) uniform DrawParams {
     uint billboard;        // 1: sprite quad (TC_FLAG_BILLBOARD), expanded towards the camera
     vec4 ambient;          // rgb: the material's ambient
     vec4 diffuse;          // rgb: the material's diffuse
+    vec4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater)
 } d;
 
 // The frame's lights (tc_view_light; struct gpu_lights in src/view.c): spherical and parallel, world space.
@@ -47,8 +48,10 @@ vec4 baked(uint s) {
 
 // The original's vertex light (game_light in Shaders.metal; docs/DECOMP.md "Vertex colour"): the baked radiosity (none
 // on persos) plus the frame's lights, through the material: min(1, (acc x diffuse + ambient + G x diffuse) x 512 / 255).
+// Under the water effect: + the default tint by depth (GLIGLOU_00442ce0; Shaders.metal game_light).
 vec3 game_light(vec4 bakedColor, vec3 world, vec3 n, vec3 centre) {
     vec3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (255.0 / 256.0) : vec3(0.0);
+    if (d.water.y > 0.5) acc += vec3(-0.6, -0.3, -0.4) * clamp((d.water.x - world.z) / 7.0, 0.0, 1.0);
     for (uint i = 0u; i < min(lights.count, 48u); i++) {
         Light l = lights.light[i];
         if (l.position.w < 1.5) {  // parallel
@@ -70,6 +73,17 @@ vec3 game_light(vec4 bakedColor, vec3 world, vec3 n, vec3 centre) {
     return clamp((acc * d.diffuse.rgb + add) * (512.0 / 255.0), 0.0, 1.0);
 }
 
+// The water effect's wobble (GLIGLOU_00442ae0; underwater_wobble in Shaders.metal), in 640 x 480 pixels.
+vec4 underwater_wobble(vec4 clip, float depth, float eyeDepth) {
+    float amp = eyeDepth < 0.0 ? (depth > 5.0 ? 1.4 : 0.0) : (depth >= 0.0 ? 0.0 : 1.4 * clamp(-depth / 5.0, 0.0, 1.0));
+    if (amp <= 0.0 || clip.w <= 0.25) return clip;
+    vec2 px = (clip.xy / clip.w * vec2(0.5, -0.5) + 0.5) * vec2(640.0, 480.0);
+    float frame = floor(u.time * 60.0), k = 6.28318531 / 64.0;
+    px += 2.0 * vec2(cos((floor(px.x + 0.5) + frame) * k), cos((floor(px.y + 0.5) + 16.0 + frame) * k)) * amp;
+    clip.xy = ((px / vec2(640.0, 480.0) - 0.5) / vec2(0.5, -0.5)) * clip.w;
+    return clip;
+}
+
 void main() {
     vec4 world = d.model * vec4(inPosition, 1.0);
     vNormal = (d.model * vec4(inNormal, 0.0)).xyz;  // shade() renormalises
@@ -77,6 +91,12 @@ void main() {
         world.xyz += u.camRight.xyz * inNormal.x + u.camUp.xyz * inNormal.y;
         vNormal = vec3(0.0);
     }
+    // The water effect's lift (GLIGLOU_00442da0; Shaders.metal level_vertex): only with the camera not below the water;
+    // tint and wobble keep the real depth.
+    vec3 real = world.xyz;
+    bool water = d.water.y > 0.5 && d.billboard == 0u;
+    float eyeDepth = u.eye.z - d.water.x;
+    if (water && eyeDepth >= 0.0) world.z += 0.7 * max(0.0, d.water.x - world.z);
     gl_Position = u.viewProjection * world;
     vWorld = world.xyz;
     vUV2 = inUV2;
@@ -85,6 +105,7 @@ void main() {
     if (u.lighting == 0u) {  // the vertex's light itself (alpha 1); sprites unlit
         vec3 n = length(vNormal) > 0.0 ? normalize(vNormal) : vec3(0.0);
         vColor = d.billboard != 0u ? vec4(1.0)
-               : vec4(game_light(vColor, world.xyz, n, (d.model * vec4(inCentre, 1.0)).xyz), 1.0);
+               : vec4(game_light(vColor, real, n, (d.model * vec4(inCentre, 1.0)).xyz), 1.0);
+        if (water) gl_Position = underwater_wobble(gl_Position, real.z - d.water.x, eyeDepth);
     }
 }

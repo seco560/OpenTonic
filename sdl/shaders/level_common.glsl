@@ -11,7 +11,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform Uniforms {
     float gamma;           // display gamma, 1 = unchanged
     vec4 fog;              // near, far (view depth), enabled (0/1), strength (0..1: fading with a sector change)
     vec4 fogColor;         // rgb, unused
-    vec4 eye;              // camera position (world), unused
+    vec4 eye;              // camera position (world): fog depth, the water sheen, the water effect
     vec4 camRight;         // camera axes (world), for billboards
     vec4 camUp;
     uint lightNext;        // the set a change blends towards (= lightSet when none runs)

@@ -135,17 +135,27 @@ def tiling(name):
     return (WRAP_U if rule & 2 else 0) | (WRAP_V if rule & 1 else 0)
 
 
+# How far a mesh's UVs must leave 0..1 on an axis tiling() clamps before fitted_surface repeats it. Over the 21 levels
+# the overshoots fall in two groups: slop of 0.01-0.19 (12 meshes: sud0's hedge vg_haie03tynz to v 1.03, carota's
+# teeth, a Land trunk ...), which the exe clamps (the edge texels stretched a little), and real tiling of 0.4-22.
+# Repeating the slop made a seam: at the wrap, filtering blends the texture's opposite edges, and on a cut-out whose
+# border row is transparent the alpha test then drops a hairline through the wall (user, 2026-10-30: thin blue lines
+# along sud0's backdrop walls, the sky showing through).
+REPEAT_OVERSHOOT = 0.25
+
+
 def fitted_surface(m):
     """m's surface with the wrap flags widened to its geometry: an axis tiling() clamps is repeated anyway where the
-    mesh's UVs leave 0..1 on it, or the surface scrolls. The exe clamps those too as far as read, but ~130 elements
-    in the 21 levels would then smear their edge texels (73 are the LAVAGAIN lava flipbook, also MORT, PORTE, NG_04,
-    OMBRE), which the original doesn't show: some handling of them is still unread (DECOMP.md "Read from
-    GliDX6vr.dll"). Clamping keeps its use where it is safe: no filtering seams along in-range texture edges."""
+    mesh's UVs leave 0..1 on it by more than REPEAT_OVERSHOOT, or the surface scrolls. The exe clamps those too as far
+    as read, but ~130 elements in the 21 levels would then smear their edge texels (73 are the LAVAGAIN lava flipbook,
+    also MORT, PORTE, NG_04, OMBRE), which the original doesn't show: some handling of them is still unread (DECOMP.md
+    "Read from GliDX6vr.dll"). Clamping keeps its use where it is safe: no filtering seams along in-range texture
+    edges."""
     surf = m['surface']
     tex, flags, su, sv = struct.unpack_from('<iI2f', surf)
     if tex < 0 or flags & (WRAP_U | WRAP_V) == WRAP_U | WRAP_V:
         return surf
-    out = lambda k: any(v[k] < -0.01 or v[k] > 1.01 for v in m['verts'])
+    out = lambda k: any(v[k] < -REPEAT_OVERSHOOT or v[k] > 1 + REPEAT_OVERSHOOT for v in m['verts'])
     if su or sv or out(6):
         flags |= WRAP_U
     if su or sv or out(7):

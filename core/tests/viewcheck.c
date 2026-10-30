@@ -40,11 +40,12 @@ static void frame(tc_viewer *v, float dt) {
     const tc_view_draw *d;
     tc_view_frame f;
     float prev;
-    int bad = 0;
+    int bad = 0, any_water = 0;
     tc_viewer_update(v, dt);
     d = tc_viewer_draws(v, &count, &opaque);
     tc_viewer_frame(v, 16.0f / 10, &f);
     if (opaque > count) bad = 1;
+    for (i = 0; i < count; i++) any_water |= d[i].underwater != 0;
     last_ed_draws = 0;
     for (i = 0; i < count; i++)
         if (d[i].mesh >= v->ed_first && d[i].mesh < v->ed_first + v->level->ed.part_count) last_ed_draws++;
@@ -57,7 +58,11 @@ static void frame(tc_viewer *v, float dt) {
         if (m && (d[i].first_index % 3 || d[i].index_count % 3 || d[i].index_count == 0 ||
                   d[i].first_index + d[i].index_count > m->index_count))
             bad = 1;
-        if (m && v->sector_mode == TC_VS_ALL && (d[i].first_index != 0 || d[i].index_count != m->index_count)) bad = 1;
+        /* whole, unless split where the water effect's plane changes (the K test counts every triangle drawn) */
+        if (m && v->sector_mode == TC_VS_ALL && (d[i].first_index != 0 || d[i].index_count != m->index_count) &&
+            !any_water)
+            bad = 1;
+        if (d[i].underwater && !(d[i].water_z == d[i].water_z)) bad = 1; /* NaN plane */
     }
     for (i = opaque, prev = INFINITY; i < count && !bad; i++) {
         tc_vec3 c = v->mesh_centre[d[i].mesh];

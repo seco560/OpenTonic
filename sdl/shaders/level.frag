@@ -68,8 +68,10 @@ vec4 water_sheen() {
     vec3 sky = vec3(0.62, 0.74, 0.86);
     vec3 h = normalize(v + normalize(u.lightDirection));
     float spec = pow(clamp(dot(n, h), 0.0, 1.0), 80.0) * 0.9;
-    // with the sky's light: dim at night (sud0's day / night cycle)
-    return vec4((sky * fresnel * 0.8 + vec3(spec)) * u.skyLight.rgb, clamp(0.35 + fresnel, 0.0, 1.0));
+    // with the sky's light: dim at night (sud0's day / night cycle). Kept faint (0.35; user, 2026-10-30: the original's
+    // blue water is not this reflective): the texture's own colour and alpha stay the look.
+    const float strength = 0.35;
+    return vec4((sky * fresnel * 0.8 + vec3(spec)) * u.skyLight.rgb * strength, clamp(0.1 + fresnel * 0.5, 0.0, 1.0));
 }
 #endif
 

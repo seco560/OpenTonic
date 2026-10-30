@@ -72,6 +72,12 @@ old look for comparing (title: "old lighting").
   head to the camera, every frame (the darkeners sit in tunnel sectors: Ed's sector lit the outside view with them).
   Drawing stays by Ed's sector. Headless (demo, 90 s): no half-faded effect light; the camera's sector differs from
   Ed's on 0-4 % of frames (Land 21 %). Not yet checked on screen.
+- **The real cause (2026-10-30, later):** the Metal shader's `Lights` was `uint count; uint3 pad; Light light[48]`; a
+  uint3 is 16-aligned in Metal, so the array sat at 32 while Renderer.swift packs it at 16: every light read one float4
+  late (colour = the next light's position: Totalski's (137, -393, -733) = saturated red; type = its near, so near < 1.5
+  made it parallel, lighting everything). Now four uints, with a static_assert. The SDL build (std140) was right. The CPU
+  model of the shader (core data, demo through sct34) never showed a colour cast: the effect lights' instant switch
+  above stays (the original's way) but was not the cause.
 - **Data:** .ttlv LITE (ttlv.py): the lights, per sector its lights and per env its fog, per mesh its material's
   ambient / diffuse and its vertices' object centres (tc_vertex is 64 bytes now: + centre). MESH and the rest keep
   their layout.
@@ -87,8 +93,48 @@ old look for comparing (title: "old lighting").
   brightness (ambient 0.87; sectorcheck counts them); water surfaces lit by 2 x ambient only: sud0's sea full, its
   rainbow river 0.4, pyramide's water 0.2, **cock01's pools 0 (black, ambient 0, no lights in the level)**.
 - **Unported find:** surfaces have waves (FUN_0045d720: vertex z = a sine table x amplitude (+0x108) + offset
-  (+0x10c), phase +0x114 stepping by +0x110 per frame); objects below a water surface get a depth tint (GLIGLOU
-  00442ce0: default (-0.6, -0.3, -0.4) to full by 7 units deep, per visual environment).
+  (+0x10c), phase +0x114 stepping by +0x110 per frame).
+- **Seams (2026-10-30, user: thin blue lines along sud0's backdrop walls, "all over the game").** fitted_surface
+  repeated an axis the name rule clamps as soon as a mesh's UVs left 0..1 by 0.01; sud0's hedge vg_haie03tynz reaches
+  v 1.03, so its V repeated, and at v = 1 filtering blended the opaque top row with the transparent bottom one: the
+  alpha test dropped a hairline, the sky behind showed. Overshoots split into slop (12 meshes, 0.01-0.19) and real
+  tiling (0.4-22): now repeated only past REPEAT_OVERSHOOT 0.25 (ttlv.py), the slop clamped as the exe does. Checked
+  headless: T-junctions are rare (sud0 27 of 13173 edges, north 4, Totalski 4, bar 0): not the cause. Left: 12 of 48
+  repeated cut-out axes have border texels opaque on one side only (north mr_cite000_txynz v, Totalski ng_pont1a,
+  the carota / spy bridges bs_legpon / bs_pon1, sud0 xx_dinotynz): they repeat by their own name in the exe too, so
+  their seams are likely the original's (a modern fix: sample those cut-outs' alpha clamped to the polygon's own UV
+  span, or pad the textures).
+- **Water sheen toned down (2026-10-30, user: the original's blue water is not this reflective):** x 0.35, the alpha
+  floor 0.1 + fresnel / 2 (was 0.35 + fresnel), both shaders.
+- **The water effect (ported 2026-10-30, the user asked for the underwater look; not yet seen on screen).** Drawing a
+  sector (FUN_00451e80, draw mask bit 0x4000, set in play) walks its envs for the first water one (MecEnv +0x28 = 1,
+  FUN_00451c20): env k > 0 sets the plane to surface k - 1 of its list, env 0 to z 9000 (all of it); the camera is
+  under water when env 0 or below that plane (the return value). Listed sectors (FUN_004521b0): all get the main
+  sector's plane while the camera is under water, else each its own while the camera is above it (env 0: never).
+  Geometry and persos are drawn with it, the water surfaces without. Per object (FUN_00446050, effect flag 1):
+  - **tint** (GLIGLOU_00442ce0): the light accumulator + tint x min(1, depth / 7) below the plane, before the
+    material; tint (-0.6, -0.3, -0.4), 7 (init GLIGLOU_00443280). The visual environment's +0 record could change them
+    (+0xc on, +0x10 depth, +0x14 rgb; +0 on, +4 / +8 wobble depth / amplitude; +0x24 the lift), but it is null in
+    every level: the defaults everywhere. (Its +4 is the fog.)
+  - **flag 8 = the camera under the water** (GLIGLOU_00442da0): its plane test runs on the vertices already in camera
+    space (FUN_00448900 before it), so "the plane's offset from the origin" is from the camera (or flag 0x10, set
+    only in 00452c70's extra pass). First read as the object's origin: wrong, see below.
+  - **wobble** (GLIGLOU_00442ae0, on unless flag 0x20: menus): the projected x / y + 2 cos((round(pixel) + frame) x
+    2 pi / 64) x amplitude (y's index + 16), frame = the rendering counter DAT_004ec8ac. Camera above the plane: the
+    vertices below wobble, 1.4 from 5 deep (-5 = DAT_004de1c0), ramping from 0; camera below (flag 8): only the
+    vertices more than 5 above. Only in front (a projected value > 0.25).
+  - **lift** (GLIGLOU_00442da0, camera above the plane): vertices below it move up by 0.7 x their depth (seen from
+    above, everything under the water at 0.3 x its depth, Ed with the floor); the depth the tint and wobble use is
+    stored before the move. Ported the same day (the user: do as the original with the geometry). **First port wrong**
+    (per object, by its centre): with the camera under water the floors whose centre is above it rose over Ed and
+    the camera, the underwater world vanished (user: "Ed swimming under the map into nothingness"); now by the camera
+    (eye z vs the draw's plane) in both shaders. The lights and the tint on the real position, the fog on the drawn
+    one.
+  Port: the core gives each draw its plane (tc_view_draw.underwater / water_z, the camera's sector as the main one, as
+  for the lights; runs of a static mesh split where it changes: pyramide in K's all-sectors mode 1186 -> 1348 draws at
+  most), only with the original's lighting (L: none). Both shaders: the tint in the vertex light, the wobble in 640 x
+  480 pixels of the projected vertex, the object's centre standing in for its origin, frame = 60 per second of the
+  animation clock (the counter's real rate unknown). The GLSL is not compiled here (no glslangValidator).
 
 ## Lighting (stage 1: baked radiosity, 2026-10-19)
 - **IPO** (0xC) = {ptr PhysicalObject, ptr radiosity, ptr ISI}.

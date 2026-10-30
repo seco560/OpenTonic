@@ -752,7 +752,8 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->ed_sector.sector = TC_SECTOR_NONE;
     if (v->sectors) {
         v->sector_shown = (uint8_t *)tc_calloc(v->sectors->count, 1);
-        if (!v->sector_shown) {
+        v->sector_water = (float *)tc_calloc(v->sectors->count, sizeof(float));
+        if (!v->sector_shown || !v->sector_water) {
             tc_viewer_free(v);
             return TC_ERR_OUT_OF_MEMORY;
         }
@@ -872,6 +873,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->mesh_centre);
     tc_free(v->blended_depth);
     tc_free(v->sector_shown);
+    tc_free(v->sector_water);
     tc_free(v->mesh_ranges);
     tc_free(v->ranges);
     tc_free(v->light_weight);
@@ -1453,7 +1455,8 @@ static void sort_blended(tc_viewer *v, uint32_t n) {
     }
 }
 
-static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, uint32_t first, uint32_t count) {
+static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, uint32_t first, uint32_t count,
+                     float water) {
     const tc_mesh *m = v->meshes[mesh];
     tc_view_draw *d;
     if (!drawable(m) || count == 0) return;
@@ -1472,29 +1475,69 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     d->model = *model;
     memcpy(d->ambient, m->surface.ambient, sizeof(d->ambient));
     memcpy(d->diffuse, m->surface.diffuse, sizeof(d->diffuse));
+    d->underwater = !isnan(water);
+    d->water_z = d->underwater ? water : 0;
 }
 
 /* A mesh whole, or with `shown` (NULL: all) the runs of its ranges whose group is shown, each run of consecutive shown
- * ranges one draw. */
-static void add_mesh(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, const uint8_t *shown) {
+ * ranges under the same water plane (sector_water: a sector's geometry; none on the water surfaces' groups) one draw. */
+static void add_mesh(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, const uint8_t *shown,
+                     bool water) {
     uint32_t n = v->mesh_ranges ? v->mesh_ranges[2 * mesh + 1] : 0, k, first = 0, count = 0;
     const tc_sector_range *r;
-    if (!shown || n == 0) {
-        add_draw(v, dl, mesh, model, 0, v->meshes[mesh]->index_count);
+    float z = NAN, rz;
+    if ((!shown && !water) || n == 0) {
+        add_draw(v, dl, mesh, model, 0, v->meshes[mesh]->index_count, NAN);
         return;
     }
     r = &v->ranges[v->mesh_ranges[2 * mesh]];
     for (k = 0; k < n; k++) {
-        if (!tc_sectors_group_shown(v->sectors, r[k].group, shown)) continue;
-        if (count && first + count == r[k].first) {
+        if (shown && !tc_sectors_group_shown(v->sectors, r[k].group, shown)) continue;
+        rz = water && r[k].group < v->sectors->count ? v->sector_water[r[k].group] : NAN;
+        if (count && first + count == r[k].first && (isnan(z) ? isnan(rz) : z == rz)) {
             count += r[k].count;
             continue;
         }
-        add_draw(v, dl, mesh, model, first, count);
+        add_draw(v, dl, mesh, model, first, count, z);
         first = r[k].first;
         count = r[k].count;
+        z = rz;
     }
-    add_draw(v, dl, mesh, model, first, count);
+    add_draw(v, dl, mesh, model, first, count, z);
+}
+
+/* The water plane FUN_00451e80 / 004521b0 set for sector s: below its first water environment k, the surface above it
+ * (k - 1 of its list), or TC_VIEW_UNDERWATER_ALL for k = 0. NAN: no water environment. */
+static float water_plane(const tc_viewer *v, uint16_t s) {
+    const tc_sector *sec = &v->sectors->sectors[s];
+    uint16_t k;
+    for (k = 0; k < sec->env_count; k++) {
+        if (sec->envs[k].water != 1) continue;
+        if (k == 0) return TC_VIEW_UNDERWATER_ALL;
+        return sec->surfaces[k - 1] < v->sectors->surface_count ? v->sectors->surface_z[sec->surfaces[k - 1]] : NAN;
+    }
+    return NAN;
+}
+
+/* Which sectors are drawn under the water effect this frame, and below which plane (v->sector_water; false: none). The
+ * frame's sector is the camera's (as for the lights): its geometry always gets its own plane, and the camera is under
+ * water when its first water env is env 0 or the camera is below that plane. Then every other sector gets the same
+ * plane (004521b0 leaves it set); else each gets its own while the camera is above it (never for env 0: 9000 up). */
+static bool water_planes(tc_viewer *v) {
+    const tc_sectors *s = v->sectors;
+    uint16_t main = v->light_sector, i;
+    float main_z, z, cam = v->camera.position.z;
+    bool under, any = false;
+    if (!s || v->lighting != TC_VL_GAME || main >= s->count) return false;
+    main_z = water_plane(v, main);
+    under = !isnan(main_z) && (main_z == TC_VIEW_UNDERWATER_ALL || cam < main_z);
+    for (i = 0; i < s->count; i++) {
+        z = i == main ? main_z : under ? main_z : water_plane(v, i);
+        if (i != main && !under && !(z < cam)) z = NAN;
+        v->sector_water[i] = z;
+        any |= !isnan(z);
+    }
+    return any;
 }
 
 /* What this frame draws of each sector (v->sector_shown), or NULL for everything: Ed's sector whole and its list (each
@@ -1524,11 +1567,14 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
     float t = v->animation_time;
     const uint8_t *shown = shown_sectors(v);
     bool perso_sectors = shown && v->sectors->perso_count == l->perso_count;
+    bool water = water_planes(v);
+    float z;
+    uint16_t sec;
     v->ed_draw_count = 0;
 
     for (i = 0; i < l->mesh_count; i++)
-        if (!v->split || !v->split[i]) add_mesh(v, &dl, i, &identity, shown);  /* split ones: as their pieces */
-    for (i = 0; i < v->piece_count; i++) add_mesh(v, &dl, v->piece_first + i, &identity, shown);
+        if (!v->split || !v->split[i]) add_mesh(v, &dl, i, &identity, shown, water); /* split ones: as their pieces */
+    for (i = 0; i < v->piece_count; i++) add_mesh(v, &dl, v->piece_first + i, &identity, shown, water);
 
     for (i = 0; i < l->perso_count; first += l->persos[i].part_count, i++) {
         const tc_perso *p = &l->persos[i];
@@ -1543,6 +1589,8 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         /* Baked samples loop; blend each channel between neighbouring samples so motion is smooth at any display
          * rate and playback speed. Visibility follows the earlier sample. */
         world = tc_mat4_from34(&p->world);
+        sec = v->sectors && v->sectors->perso_count == l->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
+        z = water && sec < v->sectors->count ? v->sector_water[sec] : NAN; /* drawn in its sector's pass */
         s = tc_sample_at_time(t, p->sample_rate, p->sample_count);
         base = s.s0 * nch;
         for (k = 0; k < p->part_count; k++) {
@@ -1552,7 +1600,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
             /* Lerping full matrices is fine for samples this close together; skipped across a part swap. */
             m = tc_channel_matrix(p->transforms, p->shown, nch, s, part->channel);
             model = tc_mat4_mul(&world, &m);
-            add_draw(v, &dl, first + k, &model, 0, part->mesh.index_count);
+            add_draw(v, &dl, first + k, &model, 0, part->mesh.index_count, z);
         }
     }
 
@@ -1563,6 +1611,8 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         /* The skier's board tilts with the slope. */
         tc_mat4 model = v->play->use_ai && v->play->has_driver ? v->play->pose_draw
                                                                : tc_player_model_matrix(&v->play->player);
+        sec = tc_viewer_ed_sector(v);
+        z = water && sec != TC_SECTOR_NONE && sec < v->sectors->count ? v->sector_water[sec] : NAN;
         for (ch = 0; ch < nch; ch++) {
             uint16_t obj = a->shown[s.s0 * nch + ch];
             tc_mat4 m, world;
@@ -1571,7 +1621,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
             world = tc_mat4_mul(&model, &m);
             for (k = 0; k < l->ed.part_count; k++)
                 if (l->ed.parts[k].object == obj) {
-                    add_draw(v, &dl, v->ed_first + k, &world, 0, l->ed.parts[k].mesh.index_count);
+                    add_draw(v, &dl, v->ed_first + k, &world, 0, l->ed.parts[k].mesh.index_count, z);
                     v->ed_draw_count++;
                 }
         }

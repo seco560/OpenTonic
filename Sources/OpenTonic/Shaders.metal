@@ -22,7 +22,7 @@ struct Uniforms {
     float gamma;             // display gamma, 1 = unchanged
     float4 fog;              // near, far (view depth), enabled (0/1), strength (0..1: fading with a sector change)
     float4 fogColor;         // rgb, unused
-    float4 eye;              // camera position (world), unused
+    float4 eye;              // camera position (world): fog depth, the water sheen, the water effect
     float4 camRight;         // camera axes (world), for billboards
     float4 camUp;
     uint lightNext;          // the set a change blends towards (= lightSet when none runs)
@@ -38,6 +38,7 @@ struct DrawParams {
     uint billboard;          // 1: sprite quad (TC_FLAG_BILLBOARD), expanded towards the camera
     float4 ambient;          // rgb: the material's ambient
     float4 diffuse;          // rgb: the material's diffuse
+    float4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater)
 };
 
 // The frame's lights (tc_view_light): spherical and parallel, world space.
@@ -46,11 +47,14 @@ struct Light {
     float4 direction;        // parallel: xyz the way it shines; w: near
     float4 color;            // rgb (x its fade); w: far
 };
+// The lights at offset 16, as Renderer.swift packs them. Not `uint3 pad`: a uint3 is 16-aligned in Metal, which put
+// the array at 32 and read every light one float4 late (colour = the next light's position: Totalski red, pyramide green).
 struct Lights {
     uint count;
-    uint3 pad;
+    uint pad0, pad1, pad2;
     Light light[48];         // TC_VIEW_MAX_LIGHTS
 };
+static_assert(__builtin_offsetof(Lights, light) == 16, "Lights must match Renderer.swift's packing");
 
 struct VertexOut {
     float4 position [[position]];
@@ -72,9 +76,12 @@ static float4 baked(VertexIn in, uint s) {
 // Spherical (GLIGLOU_00443a10): only when the object's centre is within far (GLIGLOU_00443940), then per vertex
 // nearer than far and facing it: N.L, x (far^2 - d^2) / (far^2 - near^2) beyond near. Parallel (GLIGLOU_00444fc0):
 // -N.direction where positive.
+// Under the water effect (GLIGLOU_00442ce0), before the material: + the engine's default tint (-0.6, -0.3, -0.4) x the
+// depth below the plane / 7, full from 7 deep (no level sets its own: visual environment +0 is null in all of them).
 static float3 game_light(float4 bakedColor, float3 world, float3 n, float3 centre, constant DrawParams &d,
                          constant Uniforms &u, constant Lights &lights) {
     float3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (255.0 / 256.0) : float3(0.0);
+    if (d.water.y > 0.5) acc += float3(-0.6, -0.3, -0.4) * saturate((d.water.x - world.z) / 7.0);
     for (uint i = 0; i < min(lights.count, 48u); i++) {
         Light l = lights.light[i];
         if (l.position.w < 1.5) {  // parallel
@@ -96,6 +103,21 @@ static float3 game_light(float4 bakedColor, float3 world, float3 n, float3 centr
     return saturate((acc * d.diffuse.rgb + add) * (512.0 / 255.0));
 }
 
+// The water effect's wobble (GLIGLOU_00442ae0), on the projected vertex in the original's 640 x 480 pixels: x and y
+// each move by 2 cos((pixel + frame) x 2 pi / 64) (y a quarter turn on) x an amplitude; the frame is the rendering
+// counter (DAT_004ec8ac; here 60 per second of the animation clock). The camera above the water: what is below it
+// wobbles, 1.4 from 5 deep, ramping from 0 at the surface; the camera below it (flag 8): only what is more than 5
+// above the water. Only in front of the camera.
+static float4 underwater_wobble(float4 clip, float depth, float eyeDepth, constant Uniforms &u) {
+    float amp = eyeDepth < 0.0 ? (depth > 5.0 ? 1.4 : 0.0) : (depth >= 0.0 ? 0.0 : 1.4 * saturate(-depth / 5.0));
+    if (amp <= 0.0 || clip.w <= 0.25) return clip;
+    float2 px = (clip.xy / clip.w * float2(0.5, -0.5) + 0.5) * float2(640.0, 480.0);
+    float frame = floor(u.time * 60.0), k = 2.0 * M_PI_F / 64.0;
+    px += 2.0 * float2(cos((floor(px.x + 0.5) + frame) * k), cos((floor(px.y + 0.5) + 16.0 + frame) * k)) * amp;
+    clip.xy = ((px / float2(640.0, 480.0) - 0.5) / float2(0.5, -0.5)) * clip.w;
+    return clip;
+}
+
 vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[buffer(1)]],
                               constant DrawParams &d [[buffer(2)]], constant Lights &lights [[buffer(4)]]) {
     VertexOut out;
@@ -105,6 +127,14 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
         world.xyz += u.camRight.xyz * in.normal.x + u.camUp.xyz * in.normal.y;
         out.normal = float3(0.0);
     }
+    // The water effect's lift (GLIGLOU_00442da0): with the camera not below the water, vertices below it are drawn
+    // 0.7 x their depth higher (seen from above, the pool looks 0.3 as deep; everything under it alike, so Ed keeps
+    // above its floor). Its test is in camera space (the plane's offset from the camera: flag 8 = the camera under the
+    // water), not per object. The tint and the wobble keep the real depth, stored before the move.
+    float3 real = world.xyz;
+    bool water = d.water.y > 0.5 && d.billboard == 0;
+    float eyeDepth = u.eye.z - d.water.x;
+    if (water && eyeDepth >= 0.0) world.z += 0.7 * max(0.0, d.water.x - world.z);
     out.position = u.viewProjection * world;
     out.world = world.xyz;
     out.uv2 = in.uv2;
@@ -113,7 +143,8 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
     if (u.lighting == 0) {  // the vertex's light itself (alpha 1); sprites unlit
         float3 n = length(out.normal) > 0.0 ? normalize(out.normal) : float3(0.0);
         out.color = d.billboard != 0 ? float4(1.0)
-                  : float4(game_light(out.color, world.xyz, n, (d.model * float4(in.centre, 1.0)).xyz, d, u, lights), 1.0);
+                  : float4(game_light(out.color, real, n, (d.model * float4(in.centre, 1.0)).xyz, d, u, lights), 1.0);
+        if (water) out.position = underwater_wobble(out.position, real.z - d.water.x, eyeDepth, u);
     }
     return out;
 }
@@ -164,8 +195,10 @@ float4 water_sheen(VertexOut in, constant Uniforms &u) {
     float3 sky = float3(0.62, 0.74, 0.86);
     float3 h = normalize(v + normalize(u.lightDirection));
     float spec = pow(saturate(dot(n, h)), 80.0) * 0.9;
-    // with the sky's light: dim at night (sud0's day / night cycle)
-    return float4((sky * fresnel * 0.8 + float3(spec)) * u.skyLight.rgb, saturate(0.35 + fresnel));
+    // with the sky's light: dim at night (sud0's day / night cycle). Kept faint (0.35; user, 2026-10-30: the original's
+    // blue water is not this reflective): the texture's own colour and alpha stay the look.
+    const float strength = 0.35;
+    return float4((sky * fresnel * 0.8 + float3(spec)) * u.skyLight.rgb * strength, saturate(0.1 + fresnel * 0.5));
 }
 
 // The original's alpha test for cut-outs: GREATEREQUAL 225 (TC_ALPHA_REF, GliDX6vr.dll; DECOMP.md).
