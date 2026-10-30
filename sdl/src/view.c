@@ -11,20 +11,24 @@ typedef struct gpu_uniforms {
     float baked_scale;   /* vertex colour (0..1) -> light factor: 255/128, see level.RADIOSITY_ONE */
     uint32_t light_set;  /* baked set shown (light persos, number keys); falls back to set 0 per vertex */
     float gamma;         /* display gamma (- / = keys), 1 = unchanged */
-    float fog[4];        /* near, far, enabled, unused */
+    float fog[4];        /* near, far, enabled, strength (0..1: fading with a sector change) */
     float fog_color[4];
     float eye[4];
     float cam_right[4];  /* camera axes, for billboards */
     float cam_up[4];
     uint32_t light_next; /* the set a change blends towards */
     float light_blend;   /* 0..1 */
-    float pad[2];
+    uint32_t lighting;   /* tc_view_lighting: 0 the original's formula, 1 the port's earlier look */
+    float pad;
+    float ambient_light[4]; /* the ambient lights' sum (G) */
+    float sky_light[4];  /* the sky's light (day / night), for the water's sheen */
 } gpu_uniforms;
 _Static_assert(offsetof(gpu_uniforms, light_direction) == 64, "std140: vec3 at 64");
 _Static_assert(offsetof(gpu_uniforms, ambient) == 76, "std140: float packs after the vec3");
 _Static_assert(offsetof(gpu_uniforms, fog) == 96, "std140: vec4 at 96");
 _Static_assert(offsetof(gpu_uniforms, light_next) == 176, "std140: uint after the last vec4");
-_Static_assert(sizeof(gpu_uniforms) == 192, "gpu_uniforms must match shaders/level_common.glsl");
+_Static_assert(offsetof(gpu_uniforms, ambient_light) == 192, "std140: vec4 at 192");
+_Static_assert(sizeof(gpu_uniforms) == 224, "gpu_uniforms must match shaders/level_common.glsl");
 
 /* Must match the DrawParams block in shaders/level.vert (std140, padded to 16). */
 typedef struct gpu_draw_params {
@@ -32,8 +36,18 @@ typedef struct gpu_draw_params {
     float scroll[2];
     uint32_t billboard;  /* TC_FLAG_BILLBOARD sprite quads */
     uint32_t pad;
+    float ambient[4];    /* the material's (tc_view_draw) */
+    float diffuse[4];
 } gpu_draw_params;
-_Static_assert(sizeof(gpu_draw_params) == 80, "gpu_draw_params must match shaders/level.vert");
+_Static_assert(offsetof(gpu_draw_params, ambient) == 80, "std140: vec4 at 80");
+_Static_assert(sizeof(gpu_draw_params) == 112, "gpu_draw_params must match shaders/level.vert");
+
+/* Must match the Lights block in shaders/level.vert (std140): the frame's lights as tc_view_light (3 x vec4 each). */
+typedef struct gpu_lights {
+    uint32_t count, pad[3];
+    tc_view_light light[TC_VIEW_MAX_LIGHTS];
+} gpu_lights;
+_Static_assert(offsetof(gpu_lights, light) == 16 && sizeof(tc_view_light) == 48, "gpu_lights must match shaders/level.vert");
 
 /* The Flags block in shaders/level.frag. */
 typedef struct gpu_flags { uint32_t flags, coverage, pad[2]; } gpu_flags;
@@ -172,6 +186,8 @@ void view_free(view *v) {
 
 /* ---- drawing ---- */
 
+static void vec4(float out[4], tc_vec3 v, float w) { out[0] = v.x; out[1] = v.y; out[2] = v.z; out[3] = w; }
+
 typedef struct draw_ctx {
     view *v;
     SDL_GPUCommandBuffer *cmd;
@@ -212,11 +228,11 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     params.scroll[1] = s->scroll[1];
     params.billboard = (d->flags & TC_FLAG_BILLBOARD) ? 1 : 0;
     params.pad = 0;
+    vec4(params.ambient, tc_v3(d->ambient[0], d->ambient[1], d->ambient[2]), 0);
+    vec4(params.diffuse, tc_v3(d->diffuse[0], d->diffuse[1], d->diffuse[2]), 0);
     SDL_PushGPUVertexUniformData(c->cmd, 1, &params, sizeof params);
     SDL_DrawGPUIndexedPrimitives(c->pass, d->index_count, 1, m->first_index + d->first_index, m->vertex_offset, 0);
 }
-
-static void vec4(float out[4], tc_vec3 v, float w) { out[0] = v.x; out[1] = v.y; out[2] = v.z; out[3] = w; }
 
 void view_draw_frame(view *v, gpu_frame *f) {
     tc_view_frame fr;
@@ -242,12 +258,21 @@ void view_draw_frame(view *v, gpu_frame *f) {
     u.fog[0] = fr.fog_near;
     u.fog[1] = fr.fog_far;
     u.fog[2] = fr.fog_on ? 1 : 0;
+    u.fog[3] = fr.fog_strength;
     vec4(u.fog_color, tc_v3(fr.fog_color[0], fr.fog_color[1], fr.fog_color[2]), 0);
     vec4(u.eye, fr.eye, 0);
     vec4(u.cam_right, fr.cam_right, 0);
     vec4(u.cam_up, fr.cam_up, 0);
+    u.lighting = fr.lighting;
+    vec4(u.ambient_light, tc_v3(fr.ambient_light[0], fr.ambient_light[1], fr.ambient_light[2]), 0);
+    vec4(u.sky_light, tc_v3(fr.sky_light[0], fr.sky_light[1], fr.sky_light[2]), 0);
+    static gpu_lights lights; /* 2.3 KB: off the stack */
+    SDL_zero(lights);
+    lights.count = fr.light_count;
+    SDL_memcpy(lights.light, fr.lights, sizeof lights.light);
     SDL_PushGPUVertexUniformData(f->cmd, 0, &u, sizeof u);
     SDL_PushGPUFragmentUniformData(f->cmd, 0, &u, sizeof u);
+    SDL_PushGPUVertexUniformData(f->cmd, 2, &lights, sizeof lights);
 
     SDL_GPUBufferBinding vb = {v->vertices, 0}, ib = {v->indices, 0};
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
@@ -269,6 +294,7 @@ void view_draw_frame(view *v, gpu_frame *f) {
         c.bound = NULL;
         SDL_PushGPUVertexUniformData(f->cmd, 0, &u, sizeof u);
         SDL_PushGPUFragmentUniformData(f->cmd, 0, &u, sizeof u);
+        SDL_PushGPUVertexUniformData(f->cmd, 2, &lights, sizeof lights);
         SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
         SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
     }

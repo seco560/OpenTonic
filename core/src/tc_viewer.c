@@ -13,7 +13,7 @@ void tc_camera_init(tc_camera *c) {
     c->position = tc_v3(0, 0, 0);
     c->yaw = 0;
     c->pitch = 0;
-    c->vertical_fov = 55 * TC_PI / 180;
+    c->vertical_fov = 80 * TC_PI / 180;
     c->near_z = 0.05f;
     c->far_z = 2000;
 }
@@ -617,6 +617,90 @@ static bool mesh_ranges(tc_viewer *v, const uint32_t *piece_ranges) {
     return true;
 }
 
+/* ---- lighting (TC_VL_GAME) ---- */
+
+/* The original's vertex light for a baked colour (0..1 per channel, radiosity / 255) without lights. */
+static float formula_light(float c, float ambient, float diffuse) {
+    return fminf(1, fmaxf(0, (c * (255.0f / 256) * diffuse + ambient) * (512.0f / 255)));
+}
+
+/* Per baked set, the mean light of the sky's vertices (TC_SKY_ALPHA) under the formula: how lit the sky is, for the
+ * water's sheen (sud0's day / night). 1 without a sky. */
+static void measure_sky(tc_viewer *v) {
+    const tc_level *l = v->level;
+    double sum[3][3] = {{0}};
+    uint32_t i, k, n = 0, set, ch;
+    for (i = 0; i < l->mesh_count; i++) {
+        const tc_mesh *m = &l->meshes[i];
+        for (k = 0; k < m->vertex_count; k++) {
+            uint32_t a = m->vertices[k].color[0] >> 24;
+            if (a < 64 || a > 192) continue; /* not a sky's (TC_SKY_ALPHA) */
+            n++;
+            for (set = 0; set < 3; set++) {
+                uint32_t c = m->vertices[k].color[set];
+                if ((c >> 24) < 64) c = m->vertices[k].color[0]; /* the shaders' fallback to set 0 */
+                for (ch = 0; ch < 3; ch++)
+                    sum[set][ch] += formula_light((float)((c >> (8 * ch)) & 0xFF) / 255, m->surface.ambient[ch],
+                                                  m->surface.diffuse[ch]);
+            }
+        }
+    }
+    for (set = 0; set < 3; set++)
+        for (ch = 0; ch < 3; ch++) v->sky_light[set][ch] = n ? (float)(sum[set][ch] / n) : 1;
+}
+
+/* Ed's sector's lights and its fog at the camera (FUN_00451d80 pushes the lights of the sector the frame is drawn from;
+ * FUN_00451e80 sets the fog of its env at the camera, FUN_00451c40), faded over TC_VIEW_LIGHT_FADE where the original
+ * switches at once (the user's choice, 2026-10-30). */
+/* The camera's sector (TC_VIEW_LIGHT_FADE's note): from Ed's head to the camera through the portals of his. */
+static uint16_t camera_sector(const tc_viewer *v) {
+    uint16_t s = tc_viewer_ed_sector(v);
+    if (s == TC_SECTOR_NONE || !v->play) return s;
+    return tc_sectors_cross(v->sectors, s, tc_v3_add(v->play->player.position, tc_v3(0, 0, 1.1f)), v->camera.position);
+}
+
+static void update_lighting(tc_viewer *v, float dt) {
+    const tc_level *l = v->level;
+    uint16_t s = v->light_sector = camera_sector(v), k;
+    const tc_sector *sec = v->sectors && s < v->sectors->count ? &v->sectors->sectors[s] : NULL;
+    float step = v->lights_started ? dt / TC_VIEW_LIGHT_FADE : 1, ease;
+    const tc_sector_env *env = NULL;
+    tc_sector_env level_fog;
+    uint32_t i;
+    if (!l->has_lighting) return;
+    if (v->light_wanted) {
+        memset(v->light_wanted, 0, l->light_count);
+        for (k = 0; sec && k < sec->light_count; k++) v->light_wanted[sec->lights[k]] = 1;
+        for (i = 0; i < l->light_count; i++) {
+            float w = v->light_instant[i] ? (v->light_wanted[i] ? 1.0f : 0.0f)
+                                          : v->light_weight[i] + (v->light_wanted[i] ? step : -step);
+            v->light_weight[i] = w < 0 ? 0 : w > 1 ? 1 : w;
+        }
+    }
+    k = sec ? tc_sectors_env_index(v->sectors, s, v->camera.position, NULL) : TC_SECTOR_NONE;
+    if (k != TC_SECTOR_NONE && sec->envs[k].fog && sec->envs[k].fog_far > sec->envs[k].fog_near) env = &sec->envs[k];
+    if (!sec && v->has_fog) { /* no sector known (or none in the level): the level's fog */
+        level_fog.fog = 1;
+        level_fog.fog_near = l->fog_near;
+        level_fog.fog_far = l->fog_far;
+        memcpy(level_fog.fog_rgb, l->fog_rgb, sizeof(level_fog.fog_rgb));
+        env = &level_fog;
+    }
+    if (env && v->sector_fog_strength <= 0) { /* fading in from none: its own values */
+        v->sector_fog_near = env->fog_near;
+        v->sector_fog_far = env->fog_far;
+        memcpy(v->sector_fog_color, env->fog_rgb, sizeof(v->sector_fog_color));
+    } else if (env) {
+        ease = step >= 1 ? 1 : 1 - expf(-3 * step); /* most of the way within the fade */
+        v->sector_fog_near += (env->fog_near - v->sector_fog_near) * ease;
+        v->sector_fog_far += (env->fog_far - v->sector_fog_far) * ease;
+        for (i = 0; i < 3; i++) v->sector_fog_color[i] += (env->fog_rgb[i] - v->sector_fog_color[i]) * ease;
+    }
+    v->sector_fog_strength += env ? step : -step;
+    v->sector_fog_strength = v->sector_fog_strength < 0 ? 0 : v->sector_fog_strength > 1 ? 1 : v->sector_fog_strength;
+    v->lights_started = true;
+}
+
 tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     const tc_level *l = desc->level;
     uint32_t i, k, n = 0, *piece_ranges = NULL;
@@ -630,7 +714,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->fog_enabled = true;
     v->fly_speed = 10;
     v->turn_speed = 1.6f;
-    v->orbit_distance = 4.5f;
+    v->orbit_distance = 6.0f;
     v->ed_clip = -1;
     v->ed_state = -1;
     tc_camera_init(&v->camera);
@@ -642,6 +726,26 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         memcpy(v->fog_color, l->fog_rgb, sizeof(v->fog_color));
     }
     v->light_set_count = l->light_set_count > 1 ? l->light_set_count : 1;
+    v->lighting = l->has_lighting ? TC_VL_GAME : TC_VL_PORT;
+    if (l->light_count) {
+        v->light_weight = (float *)tc_calloc(l->light_count, sizeof(float));
+        v->light_wanted = (uint8_t *)tc_calloc(l->light_count, 1);
+        v->light_instant = (uint8_t *)tc_calloc(l->light_count, 1);
+        if (!v->light_weight || !v->light_wanted || !v->light_instant) {
+            tc_viewer_free(v);
+            return TC_ERR_OUT_OF_MEMORY;
+        }
+        for (i = 0; i < l->light_count; i++)
+            for (k = 0; k < 3; k++)
+                if (l->lights[i].color[k] < 0 || l->lights[i].color[k] > 1) v->light_instant[i] = 1;
+    }
+    v->light_sector = TC_SECTOR_NONE;
+    measure_sky(v);
+    for (i = 0; i < l->sectors.count; i++)
+        for (k = 0; k < l->sectors.sectors[i].env_count; k++) {
+            const tc_sector_env *e = &l->sectors.sectors[i].envs[k];
+            v->has_sector_fog |= e->fog && e->fog_far > e->fog_near && e->fog_near < 10000;
+        }
 
     v->sectors = l->sectors.count ? &l->sectors : NULL;
     v->sector_mode = TC_VS_SECTOR; /* the user's default (2026-10-30): Ed's sector and its list; K cycles */
@@ -770,6 +874,9 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->sector_shown);
     tc_free(v->mesh_ranges);
     tc_free(v->ranges);
+    tc_free(v->light_weight);
+    tc_free(v->light_wanted);
+    tc_free(v->light_instant);
     memset(v, 0, sizeof(*v));
 }
 
@@ -898,6 +1005,66 @@ void tc_viewer_toggle_ai(tc_viewer *v) {
     v->play->tick_time = 0;
     v->ed_state = -1;
     v->ed_phase = 0;
+}
+
+/* ---- demo ---- */
+
+static float demo_random(tc_viewer *v) {
+    v->rng = v->rng * 1103515245u + 12345u;
+    return (float)((v->rng >> 8) & 0xFFFFu) / 65536.0f;
+}
+
+void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed) {
+    v->demo = on && v->play != NULL;
+    if (seed) v->rng = seed;
+    v->move_x = v->move_y = v->look_x = v->look_y = 0;
+    v->held &= ~(1u << TC_VA_JUMP);
+    if (!v->demo) return;
+    if (!v->playing) tc_viewer_toggle_play(v);
+    v->demo_turn = 0;
+    v->demo_pace = 1;
+    v->demo_next = 2;
+    v->demo_jump_in = 3;
+    v->demo_jump_hold = 0;
+    v->demo_check = 0.75f;
+    v->demo_hard_turn = 0;
+    v->demo_last = v->play->player.position;
+}
+
+bool tc_viewer_demo(const tc_viewer *v) { return v->demo; }
+
+/* One frame of the autopilot (tc_viewer_set_demo): sets the stick, the camera's turn and Jump as a player would. */
+static void demo_step(tc_viewer *v, float dt) {
+    tc_vec3 at = v->play->player.position;
+    float dx, dy;
+    if ((v->demo_next -= dt) <= 0) {
+        v->demo_next = 2 + 3 * demo_random(v);
+        v->demo_turn = (demo_random(v) - 0.5f) * 0.7f;
+        v->demo_pace = demo_random(v) < 0.2f ? 0.45f : 1;
+    }
+    if ((v->demo_check -= dt) <= 0) {
+        dx = at.x - v->demo_last.x;
+        dy = at.y - v->demo_last.y;
+        if (dx * dx + dy * dy < 0.25f && v->demo_hard_turn <= 0) { /* stuck against something: turn away, hop */
+            v->demo_hard_turn = 0.6f + 0.6f * demo_random(v);
+            v->demo_turn = demo_random(v) < 0.5f ? -1 : 1;
+            v->demo_jump_in = 0;
+        }
+        v->demo_check = 0.75f;
+        v->demo_last = at;
+    }
+    if (v->demo_hard_turn > 0 && (v->demo_hard_turn -= dt) <= 0) v->demo_next = 0; /* done: a new gentle turn */
+    if (v->demo_jump_hold > 0) v->demo_jump_hold -= dt;
+    else if ((v->demo_jump_in -= dt) <= 0) {
+        v->demo_jump_hold = 0.15f + 0.3f * demo_random(v); /* longer: higher */
+        v->demo_jump_in = 2 + 4 * demo_random(v);
+    }
+    v->move_x = 0;
+    v->move_y = v->demo_hard_turn > 0 ? 0.6f : v->demo_pace;
+    v->look_x = v->demo_turn;
+    v->look_y = fmaxf(-1, fminf(1, (-0.3f - v->camera.pitch) * 2)); /* the camera a little above him */
+    if (v->demo_jump_hold > 0) v->held |= 1u << TC_VA_JUMP;
+    else v->held &= ~(1u << TC_VA_JUMP);
 }
 
 bool tc_viewer_can_play(const tc_viewer *v) { return v->play != NULL; }
@@ -1120,9 +1287,13 @@ uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
 void tc_viewer_update(tc_viewer *v, float dt) {
     v->sound_count = 0;
     if (v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) look(v, 0); /* the level is about to change: Ed waits */
-    else if (v->playing) update_play(v, dt);
+    else if (v->playing) {
+        if (v->demo) demo_step(v, dt);
+        update_play(v, dt);
+    }
     else fly(v, dt);
     update_sectors(v);
+    update_lighting(v, dt);
     update_portals(v, v->paused ? 0 : dt);
     update_light(v, v->paused ? 0 : dt); /* the game clock, as Ed's AI */
     if (!v->paused) v->animation_time += dt * v->animation_speed;
@@ -1162,6 +1333,10 @@ void tc_viewer_step_fov(tc_viewer *v, int dir) {
 
 void tc_viewer_toggle_fog(tc_viewer *v) { v->fog_enabled = !v->fog_enabled; }
 
+void tc_viewer_cycle_lighting(tc_viewer *v) {
+    if (v->level->has_lighting) v->lighting = (tc_view_lighting)((v->lighting + 1) % TC_VL_COUNT);
+}
+
 void tc_viewer_cycle_sectors(tc_viewer *v) {
     if (v->sectors) v->sector_mode = (tc_view_sectors)((v->sector_mode + 1) % TC_VS_COUNT);
 }
@@ -1189,7 +1364,9 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     else if (v->light_set_count > 1)
         APPEND(", light %u/%u", (unsigned)v->light_set + 1, (unsigned)v->light_set_count);
     if (v->light_set_count > 1 && v->light && !v->light_scripted) APPEND("%s", " held");
-    if (v->has_fog) APPEND("%s", v->fog_enabled ? ", fog on" : ", fog off");
+    if (v->lighting == TC_VL_GAME ? v->has_sector_fog : v->has_fog)
+        APPEND("%s", v->fog_enabled ? ", fog on" : ", fog off");
+    if (v->lighting == TC_VL_PORT && v->level->has_lighting) APPEND("%s", ", old lighting");
     if (v->sectors && v->sector_mode != TC_VS_ALL)
         APPEND(", sector %s%s", tc_sectors_name(v->sectors, tc_viewer_ed_sector(v)),
                v->sector_mode == TC_VS_ALONE ? " alone" : "");
@@ -1293,6 +1470,8 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     d->first_index = first;
     d->index_count = count;
     d->model = *model;
+    memcpy(d->ambient, m->surface.ambient, sizeof(d->ambient));
+    memcpy(d->diffuse, m->surface.diffuse, sizeof(d->diffuse));
 }
 
 /* A mesh whole, or with `shown` (NULL: all) the runs of its ranges whose group is shown, each run of consecutive shown
@@ -1411,7 +1590,13 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
     const tc_camera *c = &v->camera;
     tc_vec3 right = tc_camera_right(c);
-    bool fog_on = v->fog_enabled && v->has_fog;
+    const tc_level *l = v->level;
+    bool game = v->lighting == TC_VL_GAME;
+    bool fog_on = v->fog_enabled && (game ? v->sector_fog_strength > 0 : v->has_fog);
+    const float *fog_color = game ? v->sector_fog_color : v->fog_color;
+    const float none[3] = {0.08f, 0.09f, 0.14f};
+    float vis;
+    uint32_t i, k;
     memset(out, 0, sizeof(*out));
     out->view_projection = tc_camera_view_projection(c, aspect);
     out->light_direction = tc_v3_normalize(tc_v3(0.4f, -0.3f, 0.85f));
@@ -1423,20 +1608,45 @@ void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
     out->light_blend = v->light_rate > 0 ? v->light_blend : 0;
     out->gamma = v->gamma;
     out->fog_on = fog_on;
-    if (v->has_fog) {
-        out->fog_near = v->fog_near;
-        out->fog_far = v->fog_far;
-        memcpy(out->fog_color, v->fog_color, sizeof(out->fog_color));
+    out->fog_strength = game ? v->sector_fog_strength : 1;
+    if (game ? v->sector_fog_strength > 0 : v->has_fog) {
+        out->fog_near = game ? v->sector_fog_near : v->fog_near;
+        out->fog_far = game ? v->sector_fog_far : v->fog_far;
+        memcpy(out->fog_color, fog_color, sizeof(out->fog_color));
     }
     out->eye = c->position;
     out->cam_right = right;
     out->cam_up = tc_v3_cross(right, tc_camera_forward(c));
-    if (fog_on) {
-        memcpy(out->clear_color, v->fog_color, sizeof(out->clear_color));
-    } else {
-        out->clear_color[0] = 0.08f;
-        out->clear_color[1] = 0.09f;
-        out->clear_color[2] = 0.14f;
+    /* The fog colour with fog (as much as it is faded in), else a dark blue. The engine's default fog (near 20000:
+     * every sector without one of its own) is out of sight: its colour only from near 10000 down to 5000 (a fade). */
+    vis = !fog_on ? 0 : !game ? 1 : fminf(1, fmaxf(0, (10000 - v->sector_fog_near) / 5000)) * out->fog_strength;
+    for (i = 0; i < 3; i++) out->clear_color[i] = none[i] + (fog_color[i] - none[i]) * vis;
+
+    out->lighting = v->lighting;
+    for (i = 0; i < 3; i++) {
+        out->sky_light[i] = game ? v->sky_light[out->light_set % 3][i] +
+                                       (v->sky_light[out->light_next % 3][i] - v->sky_light[out->light_set % 3][i]) *
+                                           out->light_blend
+                                 : 1;
+    }
+    for (i = 0; game && v->light_weight && i < l->light_count; i++) {
+        const tc_light *L = &l->lights[i];
+        float w = v->light_weight[i];
+        tc_view_light *o;
+        if (w <= 0 || !L->on || L->alpha_mode == 1) continue; /* 1: alpha only, no colour */
+        if (L->type == TC_LIGHT_AMBIENT) {
+            for (k = 0; k < 3; k++) out->ambient_light[k] += L->color[k] * w;
+            continue;
+        }
+        if ((L->type != TC_LIGHT_SPHERICAL && L->type != TC_LIGHT_PARALLEL) || out->light_count >= TC_VIEW_MAX_LIGHTS)
+            continue; /* hotspots: not read yet (docs/DECOMP.md) */
+        o = &out->lights[out->light_count++];
+        o->position[0] = L->position.x, o->position[1] = L->position.y, o->position[2] = L->position.z;
+        o->position[3] = (float)L->type;
+        o->direction[0] = L->direction.x, o->direction[1] = L->direction.y, o->direction[2] = L->direction.z;
+        o->direction[3] = L->near_range;
+        for (k = 0; k < 3; k++) o->color[k] = L->color[k] * w;
+        o->color[3] = L->far_range;
     }
 }
 

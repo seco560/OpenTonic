@@ -214,9 +214,12 @@ Each item is marked in the code or in docs/NOTES.md.
    GAM_0042c810), the down-ray lookup on teleports (FUN_00451240), the water in the perso's own sector, and drawing from
    the camera's sector with its +0x4C list (FUN_00451d80, list mode 0); the viewer draws from Ed's (the user's choice) by
    default (K: all sectors / Ed's alone). Checked against the
-   snapshot's own perso sectors (sectorcheck). Left: per-sector fog and lights (below), moving persos' sectors.
+   snapshot's own perso sectors (sectorcheck). Left: moving persos' sectors (per-sector fog and lights: ported 2026-10-30).
 
 ## Rendering and lighting
+**Ported 2026-10-30** (docs/NOTES.md "Lighting: the original's formula"): the vertex colour formula, the sector lights
+(spherical with the per-object cull, parallel, ambient), the sector / env fog, the material coefficients; not
+hotspots, MS lights, the underwater tint, the surface waves. The list below is the state before that:
 GLI (29 KB) is 0 % read. Everything lighting does now is inferred from the data, not read from the code:
 - the radiosity combine (x 255 / 128, overbright x 2)
 - which radiosity set is used (A, B or C, and whether they blend)
@@ -383,3 +386,15 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   (matches: their materials, ambient mostly 0.87, make them flat at full brightness in the original). The original
   hides imperfections with a fixed camera; the user keeps the free camera and wants it improved (the camera was one
   of the game's weaknesses).
+- **Lights, census and corrections (2026-10-30, read, not ported).** At most 21 lights in one sector (Totalski sct29;
+  pyramide 14, pharmmap 11, north 3; sud0, LeCanyon, cock01, mammyon none), all with +0xa4 = 1 and +0xa6 / +0xa7 = 0;
+  no flag limits a light to characters (nothing reads +0xa5), so the sector's lights reach static geometry too. Odd
+  data: north has darkening lights (colour -10, e.g. near 3 / far 8) and +7 ones (near 32.3 / far 35.2); Totalski
+  pairs a +5 and a -5 light at the same place and range in 13 sectors (they cancel). **Per-object cull:**
+  GLIGLOU_00443940 zeroes the object's bounding radius (state +0x3c, asm 0x44395c) before testing, so a light reaches
+  an object only when the object's bounding-sphere centre (state +0x30, FUN_00445d50: geometric +0x34 through the
+  object matrix) is within the light's far range; then per vertex: full N.L inside near, x (far^2 - d^2) / (far^2 -
+  near^2) out to far (GLIGLOU_00443a10 / 00443c50). **Correction:** Totalski's 7 ambient lights all sit in virtual
+  sectors (sct12v..15v, sct27v, sctfinish, sctfleche03: no portals lead in, no floors), and the listed-sector draw
+  (FUN_004521b0) pushes no sector lights, so as read they never apply. The dark spots on the slope are more likely the
+  missing ambient floor: the formula never goes below 2 x ambient (0.2 there), the port's clamp(R) / 128 goes to 0.

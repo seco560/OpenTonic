@@ -6,8 +6,9 @@ import TonicCore
 /// zones are the core's), buttons hold the same actions as their keys. Positional: buttonA is Cross on a PlayStation
 /// pad, A on an Xbox one. Polled once a frame by the renderer, before tc_viewer_update.
 @MainActor final class Gamepad {
-    /// What the app does rather than the viewer: Start = level select, Select = the controls, R3 = play / free-fly.
-    enum Command { case levelSelect, controls, togglePlay }
+    /// What the app does rather than the viewer: Start = level select, Select = the controls, R3 = play / free-fly;
+    /// press: one of the face buttons went down (it ends the demo).
+    enum Command { case levelSelect, controls, togglePlay, press }
 
     private var pressed: [ObjectIdentifier: Bool] = [:]
     private var fast = false
@@ -30,13 +31,18 @@ import TonicCore
             (pad.buttonA, [TC_VA_JUMP]), (pad.buttonX, [TC_VA_ACTION]), (pad.buttonB, [TC_VA_SHOOT]),
             (pad.rightShoulder, [TC_VA_LATERAL, TC_VA_UP]), (pad.leftShoulder, [TC_VA_DOWN]),  // R1 also up, L1 down in free-fly
         ]
+        var anyDown = false
         for (button, actions) in bindings {
-            if let down = changed(button) { for a in actions { tc_viewer_set_action(v, a, down) } }
+            if let down = changed(button) {
+                for a in actions { tc_viewer_set_action(v, a, down) }
+                anyDown = anyDown || down
+            }
         }
         var commands: [Command] = []
         if changed(pad.buttonMenu) == true { commands.append(.levelSelect) }
         if let select = pad.buttonOptions, changed(select) == true { commands.append(.controls) }
         if let r3 = pad.rightThumbstickButton, changed(r3) == true { commands.append(.togglePlay) }
+        if anyDown || changed(pad.buttonY) == true { commands.append(.press) }
         return commands
     }
 

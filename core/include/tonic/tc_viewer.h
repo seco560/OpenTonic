@@ -27,7 +27,7 @@ typedef struct tc_camera {
     float near_z, far_z;
 } tc_camera;
 
-void tc_camera_init(tc_camera *c);                /* at the origin, FOV 55 degrees, near 0.05, far 2000 */
+void tc_camera_init(tc_camera *c);                /* at the origin, FOV 80 degrees, near 0.05, far 2000 */
 tc_vec3 tc_camera_forward(const tc_camera *c);    /* (sin yaw cos pitch, cos yaw cos pitch, sin pitch) */
 tc_vec3 tc_camera_right(const tc_camera *c);      /* (cos yaw, -sin yaw, 0) */
 /* Right-handed view, perspective with 0..1 clip-space depth (Metal, SDL_GPU). Column-major. */
@@ -51,12 +51,39 @@ typedef struct tc_view_draw {
     uint32_t flags;       /* the surface's TC_FLAG_* */
     uint32_t first_index, index_count;
     tc_mat4 model;
+    float ambient[3], diffuse[3]; /* the surface's material (tc_surface), for TC_VL_GAME */
 } tc_view_draw;
 
 /* Which sectors are drawn (tc_sector.h), all from Ed's sector: his sector and the sectors of its list (the default: the
  * game's way of drawing, FUN_00451d80, sky included), every sector (the Tonic Viewer's view: the whole level at once),
  * or his sector alone (debug: which one he is in). Levels without sectors draw everything. */
 typedef enum tc_view_sectors { TC_VS_SECTOR, TC_VS_ALL, TC_VS_ALONE, TC_VS_COUNT } tc_view_sectors;
+
+/* How the level is lit: the original's formula (docs/DECOMP.md "Vertex colour") with the lights and fog of the sector the
+ * frame is drawn from (Ed's; the default), or the port's earlier look (radiosity x 255 / 128, a key light on persos,
+ * neutral skies, the level's most common fog), for comparing (L). Levels without .ttlv LITE have only the latter. */
+typedef enum tc_view_lighting { TC_VL_GAME, TC_VL_PORT, TC_VL_COUNT } tc_view_lighting;
+
+/* The lights of a frame (TC_VL_GAME), in world space: spherical and parallel ones (hotspots are not read yet, ambient
+ * ones are summed into tc_view_frame.ambient_light). A frame drawn from a sector gets its lights; when Ed's sector
+ * changes, the old sector's fade out and the new one's in over TC_VIEW_LIGHT_FADE seconds (the original switches at
+ * once), the fog too. At most TC_VIEW_MAX_LIGHTS (the most in one sector: 21, Totalski). Per vertex (the shaders):
+ *   spherical: when the object's centre (tc_vertex.centre) is within far and the vertex nearer than far, facing it:
+ *              colour x N.L, x (far^2 - d^2) / (far^2 - near^2) beyond near;
+ *   parallel:  colour x -N.direction where positive;
+ *   light = min(1, (radiosity x 255 / 256 + the lights) x diffuse + ambient + ambient_light x diffuse) x 512 / 255). */
+#define TC_VIEW_MAX_LIGHTS 48
+#define TC_VIEW_LIGHT_FADE 0.5f
+/* The sector the frame's lights and fog come from is the camera's, as the original's frame routine picks it: walked
+ * through the portals from Ed's sector, from his head to the camera, every frame (no tracking of its own to drift).
+ * Effect lights (a channel below 0 or above 1: the designers' darkeners at -10, the +5 / -5 pairs, north's +7) are never
+ * faded: part of one turns the radiosity into colour casts (only the strongest channel left), so they switch at once,
+ * as in the original. */
+typedef struct tc_view_light {
+    float position[4];        /* xyz; w: tc_light_type (TC_LIGHT_SPHERICAL or TC_LIGHT_PARALLEL) */
+    float direction[4];       /* parallel: xyz the way it shines; w: near (spherical) */
+    float color[4];           /* rgb x its fade (0..1); w: far (spherical) */
+} tc_view_light;
 
 /* Shading values for one frame; each frontend packs them into its own uniform layout. */
 typedef struct tc_view_frame {
@@ -74,6 +101,13 @@ typedef struct tc_view_frame {
     float fog_color[3];
     tc_vec3 eye, cam_right, cam_up;  /* camera axes, for billboards */
     float clear_color[3];     /* the fog colour with fog (the horizon fades into it), else (0.08, 0.09, 0.14) */
+    uint32_t lighting;        /* tc_view_lighting */
+    float fog_strength;       /* the fog's share, 0..1 (fading in or out with a sector change); 1 in TC_VL_PORT */
+    float ambient_light[3];   /* TC_VL_GAME: the ambient lights' sum (G) */
+    float sky_light[3];       /* TC_VL_GAME: the sky's light under the formula, for the water's sheen (day / night);
+                                 TC_VL_PORT: 1 */
+    uint32_t light_count;
+    tc_view_light lights[TC_VIEW_MAX_LIGHTS];
 } tc_view_frame;
 
 /* What to draw over the frame (docs/PORTALS.md): a screen transition, black, or the loading screen. */
@@ -142,6 +176,18 @@ typedef struct tc_viewer {
     float gamma;
     bool has_fog, fog_enabled;  /* the level's fog (.ttlv LEVL) and its toggle */
     float fog_near, fog_far, fog_color[3];
+    /* TC_VL_GAME (tc_view_lighting): per tc_level light, its share (0..1) while the lights fade with Ed's sector; the
+     * fog of his sector's env at the camera, faded the same way (sector_fog_strength 0: none); per baked set, the mean
+     * light of the sky's vertices under the formula (1 without a sky), for the water's sheen. */
+    tc_view_lighting lighting;
+    float *light_weight;
+    uint8_t *light_wanted;
+    uint8_t *light_instant;   /* per light: an effect light (a channel < 0 or > 1), switched at once, never faded */
+    uint16_t light_sector;    /* the sector the lights and fog come from: the camera's (the original's choice) */
+    bool lights_started;      /* the first update sets the weights and the fog at once */
+    float sector_fog_near, sector_fog_far, sector_fog_color[3], sector_fog_strength;
+    bool has_sector_fog;      /* a sector has fog in sight (near < 10000; the engine's default is 20000) */
+    float sky_light[3][3];
 
     /* Input. */
     uint32_t held;            /* 1 << tc_view_action */
@@ -150,6 +196,16 @@ typedef struct tc_viewer {
     float look_x, look_y;     /* right stick after the dead zone, x right, y up (tc_viewer_set_look_stick) */
     float fly_speed;          /* free-fly units per second (x4 with TC_VA_FAST) */
     float turn_speed;         /* radians per second */
+
+    /* Demo (tc_viewer_set_demo): Ed's autopilot. */
+    bool demo;
+    float demo_turn;          /* yaw rate, -1..1 of turn_speed */
+    float demo_pace;          /* stick push: 1 runs, ~0.45 walks */
+    float demo_next;          /* seconds to the next change of turn and pace */
+    float demo_jump_in, demo_jump_hold;
+    float demo_check;         /* seconds to the next stuck check */
+    float demo_hard_turn;     /* seconds of a hard turn left (stuck) */
+    tc_vec3 demo_last;        /* Ed at the last stuck check */
 
     /* Play mode: the default when the level has Ed, collision and an idle clip. */
     tc_viewer_play *play;     /* NULL: free-fly only */
@@ -275,6 +331,7 @@ void tc_viewer_follow_light(tc_viewer *v);   /* 0: the level's light persos set 
 void tc_viewer_step_gamma(tc_viewer *v, bool up);   /* - =: x1.1, 0.5-2.5 */
 void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps, 30-100 */
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
+void tc_viewer_cycle_lighting(tc_viewer *v);        /* L: the original's lighting <-> the port's earlier one */
 void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list (default) -> all -> his alone -> ... */
 /* Ed's sector (TC_SECTOR_NONE: none); tc_sectors_name for its name. */
 uint16_t tc_viewer_ed_sector(const tc_viewer *v);
@@ -285,6 +342,12 @@ void tc_viewer_wheel(tc_viewer *v, float notches);
 void tc_viewer_toggle_play(tc_viewer *v);
 /* I: Ed's own AI <-> the simple controller (levels with a .ttai). */
 void tc_viewer_toggle_ai(tc_viewer *v);
+/* Demo (the level select's Demo button): Ed wanders around by himself. Kept simple: the stick pushed forward (now and
+ * then half-way: a walk) while the camera, and so his way, turns at a random rate that changes every 2-5 s; a jump
+ * every 2-6 s; stuck (under 0.5 units in 0.75 s): a hard turn one way or the other, and a jump. Enters play mode;
+ * whatever the user presses is the frontend's to handle (it ends the demo: off, back to the level select). */
+void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed); /* seed: its randomness (0: keep the viewer's) */
+bool tc_viewer_demo(const tc_viewer *v);
 
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */
 bool tc_viewer_has_ai(const tc_viewer *v);     /* ... with Ed's AI */
@@ -295,7 +358,7 @@ bool tc_viewer_status_live(const tc_viewer *v);
 const tc_player *tc_viewer_player(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
- * "anim 1.00×, gamma 1.00, FOV 55°<extra>[, light 1/2|1→2[ held]][, fog on|off][, sector sctX[ alone]]
+ * "anim 1.00×, gamma 1.00, FOV 80°<extra>[, light 1/2|1→2[ held]][, fog on|off][, old lighting][, sector sctX[ alone]]
  * [, free-fly][, simple controller]" (light: the set shown, or the change running; held = a number key's pick in a level
  * with light persos; sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with
  * his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".

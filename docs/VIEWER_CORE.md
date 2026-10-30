@@ -34,7 +34,7 @@ typedef struct tc_camera {
     float vertical_fov;        /* Hor+: widescreen widens the view, never stretches */
     float near_z, far_z;
 } tc_camera;
-void tc_camera_init(tc_camera *c);                 /* fov 55 degrees, near 0.05, far 2000 */
+void tc_camera_init(tc_camera *c);                 /* fov 80 degrees, near 0.05, far 2000 */
 tc_vec3 tc_camera_forward(const tc_camera *c);     /* (sin yaw cos pitch, cos yaw cos pitch, sin pitch) */
 tc_vec3 tc_camera_right(const tc_camera *c);       /* (cos yaw, -sin yaw, 0) */
 tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);  /* right-handed, 0..1 depth */
@@ -92,7 +92,7 @@ State in the viewer, changed through small functions so both frontends behave th
   `tc_sectors_name`). docs/NOTES.md "Sectors".
 - `tc_viewer_wheel(v, y)`: orbit zoom while playing, fly speed (0.5-500) in free-fly, both x1.1 per notch.
 - `tc_viewer_status(v, buf, size)`: the UTF-8 readout both title bars show today: `view: anim 1.00×, gamma 1.00,
-  FOV 55°[, lighting 1/2][, fog on (G)][  ·  PLAYING as Ed (Tab: free-fly)][  ·  AI ... (I: simple controller)]`.
+  FOV 80°[, lighting 1/2][, fog on (G)][  ·  PLAYING as Ed (Tab: free-fly)][  ·  AI ... (I: simple controller)]`.
   Frontends add their own prefix (level name, stats) and extras (SDL: `AA 4x`).
 
 ### 5. Level setup at load
@@ -117,6 +117,7 @@ typedef struct tc_view_draw {
     uint32_t flags;     /* the surface's TC_FLAG_* (alpha test, transparent, billboard) */
     uint32_t first_index, index_count;  /* the part of the mesh's indices to draw */
     tc_mat4 model;
+    float ambient[3], diffuse[3]; /* the material's, for the formula */
 } tc_view_draw;
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
 ```
@@ -143,6 +144,11 @@ typedef struct tc_view_frame {
     float fog_color[3];
     tc_vec3 eye, cam_right, cam_up;
     float clear_color[3];       /* the fog colour with fog, else (0.08, 0.09, 0.14) */
+    uint32_t lighting;          /* tc_view_lighting: the original's formula (default) / the port's old look (L) */
+    float fog_strength;         /* 0..1 while the fog fades with Ed's sector */
+    float ambient_light[3], sky_light[3];  /* the ambient lights' sum; the sky's light (water sheen) */
+    uint32_t light_count;
+    tc_view_light lights[TC_VIEW_MAX_LIGHTS];  /* Ed's sector's spherical and parallel lights, x their fade */
 } tc_view_frame;
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out);
 void tc_viewer_update(tc_viewer *v, float dt);  /* input, Ed, cameras, animation clock */

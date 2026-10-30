@@ -5,7 +5,9 @@
  *     on sector boundaries, or in a virtual sector, which the lookup never picks);
  *   - each portal face, crossed from just in front of its centre to just behind, leads into its target
  *     (tc_sectors_cross, FUN_00451670), unless a nearer face of the same sector is in the way;
- *   - Ed's start has a sector.
+ *   - Ed's start has a sector;
+ *   - the lighting (.ttlv LITE): every sector's lights fit the frame (TC_VIEW_MAX_LIGHTS), every vertex got its object's
+ *     centre, and a viewer started on the level lights its first frame with the lights of Ed's sector, at once.
  * Usage: sectorcheck [out/ttlv] [level]. Test-only stdio and POSIX <dirent.h>. */
 #include <dirent.h>
 #include <stdio.h>
@@ -29,6 +31,87 @@ static uint8_t *read_file(const char *path, size_t *size) {
 }
 
 static int failures;
+
+/* The original's light of a baked byte without lights (tc_viewer.c formula_light). */
+static float formula(uint32_t byte, float ambient, float diffuse) {
+    float l = ((float)byte / 255 * (255.0f / 256) * diffuse + ambient) * (512.0f / 255);
+    return l < 0 ? 0 : l > 1 ? 1 : l;
+}
+
+static void lighting_check(const char *file, const tc_level *l) {
+    const tc_sectors *s = &l->sectors;
+    uint32_t i, k, most = 0, fogs = 0, envs = 0, uncentred = 0, verts = 0, baked = 0, spheres = 0, persos = 0, flat = 0;
+    double old_sum = 0, new_sum = 0;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_view_frame *f;
+    uint16_t sec;
+    if (!l->has_lighting) {
+        printf("  FAIL: no LITE chunk\n");
+        failures++;
+        return;
+    }
+    for (i = 0; i < s->count; i++) {
+        if (s->sectors[i].light_count > most) most = s->sectors[i].light_count;
+        for (k = 0; k < s->sectors[i].env_count; k++) envs++, fogs += s->sectors[i].envs[k].fog != 0;
+    }
+    for (i = 0; i < l->light_count; i++) spheres += l->lights[i].type == TC_LIGHT_SPHERICAL;
+    for (i = 0; i < l->mesh_count; i++) {
+        const tc_mesh *m = &l->meshes[i];
+        for (k = 0; k < m->vertex_count; k++) {
+            const tc_vertex *x = &m->vertices[k];
+            uint32_t a = x->color[0] >> 24, r = x->color[0] & 0xFF;
+            verts++;
+            uncentred += x->centre[0] == x->position[0] && x->centre[1] == x->position[1] && x->centre[2] == x->position[2];
+            if (a != 255 || x->uv2[0] >= 0) continue; /* skies, unbaked, lightmapped */
+            baked++;
+            old_sum += (float)r / 128 > 2 ? 2 : (float)r / 128;
+            new_sum += formula(r, m->surface.ambient[0], m->surface.diffuse[0]);
+        }
+    }
+    for (i = 0; i < l->perso_count; i++)
+        for (k = 0; k < l->persos[i].part_count; k++) {
+            const tc_surface *u = &l->persos[i].parts[k].mesh.surface;
+            persos++;
+            flat += formula(0, u->ambient[0], u->diffuse[0]) >= 1; /* full light whatever the lights do */
+        }
+    printf("  lighting: %u lights (%u spherical), at most %u in a sector; %u of %u envs fogged; %u of %u static vertices "
+           "at their own position; red of the baked ones, old %.2f -> formula %.2f; perso parts flat %u of %u\n",
+           l->light_count, spheres, most, fogs, envs, uncentred, verts, baked ? old_sum / baked : 0,
+           baked ? new_sum / baked : 0, flat, persos);
+    if (most > TC_VIEW_MAX_LIGHTS || uncentred * 100 > verts) {
+        printf("  FAIL: too many lights in a sector, or vertices without their object's centre\n");
+        failures++;
+    }
+    memset(&desc, 0, sizeof desc);
+    desc.level = l;
+    desc.level_name = file;
+    if (tc_viewer_init(&v, &desc) != TC_OK) {
+        printf("  FAIL: the viewer does not start\n");
+        failures++;
+        return;
+    }
+    tc_viewer_update(&v, 1.0f / 60);
+    f = (tc_view_frame *)malloc(sizeof *f);
+    tc_viewer_frame(&v, 16.0f / 9, f);
+    sec = tc_viewer_ed_sector(&v);
+    if (sec != TC_SECTOR_NONE) {
+        uint32_t want = 0;
+        for (k = 0; k < s->sectors[sec].light_count; k++) {
+            const tc_light *L = &l->lights[s->sectors[sec].lights[k]];
+            want += L->on && L->alpha_mode != 1 && (L->type == TC_LIGHT_SPHERICAL || L->type == TC_LIGHT_PARALLEL);
+        }
+        printf("  first frame in %s: %u lights (%u wanted), ambient %.2f, fog %.0f..%.0f x %.2f, sky %.2f\n",
+               tc_sectors_name(s, sec), f->light_count, want, f->ambient_light[0], f->fog_near, f->fog_far,
+               f->fog_strength, f->sky_light[0]);
+        if (f->light_count != (want < TC_VIEW_MAX_LIGHTS ? want : TC_VIEW_MAX_LIGHTS) || f->lighting != TC_VL_GAME) {
+            printf("  FAIL: the first frame's lights are not Ed's sector's\n");
+            failures++;
+        }
+    }
+    free(f);
+    tc_viewer_free(&v);
+}
 
 static void level_check(const char *dir, const char *file) {
     char path[1024];
@@ -91,6 +174,7 @@ static void level_check(const char *dir, const char *file) {
         printf("  Ed's start (%.1f, %.1f, %.1f): %s\n", l.ed.start.m[3], l.ed.start.m[7], l.ed.start.m[11],
                e == TC_SECTOR_NONE ? "(none)" : tc_sectors_name(s, e));
     }
+    lighting_check(file, &l);
     tc_level_free(&l);
     free(data);
 }

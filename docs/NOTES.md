@@ -40,6 +40,56 @@
 - **Unresolved fix→level pointers (answered):** all belong to the 3 fix persos' runtime state and are rewritten at load. In bar: std_game+0xC ×3 (= the new level SuperObject, as raymap patches it), Perso3dData +0x70, +0x94 (Ed only) and +0x164/+0x168/+0x16C ×3, plus 6 triplets of consecutive pointers and 3 single pointers elsewhere in fix (probably linked-list next/prev/header nodes into level data; not traced). None are needed for rendering.
 - Not exported yet: sprites, sector data (lights, fog, neighbours, sky material). Collision: see "Play as Ed".
 
+## Demo mode (2026-10-30)
+The level select's **Demo** button (D; Square on a pad) opens a random main level (no cutscenes, no imports, with a
+.ttai) and lets Ed wander by himself: tc_viewer_set_demo, an autopilot in the core that plays him as a player would
+(stick forward, now and then a walk, the camera turned at a random rate that changes every 2-5 s, a jump every 2-6 s;
+stuck under 0.5 units in 0.75 s: a hard turn and a jump). A new level every 60 s; red portals he walks into are taken
+(still the demo); a key (but M), click or pad button ends it. viewcheck runs it 40 s on north. Both frontends; the level
+select's text is now drawn light on dark in macOS light mode too (darkAqua), the two big buttons restyled.
+
+## Lighting: the original's formula, sector lights and fog (2026-10-30; supersedes the guesses below)
+Read from the exe (docs/DECOMP.md "Rendering and lighting"), ported to both builds; **L** switches back to the port's
+old look for comparing (title: "old lighting").
+- **Per vertex** (both shaders' vertex stage, as the original's Gouraud): acc = radiosity x 255 / 256 (the stored byte;
+  persos and water surfaces: none) + the lights; light = min(1, (acc x diffuse + ambient + G x diffuse) x 512 / 255),
+  then MODULATE with the texture (never brighter than the texture; lightmaps stay x 2). G = the ambient lights' sum.
+- **Lights:** those of the sector the frame is drawn from (Ed's, as the sectors): +0x34 then +0x28. Spherical: only
+  when the object's bounding-sphere centre (geometric +0x34) is within far (the exe zeroes the radius: a quirk, kept),
+  then N.L inside near, x (far^2 - d^2) / (far^2 - near^2) out to far. Parallel: -N.direction. Ambient: into G.
+  Hotspots (Totalski's 5) **not ported**: their decompile is mangled (which axis, the (N.x + 1) / 2 term). Persos'
+  own MS lights (north's torches) not ported either.
+- **Fog:** the env of Ed's sector at the camera (below k of its water surfaces: env k, FUN_00451c40), so underwater
+  fog works (pyramide: pink 0..5000 in 3 pools). The engine's default (20000 / 30000) is drawn too, but its colour
+  stays out of the background and the title.
+- **Fades (the user's choice, 2026-10-30):** when the sector changes, its lights fade in and the old ones out over
+  TC_VIEW_LIGHT_FADE (0.5 s), the fog with them; the original switches at once.
+- **Fix, same day (the user saw Totalski go black and red, pyramide green at sector changes):** (1) effect lights (a
+  channel < 0 or > 1: the -10 darkeners, Totalski 9 and north 7, some reaching 45-88 units; the +5 / -5 pairs; +7)
+  switch at once: half of a -10 leaves the radiosity just above zero in its strongest channel only (colour casts);
+  pyramide's -1 darkener (far 45.7, 16 sectors) beside cyan lights does the same in green. (2) The lights and fog come
+  from the **camera's** sector, as the original's frame routine: walked through the portals from Ed's sector, his
+  head to the camera, every frame (the darkeners sit in tunnel sectors: Ed's sector lit the outside view with them).
+  Drawing stays by Ed's sector. Headless (demo, 90 s): no half-faded effect light; the camera's sector differs from
+  Ed's on 0-4 % of frames (Land 21 %). Not yet checked on screen.
+- **Data:** .ttlv LITE (ttlv.py): the lights, per sector its lights and per env its fog, per mesh its material's
+  ambient / diffuse and its vertices' object centres (tc_vertex is 64 bytes now: + centre). MESH and the rest keep
+  their layout.
+- **Workarounds dropped or narrowed:** `fill_unbaked` (sud0's rainbow river copied set 1's radiosity into the
+  all-zero sets 0 and 2) is gone: under the formula zero is 2 x ambient (0.4 there), not black. `mark_sky` no longer
+  overwrites the skies' radiosity: their vertices carry alpha 128 (TC_SKY_ALPHA), which only the old lighting turns
+  into neutral light; the formula uses the real values, so sud0's sky follows the day / night cycle (the user, in
+  Wine: evenly lit, changing with it). The water sheen (ours, not the game's) is scaled by the sky's mean formula
+  light of the current set (`sky_light`), so it dims at night.
+- **Expect, to compare in Wine:** levels get darker on average (mean baked light, old -> formula: cock01 1.02 ->
+  0.58, LeCanyon 1.01 -> 0.70, pyramide 1.19 -> 0.76, Transit 1.00 -> 0.65; sud0 0.30 -> 0.43, Totalski 0.43 ->
+  0.44: the old x 2 overbright is gone, the 2 x ambient floor is new); most characters flat at full texture
+  brightness (ambient 0.87; sectorcheck counts them); water surfaces lit by 2 x ambient only: sud0's sea full, its
+  rainbow river 0.4, pyramide's water 0.2, **cock01's pools 0 (black, ambient 0, no lights in the level)**.
+- **Unported find:** surfaces have waves (FUN_0045d720: vertex z = a sine table x amplitude (+0x108) + offset
+  (+0x10c), phase +0x114 stepping by +0x110 per frame); objects below a water surface get a depth tint (GLIGLOU
+  00442ce0: default (-0.6, -0.3, -0.4) to full by 7 units deep, per visual environment).
+
 ## Lighting (stage 1: baked radiosity, 2026-10-19)
 - **IPO** (0xC) = {ptr PhysicalObject, ptr radiosity, ptr ISI}.
   - IPO+4 radiosity: all zero in every level file. Probably the runtime "current" buffer.

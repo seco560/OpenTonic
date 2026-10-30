@@ -9,11 +9,14 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform Uniforms {
     float bakedScale;      // vertex colour -> light factor (255/128: radiosity 128 = texture unchanged)
     uint lightSet;         // baked set shown (0-2), blended towards lightNext by lightBlend
     float gamma;           // display gamma, 1 = unchanged
-    vec4 fog;              // near, far (view depth), enabled (0/1), unused
+    vec4 fog;              // near, far (view depth), enabled (0/1), strength (0..1: fading with a sector change)
     vec4 fogColor;         // rgb, unused
     vec4 eye;              // camera position (world), unused
     vec4 camRight;         // camera axes (world), for billboards
     vec4 camUp;
     uint lightNext;        // the set a change blends towards (= lightSet when none runs)
     float lightBlend;      // 0..1
+    uint lighting;         // 0: the original's formula (tc_view_lighting TC_VL_GAME), 1: the port's earlier look
+    vec4 ambientLight;     // rgb: the ambient lights' sum (G)
+    vec4 skyLight;         // rgb: the sky's light (day / night), for the water's sheen
 } u;

@@ -260,6 +260,52 @@ static void sector_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
+/* The demo (tc_viewer_set_demo) on north (no red portal near Ed's start): Ed wanders by himself for 40 s, through
+ * frames as the frontends draw them. */
+static void demo_scenario(const char *dir) {
+    char path[1024], what[256];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_vec3 last, p, start;
+    float travelled = 0, far_away = 0;
+    int i, jumps = 0;
+    bool was_jump = false;
+    snprintf(path, sizeof(path), "%s/north.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no north: demo skipped)\n"); return; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/north.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "north";
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "north viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    tc_viewer_set_demo(&v, true, 12345);
+    check(tc_viewer_demo(&v) && v.playing, "demo: on, in play mode");
+    last = start = ed(&v);
+    for (i = 0; i < 60 * 40; i++) {
+        frame(&v, 1.0f / 60);
+        p = ed(&v);
+        travelled += sqrtf((p.x - last.x) * (p.x - last.x) + (p.y - last.y) * (p.y - last.y));
+        far_away = fmaxf(far_away, tc_v3_distance(p, start));
+        last = p;
+        jumps += !was_jump && ((v.held >> TC_VA_JUMP) & 1u);
+        was_jump = (v.held >> TC_VA_JUMP) & 1u;
+    }
+    snprintf(what, sizeof(what), "demo: Ed wanders 40 s by himself: %.0f units walked, %.0f from his start at most, %d jumps",
+             travelled, far_away, jumps);
+    check(isfinite(p.x) && travelled > 100 && far_away > 15 && jumps >= 5, what);
+    tc_viewer_set_demo(&v, false, 0);
+    check(!tc_viewer_demo(&v) && v.move_y == 0 && !((v.held >> TC_VA_JUMP) & 1u), "demo off: the stick and Jump let go");
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
 static void portal_scenario(const char *dir) {
     char path[1024];
     size_t size, ai_size;
@@ -303,7 +349,7 @@ static void portal_scenario(const char *dir) {
     tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(g->position, tc_v3_scale(front, 8)),
                        atan2f(-front.x, front.y));
     v.camera.yaw = TC_PI - tc_viewer_player(&v)->heading;
-    tc_viewer_step_fov(&v, 1); /* 60 degrees and a zoomed-out camera: kept across the level change (the carry) */
+    tc_viewer_step_fov(&v, 1); /* 85 degrees and a zoomed-out camera: kept across the level change (the carry) */
     tc_viewer_wheel(&v, -2);
     zoom = v.orbit_distance;
     for (i = 0; i < 60 * 25 && !pending; i++) {
@@ -340,11 +386,11 @@ static void portal_scenario(const char *dir) {
     desc.carry = &carry;
     if (tc_viewer_init(&w, &desc) != TC_OK) { check(0, "bar with the carry"); return; }
     free(ai);
-    check(fabsf(w.camera.vertical_fov - 60 * TC_PI / 180) < 1e-4f, "bar keeps sud0's field of view (60 degrees)");
+    check(fabsf(w.camera.vertical_fov - 85 * TC_PI / 180) < 1e-4f, "bar keeps sud0's field of view (85 degrees)");
     {
         char what[96];
-        snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default 4.5)", (double)zoom);
-        check(zoom != 4.5f && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
+        snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default 6)", (double)zoom);
+        check(zoom != 6.0f && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
     }
     tc_viewer_overlay(&w, &o);
     check(o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO, "bar starts with the reveal");
@@ -486,9 +532,20 @@ int main(int argc, char **argv) {
     tc_viewer_status(&v, ", AA 4x", status, sizeof(status));
     printf("  status: %s\n", status);
     check(tc_viewer_status(&v, NULL, status, 8) > 8 && strlen(status) == 7, "status truncates");
+    if (v.level->has_lighting) {
+        static tc_view_frame fr;
+        tc_viewer_cycle_lighting(&v);
+        tc_viewer_frame(&v, 1, &fr);
+        tc_viewer_status(&v, NULL, status, sizeof(status));
+        check(fr.lighting == TC_VL_PORT && strstr(status, ", old lighting") != NULL, "L: the port's old lighting");
+        tc_viewer_cycle_lighting(&v);
+        tc_viewer_frame(&v, 1, &fr);
+        check(fr.lighting == TC_VL_GAME && fr.sky_light[0] > 0, "L again: the original's");
+    }
 
 done:
     sector_scenario(dir);
+    demo_scenario(dir);
     portal_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");

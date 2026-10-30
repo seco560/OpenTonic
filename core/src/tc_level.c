@@ -16,6 +16,7 @@ static void rd_surface(reader *r, tc_surface *s) {
     s->flags = rd_u32(r);
     s->scroll[0] = rd_f32(r);
     s->scroll[1] = rd_f32(r);
+    for (i = 0; i < 3; i++) s->ambient[i] = 0.5f, s->diffuse[i] = 0; /* full light until LITE says otherwise */
     n = rd_u16(r);
     (void)rd_u16(r);
     s->frames = (tc_frame *)rd_array(r, n, sizeof(tc_frame), 8);
@@ -26,7 +27,7 @@ static void rd_surface(reader *r, tc_surface *s) {
 
 static void rd_geometry(reader *r, tc_mesh *m) {
     uint32_t nv = rd_u32(r), ni = rd_u32(r), i, k;
-    m->vertices = (tc_vertex *)rd_array(r, nv, sizeof(tc_vertex), sizeof(tc_vertex));
+    m->vertices = (tc_vertex *)rd_array(r, nv, sizeof(tc_vertex), 52); /* 52 bytes each in the file (no centre) */
     if (r->error) return;
     m->vertex_count = m->vertices ? nv : 0;
     for (i = 0; i < m->vertex_count; i++) {
@@ -38,6 +39,7 @@ static void rd_geometry(reader *r, tc_mesh *m) {
         for (k = 0; k < 3; k++) v->color[k] = rd_u32(r);
         v->uv2[0] = rd_f32(r);
         v->uv2[1] = rd_f32(r);
+        for (k = 0; k < 3; k++) v->centre[k] = v->position[k]; /* until LITE gives its object's */
     }
     m->indices = (uint32_t *)rd_array(r, ni, sizeof(uint32_t), 4);
     if (r->error) return;
@@ -95,11 +97,88 @@ void tc_level_free(tc_level *level) {
     }
     tc_free(level->ed.anims);
     tc_sectors_free(&level->sectors);
+    tc_free(level->lights);
     memset(level, 0, sizeof *level);
 }
 
-/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP and LAIS (optional), TEXS, MESH, PRSO, COLL, FLOR, SECT and EDPL (optional:
- * no sectors, no player). */
+/* Mesh i of the viewer's table: the statics, each perso's parts, Ed's parts (NULL past them). */
+static tc_mesh *table_mesh(tc_level *l, uint32_t i) {
+    uint32_t p;
+    if (i < l->mesh_count) return &l->meshes[i];
+    i -= l->mesh_count;
+    for (p = 0; p < l->perso_count; p++) {
+        if (i < l->persos[p].part_count) return &l->persos[p].parts[i].mesh;
+        i -= l->persos[p].part_count;
+    }
+    return i < l->ed.part_count ? &l->ed.parts[i].mesh : NULL;
+}
+
+/* .ttlv LITE (after SECT and EDPL: it names their sectors and meshes). Light indices out of range are dropped; sectors,
+ * envs and meshes past the level's are read and skipped. */
+static void read_lite(tc_level *level, reader *r) {
+    uint32_t i, k, j, n, runs;
+    uint16_t ns, nl;
+    n = rd_u16(r);
+    (void)rd_u16(r);
+    level->lights = (tc_light *)rd_array(r, n, sizeof(tc_light), 52);
+    if (level->lights) level->light_count = n;
+    for (i = 0; i < level->light_count; i++) {
+        tc_light *l = &level->lights[i];
+        l->type = rd_u8(r);
+        l->on = rd_u8(r);
+        l->paint = rd_u8(r);
+        l->alpha_mode = rd_u8(r);
+        l->near_range = rd_f32(r);
+        l->far_range = rd_f32(r);
+        l->position.x = rd_f32(r), l->position.y = rd_f32(r), l->position.z = rd_f32(r);
+        l->direction.x = rd_f32(r), l->direction.y = rd_f32(r), l->direction.z = rd_f32(r);
+        for (k = 0; k < 4; k++) l->color[k] = rd_f32(r);
+    }
+    ns = rd_u16(r);
+    (void)rd_u16(r);
+    for (i = 0; i < ns && !r->error; i++) {
+        tc_sector *sec = i < level->sectors.count ? &level->sectors.sectors[i] : NULL;
+        uint16_t ne;
+        nl = rd_u16(r);
+        ne = rd_u16(r);
+        if (sec) sec->lights = (uint16_t *)rd_array(r, nl, sizeof(uint16_t), 2);
+        for (k = 0; k < nl; k++) {
+            uint16_t l = rd_u16(r);
+            if (sec && sec->lights && l < level->light_count) sec->lights[sec->light_count++] = l;
+        }
+        for (k = 0; k < ne; k++) {
+            tc_sector_env e;
+            e.fog = rd_u32(r);
+            e.fog_near = rd_f32(r);
+            e.fog_far = rd_f32(r);
+            for (j = 0; j < 3; j++) e.fog_rgb[j] = rd_f32(r);
+            if (sec && k < sec->env_count) {
+                tc_sector_env *d = &sec->envs[k];
+                d->fog = e.fog;
+                d->fog_near = e.fog_near;
+                d->fog_far = e.fog_far;
+                memcpy(d->fog_rgb, e.fog_rgb, sizeof d->fog_rgb);
+            }
+        }
+    }
+    n = rd_u32(r);
+    for (i = 0; i < n && !r->error; i++) {
+        tc_mesh *m = table_mesh(level, i);
+        float a[6];
+        for (k = 0; k < 6; k++) a[k] = rd_f32(r);
+        if (m) for (k = 0; k < 3; k++) m->surface.ambient[k] = a[k], m->surface.diffuse[k] = a[3 + k];
+        runs = rd_u32(r);
+        for (k = 0; k < runs && !r->error; k++) {
+            uint32_t first = rd_u32(r), count = rd_u32(r), v;
+            float c[3];
+            c[0] = rd_f32(r), c[1] = rd_f32(r), c[2] = rd_f32(r);
+            for (v = first; m && v < m->vertex_count && v - first < count; v++) memcpy(m->vertices[v].centre, c, sizeof c);
+        }
+    }
+}
+
+/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP and LAIS (optional), TEXS, MESH, PRSO, COLL, FLOR, SECT, EDPL and LITE
+ * (optional: no sectors, no player, the old lighting only). */
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     chunks cs;
     reader rr, *r = &rr;
@@ -220,36 +299,43 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         if (e != TC_OK) goto fail;
     }
 
-    if (!chunk_need(&cs, "EDPL", r)) return TC_OK;
-    ed = &level->ed;
-    rd_mat34(r, &ed->start);
-    ed->static_perso = rd_i32(r);
-    n = rd_u32(r);
-    ed->parts = (tc_ed_part *)rd_array(r, n, sizeof(tc_ed_part), 28);
-    if (ed->parts) ed->part_count = n;
-    for (i = 0; i < ed->part_count && !r->error; i++) {
-        ed->parts[i].object = rd_u16(r);
+    if (chunk_need(&cs, "EDPL", r)) {
+        ed = &level->ed;
+        rd_mat34(r, &ed->start);
+        ed->static_perso = rd_i32(r);
+        n = rd_u32(r);
+        ed->parts = (tc_ed_part *)rd_array(r, n, sizeof(tc_ed_part), 28);
+        if (ed->parts) ed->part_count = n;
+        for (i = 0; i < ed->part_count && !r->error; i++) {
+            ed->parts[i].object = rd_u16(r);
+            (void)rd_u16(r);
+            rd_mesh(r, &ed->parts[i].mesh);
+        }
+        n = rd_u16(r);
         (void)rd_u16(r);
-        rd_mesh(r, &ed->parts[i].mesh);
+        ed->anims = (tc_ed_anim *)rd_array(r, n, sizeof(tc_ed_anim), 18);
+        if (ed->anims) ed->anim_count = n;
+        for (i = 0; i < ed->anim_count && !r->error; i++) {
+            tc_ed_anim *a = &ed->anims[i];
+            a->name = rd_string(r);
+            a->channel_count = rd_u16(r);
+            a->sample_count = rd_u16(r);
+            a->sample_rate = rd_f32(r);
+            a->loop = rd_u8(r);
+            (void)rd_u8(r);
+            (void)rd_u16(r);
+            a->ground_speed = rd_f32(r);
+            rd_samples(r, (uint32_t)a->sample_count * a->channel_count, &a->transforms, &a->shown);
+        }
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+        level->has_ed = 1;
     }
-    n = rd_u16(r);
-    (void)rd_u16(r);
-    ed->anims = (tc_ed_anim *)rd_array(r, n, sizeof(tc_ed_anim), 18);
-    if (ed->anims) ed->anim_count = n;
-    for (i = 0; i < ed->anim_count && !r->error; i++) {
-        tc_ed_anim *a = &ed->anims[i];
-        a->name = rd_string(r);
-        a->channel_count = rd_u16(r);
-        a->sample_count = rd_u16(r);
-        a->sample_rate = rd_f32(r);
-        a->loop = rd_u8(r);
-        (void)rd_u8(r);
-        (void)rd_u16(r);
-        a->ground_speed = rd_f32(r);
-        rd_samples(r, (uint32_t)a->sample_count * a->channel_count, &a->transforms, &a->shown);
+
+    if (chunk_need(&cs, "LITE", r)) {
+        read_lite(level, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+        level->has_lighting = 1;
     }
-    if ((e = chunk_end(r)) != TC_OK) goto fail;
-    level->has_ed = 1;
     return TC_OK;
 
 fail:

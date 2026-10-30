@@ -56,15 +56,29 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
           per MESH mesh: u32 n_ranges, n_ranges x { u16 group (0xFFFF: none, always drawn), u16 0, u32 first_index,
               u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
           u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
+  LITE  the original's lighting (docs/DECOMP.md "Rendering and lighting"; reader core/src/tc_level.c):
+          u16 n_lights, u16 0, n_lights x { u8 type (1 parallel, 2 spherical, 3 hotspot, 4 ambient), u8 on,
+              u8 paint (+0xa6: spherical without N.L), u8 alpha_mode (+0xa7: 0 colour and alpha, 1 alpha only,
+              2 colour only), f32 near, f32 far, f32 position[3], f32 direction[3] (parallel: the way it shines),
+              f32 colour[4] } (level.Light)
+          u16 n_sectors (= SECT's), u16 0, n_sectors x { u16 n_lights, u16 n_envs (= SECT's for it),
+              n_lights x u16 light (the lights pushed when the frame is drawn from it: +0x34, then +0x28),
+              n_envs x { u32 fog (0: off), f32 near, f32 far, f32 rgb[3] } (the fog while the camera is in env k) }
+          u32 n_meshes (= MESH's, then every PRSO part, then every EDPL part, in file order), n x {
+              f32 ambient[3], f32 diffuse[3] (the material's: light = min(1, (radiosity / 256 + lights) x diffuse
+              + ambient + ambient lights x diffuse) x 512 / 255),
+              u32 n_runs, n_runs x { u32 first_vertex, u32 vertex_count, f32 centre[3] } (the bounding-sphere centre
+              of the object the vertices come from, mesh space: a spherical light reaches an object only when it is
+              within the light's far range, GLIGLOU_00443940) }
 
   surface  = { i32 texture (-1 = none), u32 flags (TC_FLAG_*: alpha test / blend, and WRAP_U / WRAP_V: clamped
                unless set), f32 scroll[2] (UV per second: uv' = uv + scroll * t),
                u16 n_anim, u16 0, n_anim x { i32 texture, f32 seconds } (animated texture loop; 0 = static) }
   geometry = { u32 n_vertices, u32 n_indices, n_vertices x vertex, n_indices x u32 }
-  vertex (52 bytes, = tc_vertex) = f32 pos[3], f32 normal[3], f32 uv[2], u32 rgba8 x 3 (the baked sets: radiosity
-             clamped to 0..255, light = rgb / 128, see level.RADIOSITY_ONE; alpha 255 = baked, 0 = none: the viewer's
-             fallback lighting, as for all perso parts), f32 uv2[2] (lightmap atlas coordinates, top-left origin;
-             -1 = none; lightmapped triangles get their own vertices)
+  vertex (52 bytes; tc_vertex adds the LITE centre) = f32 pos[3], f32 normal[3], f32 uv[2], u32 rgba8 x 3 (the
+             baked sets: radiosity clamped to 0..255; alpha 255 = baked, SKY_ALPHA (128) = baked, a sky's, 0 = none,
+             as for all perso parts), f32 uv2[2] (lightmap atlas coordinates, top-left origin; -1 = none; lightmapped
+             triangles get their own vertices)
   Sprites (TC_FLAG_BILLBOARD meshes): every vertex holds the centre, normal.xy = the corner offset; unlit.
 
 One mesh/part per material, LOD 0 only, Z up. Samples: the A3D is evaluated (keyframe lerp, see level.Anim) at
@@ -93,6 +107,7 @@ ANIM_TIME_SCALE = 0.25
 # 0.25 makes each frame last 4x longer. Hypothesis: the same unexplained 4x as ANIM_TIME_SCALE.
 TEXTURE_TIME_SCALE = {'GEN_ARCH': 0.5}  # user-matched: 0.25 was too slow, 2x that looked natural
 LIGHT_SETS = 3  # baked radiosity sets per vertex (set 0 everywhere; 1-2 only in Land/sud0)
+SKY_ALPHA = 128  # the baked colours' alpha on a sky's vertices (level.mark_sky): neutral light in the old lighting
 
 
 def texture_time_scale(tex):
@@ -211,18 +226,25 @@ class LightmapAtlas:
 
 def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
     """Append geo transformed by m to meshes[material] (created by new_mesh(material)), with the
-    key's baked radiosity as rgba8 (alpha 0 = none) and, given an atlas, per-triangle lightmap
-    coordinates (uv2; -1 = none). mesh['groups'] gets `group` once per triangle added (the SECT membership group)."""
+    key's baked radiosity as rgba8 (alpha 0 = none, SKY_ALPHA = a sky's) and, given an atlas, per-triangle lightmap
+    coordinates (uv2; -1 = none). mesh['groups'] gets `group` once per triangle added (the SECT membership group),
+    mesh['centres'] geo's bounding-sphere centre (transformed by m) once per vertex added (LITE)."""
     verts = [level.mat_apply(m, v) for v in geo.vertices]
+    centre = level.mat_apply(m, geo.centre)
+    sky = getattr(key, 'sky', False)
     def packed(baked):
-        return [struct.unpack('<I', bytes((*(min(max(x, 0), 255) for x in c), 255)))[0] for c in baked] if baked else None
+        a = SKY_ALPHA if sky else 255
+        return [struct.unpack('<I', bytes((*(min(max(x, 0), 255) for x in c), a)))[0] for c in baked] if baked else None
     sets = [packed(level.baked_colors(key, i)) for i in range(LIGHT_SETS)]
+    if sky and sets[0] is None:  # a sky without radiosity: none (0) under the formula, still flagged
+        sets[0] = packed([(0, 0, 0)] * len(geo.vertices))
     norms = [rotate(m, n) for n in geo.normals] if geo.normals else None  # fine for uniform scale
     flip = level.mat_det(m) < 0
     for el in geo.elements:
         mesh = meshes.get(el.material)
         if mesh is None:
-            mesh = meshes[el.material] = dict(new_mesh(el.material), verts=[], index={}, indices=[], groups=[])
+            mesh = meshes[el.material] = dict(new_mesh(el.material), verts=[], index={}, indices=[], groups=[],
+                                              centres=[])
         mesh['groups'] += [group] * len(el.triangles)
         for k, tri in enumerate(el.triangles):
             uvt = el.uv_tris[k] if el.uv_tris else (None,) * 3
@@ -237,6 +259,7 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
                     mesh['index'][vk] = len(mesh['verts'])
                     mesh['verts'].append((*verts[vi], *(norms[vi] if norms else (0.0, 0.0, 0.0)), u, 1.0 - v,
                                           *(c[vi] if c else 0 for c in sets), *(l2 or (-1.0, -1.0))))
+                    mesh['centres'].append(centre)
                 mesh['indices'].append(mesh['index'][vk])
     # Sprites: a quad per sprite in a BILLBOARD mesh; every vertex holds the centre (transformed by m) and
     # carries its corner offset (half extents x the object's scale) in the normal slot, unlit (no colour).
@@ -247,11 +270,13 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
             base = new_mesh(mat)
             surf = bytearray(base['surface'])
             struct.pack_into('<I', surf, 4, struct.unpack_from('<I', surf, 4)[0] | BILLBOARD)
-            mesh = meshes[('sprite', mat)] = dict(base, surface=bytes(surf), verts=[], index={}, indices=[], groups=[])
+            mesh = meshes[('sprite', mat)] = dict(base, surface=bytes(surf), verts=[], index={}, indices=[], groups=[],
+                                                  centres=[])
         mesh['groups'] += [group] * 2
         first = len(mesh['verts'])
         for dx, dy, u, v in ((-1, -1, 0, 1), (1, -1, 1, 1), (-1, 1, 0, 0), (1, 1, 1, 0)):
             mesh['verts'].append((*verts[ci], dx * hx * sx, dy * hy * sx, 0.0, u, v, *(0,) * LIGHT_SETS, -1.0, -1.0))
+            mesh['centres'].append(centre)
         mesh['indices'] += [first, first + 1, first + 2, first + 2, first + 1, first + 3]
 
 
@@ -287,7 +312,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
         su, sv = (s * level.SCROLL_RATE for s in mat.scroll) if mat else (0, 0)
         frames = [(texture_id(t)[0], d / level.SCROLL_RATE / texture_time_scale(t)) for t, d in mat.frames] if mat else []
         return dict(surface=struct.pack('<iI2f2H', tid, flags, -su, sv, len(frames), 0)
-                    + b''.join(struct.pack('<if', t, d) for t, d in frames))
+                    + b''.join(struct.pack('<if', t, d) for t, d in frames), material=mat)
 
     def geometry(m):
         return (struct.pack('<II', len(m['verts']), len(m['indices'])) + b''.join(struct.pack(f'<8f{LIGHT_SETS}I2f', *v) for v in m['verts'])
@@ -309,7 +334,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
         with open(atlas_path, 'wb') as f:
             f.write(atlas.png())
         atlas_rel = os.path.relpath(atlas_path, out_dir).replace(os.sep, '/')
-    blobs, n_parts, ed_blob = [], 0, None
+    blobs, n_parts, ed_blob, lite_parts = [], 0, None, []
     ed_loc = data.player()
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
     for p in data.persos() if persos else ():
@@ -329,6 +354,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                     pm = {}
                     add_geometry(pm, None, geo, scale, surface)
                     parts += [struct.pack('<2H', ch, obj) + fitted_surface(mm) + geometry(mm) for mm in pm.values()]
+                    lite_parts += pm.values()
         n_parts += len(parts)
         blobs.append(struct.pack('<12f2Hf', *p.world, len(a.chans), len(poses), a.fps * k * ANIM_TIME_SCALE)
                      + struct.pack(f'<{len(a.chans)}h', *a.parents(0)) + struct.pack('<I', len(parts)) + b''.join(parts)
@@ -345,7 +371,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     flor = struct.pack('<HH', len(table), 0) + b''.join(struct.pack('<2f', *f) for f in table)
     flor += struct.pack(f'<{len(floors)}H', *(0xFFFF if f is None else index[f] for f in floors))
     ed = data.ed(state_anims=True)
-    edpl = None
+    edpl, lite_ed = None, []
     if ed:
         p, start, anims = ed
         parts = []
@@ -354,6 +380,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
             pm = {}
             add_geometry(pm, None, geo, scale, surface)
             parts += [struct.pack('<2H', obj, 0) + fitted_surface(mm) + geometry(mm) for mm in pm.values()]
+            lite_ed += pm.values()
         recs = []
         for name, a, loop in anims:
             state_anim = name.startswith('s') and name[1:].isdigit()
@@ -383,10 +410,38 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
            ('LAIS', struct.pack('<HH', len(lais), 0) + b''.join(lais)) if lais else None,
            ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
-           ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None]
+           ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
+           ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else [])))]
     chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),
             len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else [])
+
+
+def lite(data, sectors, meshes):
+    """The LITE chunk (module docstring): the lights, each sector's lights and fogs, and per mesh (MESH, then every
+    PRSO part, then every EDPL part) its material's ambient and diffuse and its vertices' object centres as runs."""
+    out = [struct.pack('<HH', len(data.lights), 0)]
+    for l in data.lights:
+        out.append(struct.pack('<4B2f3f3f4f', l.type, 1 if l.on else 0, l.paint, l.alpha_mode, l.near, l.far,
+                               *l.position, *l.direction, *l.color))
+    out.append(struct.pack('<HH', len(sectors), 0))
+    for sec in sectors:
+        out.append(struct.pack(f'<2H{len(sec.lights)}H', len(sec.lights), len(sec.fogs), *sec.lights))
+        out += [struct.pack('<I5f', 1, f[0], f[1], *f[2]) if f else struct.pack('<I5f', 0, 0, 0, 0, 0, 0)
+                for f in sec.fogs]
+    out.append(struct.pack('<I', len(meshes)))
+    for m in meshes:
+        mat = m.get('material')
+        ambient, diffuse = (mat.ambient[:3], mat.diffuse[:3]) if mat else ((0.5,) * 3, (0.0,) * 3)
+        runs = []
+        for i, c in enumerate(m['centres']):
+            if runs and runs[-1][2] == c:
+                runs[-1][1] += 1
+            else:
+                runs.append([i, 1, c])
+        out.append(struct.pack('<6fI', *ambient, *diffuse, len(runs)))
+        out += [struct.pack('<2I3f', first, count, *c) for first, count, c in runs]
+    return b''.join(out)
 
 
 class Sections:

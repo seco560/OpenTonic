@@ -45,7 +45,7 @@ static tc_vec3 swim(float mass, float z, float seconds, int mode, float speed, t
                     tc_mec_swim *s) {
     static float surface_z[1] = {0};
     static uint16_t surfaces[1] = {0};
-    static tc_sector_env envs[2] = {{9.81f, 1.3f, 1, 0}, {9.81f, 1000, 1, 1}};
+    static tc_sector_env envs[2] = {{9.81f, 1.3f, 1, 0, 0, 0, 0, {0}}, {9.81f, 1000, 1, 1, 0, 0, 0, {0}}};
     tc_sector sector;
     tc_sectors m;
     float f[17] = {990, 0, 0.1f, 0.1f, 0.1f, 0.1f, 2.5f, 2.5f, 2000, 1, 1, 0, 10, 0.99f, 160, 1, 0}, prop[32] = {0}, depth;

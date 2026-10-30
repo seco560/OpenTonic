@@ -130,6 +130,7 @@ class Element:
 class Geometric:
     vertices: list
     normals: list
+    centre: tuple = (0.0, 0.0, 0.0)  # bounding sphere centre (+0x34; radius +0x30): the point lights are culled by
     elements: list = field(default_factory=list)
     skipped: dict = field(default_factory=dict)  # element type -> count not handled
     sprites: list = field(default_factory=list)  # (vertex index of the centre, half width, half height, Material)
@@ -162,9 +163,29 @@ class Sector:
     no_child_lookup: int = 0
     visible: list = field(default_factory=list)
     envs: list = field(default_factory=list)
+    fogs: list = field(default_factory=list)  # per env: (near, far, (r, g, b)) of its visual environment, or None: off
+    lights: list = field(default_factory=list)  # indices into LevelData.lights, in the order the exe pushes them
     surfaces: list = field(default_factory=list)
     portals: list = field(default_factory=list)
     floors: list = field(default_factory=list)
+
+
+@dataclass(eq=False)
+class Light:
+    """A GLI light (0x100 bytes, GLIGLOU_Light_00443460; docs/DECOMP.md "Rendering and lighting"): +0 on, +8 type
+    (1 parallel, 2 spherical, 3 hotspot, 4 ambient), +0xc far, +0x10 near, +0x24 matrix (+0x28 position, then the 3x3
+    rows), +0x94 colour rgba, +0xa6 paint (spherical without N.L), +0xa7 alpha mode (0 colour and alpha, 1 alpha only,
+    2 colour only). direction: a parallel light's way (the 3x3's third column, GLIGLOU_00444fc0: faces turned against
+    it are lit)."""
+    type: int
+    on: int
+    paint: int
+    alpha_mode: int
+    near: float
+    far: float
+    position: tuple
+    direction: tuple
+    color: tuple
 
 
 @dataclass(eq=False)
@@ -342,28 +363,6 @@ STORY_GATES = {'sud0': ('sctporte', 'sctporte1', 'sctporte2', 'sctportedroite', 
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
 
 
-def fill_unbaked(so):
-    """An element whose vertices are all exactly (0, 0, 0) in one baked set but lit in another was
-    not baked for that set (baked values are signed and noisy, never exactly zero over a whole
-    element): copy the first lit set's values. Only sud0's rainbow water (O_ZARBI_AUNTXY, sets 0
-    and 2 zero, set 1 ~95) matches in the levels checked; it is visible in the game in every set.
-    north has 25 elements that are zero in its only set; with nothing to copy they stay black."""
-    sets = so.color_sets
-    for lod, geo in enumerate(so.lods):
-        for e in geo.elements:
-            vs = {v for t in e.triangles for v in t}
-            cols = [s[lod] if lod < len(s) else None for s in sets]
-            if not vs or any(c is not None and max(vs) >= len(c) for c in cols):
-                continue
-            lit = [c for c in cols if c and any(c[v] != (0, 0, 0) for v in vs)]
-            if not lit:
-                continue
-            for c in cols:
-                if c and all(c[v] == (0, 0, 0) for v in vs):
-                    for v in vs:
-                        c[v] = lit[0][v]
-
-
 def baked_colors(key, index=0):
     """Raw radiosity (r, g, b) per vertex of baked set `index` for a meshes() key (static IPO
     SuperObject, LOD 0), else None."""
@@ -426,6 +425,7 @@ class LevelData:
         self.geometrics = {}
         self.so_seen = set()
         self.warnings = []
+        self.lights, self._light_index = [], {}  # Light records the sectors list (light())
         g = lv.gpt
         n, = self.un('I', (g, 0))
         self.perso_in_fix = [(lv.ptr((g, 4 + 0x60 * i)), lv.ptr((g, 0x60 + 0x60 * i))) for i in range(n)]
@@ -484,7 +484,7 @@ class LevelData:
         pv, pn = lv.ptr(loc, 4), lv.ptr(loc, 8)
         verts = [self.un('3f', pv, 12 * i) for i in range(nv)] if pv else []
         norms = [self.un('3f', pn, 12 * i) for i in range(nv)] if pn else []
-        geo = self.geometrics[loc] = Geometric(verts, norms)
+        geo = self.geometrics[loc] = Geometric(verts, norms, self.un('3f', loc, 0x34))
         types = self.un(f'{ne}H', lv.ptr(loc, 24)) if ne else ()
         elems = lv.ptr(loc, 28)
         for i, t in enumerate(types):
@@ -561,7 +561,6 @@ class LevelData:
             # Extra baked sets (day/night variants) exist only where ISI+4 is set (Land, sud0).
             so.color_sets = [so.colors] + ([self.radiosity(isi, so.lods, i) for i in (1, 2)]
                                            if isi and lv.ptr(isi, 4) else [])
-            fill_unbaked(so)
         elif so.kind == 'perso' and data:
             so.perso = self.read_perso(data, so.world)
         c = lv.ptr(loc, 8)
@@ -954,21 +953,16 @@ class LevelData:
         return (near, far, rgb) if near < 10000 and far > near else None
 
     def mark_sky(self):
-        """Sky sectors are named "...ciel..." (sctciel, sct3ciel02, BigBoss "ciel"). Their baked radiosity is
-        unusable (sud0 -13, Totalski 0, north 0..267) while the game shows the skies evenly lit, so their
-        IPOs get neutral light (RADIOSITY_ONE: texture unchanged) in every baked set. Inferred from the data
-        and the in-game look, not from the exe. so.sky marks them."""
+        """Sky sectors are named "...ciel..." (sctciel, sct3ciel02, BigBoss "ciel"): so.sky marks their IPOs. Under the
+        port's old lighting (clamp(R) / 128) their radiosity (sud0 -13 in set 0, Totalski 0) made them black, so that
+        lighting gives them neutral light (the .ttlv flags their vertices); the original's formula (DECOMP.md "Vertex
+        colour") uses their radiosity as it is: sud0's sky follows the day / night cycle (the user, in Wine)."""
         for sec in self.walk():
             if sec.kind != 'sector' or 'CIEL' not in self.sector_name(sec).upper():
                 continue
             for so in self.walk(sec):
-                if so.kind != 'ipo' or not so.lods:
-                    continue
-                so.sky = True
-                one = (int(RADIOSITY_ONE),) * 3
-                n = max(1, len(so.color_sets))
-                so.colors = [[one] * len(g.vertices) for g in so.lods]
-                so.color_sets = [so.colors] + [[[one] * len(g.vertices) for g in so.lods] for _ in range(n - 1)]
+                if so.kind == 'ipo' and so.lods:
+                    so.sky = True
 
     def mark_gates(self):
         """so.gated on the IPOs of this level's STORY_GATES sectors while GATES_OPEN: meshes() and collision() leave them
@@ -1046,7 +1040,22 @@ class LevelData:
                 env = lv.ptr(entry) if entry else None
                 sec.envs.append((un('f', env)[0], un('f', env, 0x14)[0], un('f', env, 0x10)[0], un('I', env, 0x28)[0])
                                 if env else None)
+                # the fog the frame gets when the camera is in this env (FUN_00451e80 -> FUN_00451c40): the visual
+                # environment (entry +8) -> +4 {near, far, third, rgba}; none: fog off (FUN_004cf040)
+                ve = lv.ptr(entry, 8) if entry else None
+                fog = lv.ptr(ve, 4) if ve else None
+                sec.fogs.append((*un('2f', fog), un('3f', fog, 0xc)) if fog else None)
                 node = lv.ptr(node, 4)
+            # the lights pushed when the frame is drawn from this sector (FUN_00452410): +0x34, then +0x28 (with the
+            # draw flags' and the sector's 0x8000, set in normal play); {ptr light, ptr next} nodes
+            for off in (0x34, 0x28):
+                node, seen = lv.ptr(data, off), set()
+                while node is not None and node not in seen and len(seen) < 100:
+                    seen.add(node)
+                    light = lv.ptr(node)
+                    if light:
+                        sec.lights.append(self.light(light))
+                    node = lv.ptr(node, 4)
             node = lv.ptr(data, 0x10)
             while node is not None and len(sec.surfaces) < 64:
                 srf = lv.ptr(node)
@@ -1073,6 +1082,17 @@ class LevelData:
                     sec.floors += [(v0, v1, v2, n) for v0, v1, v2, n, _ in self.faces(geo, ch.world) if n[2] > 0]
         self._sectors = out
         return out
+
+    def light(self, loc):
+        """The index in self.lights of the light record at loc (read once)."""
+        if loc not in self._light_index:
+            un = self.un
+            raw = loc[0].data[loc[1]:loc[1] + 0x100]
+            m = un('12f', loc, 0x28)  # position, then the 3x3 rows
+            self._light_index[loc] = len(self.lights)
+            self.lights.append(Light(un('I', loc, 8)[0], un('I', loc)[0], raw[0xa6], raw[0xa7], un('f', loc, 0x10)[0],
+                                     un('f', loc, 0xc)[0], m[0:3], (m[5], m[8], m[11]), un('4f', loc, 0x94)))
+        return self._light_index[loc]
 
     def faces(self, geo, world, collide=False):
         """A GeometricObject's (or, collide=True, a GeometricObjectCollide's) indexed-triangle elements as world-space

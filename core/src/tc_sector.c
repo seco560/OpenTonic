@@ -93,22 +93,28 @@ uint16_t tc_sectors_cross(const tc_sectors *s, uint16_t sector, tc_vec3 from, tc
     return sector;
 }
 
-float tc_sectors_env(const tc_sectors *s, uint16_t sector, tc_vec3 p, tc_sector_env *env) {
+uint16_t tc_sectors_env_index(const tc_sectors *s, uint16_t sector, tc_vec3 p, float *depth) {
     const tc_sector *sec;
-    const tc_sector_env air = {9.81f, 1.3f, 1.0f, 0}; /* the fix's 0x36b51c, every sector's env 0 */
-    float depth = 0;
-    uint16_t k = 0;
-    *env = air;
-    if (!s || sector >= s->count) return 0;
+    uint16_t k;
+    if (depth) *depth = 0;
+    if (!s || sector >= s->count) return TC_SECTOR_NONE;
     sec = &s->sectors[sector];
     for (k = 0; k < sec->surface_count; k++) {
         float d;
         if (sec->surfaces[k] >= s->surface_count) break;
         d = s->surface_z[sec->surfaces[k]] - p.z; /* FUN_0045d880 */
         if (!(d > 0)) break;
-        depth = d;
+        if (depth) *depth = d;
     }
-    if (k < sec->env_count && sec->envs[k].water != 0xFFFFFFFFu) *env = sec->envs[k];
+    return k < sec->env_count ? k : TC_SECTOR_NONE;
+}
+
+float tc_sectors_env(const tc_sectors *s, uint16_t sector, tc_vec3 p, tc_sector_env *env) {
+    const tc_sector_env air = {9.81f, 1.3f, 1.0f, 0, 0, 0, 0, {0, 0, 0}}; /* the fix's 0x36b51c, every sector's env 0 */
+    float depth;
+    uint16_t k = tc_sectors_env_index(s, sector, p, &depth);
+    *env = air;
+    if (k != TC_SECTOR_NONE && s->sectors[sector].envs[k].water != 0xFFFFFFFFu) *env = s->sectors[sector].envs[k];
     return depth;
 }
 
@@ -172,6 +178,7 @@ void tc_sectors_free(tc_sectors *s) {
         tc_free(sec->surfaces);
         tc_free(sec->portals);
         tc_free(sec->floors);
+        tc_free(sec->lights);
     }
     tc_free(s->sectors);
     tc_free(s->surface_z);

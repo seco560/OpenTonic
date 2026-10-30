@@ -25,6 +25,10 @@ extern "C" {
 typedef struct tc_sector_env {
     float gravity, density, drag; /* MecEnv +0, +0x14, +0x10 */
     uint32_t water;               /* MecEnv +0x28: 1 in water (the scripts' water zones); 0xFFFFFFFF: no environment */
+    /* The fog while the camera is in this env (its visual environment; .ttlv LITE, without it none): linear by view
+     * depth from none at near to full at far. */
+    uint32_t fog;                 /* 0: off */
+    float fog_near, fog_far, fog_rgb[3];
 } tc_sector_env;
 
 /* Crossed from the side its normal points to (the sector it belongs to) into target. */
@@ -49,6 +53,8 @@ typedef struct tc_sector {
     tc_portal *portals;
     uint32_t floor_count;
     tc_vec3 *floors;              /* 4 per face: v0, v1, v2, the stored face normal; faces up only */
+    uint16_t light_count;
+    uint16_t *lights;             /* into tc_level.lights (.ttlv LITE): lit with these when the frame is drawn from it */
 } tc_sector;
 
 typedef struct tc_sector_group {
@@ -84,6 +90,9 @@ uint16_t tc_sectors_cross(const tc_sectors *s, uint16_t sector, tc_vec3 from, tc
  * (walked in order, stopping at the first p is not below); returns the depth below the last of them (> 0), 0 above the
  * first. No sector, or none listed: the air, 0. env->water 0xFFFFFFFF: the sector names no environment there. */
 float tc_sectors_env(const tc_sectors *s, uint16_t sector, tc_vec3 p, tc_sector_env *env);
+/* The index of that env in the sector's list (TC_SECTOR_NONE: no sector, or the list is shorter), *depth (may be NULL)
+ * as above: FUN_00451c40, the env whose visual environment gives the frame its fog (the camera's position). */
+uint16_t tc_sectors_env_index(const tc_sectors *s, uint16_t sector, tc_vec3 p, float *depth);
 /* What a mode draws of each sector, one byte per sector: TC_SHOWN_SECTOR its characters and the water surfaces it
  * lists, TC_SHOWN_GEOMETRY its static geometry too (FUN_004521b0: a listed sector's link draw > 0; the sector drawn from
  * has both). */

@@ -132,6 +132,9 @@ final class GameView: MTKView {
 
     private var loadingScreen: LoadingScreen?
     var vignettes: URL?
+    /// In the demo: a key (but M), a click or a pad button ends it.
+    var onDemoInput: (() -> Void)?
+    private var inDemo: Bool { viewer.map { tc_viewer_demo($0) } ?? false }
 
     /// The renderer's loading screen state, every frame.
     func showLoading(_ state: (String, Float)?) {
@@ -171,7 +174,10 @@ final class GameView: MTKView {
         }
     }
 
-    override func mouseDown(with event: NSEvent) { setCaptured(true) }
+    override func mouseDown(with event: NSEvent) {
+        if inDemo { onDemoInput?(); return }
+        setCaptured(true)
+    }
 
     override func mouseMoved(with event: NSEvent) {
         if captured, let v = viewer { tc_viewer_mouse_look(v, Float(event.deltaX), Float(event.deltaY)) }
@@ -191,6 +197,10 @@ final class GameView: MTKView {
         }
         if event.keyCode == 46, !event.isARepeat {  // M: mute/unmute music and sound effects
             Music.shared.muted.toggle()
+            return
+        }
+        if inDemo {
+            if !event.isARepeat { onDemoInput?() }
             return
         }
         guard let v = viewer else { super.keyDown(with: event); return }
@@ -249,6 +259,10 @@ final class GameView: MTKView {
             if !event.isARepeat { tc_viewer_toggle_fog(v); updateTitle() }
             return
         }
+        if event.keyCode == 37 {  // L: lighting: the original's / the port's earlier one (comparing)
+            if !event.isARepeat { tc_viewer_cycle_lighting(v); updateTitle() }
+            return
+        }
         if event.keyCode == 40 {  // K: sectors drawn: Ed's and its list (default) / all / his alone
             if !event.isARepeat { tc_viewer_cycle_sectors(v); updateTitle() }
             return
@@ -291,6 +305,11 @@ final class GameView: MTKView {
     /// The loading screen after the intro: Totalski opens when its bar is full (shown full for a tick first, as a portal's).
     private var nextLevel: (url: URL, screen: LoadingScreen, start: CFTimeInterval, full: Bool)?
     private var nextLevelTimer: Timer?
+    /// The demo (the level select's Demo button, D): random main levels, Ed wandering by himself (tc_viewer_set_demo),
+    /// the next level every demoSeconds or through a red portal he walks into; a key, click or pad button ends it.
+    private var demo = false
+    private var demoTimer: Timer?
+    private let demoSeconds: TimeInterval = 60
     /// Default data, first that exists: inside OpenTonic.app (Contents/Resources/data/ttlv, built by
     /// tools/install_macos.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
@@ -334,6 +353,9 @@ final class GameView: MTKView {
     }
 
     @MainActor @objc func showPicker() {
+        demo = false
+        demoTimer?.invalidate()
+        demoTimer = nil
         Sfx.shared.stopAll()
         Music.shared.play(level: "menu", audioDir: levelFolder.deletingLastPathComponent().appendingPathComponent("audio"))
         gameView?.setCaptured(false)
@@ -344,6 +366,7 @@ final class GameView: MTKView {
         let thumbs = levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level")
         let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs) { [weak self] url in self?.openLevel(url) }
         picker.onIntro = { [weak self] in self?.playIntro() }
+        picker.onDemo = { [weak self] in self?.startDemo() }
         if picker.isEmpty {
             fail("No .ttlv levels in \(levelFolder.path). Please run your genuine installed Tonic Trouble files through the conversion step.")
         }
@@ -361,7 +384,9 @@ final class GameView: MTKView {
         picker.relayout(width: scroll.contentView.bounds.width)
         // Container so the Controls button floats in the top-right corner above the scrolling grid; it also takes V (intro).
         let container = PickerContainer(frame: window.contentLayoutRect)
+        container.appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
         container.onIntro = { [weak self] in self?.playIntro() }
+        container.onDemo = { [weak self] in self?.startDemo() }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
@@ -375,6 +400,40 @@ final class GameView: MTKView {
         window.contentView = container
         window.makeFirstResponder(container)
         window.title = "Open Tonic"
+    }
+
+    /// The levels the demo picks from: the game's main ones (no cutscenes, no imported models), with Ed's AI (.ttai).
+    private func demoLevels() -> [URL] {
+        let fm = FileManager.default
+        let imported = levelFolder.deletingLastPathComponent().appendingPathComponent("Imported")
+        return ((try? fm.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []).filter { url in
+            let name = url.deletingPathExtension().lastPathComponent
+            return url.pathExtension.lowercased() == "ttlv" && tc_level_is_cutscene(name) == 0
+                && !fm.fileExists(atPath: imported.appendingPathComponent(name).path)
+                && fm.fileExists(atPath: url.deletingPathExtension().appendingPathExtension("ttai").path)
+        }
+    }
+
+    @MainActor func startDemo() {
+        demo = true
+        nextDemoLevel()
+    }
+
+    /// Another random main level (not the one shown), in the demo.
+    private func nextDemoLevel() {
+        guard demo else { return }
+        let all = demoLevels(), current = renderer?.viewer?.level.name.lowercased()
+        guard let url = all.filter({ $0.deletingPathExtension().lastPathComponent.lowercased() != current }).randomElement()
+                ?? all.first else {
+            showPicker()
+            return
+        }
+        openLevel(url)
+        guard renderer != nil else { showPicker(); return }  // it didn't load (openLevel showed why)
+        demoTimer?.invalidate()
+        demoTimer = Timer.scheduledTimer(withTimeInterval: demoSeconds, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.nextDemoLevel() }
+        }
     }
 
     /// The intro movie, from the level select screen (V). files/out/video/intro.mp4 next to the ttlv folder.
@@ -496,6 +555,8 @@ final class GameView: MTKView {
                         tc_viewer_toggle_play(v)
                         view?.updateTitle()
                     }
+                case .press:
+                    if let v = view?.renderer?.viewer?.raw, tc_viewer_demo(v) { self?.showPicker() }
                 }
             }
             renderer = r
@@ -515,6 +576,11 @@ final class GameView: MTKView {
         if wasCaptured { view.setCaptured(true) }
         let r = renderer!, viewer = r.viewer!, s = viewer.stats
         window.title = "Open Tonic — \(viewer.level.name)"
+        if demo {  // through a red portal too: still the demo
+            tc_viewer_set_demo(viewer.raw, true, UInt32.random(in: 1...UInt32.max))
+            window.title = "Open Tonic — Demo — \(viewer.level.name)"
+            view.onDemoInput = { [weak self] in self?.showPicker() }
+        }
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()
         titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in

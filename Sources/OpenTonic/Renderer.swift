@@ -31,6 +31,9 @@ import TonicCore
         var camUp: SIMD4<Float>
         var lightNext: UInt32  // the set a change blends towards
         var lightBlend: Float  // 0..1
+        var lighting: UInt32   // tc_view_lighting: 0 the original's formula, 1 the port's earlier look
+        var ambientLight: SIMD4<Float>  // the ambient lights' sum (G)
+        var skyLight: SIMD4<Float>      // the sky's light (day / night), for the water's sheen
     }
 
     /// Per-draw vertex constants (matches DrawParams in Shaders.metal).
@@ -38,6 +41,8 @@ import TonicCore
         var model: float4x4
         var scroll: SIMD2<Float>
         var billboard: UInt32  // TC_FLAG_BILLBOARD sprite quads
+        var ambient: SIMD4<Float>  // the material's (tc_view_draw)
+        var diffuse: SIMD4<Float>
     }
 
     /// Ed's shadow disc (matches ShadowParams in Shaders.metal).
@@ -145,8 +150,9 @@ import TonicCore
         vd.attributes[2].format = .float2; vd.attributes[2].offset = 24
         for (i, off) in [(3, 32), (4, 36), (5, 40)] { vd.attributes[i].format = .uchar4Normalized; vd.attributes[i].offset = off }
         vd.attributes[6].format = .float2; vd.attributes[6].offset = 44  // lightmap atlas uv
-        for i in 0..<7 { vd.attributes[i].bufferIndex = 0 }
-        vd.layouts[0].stride = MemoryLayout<tc_vertex>.stride  // 52: pos3 + normal3 + uv floats, 3 x rgba8 baked sets, uv2
+        vd.attributes[7].format = .float3; vd.attributes[7].offset = 52  // the object's centre (light culling)
+        for i in 0..<8 { vd.attributes[i].bufferIndex = 0 }
+        vd.layouts[0].stride = MemoryLayout<tc_vertex>.stride  // 64: pos3 + normal3 + uv floats, 3 x rgba8 baked sets, uv2, centre3
 
 
         let ds = MTLDepthStencilDescriptor()
@@ -315,7 +321,7 @@ import TonicCore
         meshes = (0..<tc_viewer_mesh_count(viewer.raw)).map { i in
             let m = tc_viewer_mesh(viewer.raw, i)!.pointee
             guard m.index_count > 0, m.vertex_count > 0, let v = m.vertices, let i = m.indices else { return nil }
-            // tc_vertex is already the packed GPU layout (52 bytes).
+            // tc_vertex is already the packed GPU layout (64 bytes).
             guard let vb = device.makeBuffer(bytes: v, length: Int(m.vertex_count) * MemoryLayout<tc_vertex>.stride),
                   let ib = device.makeBuffer(bytes: i, length: Int(m.index_count) * 4) else { return nil }
             return GPUMesh(vertices: vb, indices: ib, indexCount: Int(m.index_count), scroll: SIMD2(m.surface.scroll.0, m.surface.scroll.1))
@@ -430,14 +436,21 @@ import TonicCore
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         var uniforms = Uniforms(viewProjection: float4x4(f.view_projection), lightDirection: SIMD3(f.light_direction),
                                 ambient: f.ambient, time: f.time, bakedScale: f.baked_scale, lightSet: f.light_set, gamma: f.gamma,
-                                fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, 0),
+                                fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, f.fog_strength),
                                 fogColor: SIMD4(f.fog_color.0, f.fog_color.1, f.fog_color.2, 0), eye: SIMD4(SIMD3(f.eye), 0),
                                 camRight: SIMD4(SIMD3(f.cam_right), 0), camUp: SIMD4(SIMD3(f.cam_up), 0),
-                                lightNext: f.light_next, lightBlend: f.light_blend)
+                                lightNext: f.light_next, lightBlend: f.light_blend, lighting: f.lighting,
+                                ambientLight: SIMD4(f.ambient_light.0, f.ambient_light.1, f.ambient_light.2, 0),
+                                skyLight: SIMD4(f.sky_light.0, f.sky_light.1, f.sky_light.2, 0))
         enc.setDepthStencilState(depthState)
         enc.setCullMode(.none)  // winding of OpenSpace elements not yet confirmed
         enc.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
         enc.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+        // Lights in Shaders.metal: uint count, 12 bytes of padding, then tc_view_light as is (3 x float4 each).
+        var lights = [UInt8](repeating: 0, count: 16 + MemoryLayout.size(ofValue: f.lights))
+        withUnsafeBytes(of: f.light_count) { lights.replaceSubrange(0..<4, with: $0) }
+        withUnsafeBytes(of: f.lights) { lights.replaceSubrange(16..<lights.count, with: $0) }
+        enc.setVertexBytes(lights, length: lights.count, index: 4)
 
         var count: UInt32 = 0, opaque: UInt32 = 0
         let draws = tc_viewer_draws(v, &count, &opaque)!
@@ -457,7 +470,9 @@ import TonicCore
                 enc.setRenderPipelineState(flatPipeline)
                 enc.setFragmentTexture(lightmap, index: 1)
             }
-            var params = DrawParams(model: float4x4(d.model), scroll: m.scroll, billboard: d.flags & TC_FLAG_BILLBOARD != 0 ? 1 : 0)
+            var params = DrawParams(model: float4x4(d.model), scroll: m.scroll, billboard: d.flags & TC_FLAG_BILLBOARD != 0 ? 1 : 0,
+                                    ambient: SIMD4(d.ambient.0, d.ambient.1, d.ambient.2, 0),
+                                    diffuse: SIMD4(d.diffuse.0, d.diffuse.1, d.diffuse.2, 0))
             enc.setVertexBytes(&params, length: MemoryLayout<DrawParams>.stride, index: 2)
             enc.setVertexBuffer(m.vertices, offset: 0, index: 0)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: Int(d.index_count), indexType: .uint32, indexBuffer: m.indices,

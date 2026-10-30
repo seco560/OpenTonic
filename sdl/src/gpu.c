@@ -59,7 +59,7 @@ static bool msaa_supported(const gpu *g, int samples) {
            SDL_GPUTextureSupportsSampleCount(g->device, g->depth_format, sample_count(samples));
 }
 
-/* tc_vertex is the packed GPU layout: pos3, normal3, uv2 floats, 3 x rgba8 baked sets, uv2 (52 bytes).
+/* tc_vertex is the packed GPU layout: pos3, normal3, uv2 floats, 3 x rgba8 baked sets, uv2, centre3 (64 bytes).
  * coverage: alpha to coverage (only takes effect with multisampling). */
 static SDL_GPUGraphicsPipeline *level_pipeline(gpu *g, SDL_GPUShader *vs, SDL_GPUShader *fs, bool blended,
                                                bool depth_write, bool coverage) {
@@ -71,6 +71,7 @@ static SDL_GPUGraphicsPipeline *level_pipeline(gpu *g, SDL_GPUShader *vs, SDL_GP
         {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, offsetof(tc_vertex, color) + 4},
         {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, offsetof(tc_vertex, color) + 8},
         {6, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(tc_vertex, uv2)},
+        {7, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(tc_vertex, centre)},
     };
     SDL_GPUVertexBufferDescription buffer;
     SDL_zero(buffer);
@@ -242,7 +243,7 @@ bool gpu_init(gpu *g, SDL_Window *window, int msaa) {
         if (msaa_supported(g, s)) g->msaa = s;
     SDL_Log("GPU: antialiasing %dx MSAA", g->msaa);
 
-    g->level_vs = shader(g, level_vert, sizeof level_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 2);
+    g->level_vs = shader(g, level_vert, sizeof level_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 3);  /* Uniforms, DrawParams, Lights */
     g->textured_fs = shader(g, level_frag, sizeof level_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 2);
     g->flat_fs = shader(g, level_flat_frag, sizeof level_flat_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
     g->shadow_vs = shader(g, shadow_vert, sizeof shadow_vert, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);

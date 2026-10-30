@@ -37,18 +37,23 @@ typedef enum tc_result {
 
 const char *tc_result_string(tc_result r);
 
-/* 52 bytes, tightly packed: exactly the GPU vertex layout the viewer uses.
- * color[i]: baked lighting set i, rgba8 little-endian (r in the low byte); alpha 0 = none.
- * uv2: lightmap atlas coordinates (texel space / atlas size, top-left origin); -1 = no lightmap. */
+/* 64 bytes, tightly packed: exactly the GPU vertex layout the viewer uses.
+ * color[i]: baked lighting set i, rgba8 little-endian (r in the low byte); alpha 255 = baked, TC_SKY_ALPHA = baked, a
+ * sky's (neutral under the port's old lighting), 0 = none (persos: no radiosity).
+ * uv2: lightmap atlas coordinates (texel space / atlas size, top-left origin); -1 = no lightmap.
+ * centre: the bounding-sphere centre of the object the vertex comes from, in the mesh's space (.ttlv LITE; the vertex
+ * itself without it): a spherical light reaches an object only when this point is within its far range. */
 typedef struct tc_vertex {
     float position[3];
     float normal[3];
     float uv[2];
     uint32_t color[3];
     float uv2[2];
+    float centre[3];
 } tc_vertex;
-/* Platform backends upload tc_vertex arrays to the GPU as-is (52-byte stride). */
-_Static_assert(sizeof(tc_vertex) == 52, "tc_vertex must stay the packed 52-byte GPU vertex layout");
+/* Platform backends upload tc_vertex arrays to the GPU as-is (64-byte stride). */
+_Static_assert(sizeof(tc_vertex) == 64, "tc_vertex must stay the packed 64-byte GPU vertex layout");
+#define TC_SKY_ALPHA 128u
 
 typedef struct tc_frame { int32_t texture; float seconds; } tc_frame;
 
@@ -58,6 +63,9 @@ typedef struct tc_surface {
     float scroll[2];      /* UV per second */
     uint32_t frame_count; /* animated texture loop; 0 = static */
     tc_frame *frames;
+    /* The material's lighting coefficients (.ttlv LITE; without it ambient 0.5, diffuse 0: full light): the original's
+     * light = min(1, (radiosity / 256 + lights) x diffuse + ambient + ambient lights x diffuse) x 512 / 255). */
+    float ambient[3], diffuse[3];
 } tc_surface;
 
 typedef struct tc_mesh {
@@ -107,6 +115,22 @@ typedef struct tc_ed {
  * for tc_ai_model_load_scripts). */
 typedef struct tc_light_perso { uint32_t size; uint8_t *scripts; } tc_light_perso;
 
+/* A light of the original (.ttlv LITE; GLI light record, docs/DECOMP.md "Rendering and lighting"). The sectors list
+ * which of them light a frame drawn from them (tc_sector.lights). */
+typedef enum tc_light_type {
+    TC_LIGHT_PARALLEL = 1, TC_LIGHT_SPHERICAL = 2, TC_LIGHT_HOTSPOT = 3, TC_LIGHT_AMBIENT = 4
+} tc_light_type;
+typedef struct tc_light {
+    uint8_t type;                /* tc_light_type */
+    uint8_t on;
+    uint8_t paint;               /* +0xa6: a spherical light without N.L (none in the 21 levels) */
+    uint8_t alpha_mode;          /* +0xa7: 0 colour and alpha, 1 alpha only, 2 colour only */
+    float near_range, far_range; /* spherical: full inside near, fading out to far */
+    tc_vec3 position;
+    tc_vec3 direction;           /* parallel: the way it shines (faces turned against it are lit) */
+    float color[4];
+} tc_light;
+
 typedef struct tc_level {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
     uint32_t light_set_count;    /* baked sets per vertex, 1-3 */
@@ -128,6 +152,9 @@ typedef struct tc_level {
     int has_ed;
     tc_ed ed;
     tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
+    int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
+    uint32_t light_count;        /* centres (without it only the port's old lighting works) */
+    tc_light *lights;
 } tc_level;
 
 /* Parses `size` bytes at `data`. On failure *level is left empty (safe to tc_level_free). */

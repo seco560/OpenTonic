@@ -23,11 +23,12 @@ layout(location = 4) in vec2 vUV2;
 
 layout(location = 0) out vec4 outColor;
 
-// Static geometry: the engine's baked per-vertex radiosity (Gouraud), texture x light, up to ~2x.
-// Persos (and the few IPOs without radiosity, alpha 0) keep the placeholder until sector lights are
-// decoded: a fixed key light plus ambient, so geometry reads clearly in the viewer.
+// The original's lighting: the vertex's (level.vert). The port's earlier look: the baked radiosity x 255/128 (up to
+// ~2x), skies neutral, persos (and the few IPOs without radiosity, alpha 0) a fixed key light plus ambient.
 vec3 shade() {
-    if (vColor.a > 0.5) return vColor.rgb * u.bakedScale;
+    if (u.lighting == 0u) return vColor.rgb;
+    if (vColor.a > 0.25 && vColor.a < 0.75) return vec3(1.0);  // a sky (TC_SKY_ALPHA)
+    if (vColor.a > 0.25) return vColor.rgb * u.bakedScale;
     vec3 n = vNormal;
     float l = length(n) > 0.0 ? clamp(dot(normalize(n), u.lightDirection), 0.0, 1.0) : 1.0;
     return vec3(u.ambient + (1.0 - u.ambient) * l);
@@ -45,7 +46,7 @@ vec3 light() {
 vec3 fogged(vec3 rgb) {
     if (u.fog.z < 0.5 || u.fog.y <= u.fog.x) return rgb;
     float depth = dot(vWorld - u.eye.xyz, cross(u.camUp.xyz, u.camRight.xyz));
-    float t = clamp((depth - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    float t = clamp((depth - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0) * u.fog.w;  // w: faded in or out
     return mix(rgb, u.fogColor.rgb, t);
 }
 
@@ -67,7 +68,8 @@ vec4 water_sheen() {
     vec3 sky = vec3(0.62, 0.74, 0.86);
     vec3 h = normalize(v + normalize(u.lightDirection));
     float spec = pow(clamp(dot(n, h), 0.0, 1.0), 80.0) * 0.9;
-    return vec4(sky * fresnel * 0.8 + vec3(spec), clamp(0.35 + fresnel, 0.0, 1.0));
+    // with the sky's light: dim at night (sud0's day / night cycle)
+    return vec4((sky * fresnel * 0.8 + vec3(spec)) * u.skyLight.rgb, clamp(0.35 + fresnel, 0.0, 1.0));
 }
 #endif
 

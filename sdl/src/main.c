@@ -36,19 +36,20 @@ static const char *controls_text =
     "Lighting variant:  1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain)\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
+    "Lighting:  L  the original's (default: its formula, the lights and fog of Ed's sector) / the port's old one\n"
     "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 8)\n"
     "Supersampling:  F3  off / 1.5x / 2x  (draws the level at that many times the window's pixels; TONIC_SCALE=150|200)\n"
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level\n"
+    "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level  -  V intro  -  D demo (any key ends it)\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "\n"
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
     "  R2:  fly faster  -  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
-    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro  -  Intro:  Cross, Circle or Start skip\n"
+    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro, Square the demo  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
 
@@ -81,6 +82,11 @@ typedef struct app {
     char *next_level;            /* its .ttlv, or NULL */
     char next_name[64];          /* its level name (for the vignette) */
     float next_time;             /* seconds into its loading screen */
+    /* The demo (the level select's Demo button, D, Square): random main levels, Ed wandering by himself
+     * (tc_viewer_set_demo), the next level every DEMO_SECONDS or through a red portal he walks into; a key, click or pad
+     * button ends it. */
+    bool demo;
+    float demo_time;             /* seconds on this level */
     char title_base[512];
     char title[1024];
     Uint64 last_title_ns;
@@ -142,6 +148,7 @@ static void close_picker(app *a) {
 }
 
 static void show_picker(app *a) {
+    a->demo = false;
     sfx_stop_all();
     char *audio = audio_dir(a);
     if (audio) music_play("menu", audio);
@@ -198,7 +205,9 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     SDL_free(audio);
     const tc_view_stats *s = &v->viewer.stats;
     uint32_t textures = v->texture_count - v->missing_textures;
-    SDL_snprintf(a->title_base, sizeof a->title_base, "Open Tonic \xe2\x80\x94 %s", v->level.name);
+    SDL_snprintf(a->title_base, sizeof a->title_base, "Open Tonic \xe2\x80\x94 %s%s", a->demo ? "Demo \xe2\x80\x94 " : "",
+                 v->level.name);
+    if (a->demo) tc_viewer_set_demo(&v->viewer, true, SDL_rand_bits() | 1u);  /* through a red portal too */
     a->title[0] = 0;
     update_title(a);  /* play mode is on from the start when the level has Ed */
     SDL_Log("Loaded %s: %u meshes, %u persos (%u parts), %u triangles, %u textures, %u missing", v->level.name, s->meshes,
@@ -227,6 +236,55 @@ static void open_portal_level(app *a, const tc_viewer_carry *pending) {
     }
     if (!open_level(a, path, &carry)) show_picker(a);
     SDL_free(path);
+}
+
+#define DEMO_SECONDS 60.0f
+
+/* The levels the demo picks from: the game's main ones (no cutscenes, no imported models), with Ed's AI (.ttai). */
+static bool demo_level(const app *a, const char *file) {
+    char *name = path_stem(file), *out = path_dir(a->level_folder);
+    char *imported = out ? path_join(out, "Imported") : NULL, *dir = imported && name ? path_join(imported, name) : NULL;
+    char ai[600];
+    bool ok = name && !tc_level_is_cutscene(name) && !(dir && path_is_dir(dir));
+    if (ok) {
+        SDL_snprintf(ai, sizeof ai, "%s/%s.ttai", a->level_folder, name);
+        ok = path_is_file(ai);
+    }
+    SDL_free(dir);
+    SDL_free(imported);
+    SDL_free(out);
+    SDL_free(name);
+    return ok;
+}
+
+/* Another random main level (not the one shown), in the demo; the level select when there is none or it won't load. */
+static void next_demo_level(app *a) {
+    int n = 0, count = 0, pick;
+    char **files = SDL_GlobDirectory(a->level_folder, "*.ttlv", SDL_GLOB_CASEINSENSITIVE, &n);
+    char *path = NULL;
+    const char *current = a->view ? a->view->level.name : "";
+    for (int round = 0; round < 2 && !path; round++) {  /* the second round only when the current one is all there is */
+        count = 0;
+        for (int i = 0; files && i < n; i++) {
+            char *stem = path_stem(files[i]);
+            bool same = stem && SDL_strcasecmp(stem, current) == 0;
+            SDL_free(stem);
+            if (demo_level(a, files[i]) && (round || !same)) files[count++] = files[i];
+        }
+        if (count == 0) continue;
+        pick = (int)SDL_rand(count);
+        path = path_join(a->level_folder, files[pick]);
+    }
+    SDL_free(files);
+    a->demo_time = 0;
+    if (!path || !open_level(a, path, NULL)) show_picker(a);
+    SDL_free(path);
+}
+
+static void start_demo(app *a) {
+    a->demo = true;
+    a->help = false;
+    next_demo_level(a);
 }
 
 /* The intro movie, from the level select screen (V): out/video/intro.mpg next to the ttlv folder. */
@@ -331,6 +389,10 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
         if (!k->repeat) { tc_viewer_toggle_fog(v); update_title(a); }
         return;
     }
+    if (sc == SDL_SCANCODE_L) {  /* L: lighting: the original's / the port's earlier one (comparing) */
+        if (!k->repeat) { tc_viewer_cycle_lighting(v); update_title(a); }
+        return;
+    }
     if (sc == SDL_SCANCODE_K) {  /* K: sectors drawn: Ed's and its list (default) / all / his alone */
         if (!k->repeat) { tc_viewer_cycle_sectors(v); update_title(a); }
         return;
@@ -364,6 +426,9 @@ static void picker_key(app *a, const SDL_KeyboardEvent *k) {
         break;
     case SDL_SCANCODE_V:  /* V: the intro movie */
         if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) play_intro(a);
+        break;
+    case SDL_SCANCODE_D:  /* D: the demo */
+        if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) start_demo(a);
         break;
     default: break;
     }
@@ -420,6 +485,7 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
         return;
     }
     if (ctrl) return;
+    if (a->view && a->demo) { if (!k->repeat) show_picker(a); return; }  /* any other key ends the demo */
     if (a->view) level_key(a, k);
     else if (a->picker_open) picker_key(a, k);
 }
@@ -456,7 +522,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         return;
     }
     if (a->view) {
-        if (button == SDL_GAMEPAD_BUTTON_START) { show_picker(a); return; }  /* level select (Ctrl+L) */
+        if (button == SDL_GAMEPAD_BUTTON_START || a->demo) { show_picker(a); return; }  /* level select (Ctrl+L); ends the demo */
         if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {  /* R3: play as Ed / free-fly (Tab) */
             tc_viewer_toggle_play(&a->view->viewer);
             update_title(a);
@@ -473,6 +539,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: picker_move(&a->picker, 0, 1); break;
     case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_START: open_selected(a); break;
     case SDL_GAMEPAD_BUTTON_NORTH: play_intro(a); break;  /* Triangle: the intro (V) */
+    case SDL_GAMEPAD_BUTTON_WEST: start_demo(a); break;   /* Square: the demo (D) */
     default: break;
     }
 }
@@ -559,10 +626,12 @@ static void handle(app *a, const SDL_Event *e) {
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
         if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro || a->next_level) break;
-        if (a->view) set_captured(a, true);
+        if (a->view && a->demo) show_picker(a);  /* a click ends the demo */
+        else if (a->view) set_captured(a, true);
         else if (a->picker_open) {
             int i = picker_hit(&a->picker, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
             if (i == PICKER_INTRO) play_intro(a);
+            else if (i == PICKER_DEMO) start_demo(a);
             else if (i == PICKER_CONTROLS) a->help = true;
             else if (i >= 0) {
                 char *path = SDL_strdup(a->picker.entries[i].path);  /* opening closes the picker */
@@ -804,6 +873,7 @@ int main(int argc, char **argv) {
         last = now;
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
         if (a.next_level) a.next_time += dt;
+        if (a.demo && a.view && (a.demo_time += dt) >= DEMO_SECONDS) next_demo_level(&a);
         pad_update(&a, dt);
         if (a.view) {
             tc_viewer_update(&a.view->viewer, dt);

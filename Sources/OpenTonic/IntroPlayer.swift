@@ -69,17 +69,19 @@ final class IntroView: NSView {
     }
 }
 
-/// The level select screen's root view: V plays the intro.
+/// The level select screen's root view: V plays the intro, D starts the demo.
 final class PickerContainer: NSView {
     var onIntro: (() -> Void)?
+    var onDemo: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        if event.charactersIgnoringModifiers?.lowercased() == "v", event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
-            onIntro?()
-        } else {
-            super.keyDown(with: event)
+        let plain = event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "v" where plain: onIntro?()
+        case "d" where plain: onDemo?()
+        default: super.keyDown(with: event)
         }
     }
 }

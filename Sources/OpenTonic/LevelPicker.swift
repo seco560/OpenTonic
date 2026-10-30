@@ -12,10 +12,15 @@ final class LevelPicker: NSView {
     private static let titles = ["Levels", "Cutscenes", "Imported"]
     private let entries: [Entry]
     private let onPick: (URL) -> Void
-    /// The big "Play Intro Video" button at the top (the movie then starts the ski slope, as the original).
+    /// The two big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original) and
+    /// "Demo" (Ed wanders around random main levels by himself).
     var onIntro: (() -> Void)?
-    private let introButton = NSButton(title: "Play Intro Video", target: nil, action: nil)
-    private let introHeight: CGFloat = 64
+    var onDemo: (() -> Void)?
+    private let introButton = PickerButton(title: "▶  Play Intro Video", colors: (NSColor(calibratedRed: 0.95, green: 0.45, blue: 0.2, alpha: 1),
+                                                                         NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.45, alpha: 1)))
+    private let demoButton = PickerButton(title: "✦  Demo", colors: (NSColor(calibratedRed: 0.2, green: 0.75, blue: 0.85, alpha: 1),
+                                                               NSColor(calibratedRed: 0.25, green: 0.3, blue: 0.85, alpha: 1)))
+    private let introHeight: CGFloat = 84
     private var tiles: [NSButton] = []
     private let headings = LevelPicker.titles.map { NSTextField(labelWithString: $0) }
     private let rules = LevelPicker.titles.map { _ in NSBox() }
@@ -51,28 +56,35 @@ final class LevelPicker: NSView {
             return Entry(name: name, url: url, image: image, section: s)
         }
         super.init(frame: .zero)
+        // The screen is dark whatever the system's appearance: light mode's black text would vanish on it.
+        appearance = NSAppearance(named: .darkAqua)
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(white: 0, alpha: 0.9)
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowBlurRadius = 3
         for (i, e) in entries.enumerated() {
             let b = NSButton(title: e.name, image: e.image ?? NSImage(size: tile), target: self, action: #selector(pick(_:)))
             b.tag = i
             b.imagePosition = .imageAbove
             b.imageScaling = .scaleProportionallyUpOrDown
             b.isBordered = false
-            b.font = .systemFont(ofSize: 14, weight: .medium)
+            b.attributedTitle = NSAttributedString(string: e.name, attributes: [
+                .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.white, .shadow: shadow])
             b.toolTip = e.url.path
             addSubview(b)
             tiles.append(b)
         }
-        introButton.bezelStyle = .rounded
-        introButton.controlSize = .large
-        introButton.font = .systemFont(ofSize: 20, weight: .semibold)
         introButton.target = self
         introButton.action = #selector(intro)
-        introButton.keyEquivalent = ""
         introButton.toolTip = "The game's intro movie (V)"
+        demoButton.target = self
+        demoButton.action = #selector(demo)
+        demoButton.toolTip = "Ed wanders around random levels by himself; any key or click ends it (D)"
         addSubview(introButton)
+        addSubview(demoButton)
         for (k, (heading, rule)) in zip(headings, rules).enumerated() where entries.contains(where: { $0.section == k }) {
-            heading.font = .systemFont(ofSize: 15, weight: .semibold)
-            heading.textColor = .secondaryLabelColor
+            heading.font = .systemFont(ofSize: 17, weight: .bold)
+            heading.textColor = NSColor(white: 0.92, alpha: 1)
             rule.boxType = .separator
             addSubview(heading)
             addSubview(rule)
@@ -103,10 +115,10 @@ final class LevelPicker: NSView {
         let cols = max(1, Int((width - pad) / cellW))
         let left = max(pad, (width - CGFloat(cols) * cellW + pad) / 2)
         let rowWidth = CGFloat(cols) * cellW - pad
-        introButton.sizeToFit()
-        let bw = max(introButton.frame.width + 60, 320)
-        introButton.frame = NSRect(x: (width - bw) / 2, y: pad + (introHeight - introButton.frame.height) / 2 - 8, width: bw,
-                                   height: introButton.frame.height)
+        let bw: CGFloat = 280, bh: CGFloat = 54, gap: CGFloat = 24
+        let bx = (width - 2 * bw - gap) / 2, by = pad + (introHeight - bh) / 2 - 8
+        introButton.frame = NSRect(x: bx, y: by, width: bw, height: bh)
+        demoButton.frame = NSRect(x: bx + bw + gap, y: by, width: bw, height: bh)
         // Each section starts on a new row, under its heading; empty sections take no space.
         var y = pad + introHeight
         for (k, (heading, rule)) in zip(headings, rules).enumerated() {
@@ -127,4 +139,62 @@ final class LevelPicker: NSView {
 
     @objc private func pick(_ sender: NSButton) { onPick(entries[sender.tag].url) }
     @objc private func intro() { onIntro?() }
+    @objc private func demo() { onDemo?() }
+}
+
+/// A big pill-shaped button of the level select: a two-colour gradient, white bold title, lighter under the mouse,
+/// darker while pressed.
+final class PickerButton: NSButton {
+    private let colors: (NSColor, NSColor)
+    private var hovering = false { didSet { needsDisplay = true } }
+
+    init(title: String, colors: (NSColor, NSColor)) {
+        self.colors = colors
+        super.init(frame: .zero)
+        self.title = title
+        isBordered = false
+        setButtonType(.momentaryPushIn)
+        focusRingType = .none
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds.insetBy(dx: 2, dy: 2), path = NSBezierPath(roundedRect: r, xRadius: r.height / 2, yRadius: r.height / 2)
+        let pressed = isHighlighted
+        func tone(_ c: NSColor) -> NSColor {
+            pressed ? c.blended(withFraction: 0.3, of: .black)! : hovering ? c.blended(withFraction: 0.2, of: .white)! : c
+        }
+        NSGraphicsContext.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowColor = colors.1.withAlphaComponent(hovering ? 0.8 : 0.45)
+        glow.shadowBlurRadius = hovering ? 14 : 8
+        glow.set()
+        NSGradient(starting: tone(colors.0), ending: tone(colors.1))?.draw(in: path, angle: 0)
+        NSGraphicsContext.restoreGraphicsState()
+        NSGradient(starting: NSColor(white: 1, alpha: 0), ending: NSColor(white: 1, alpha: 0.28))?  // gloss on the top half
+            .draw(in: NSBezierPath(roundedRect: NSRect(x: r.minX, y: r.midY, width: r.width, height: r.height / 2),
+                                   xRadius: r.height / 4, yRadius: r.height / 4), angle: 90)
+        NSColor(white: 1, alpha: 0.35).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(white: 0, alpha: 0.6)
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowBlurRadius = 2
+        let text = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 20, weight: .bold), .foregroundColor: NSColor.white, .shadow: shadow])
+        let size = text.size()
+        text.draw(at: NSPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2))
+    }
 }
