@@ -189,7 +189,8 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     view *v = c->v;
     gpu *g = v->g;
     const view_mesh *m = &v->meshes[d->mesh];
-    if (m->index_count == 0) return;
+    /* d's index range: all of the mesh, or the shown sectors' part of a static (tc_view_draw) */
+    if (m->index_count == 0 || d->index_count == 0 || d->first_index + d->index_count > m->index_count) return;
     const tc_surface *s = &tc_viewer_mesh(&v->viewer, d->mesh)->surface;
     bool transparent = (d->flags & TC_FLAG_TRANSPARENT) != 0;
     SDL_GPUTexture *tex = d->texture >= 0 && v->textures ? v->textures[d->texture] : NULL;
@@ -212,7 +213,7 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     params.billboard = (d->flags & TC_FLAG_BILLBOARD) ? 1 : 0;
     params.pad = 0;
     SDL_PushGPUVertexUniformData(c->cmd, 1, &params, sizeof params);
-    SDL_DrawGPUIndexedPrimitives(c->pass, m->index_count, 1, m->first_index, m->vertex_offset, 0);
+    SDL_DrawGPUIndexedPrimitives(c->pass, d->index_count, 1, m->first_index + d->first_index, m->vertex_offset, 0);
 }
 
 static void vec4(float out[4], tc_vec3 v, float w) { out[0] = v.x; out[1] = v.y; out[2] = v.z; out[3] = w; }

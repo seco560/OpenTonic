@@ -36,15 +36,18 @@ static void check(int ok, const char *what) {
     if (!ok) failures++;
 }
 
-/* Swimming (card type 1): a water plane at z 0 over a big box; Ed's main swim card with the given mass. mode / speed /
- * dir: the request each frame (speed = proposal [0], dir = proposal [7..9]). Returns the end position; *v the velocity. */
+/* Swimming (card type 1): one sector listing a water surface at z 0 (env 0 the air, env 1 water below it, as the levels'
+ * water sectors); Ed's main swim card with the given mass. mode / speed / dir: the request each frame (speed = proposal
+ * [0], dir = proposal [7..9]). Returns the end position; *v the velocity. */
 static float swim_lo, swim_hi, swim_mean; /* z over the last 10 s of a swim() */
 
 static tc_vec3 swim(float mass, float z, float seconds, int mode, float speed, tc_vec3 dir, float fps, tc_vec3 *v,
                     tc_mec_swim *s) {
-    static tc_vec3 boxes[2] = {{-100, -100, -100}, {100, 100, 100}};
-    tc_ai_water water = {0, 9.81f, 1000, 1, 1, boxes};
-    tc_ai_model m;
+    static float surface_z[1] = {0};
+    static uint16_t surfaces[1] = {0};
+    static tc_sector_env envs[2] = {{9.81f, 1.3f, 1, 0}, {9.81f, 1000, 1, 1}};
+    tc_sector sector;
+    tc_sectors m;
     float f[17] = {990, 0, 0.1f, 0.1f, 0.1f, 0.1f, 2.5f, 2.5f, 2000, 1, 1, 0, 10, 0.99f, 160, 1, 0}, prop[32] = {0}, depth;
     tc_ai_card card;
     tc_vec3 p = tc_v3(0, 0, z);
@@ -52,8 +55,15 @@ static tc_vec3 swim(float mass, float z, float seconds, int mode, float speed, t
     f[0] = mass;
     card = card_of(1, f, 17);
     memset(&m, 0, sizeof(m));
-    m.water_count = 1;
-    m.water = &water;
+    memset(&sector, 0, sizeof(sector));
+    sector.env_count = 2;
+    sector.envs = envs;
+    sector.surface_count = 1;
+    sector.surfaces = surfaces;
+    m.count = 1;
+    m.sectors = &sector;
+    m.surface_count = 1;
+    m.surface_z = surface_z;
     prop[0] = speed;
     prop[7] = dir.x, prop[8] = dir.y, prop[9] = dir.z;
     tc_mec_swim_enter(s, TC_PI / 2); /* facing +x */
@@ -61,7 +71,7 @@ static tc_vec3 swim(float mass, float z, float seconds, int mode, float speed, t
     swim_lo = 1e9f, swim_hi = -1e9f, swim_mean = 0;
     for (i = 0; i < (int)(seconds * fps); i++) {
         tc_mec_swim_request(s, &card, mode, prop, 1 / fps);
-        *v = tc_mec_swim_velocity(s, &card, &m, NULL, p, *v, 1 / fps, &depth);
+        *v = tc_mec_swim_velocity(s, &card, &m, 0, p, *v, 1 / fps, &depth);
         p = tc_v3_add(p, tc_v3_scale(*v, 1 / fps));
         if (i >= (int)((seconds - 10) * fps)) {
             swim_lo = fminf(swim_lo, p.z);

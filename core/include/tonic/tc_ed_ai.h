@@ -49,6 +49,11 @@ typedef struct tc_ed_ai {
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;
     tc_mec_env env;
+    /* Ed's sector (tc_sector.h): where his water is looked up. Set the level's sectors with tc_ed_ai_set_sectors (NULL:
+     * none, no water); each step moves it on through the portals, and looks it up again after the player was placed
+     * (tc_player.placed changed: init, respawn, teleport). */
+    const tc_sectors *sectors;
+    tc_sector_track sector;
     /* Portals (.ttai PORT): the one in progress (-1 none), whether its fire condition has held, its next fire op and
      * when that may run; per portal whether the player has left its radius since it last captured him. */
     int portal;
@@ -61,6 +66,12 @@ typedef struct tc_ed_ai {
 } tc_ed_ai;
 
 tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player, const char *level_name);
+/* The level's sectors (tc_level.sectors, must outlive the driver; NULL or empty: no sectors, so no water): Ed's sector
+ * is looked up at once. */
+void tc_ed_ai_set_sectors(tc_ed_ai *e, const tc_sectors *s);
+/* Move Ed's sector on to where the player is now (each tc_ed_ai_step does it first): for a host that moves the player
+ * itself (the viewer's simple controller). */
+void tc_ed_ai_track_sector(tc_ed_ai *e);
 void tc_ed_ai_free(tc_ed_ai *e);
 /* inputs: 1 << TC_AI_IN_* held; stick -1..1 (y forward, 0 with a keyboard); camera: the eye position.
  * Runs the portals before the AI: capture when the player comes within a portal's radius (its guards holding), then its

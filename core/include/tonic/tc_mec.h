@@ -15,24 +15,21 @@
 #include "tc_math.h"
 #include "tc_ai.h"
 #include "tc_collision.h"
+#include "tc_sector.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Mechanical environment (MecEnv, docs/NOTES.md "Swimming"): gravity and the fluid's density (+0x14): air 1.3 (every
- * level), water 1000 (below a sector's water surface). */
-typedef struct tc_mec_env { float gravity, density, drag; } tc_mec_env;
+ * level), water 1000 (below a sector's water surface); water = MecEnv +0x28, what the scripts' water zones read. */
+typedef struct tc_mec_env { float gravity, density, drag; uint32_t water; } tc_mec_env;
 tc_mec_env tc_mec_env_default(void);
-/* The environment at p (FUN_00451b90 with the .ttai WATR water planes): among the planes one of whose sector boxes
- * holds p, the one nearest p in height; p below it: its environment and the depth (> 0, the scripts' EnvHeight), else
- * the air and 0 (the exe writes the depth only below a surface). The nearest-in-height rule stands in for the
- * engine's choice of the perso's sector, where sector boxes overlap (sud0's top pool above the falls' foot).
- * world (NULL: not checked): p counts as dry when solid ground lies straight above it below the surface (a ceiling,
- * i.e. a face turned down towards p). The water planes are bounded only by sector boxes, which overlap the dry places
- * under a level's water (sud0: the tunnel under Doc's house below the river, the cave under the well); the exe asks the
- * perso's sector, which the port does not have (docs/NOTES.md "Ghost water"). */
-float tc_mec_env_at(const tc_ai_model *m, tc_collision *world, tc_vec3 p, tc_mec_env *env);
+/* The environment at p looked up in the perso's sector (FUN_00451b90 = tc_sectors_env; every lookup of a perso uses its
+ * own sector, even for points of it that lie in another): below the first k surfaces the sector lists, its env k and
+ * the depth below the last of them (> 0, the scripts' EnvHeight), else the air and 0. A surface is an unbounded plane
+ * within the sector, so water does not end at a pool's floor or edge (docs/NOTES.md "Sectors"). No sector: the air. */
+float tc_mec_env_at(const tc_sectors *s, uint16_t sector, tc_vec3 p, tc_mec_env *env);
 
 /* The exe applies some fractions once per mechanics frame (friction, the board turning towards the ground): a fixed
  * share k of the way each frame, so their effect over a second depends on the frame rate. Its mechanics frame is
@@ -95,7 +92,7 @@ void tc_mec_swim_enter(tc_mec_swim *s, float heading);
 void tc_mec_swim_request(tc_mec_swim *s, const tc_ai_card *card, int mode, const float *proposal, float dt);
 /* The forces and the new velocity: the environment and depth at the probe 0.5 x body size below position (*depth =
  * the scripts' EnvHeight while swimming), weight, buoyancy rho g V, drag -rho Cd s^2 min(|v|, 10) v, the thrust. */
-tc_vec3 tc_mec_swim_velocity(tc_mec_swim *s, const tc_ai_card *card, const tc_ai_model *m, tc_collision *world,
+tc_vec3 tc_mec_swim_velocity(tc_mec_swim *s, const tc_ai_card *card, const tc_sectors *sectors, uint16_t sector,
                              tc_vec3 position, tc_vec3 velocity, float dt, float *depth);
 /* The model's axes (FUN_004c91d2 = the frame Rz(heading + pi / 2) Rx(polar + offset)): z along the swim direction (the
  * head), y the back (up when level), x the left. */

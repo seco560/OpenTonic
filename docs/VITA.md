@@ -82,7 +82,10 @@ scripts make the stick camera-relative themselves.
   (seen while chasing the ghost water) has several {head, tail, count} lists after the environments and surfaces,
   e.g. 14 entries at +0x1C in marmite's sctV01a, plausibly that. Reading which list the renderer walks (GLI is 0 %
   read, docs/DECOMP.md) would give the game's own visibility, better than plain culling, and the sector choice the
-  water needs too (docs/NOTES.md "Ghost water").
+  water needs too (docs/NOTES.md "Ghost water"). **Read and ported 2026-10-30** (docs/NOTES.md "Sectors"): the frame
+  is drawn from a sector and the sectors of its +0x4C list (the exe: the camera's; tc_viewer's default: Ed's), each
+  static mesh as runs of its shown sectors' index ranges (sud0 from Ed's start: 666 of 4535 static triangles). The draw
+  count per frame is not measured yet.
 - Measure with `viewcheck` (draws per frame, level by level). Target: a few hundred at most in the largest levels.
 - Alpha bleed into `tools/ttre` (converter), removing it from both frontends' texture loading.
 

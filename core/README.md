@@ -1,6 +1,7 @@
 # TonicCore: the portable core
 
-Plain C11 library with the platform-independent part of the port: the `.ttlv` loader,
+Plain C11 library with the platform-independent part of the port: the `.ttlv` loader (with the level's sectors,
+`tc_sector.h`: which sector a point or a moving perso is in, the water there, what each sector draws),
 world collision (uniform grid, raycast, closest point), Ed's play-mode controller, the
 animation sampling helpers, the AI interpreter (`tc_ai.h`: runs Ed's own scripts from a
 `.ttai`, see docs/NOTES.md "AI interpreter"), the exe's mechanics (`tc_mec.h`: ground/air with the
@@ -46,8 +47,10 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
   collision stress run (other options in the header of tests/aicheck.c). `make mechcheck` checks the ground/air
   mechanics (steps, walls, falling) on hand-made geometry, no game data needed; `make crashcheck` rides the Totalski
   skier into a tree (the scripted obstacle crash). `make viewcheck` runs `tc_viewer` headless on bar
-  (scripted keys: AI, free-fly and drop, simple controller, settings; every frame's draw list validated).
-  The test (not the library) uses POSIX `<dirent.h>` to list the level folder.
+  (scripted keys: AI, free-fly and drop, simple controller, settings, the sector modes on sud0; every frame's draw list
+  validated). `make sectorcheck` checks every level's sectors (`tc_sector.h`) against the game's own data: the lookup
+  finds each level perso's snapshot sector, portal faces lead into their targets.
+  The tests (not the library) use POSIX `<dirent.h>` to list the level folder.
 
 ## Vita backend sketch (VitaSDK + vitaGL)
 - Build: `make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib`, then a VitaSDK CMake app linking

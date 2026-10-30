@@ -81,10 +81,16 @@ struct SuperObject {
 
 /* perso +0x24. Its +4 is the sector SuperObject the integrators get as their 4th argument (GAM_0042b0e0 passes
  * FUN_00451790(perso->sector_info)); FUN_00451b90 checks that its type is 8 and looks the mechanical environment up
- * in the sector's data. */
+ * in the sector's data. GAM_0042c810 (every frame, after the mechanics) moves it on: FUN_00451670(+0xC, position,
+ * &sector) walks the segment from the last position through the current sector's portal faces (sector data +0, a
+ * GeometricObjectCollide whose type 1 elements hold the sector they lead into at +0); a change takes the perso out of
+ * the old sector's character list (+0x1C, its node +8) into the new one's. After a teleport the exe sets it from
+ * FUN_00451240 (point -> sector, straight down; GAM_00429150, GAM_00427b80). docs/NOTES.md "Sectors". */
 typedef struct SectorInfo {
-    u32 unk_00;                 /* +0x00 */
+    SuperObject *sector_copy;   /* +0x00 set to +4 after each change (FUN_00452900) */
     SuperObject *sector;        /* +0x04 */
+    void *list_node;            /* +0x08 the perso's node in its sector's character list (FUN_004518c0 / 00451a60) */
+    Vec3 last_position;         /* +0x0C where the last crossing walk ended */
 } SectorInfo;
 
 /* ---- Collision geometry and zones (tools/ttre/level.py, ai.py zdm_sets: the exporter reads them from every level) ---- */

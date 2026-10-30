@@ -249,6 +249,10 @@ final class GameView: MTKView {
             if !event.isARepeat { tc_viewer_toggle_fog(v); updateTitle() }
             return
         }
+        if event.keyCode == 40 {  // K: sectors drawn: Ed's and its list (default) / all / his alone
+            if !event.isARepeat { tc_viewer_cycle_sectors(v); updateTitle() }
+            return
+        }
         if event.keyCode == 35 {  // P: pause/resume animation
             if !event.isARepeat { tc_viewer_toggle_pause(v) }
             return

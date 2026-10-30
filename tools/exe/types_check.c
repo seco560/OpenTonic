@@ -19,6 +19,9 @@ AT(Perso, dynam, 0x08);
 AT(Perso, brain, 0x0C);
 AT(Perso, collset, 0x14);
 AT(Perso, sector_info, 0x24);
+AT(SectorInfo, sector, 0x04);      /* GAM_0042c810: puVar1[1] */
+AT(SectorInfo, list_node, 0x08);   /* GAM_0042c3c0: +8 */
+AT(SectorInfo, last_position, 0x0C); /* GAM_0042c810: puVar1[3..5] */
 AT(Perso, unk_30, 0x30);
 AT(CollSet, zdm, 0x08);
 AT(CollSet, zdm_activation, 0x18);

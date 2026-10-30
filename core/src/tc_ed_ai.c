@@ -41,6 +41,10 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     memset(&e->swim, 0, sizeof(e->swim));
     e->env_depth = 0;
     e->env = tc_mec_env_default();
+    e->sectors = NULL;
+    e->sector.sector = TC_SECTOR_NONE;
+    e->sector.position = player->position;
+    e->sector.placed = player->placed;
     tc_mec_walk_reset(&e->walk);
     e->contacts = 0;
     e->auto_start = false;
@@ -412,9 +416,9 @@ static void footsteps(tc_ed_ai *e) {
     }
 }
 
-/* The water zones the scripts test (GAM_00437900 + MEC_004c0fb5, docs/NOTES.md "Swimming"): kind 0 = the water flag at
- * the origin, kinds 1..6 at the playing state's sample points (placed by the model matrix); combined = the value the
- * present kinds 1..6 share, 3 when they differ, kind 0's without points. Every exported plane is water (MecEnv +0x28 1). */
+/* The water zones the scripts test (GAM_00437900 + MEC_004c0fb5, docs/NOTES.md "Swimming"): kind 0 = the water flag
+ * (MecEnv +0x28) at the origin, kinds 1..6 at the playing state's sample points (placed by the model matrix), all looked
+ * up in Ed's sector; combined = the value the present kinds 1..6 share, 3 when they differ, kind 0's without points. */
 static void water_zones(tc_ed_ai *e) {
     tc_ai_perso *a = &e->ai;
     const tc_ai_state *st = &a->model->states[a->state];
@@ -423,19 +427,19 @@ static void water_zones(tc_ed_ai *e) {
     bool mixed = false;
     int k;
     for (k = 0; k < 7; k++) a->zone[k] = -1;
-    a->zone[0] = tc_mec_env_at(a->model, e->player->world, e->player->position, &env) > 0;
-    if (st->water_points != TC_AI_NONE16 && a->model->water_count) {
+    tc_mec_env_at(e->sectors, e->sector.sector, e->player->position, &env);
+    a->zone[0] = env.water != 0;
+    if (st->water_points != TC_AI_NONE16) {
         const tc_ai_water_points *w = &a->model->water_point_sets[st->water_points];
         tc_mat4 m = tc_ed_ai_model_matrix(e);
         for (k = 0; k < w->count; k++) {
             tc_vec3 q = w->point[k], p = tc_v3(m.m[0] * q.x + m.m[4] * q.y + m.m[8] * q.z + m.m[12],
                                              m.m[1] * q.x + m.m[5] * q.y + m.m[9] * q.z + m.m[13],
                                              m.m[2] * q.x + m.m[6] * q.y + m.m[10] * q.z + m.m[14]);
-            if (w->kind[k] >= 1 && w->kind[k] <= 6) a->zone[w->kind[k]] = tc_mec_env_at(a->model, e->player->world, p, &env) > 0;
+            if (w->kind[k] < 1 || w->kind[k] > 6) continue;
+            tc_mec_env_at(e->sectors, e->sector.sector, p, &env);
+            a->zone[w->kind[k]] = env.water != 0;
         }
-    } else if (st->water_points != TC_AI_NONE16) {
-        const tc_ai_water_points *w = &a->model->water_point_sets[st->water_points];
-        for (k = 0; k < w->count; k++) if (w->kind[k] >= 1 && w->kind[k] <= 6) a->zone[w->kind[k]] = 0;
     }
     for (k = 1; k <= 6; k++) {
         if (a->zone[k] < 0) continue;
@@ -444,6 +448,20 @@ static void water_zones(tc_ed_ai *e) {
     }
     a->zone_combined = mixed ? 3 : combined >= 0 ? combined : a->zone[0];
 }
+
+/* Ed's sector (SectorInfo): the exe moves it on after each frame's mechanics (GAM_0042c810), from where he was to where
+ * he is; here in the next step before anything reads it, which is the same for what the step sees. Looked up again
+ * (tc_sector_place) after a teleport or respawn: the exe does so where it sets a perso's position (FUN_00451240 in
+ * GAM_00429150 etc.). */
+static void track_sector(tc_ed_ai *e) { tc_sector_follow(&e->sector, e->sectors, e->player->position, e->player->placed); }
+
+void tc_ed_ai_set_sectors(tc_ed_ai *e, const tc_sectors *s) {
+    e->sectors = s;
+    e->sector.sector = TC_SECTOR_NONE;
+    track_sector(e);
+}
+
+void tc_ed_ai_track_sector(tc_ed_ai *e) { track_sector(e); }
 
 void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera) {
     tc_player *p = e->player;
@@ -484,6 +502,7 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
         a->axes[1] = tc_v3(mm.m[4], mm.m[5], mm.m[6]);
         a->axes[2] = tc_v3(mm.m[8], mm.m[9], mm.m[10]);
     }
+    track_sector(e); /* after the portals: one may have moved him */
     water_zones(e);
     tc_ai_step(a, dt);
     footsteps(e);
@@ -508,8 +527,10 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     type = card ? card->type : TC_AI_NONE16;
     if (type != e->card_type && e->card_type == 5)
         p->velocity = tc_v3(0, 0, 0); /* leaving flight (GAM_0042ab20): stop, keep the heading */
-    /* The mechanical environment at the feet (the integrators' lookup at the step's start; water planes: .ttai WATR) */
-    e->env_depth = tc_mec_env_at(a->model, p->world, p->position, &e->env);
+    /* The mechanical environment at the feet (the integrators' lookup at the step's start, in Ed's sector: placed again
+     * if a portal or SetPositionFrom moved him this step, as the exe sets the sector with the position) */
+    track_sector(e);
+    e->env_depth = tc_mec_env_at(e->sectors, e->sector.sector, p->position, &e->env);
     if (type == 7) {
         /* Card type 7 (DNM_IntegrateType7_004acb49 / DNM_RequestType7_004b17d1): with the card's gravity factor 0 (all of
          * Ed's: surface swimming 5 / 18 / 19, the portal walk-in 228, the skier's finish 321) the velocity is kept and the
@@ -541,7 +562,7 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
         if (e->card_type != 1) tc_mec_swim_enter(&e->swim, p->heading);
         if (m->mode_count == 0) tc_mec_swim_request(&e->swim, card, 0, m->proposal, dt);
         for (k = 0; k < m->mode_count; k++) tc_mec_swim_request(&e->swim, card, m->modes[k], m->proposal, dt);
-        v = tc_mec_swim_velocity(&e->swim, card, a->model, p->world, p->position, v, dt, &e->env_depth);
+        v = tc_mec_swim_velocity(&e->swim, card, e->sectors, e->sector.sector, p->position, v, dt, &e->env_depth);
         tc_player_move(p, dt, v);
         p->heading = e->swim.heading_lagged + TC_PI / 2; /* the swim heading's front, in tc_player's terms */
         e->card_type = type;

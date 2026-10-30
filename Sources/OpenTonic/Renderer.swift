@@ -442,7 +442,8 @@ import TonicCore
         var count: UInt32 = 0, opaque: UInt32 = 0
         let draws = tc_viewer_draws(v, &count, &opaque)!
         func drawMesh(_ d: tc_view_draw) {
-            guard let m = meshes[Int(d.mesh)] else { return }
+            // d's index range: all of the mesh, or the shown sectors' part of a static (tc_view_draw)
+            guard let m = meshes[Int(d.mesh)], d.index_count > 0, Int(d.first_index) + Int(d.index_count) <= m.indexCount else { return }
             let transparent = d.flags & TC_FLAG_TRANSPARENT != 0
             var flags = SIMD2<UInt32>(d.flags, !transparent && msaa > 1 ? 1 : 0)  // coverage: as the textured pipeline
             if d.texture >= 0, let tex = textures[Int(d.texture)] {
@@ -459,7 +460,8 @@ import TonicCore
             var params = DrawParams(model: float4x4(d.model), scroll: m.scroll, billboard: d.flags & TC_FLAG_BILLBOARD != 0 ? 1 : 0)
             enc.setVertexBytes(&params, length: MemoryLayout<DrawParams>.stride, index: 2)
             enc.setVertexBuffer(m.vertices, offset: 0, index: 0)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: m.indexCount, indexType: .uint32, indexBuffer: m.indices, indexBufferOffset: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: Int(d.index_count), indexType: .uint32, indexBuffer: m.indices,
+                                      indexBufferOffset: Int(d.first_index) * 4)
         }
         // Opaque draws, Ed's shadow on them, then the transparent ones (alpha blended, no depth writes): water drawn
         // over shallow ground stays on top of the shadow.

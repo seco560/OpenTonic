@@ -43,13 +43,20 @@ typedef enum tc_view_action {
 
 typedef struct tc_view_stats { uint32_t meshes, persos, parts, triangles; } tc_view_stats;
 
-/* One mesh to draw this frame. */
+/* One mesh to draw this frame: indices [first_index, first_index + index_count) of it (all of them, unless a sector
+ * mode draws only some sectors' part of a static mesh). */
 typedef struct tc_view_draw {
     uint32_t mesh;        /* tc_viewer_mesh index */
     int32_t texture;      /* level texture at this frame (animated textures stepped), -1 = untextured */
     uint32_t flags;       /* the surface's TC_FLAG_* */
+    uint32_t first_index, index_count;
     tc_mat4 model;
 } tc_view_draw;
+
+/* Which sectors are drawn (tc_sector.h), all from Ed's sector: his sector and the sectors of its list (the default: the
+ * game's way of drawing, FUN_00451d80, sky included), every sector (the Tonic Viewer's view: the whole level at once),
+ * or his sector alone (debug: which one he is in). Levels without sectors draw everything. */
+typedef enum tc_view_sectors { TC_VS_SECTOR, TC_VS_ALL, TC_VS_ALONE, TC_VS_COUNT } tc_view_sectors;
 
 /* Shading values for one frame; each frontend packs them into its own uniform layout. */
 typedef struct tc_view_frame {
@@ -169,6 +176,16 @@ typedef struct tc_viewer {
     uint32_t ed_draw_count;   /* Ed's parts in the last tc_viewer_draws (0: hidden, e.g. stepped into a portal) */
     uint32_t sound_count;
 
+    /* Sectors (tc_sector.h; none: the level has no SECT and everything is drawn). Ed's sector is his AI's (it looks his
+     * water up there), else tracked here for the simple controller. */
+    const tc_sectors *sectors;
+    tc_view_sectors sector_mode;
+    tc_sector_track ed_sector;
+    uint8_t *sector_shown;        /* this frame's TC_SHOWN_* per sector */
+    uint32_t *mesh_ranges;        /* per tc_viewer_mesh: first and count of its index ranges in `ranges` (count 0: one */
+    tc_sector_range *ranges;      /* whole, drawn always: persos, Ed; static meshes and the pieces have them) */
+    uint32_t range_count, range_cap;
+
     /* Mesh table and this frame's draw list. */
     const tc_mesh **meshes;
     uint8_t *mesh_water;          /* per static mesh: 1 = a water surface (TC_FLAG_WATER on its draws) */
@@ -258,6 +275,9 @@ void tc_viewer_follow_light(tc_viewer *v);   /* 0: the level's light persos set 
 void tc_viewer_step_gamma(tc_viewer *v, bool up);   /* - =: x1.1, 0.5-2.5 */
 void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps, 30-100 */
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
+void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list (default) -> all -> his alone -> ... */
+/* Ed's sector (TC_SECTOR_NONE: none); tc_sectors_name for its name. */
+uint16_t tc_viewer_ed_sector(const tc_viewer *v);
 /* Wheel notches (positive = up): orbit zoom while playing, fly speed in free-fly; x1.1 per notch. */
 void tc_viewer_wheel(tc_viewer *v, float notches);
 /* Tab: enter/leave play mode. Entering puts the orbit camera behind Ed; leaving keeps the camera where it is.
@@ -275,9 +295,10 @@ bool tc_viewer_status_live(const tc_viewer *v);
 const tc_player *tc_viewer_player(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
- * "anim 1.00×, gamma 1.00, FOV 55°<extra>[, light 1/2|1→2[ held]][, fog on|off][, free-fly][, simple controller]"
- * (light: the set shown, or the change running; held = a number key's pick in a level with light persos; the modes
- * only when not the default: playing as Ed with his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
+ * "anim 1.00×, gamma 1.00, FOV 55°<extra>[, light 1/2|1→2[ held]][, fog on|off][, sector sctX[ alone]]
+ * [, free-fly][, simple controller]" (light: the set shown, or the change running; held = a number key's pick in a level
+ * with light persos; sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with
+ * his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
  * Returns the length snprintf would have written. */
 size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t size);
 

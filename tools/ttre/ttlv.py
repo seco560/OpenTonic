@@ -40,6 +40,22 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         the state animations for the AI: one per distinct A3D, named "s<k>" (k = the first state using it; .ttai states
         point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
         ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
+  SECT* the sectors (level.LevelData.sectors, docs/NOTES.md "Sectors"; reader core/src/tc_sector.c). Data only: which
+        sectors are drawn, and where water is, is the core's choice per mode (the Tonic Viewer draws them all):
+          u16 n_sectors, u16 n_surfaces, n_surfaces x f32 z (water surface heights)
+          n_sectors x { u16 name_len, name, u8 virtual, u8 no_child_lookup, u16 n_visible,
+                        n_visible x { u16 sector, u16 draw } (drawn with it: its +0x4C list),
+                        u16 n_envs, n_envs x { f32 gravity, f32 density, f32 drag, u32 water (0xFFFFFFFF: none) },
+                        u16 n_surfaces, n_surfaces x u16 surface (in list order: env k lies below k of them),
+                        u32 n_portals, n_portals x { u16 target sector (0xFFFF: a dead end), u16 0, f32 v[9],
+                                                     f32 normal[3] } (crossed from the normal's side into target),
+                        u32 n_floors, n_floors x { f32 v[9], f32 normal[3] } (the faces a point's sector is looked up
+                                                     on, straight down: the nearest below wins) }
+          u16 n_groups, n_groups x { u16 n, u16 flags (1 = a water surface), n x u16 sector } (membership: group
+              i < n_sectors is sector i's geometry; drawn when one of its sectors is)
+          per MESH mesh: u32 n_ranges, n_ranges x { u16 group (0xFFFF: none, always drawn), u16 0, u32 first_index,
+              u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
+          u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
 
   surface  = { i32 texture (-1 = none), u32 flags (TC_FLAG_*: alpha test / blend, and WRAP_U / WRAP_V: clamped
                unless set), f32 scroll[2] (UV per second: uv' = uv + scroll * t),
@@ -193,10 +209,10 @@ class LightmapAtlas:
         return gf.to_png(a, a, bytes(img))
 
 
-def add_geometry(meshes, key, geo, m, new_mesh, atlas=None):
+def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
     """Append geo transformed by m to meshes[material] (created by new_mesh(material)), with the
     key's baked radiosity as rgba8 (alpha 0 = none) and, given an atlas, per-triangle lightmap
-    coordinates (uv2; -1 = none)."""
+    coordinates (uv2; -1 = none). mesh['groups'] gets `group` once per triangle added (the SECT membership group)."""
     verts = [level.mat_apply(m, v) for v in geo.vertices]
     def packed(baked):
         return [struct.unpack('<I', bytes((*(min(max(x, 0), 255) for x in c), 255)))[0] for c in baked] if baked else None
@@ -206,7 +222,8 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None):
     for el in geo.elements:
         mesh = meshes.get(el.material)
         if mesh is None:
-            mesh = meshes[el.material] = dict(new_mesh(el.material), verts=[], index={}, indices=[])
+            mesh = meshes[el.material] = dict(new_mesh(el.material), verts=[], index={}, indices=[], groups=[])
+        mesh['groups'] += [group] * len(el.triangles)
         for k, tri in enumerate(el.triangles):
             uvt = el.uv_tris[k] if el.uv_tris else (None,) * 3
             lm = el.lightmaps[k] if atlas and k < len(el.lightmaps) else None
@@ -230,7 +247,8 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None):
             base = new_mesh(mat)
             surf = bytearray(base['surface'])
             struct.pack_into('<I', surf, 4, struct.unpack_from('<I', surf, 4)[0] | BILLBOARD)
-            mesh = meshes[('sprite', mat)] = dict(base, surface=bytes(surf), verts=[], index={}, indices=[])
+            mesh = meshes[('sprite', mat)] = dict(base, surface=bytes(surf), verts=[], index={}, indices=[], groups=[])
+        mesh['groups'] += [group] * 2
         first = len(mesh['verts'])
         for dx, dy, u, v in ((-1, -1, 0, 1), (1, -1, 1, 1), (-1, 1, 0, 0), (1, 1, 1, 0)):
             mesh['verts'].append((*verts[ci], dx * hx * sx, dy * hy * sx, 0.0, u, v, *(0,) * LIGHT_SETS, -1.0, -1.0))
@@ -281,8 +299,10 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     atlas = LightmapAtlas(idx) if lightmaps else None
     if atlas:
         atlas.plan(len(lightmaps))
+    sect = Sections(data)
     for key, geo, m in statics:
-        add_geometry(meshes, key, geo, m, surface, atlas)
+        add_geometry(meshes, key, geo, m, surface, atlas, sect.group_of(key))
+    sect.order(meshes)
     atlas_rel = ''
     if atlas:
         atlas_path = os.path.splitext(os.path.abspath(path))[0] + '_lightmap.png'
@@ -298,6 +318,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
             continue  # (the fix Ed is left out where another perso is the player: unplaced there)
         if p.loc == ed_loc:
             ed_blob = len(blobs)
+        sect.perso_sectors.append(data.perso_sector(p.loc))
         k = max(1, round(60 / a.fps)) if a.n_frames > 1 else 1
         poses = [a.pose(s / k) for s in range(a.n_frames * k)]
         parts = []
@@ -361,10 +382,88 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
            ('LMAP', struct.pack('<H', len(atlas_rel.encode())) + atlas_rel.encode()) if atlas_rel else None,
            ('LAIS', struct.pack('<HH', len(lais), 0) + b''.join(lais)) if lais else None,
            ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),
-           ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None]
+           ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
+           ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None]
     chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),
             len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else [])
+
+
+class Sections:
+    """The SECT chunk (module docstring): the level's sectors (LevelData.sectors) and which of them each static
+    triangle and each perso belongs to. Membership groups: group i < n_sectors is sector i's own geometry; then one
+    group per distinct set of sectors listing a water surface (the exe draws a surface once per frame when any sector
+    listing it is drawn: FUN_0045d990's frame stamp), flagged as water."""
+    def __init__(self, data):
+        self.sectors = data.sectors()
+        self.data = data
+        self.groups = [((i,), False) for i in range(len(self.sectors))]
+        index = {}
+        self.surface_group = []
+        for k in range(len(data.surfaces())):
+            members = tuple(sorted(i for i, sec in enumerate(self.sectors) if k in sec.surfaces))
+            if (members, True) not in index:
+                index[(members, True)] = len(self.groups)
+                self.groups.append((members, True))
+            self.surface_group.append(index[(members, True)])
+        self.perso_sectors = []
+        self.reordered = 0
+
+    def group_of(self, key):
+        """A meshes() key's group, or None (not in a sector: drawn always)."""
+        if isinstance(key, level.SuperObject):
+            return self.data.static_sector(key)
+        if isinstance(key, tuple) and key[0] == 'surface':
+            k = next((i for i, (loc, _, _) in enumerate(self.data.surfaces()) if loc == key[1]), None)
+            return self.surface_group[k] if k is not None else None
+        return None
+
+    def order(self, meshes):
+        """Each mesh's triangles sorted by group (stable; None last), so each group's are one index range. The
+        statics come sector by sector with the surfaces last (LevelData.meshes), so this leaves the order as it was
+        (self.reordered counts the meshes it changed)."""
+        last = len(self.groups)
+        for mesh in meshes.values():
+            g = mesh['groups']
+            order = sorted(range(len(g)), key=lambda t: last if g[t] is None else g[t])
+            if order != list(range(len(g))):
+                self.reordered += 1
+                self.data.warnings.append('SECT: a static mesh\'s triangles were reordered by sector')
+                idx = mesh['indices']
+                mesh['indices'] = [idx[3 * t + c] for t in order for c in range(3)]
+                mesh['groups'] = [g[t] for t in order]
+
+    def chunk(self, meshes):
+        out = [struct.pack('<HH', len(self.sectors), len(self.data.surfaces()))]
+        # the height FUN_0045d880 reads: the translation z of the surface's +0x5C matrix
+        out += [struct.pack('<f', self.data.un('I21f', (loc[0], loc[1] + 0x5C))[3]) for loc, _, _ in self.data.surfaces()]
+        for sec in self.sectors:
+            name = sec.name.encode('latin-1')
+            out.append(struct.pack('<H', len(name)) + name + struct.pack('<2BH', sec.virtual, sec.no_child_lookup,
+                                                                          len(sec.visible)))
+            out += [struct.pack('<2H', t, draw) for t, draw in sec.visible]
+            out.append(struct.pack('<H', len(sec.envs)))
+            out += [struct.pack('<3fI', *e) if e else struct.pack('<3fI', 0, 0, 0, 0xFFFFFFFF) for e in sec.envs]
+            out.append(struct.pack(f'<H{len(sec.surfaces)}H', len(sec.surfaces), *sec.surfaces))
+            out.append(struct.pack('<I', len(sec.portals)))
+            out += [struct.pack('<2H12f', t, 0, *v0, *v1, *v2, *n) for t, v0, v1, v2, n in sec.portals]
+            out.append(struct.pack('<I', len(sec.floors)))
+            out += [struct.pack('<12f', *v0, *v1, *v2, *n) for v0, v1, v2, n in sec.floors]
+        out.append(struct.pack('<H', len(self.groups)))
+        for members, water in self.groups:
+            out.append(struct.pack(f'<2H{len(members)}H', len(members), 1 if water else 0, *members))
+        for mesh in meshes:
+            ranges, g = [], mesh['groups']
+            for t, grp in enumerate(g):
+                if ranges and ranges[-1][0] == grp:
+                    ranges[-1][2] += 3
+                else:
+                    ranges.append([grp, 3 * t, 3])
+            out.append(struct.pack('<I', len(ranges)))
+            out += [struct.pack('<HHII', 0xFFFF if grp is None else grp, 0, first, count) for grp, first, count in ranges]
+        out.append(struct.pack('<I', len(self.perso_sectors)))
+        out += [struct.pack('<H', 0xFFFF if i is None else i) for i in self.perso_sectors]
+        return b''.join(out)
 
 
 def ground_speed(poses, rate):

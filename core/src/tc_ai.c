@@ -42,8 +42,8 @@ static tc_vec3 rd_vec3(reader *r) {
     return v;
 }
 
-/* Chunks (tools/ttre/ai.py): SCPT, STAT, BTNS, STRS, VECS, PRSO, CARD, BODY, ZDMF, TRIG, PORT, PLAC, TRAN, SNDS, WATR, WPTS,
- * MECE, ZONE, FSND, DRYB, LINK; all required. Each is read to its exact end (chunk_end). */
+/* Chunks (tools/ttre/ai.py): SCPT, STAT, BTNS, STRS, VECS, PRSO, CARD, BODY, ZDMF, TRIG, PORT, PLAC, TRAN, SNDS, WPTS,
+ * MECE, ZONE, FSND, LINK; all required (the water is the .ttlv's: SECT). Each is read to its exact end (chunk_end). */
 #define CHUNK_END(r) do { if ((e = chunk_end(r)) != TC_OK) goto fail; } while (0)
 
 static void rd_portals(reader *r, tc_ai_model *m) {
@@ -351,23 +351,6 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     }
     CHUNK_END(r);
 
-    chunk_need(&cs, "WATR", r);
-    m->water_count = rd_u16(r);
-    (void)rd_u16(r);
-    m->water = (tc_ai_water *)rd_array(r, m->water_count, sizeof(tc_ai_water), 20);
-    for (i = 0; m->water && i < m->water_count; i++) {
-        tc_ai_water *w = &m->water[i];
-        w->z = rd_f32(r);
-        w->gravity = rd_f32(r);
-        w->density = rd_f32(r);
-        w->drag = rd_f32(r);
-        w->box_count = rd_u16(r);
-        (void)rd_u16(r);
-        w->boxes = (tc_vec3 *)rd_array(r, (size_t)w->box_count * 2, sizeof(tc_vec3), 12);
-        for (k = 0; w->boxes && k < (uint32_t)w->box_count * 2; k++) w->boxes[k] = rd_vec3(r);
-    }
-    CHUNK_END(r);
-
     chunk_need(&cs, "WPTS", r);
     m->water_point_set_count = rd_u16(r);
     (void)rd_u16(r);
@@ -415,13 +398,6 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     m->floor_sound_count = rd_u32(r);
     m->floor_sounds = (uint8_t *)rd_array(r, m->floor_sound_count, 1, 1);
     for (i = 0; m->floor_sounds && i < m->floor_sound_count; i++) m->floor_sounds[i] = rd_u8(r);
-    CHUNK_END(r);
-
-    chunk_need(&cs, "DRYB", r);
-    m->dry_box_count = rd_u16(r);
-    (void)rd_u16(r);
-    m->dry_boxes = (tc_vec3 *)rd_array(r, (size_t)m->dry_box_count * 2, sizeof(tc_vec3), 12);
-    for (i = 0; m->dry_boxes && i < (uint32_t)m->dry_box_count * 2; i++) m->dry_boxes[i] = rd_vec3(r);
     CHUNK_END(r);
 
     chunk_need(&cs, "LINK", r);
@@ -482,9 +458,6 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->triggers);
     tc_free(m->sounds);
     tc_free(m->mech_events);
-    for (i = 0; m->water && i < m->water_count; i++) tc_free(m->water[i].boxes);
-    tc_free(m->water);
-    tc_free(m->dry_boxes);
     tc_free(m->water_point_sets);
     tc_free(m->floor_sounds);
     for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);

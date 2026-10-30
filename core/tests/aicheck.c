@@ -63,6 +63,8 @@ int main(int argc, char **argv) {
     uint16_t last_normal = 0xFFFE, last_reflex = 0xFFFE, last_wanted = 0xFFFF;
     int32_t last_mode = -2;
     int quiet = 0, respawns = 0, stalls = 0, board_frames = 0, board_under = 0;
+    uint16_t last_sector = TC_SECTOR_NONE;
+    uint32_t sector_changes = 0, sector_frames = 0, sector_differs = 0, water_frames = 0;
     float board_min = 1e9f, board_sum = 0, fly_head = 0, fly_off = 0;
     int fly_frames = 0, steps_generic = 0, steps_by[24] = {0};
     float travelled = 0, max_step = 0, stalled_for = 0;
@@ -234,9 +236,11 @@ int main(int argc, char **argv) {
     }
     tc_player_init(&player, &world, tc_v3(start.m[3], start.m[7], start.m[11]),
                    start_heading == start_heading ? start_heading * TC_PI / 180 : tc_heading_of(&start));
-    if (model.water_count) printf("water: %u surfaces\n", model.water_count);
     tc_player_apply_floors(&player); /* as the viewer does (sliding profile on zero-grip levels) */
     if (tc_ed_ai_init(&ed, &model, &player, level_name) != TC_OK) { fprintf(stderr, "init failed\n"); return 1; }
+    tc_ed_ai_set_sectors(&ed, &level.sectors);
+    printf("sectors: %u, %u water surfaces; Ed starts in %s\n", level.sectors.count, level.sectors.surface_count,
+           tc_sectors_name(&level.sectors, ed.sector.sector));
     p = &ed.ai;
     p->trace = trace;
     tracing = getenv("AI_TRACE") != NULL;
@@ -308,6 +312,23 @@ int main(int argc, char **argv) {
             if (p->sounds[i] == TC_AI_FOOTSTEP_EVENT) steps_generic++;
             else if (p->sounds[i] > TC_AI_STEP_SOUND && p->sounds[i] < TC_AI_STEP_SOUND + 24) steps_by[p->sounds[i] - TC_AI_STEP_SOUND]++;
         }
+        /* Ed's sector (tracked through the portals) against a fresh lookup at his position: they differ where sectors
+         * overlap seen from above, or with nothing below him (in the air over a pit) */
+        if (level.sectors.count && ed.sector.sector != TC_SECTOR_NONE) {
+            uint16_t found = tc_sectors_find(&level.sectors, player.position);
+            sector_frames++;
+            if (found != TC_SECTOR_NONE && found != ed.sector.sector && ++sector_differs <= 3)
+                printf("%6.2f  sector lookup %s, tracked %s  pos (%.2f, %.2f, %.2f)\n", (double)t,
+                       tc_sectors_name(&level.sectors, found), tc_sectors_name(&level.sectors, ed.sector.sector),
+                       (double)player.position.x, (double)player.position.y, (double)player.position.z);
+            if (p->zone[0] == 1) water_frames++;
+        }
+        if (ed.sector.sector != last_sector) {
+            printf("%6.2f  sector %s  pos (%.2f, %.2f, %.2f)\n", (double)t, tc_sectors_name(&level.sectors, ed.sector.sector),
+                   (double)player.position.x, (double)player.position.y, (double)player.position.z);
+            if (last_sector != TC_SECTOR_NONE) sector_changes++;
+            last_sector = ed.sector.sector;
+        }
         if (quiet) continue;
 
         if (p->normal.behaviour != last_normal || p->reflex.behaviour != last_reflex) {
@@ -360,6 +381,10 @@ int main(int argc, char **argv) {
         printf("wander: travelled %.1f, largest step %.3f, jumps %d, stalls %d, blocked frames %u, end (%.2f, %.2f, %.2f) state %u\n",
                (double)travelled, (double)max_step, respawns, stalls, ed.walk.blocked, (double)player.position.x,
                (double)player.position.y, (double)player.position.z, p->state);
+    if (level.sectors.count)
+        printf("sectors: %u changes, end in %s; on %u of %u frames a lookup at Ed's position finds another sector; %u frames "
+               "in water (zone 0)\n", sector_changes, tc_sectors_name(&level.sectors, ed.sector.sector), sector_differs,
+               sector_frames, water_frames);
     if (board_frames)
         printf("board clearance over %d frames near the snow: mean %.3f, min %.3f, %d frames more than 0.02 into it\n",
                board_frames, (double)(board_sum / (float)board_frames), (double)board_min, board_under);

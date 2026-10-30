@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include "tc_math.h"
 #include "tc_collision.h"
+#include "tc_sector.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,8 +16,9 @@ extern "C" {
 #define TC_FLAG_ALPHA_TEST (1u << 0)
 #define TC_FLAG_TRANSPARENT (1u << 1)
 #define TC_FLAG_BILLBOARD (1u << 2)  /* sprites: vertex = centre, normal.xy = corner offset (camera plane) */
-#define TC_FLAG_WATER (1u << 3)      /* set by tc_viewer on draws: a water material (a triangle flat at a .ttai water
-                                        plane): the renderers add the sheen to its upward faces (NOTES "Water surfaces") */
+#define TC_FLAG_WATER (1u << 3)      /* set by tc_viewer on draws: a water material (the mesh holds water surface
+                                        triangles: a range of a SECT water group): the renderers add the sheen to its
+                                        upward faces (NOTES "Water surfaces") */
 /* Texture addressing per axis, as the original's driver sets it from the texture's name (tools/ttre/ttlv.py
  * `tiling`): wrap along u / v when set, clamp to the edge otherwise. */
 #define TC_FLAG_WRAP_U (1u << 4)
@@ -125,6 +127,7 @@ typedef struct tc_level {
     uint32_t collision_crc;      /* CRC-32 of the COLL chunk: a .ttai's per-triangle tables match when its LINK holds it */
     int has_ed;
     tc_ed ed;
+    tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
 } tc_level;
 
 /* Parses `size` bytes at `data`. On failure *level is left empty (safe to tc_level_free). */

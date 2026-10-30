@@ -94,10 +94,12 @@ void tc_level_free(tc_level *level) {
         tc_free(level->ed.anims[i].shown);
     }
     tc_free(level->ed.anims);
+    tc_sectors_free(&level->sectors);
     memset(level, 0, sizeof *level);
 }
 
-/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP and LAIS (optional), TEXS, MESH, PRSO, COLL, FLOR, EDPL (optional: no player). */
+/* Chunks (tools/ttre/ttlv.py): LEVL, LMAP and LAIS (optional), TEXS, MESH, PRSO, COLL, FLOR, SECT and EDPL (optional:
+ * no sectors, no player). */
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     chunks cs;
     reader rr, *r = &rr;
@@ -211,6 +213,12 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         tc_free(table);
     }
     if ((e = chunk_end(r)) != TC_OK) goto fail;
+
+    if (chunk_need(&cs, "SECT", r)) {
+        e = tc_sectors_read(&level->sectors, r, level->meshes, level->mesh_count, level->perso_count);
+        if (e == TC_OK) e = chunk_end(r);
+        if (e != TC_OK) goto fail;
+    }
 
     if (!chunk_need(&cs, "EDPL", r)) return TC_OK;
     ed = &level->ed;

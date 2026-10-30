@@ -139,4 +139,7 @@ static inline uint32_t tc_crc32(const uint8_t *p, size_t n) {
     }
     return ~c;
 }
+/* tc_sector.c: the .ttlv SECT chunk, after MESH and PRSO (its ranges and perso sectors follow their counts). */
+tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint32_t mesh_count, uint32_t perso_count);
+void tc_sectors_free(tc_sectors *s);
 #endif

@@ -6,6 +6,7 @@
 #   make crashcheck -> Totalski: the skier rides into a tree and crashes (needs ../files/out/ttlv/Totalski.*)
 #   make viewcheck  -> the viewer module (tc_viewer) headless on bar: scripted keys, draw lists, title readout
 #   make portalcheck -> Ed walks into portals on sud0, Land and north (docs/PORTALS.md)
+#   make sectorcheck -> every level's sectors against the game's own data (tc_sector.h)
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 CC ?= cc
 AR ?= ar
@@ -18,7 +19,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck $(BUILD)/portalcheck
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -46,6 +47,9 @@ $(BUILD)/viewcheck: tests/viewcheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/portalcheck: tests/portalcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
+$(BUILD)/sectorcheck: tests/sectorcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -67,7 +71,10 @@ viewcheck: $(BUILD)/viewcheck
 portalcheck: $(BUILD)/portalcheck
 	$(BUILD)/portalcheck ../files/out/ttlv
 
+sectorcheck: $(BUILD)/sectorcheck
+	$(BUILD)/sectorcheck ../files/out/ttlv
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck viewcheck portalcheck clean
+.PHONY: all lib check aicheck mechcheck crashcheck viewcheck portalcheck sectorcheck clean

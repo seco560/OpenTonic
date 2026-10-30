@@ -1109,6 +1109,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   exe sweeps no card, flags 0x10 / 4; the port uses tc_player's capsule).
 
 ### Water at a pool's floor (2026-10-29, Linux session; BUGS.md "Water Jump Buoyancy")
+**Superseded 2026-10-30 by "Sectors" below:** the water is looked up in Ed's own sector now; the box slack is gone.
 - **Symptom (cavedoc, the pool in front of Ed's arrival from sud0: surface -48.25, floor -51.14, box (-25.4, -136.7,
   -51.1)-(18.0, -96.2, -38.5)):** a running jump in reached the bottom, Ed then "surface swam" (B2, state 5) on the
   floor, walked along it (B7 / B9, ground) and jumped off it (state 43).
@@ -1126,6 +1127,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   pool): state 5 at z -48.19 (was -51.14, then on the floor). wander: 20 levels identical, cavedoc 0 stalls (was 1).
 
 ### Ghost water (2026-10-29, Linux session; BUGS.md "Ghost Water Bodies")
+**Superseded 2026-10-30 by "Sectors" below:** both fixes (the ceiling rule, the dry boxes) are removed with the boxes.
 - **Cause:** the port bounds each water plane by the boxes of the sectors listing it (the exe asks the perso's sector,
   which the port lacks), so dry places inside or under those boxes counted as water. Found with a scan of every level's
   walkable floor (wet by the lookup, no drawn water straight above). The exe's water really is an unbounded plane
@@ -1143,6 +1145,72 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   fix). **Left:** the pit 100 below sud0's falls and under the well shaft (open to the water above); marmite's sctV01a
   (the sector lists the surface over all of it); BigBoss. cock01's water depends on gameplay (Ed changes its level).
 - A drawn-water footprint test (wet only under drawn water) was tried and dropped: it dried large parts of Land.
+
+### Sectors (2026-10-30): read from the exe, ported (BUGS.md "Level Sectors", DECOMP.md plan 7)
+- **Which sector a perso is in.** SectorInfo (perso +0x24): +4 the current sector, +0xC the last position (types.h).
+  Every frame after the mechanics, GAM_00428070 -> GAM_0042c810 calls FUN_00451670(last position, position, &sector):
+  the segment is tested against the current sector's **portal faces** (sector data +0: a GeometricObjectCollide whose
+  type 1 elements hold, at +0 where a GameMaterial would be, the sector the faces lead into). FUN_00460440 /
+  FUN_00468070: crossed from the face's front (its stored normal's side) to its back within the segment (dot(n, d) <
+  0, start in front, t < 1; a bounding-box test first, then FUN_00467d40, point in triangle projected on the plane the
+  normal is nearest to, 1/sqrt 3 = DAT_004d28f4, edges inclusive). Only the nearest crossed face counts: a target that
+  is not a sector (Land 173, north 137, skymap 2 dead-end faces) or is the same sector ends the walk; else the perso
+  enters it and the walk goes on from the crossing point. On a change it leaves the old sector's character list
+  (+0x1C, node at SectorInfo +8) for the new one's.
+- **Teleports and level load** use FUN_00451240(father sector, point): for each non-virtual sector (+0x88 == 0), a ray
+  straight down against its portal object and (unless +0x89) the LOD 0 visual geometry of its **direct** IPO children
+  (nested IPOs are not tested); FUN_004611b0 -> FUN_004687a0 (unbounded ray, t >= 0) keeps front faces only
+  (FUN_00460350), so only faces whose stored normal points up count; the nearest hit below wins (ties: the earlier
+  sector). No hit: GAM_00427b80 falls back to the last sector ("Univers" in sud0, which lists 70 sectors).
+  Callers set the position, then the sector (GAM_00429150, GAM_004279b0, GAM_Initeng_0040ea30 for the main
+  character).
+- **Oracle:** the snapshot holds every level perso's SectorInfo. The lookup at each perso's position gives the game's
+  own sector for ~95 % of all persos (Python prototype; the rest have no floor straight below, sit on a boundary or in a
+  virtual sector) and for 1,705 of the 1,708 persos the .ttlv exports (core/tests/sectorcheck.c, all 21 levels:
+  Totalski's 2 in a virtual sector, 1 in cavedoc; the one unknown per level is the fix Ed, whose pointer is stale). Each portal face, crossed at its centre, leads into its target
+  (sectorcheck: all but 2 in Totalski and 4 in marmite, where a nearer face of the sector is in the way).
+- **What is drawn.** The frame routine (unanalysed code ending 0x428e9a) draws from the sector of GAM_00424940(1), the
+  first entry of the viewport camera table (0x8c1704; GAM_004279b0 moves it with the main character): the **camera's**
+  sector (byte 0x8c1764 = 0, reset at level init by GAM_Initeng_0040ea30; 1 = the main character's, 2 = a chosen one:
+  debug). FUN_00451d80: the sector itself (FUN_00451e80: its IPO tree, its surfaces, its characters), then each sector
+  of its list chosen by byte 0x8c1765 (also reset to 0 at init; the debug console cycles 0-3): mode 0 = **+0x4C**
+  nodes {u16 draw, u16, ptr sector, ptr next}; 1 = +0x58, 2 = +0x64 ({ptr sector, ptr next}). FUN_004521b0 draws a
+  listed sector's characters and surfaces, and its static geometry only when draw > 0 (always 1 in the 21 levels, Land
+  and cock01 have one 3). The lists never include the sector itself and are not symmetric (sud0 334 / 127). Surfaces
+  are drawn once per frame (FUN_0045d990's frame stamp) though several sectors list them.
+- **Sector data, as read:** +0 portals, +4 environments {ptr {ptr MecEnv, ?, ptr visual env}, next}, +0x10 water
+  surfaces, +0x1C characters (runtime), +0x28 / +0x34 lights, +0x4C / +0x58 / +0x64 the three lists, +0x88 u8
+  virtual (sky, foliage, gates, "Univers"), +0x89 u8 IPOs not looked up, +0x94 name. Every sector lists 0 or 1 surface
+  and 1 or 2 environments; env 1 is water (density 1000, MecEnv +0x28 = 1) except skymap's 4 surfaces (air below: no
+  water there, the old export treated every plane as water) and one of marmite's 9.
+- **Water, now faithful:** MEC_EnvLookup_00451b90 in the perso's sector (every lookup of a perso, its sample points
+  too: GAM_UpdateWaterZones_00437900, the swim forces' probe): below the first k listed surfaces (+0x5C matrix z) env k,
+  the depth below the last; the zones are the env's water flag (+0x28), not depth > 0. A surface is an unbounded plane
+  within its sectors, so the water does not stop at a pool's floor or edge, and a dry sector under a river is dry. This
+  replaces the box rules (WATR boxes, DRYB, the ceiling ray, the floor slack).
+- **Port:** .ttlv **SECT** (tools/ttre/ttlv.py; level.py `sectors()`, `faces()`): per sector its name, flags, list
+  (+0x4C, with draw), environments, surfaces, portal faces (target, vertices, stored normal through the cofactor
+  matrix) and lookup floors (up-facing faces of the portal object and the direct IPOs, story-gated IPOs left out);
+  membership groups (sector i's geometry = group i; one group per set of sectors listing a surface, flagged water);
+  per static mesh its index ranges by group; per perso its snapshot sector. The statics come sector by sector with the
+  surfaces last, so sorting each mesh by group changes no triangle: **MESH, PRSO, COLL and the rest are byte-identical
+  to before in all 21 levels**, SECT is added (2-235 KB). The .ttai loses WATR and DRYB.
+  Core: tc_sector.h / tc_sector.c (tc_sectors_find = FUN_00451240, tc_sectors_cross = FUN_00451670 with FUN_00468070's
+  test, tc_sectors_env = FUN_00451b90, tc_sector_track / follow); tc_mec_env_at(sectors, sector, ...) and the swim
+  forces through Ed's sector; tc_ed_ai tracks Ed's (tc_ed_ai_set_sectors; moved on before the water zones each step,
+  placed again after tc_player.placed changes: init, respawn, teleport, also within a step before the env lookup).
+- **Viewer (K), all from Ed's sector (the user's choice, 2026-10-30: draw by Ed, not by the camera):** his sector and
+  its +0x4C list (the default: the game's way of drawing, sky included; listed sectors' characters and surfaces, their
+  geometry when draw > 0), all sectors (the Tonic Viewer's view), his sector alone (debug: which one he is in). The
+  title shows his sector. tc_view_draw has first_index / index_count; a static mesh is drawn as runs of its shown
+  ranges (all sectors: one whole draw, as before); transparent pieces keep their triangles' ranges; persos are drawn
+  with their sector (unknown: always); Ed always. The exe draws from its camera's sector, which
+  differs from Ed's on 0-9 % of frames (headless, 30 s per level; Land the most); the port uses Ed's. In free-fly the
+  drawing stays with Ed's sector (all sectors: K).
+  The water flag on draws now comes from the surfaces themselves (a range of a water group), not planes and boxes.
+- **Not done:** per-sector fog and lights (the visual environment, +0x28 / +0x34; FUN_00451e80 switches the fog per
+  sector), the characters' lists for persos that move (the port's level persos don't), the +0x58 / +0x64 lists, the
+  sectors' texture channels (FUN_00451cd0: textures are loaded per sector at init), cock01's water level changing.
 
 ### ZDx zones, read with types (2026-10-24, typing step 3; COND_13 for portals ported, see the last bullet)
 - **List numbering** (GAM_ZoneList_00431520): 0 = ZDD (collide set +0), 1 = ZDM (+8), 2 = ZDE (+4), 3 = ZDR (+0xC);
@@ -1213,12 +1281,15 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   height inside its sector boxes (sud0: 2); Shaders.metal / sdl level.frag water_sheen() add, on upward faces only (the
   falls share the material), a Fresnel sky reflection and the light's highlight over moving procedural ripples, and
   raise the alpha of blended water. The look is a stand-in for the engine's (its water rendering, the SRF module, is
-  not decoded); **not seen yet** (the Metal shader compiles; the SDL GLSL builds on Linux).
+  not decoded); **not seen yet** (the Metal shader compiles; the SDL GLSL builds on Linux). Since 2026-10-30 (SECT) a
+  mesh is a water material when it holds triangles of the surfaces themselves (a range of a water group); sud0: the
+  same 2.
   Fixed the same day (user: from underwater the whole surface was one solid colour): seen from below, the view vector
   points down, so the Fresnel term was 1 (full sky) and the alpha forced opaque; now no sheen from below (eye under the
   fragment), the texture's own alpha, the world above showing through.
 
 ### Dry sectors inside water boxes (.ttai v11, 2026-10-24)
+**Superseded 2026-10-30 by "Sectors":** the .ttai WATR / DRYB chunks are gone.
 - User: sud0's way into Doc's cave counted as water (Ed swam in the air). Cause: water_planes bounds a surface by the
   geometry boxes of the sectors listing it; the river's box [-169..-87, -18..75, -23..16] (surface z -5.2) overlaps the
   cave entrance's own sector [-181..-134, 11..39, -16..-4], which lists no surface. The exe asks the perso's sector.

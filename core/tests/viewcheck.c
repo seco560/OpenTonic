@@ -30,7 +30,8 @@ static void check(int ok, const char *what) {
 }
 
 /* Every draw names a drawable mesh and an existing texture; [opaque, count) are exactly the transparent ones, back
- * to front (each mesh centre's distance from the eye never grows); a split static is never drawn itself. */
+ * to front (each mesh centre's distance from the eye never grows); a split static is never drawn itself; its index
+ * range is whole triangles inside the mesh, all of it while every sector is drawn. */
 static int bad_frames;
 static uint32_t last_count, last_opaque, last_ed_draws;
 
@@ -53,6 +54,10 @@ static void frame(tc_viewer *v, float dt) {
         if (!m || m->index_count == 0 || (d[i].flags & ~TC_FLAG_WATER) != m->surface.flags || transparent != (i >= opaque)) bad = 1;
         if (d[i].texture < -1 || d[i].texture >= (int32_t)v->level->texture_count) bad = 1;
         if (d[i].mesh < v->level->mesh_count && v->split && v->split[d[i].mesh]) bad = 1;
+        if (m && (d[i].first_index % 3 || d[i].index_count % 3 || d[i].index_count == 0 ||
+                  d[i].first_index + d[i].index_count > m->index_count))
+            bad = 1;
+        if (m && v->sector_mode == TC_VS_ALL && (d[i].first_index != 0 || d[i].index_count != m->index_count)) bad = 1;
     }
     for (i = opaque, prev = INFINITY; i < count && !bad; i++) {
         tc_vec3 c = v->mesh_centre[d[i].mesh];
@@ -178,6 +183,83 @@ static void light_scenario(const char *dir, const char *name) {
 /* Portals through the viewer (docs/PORTALS.md): Ed walks into sud0's Cocktail arch; the overlay must go cover ->
  * black -> loading screen, then the level change is pending: the arch leads to the cutscene level bar, so cock01
  * (tc_level_after_cutscene). bar's viewer, started with the carry, reveals and Ed steps out (state 229). */
+/* The sector modes (K) on sud0, playing: everything (the statics' triangles all drawn), the game's (the camera's
+ * sector and its list: fewer), Ed's alone (fewer still); the title names the sector. Then Ed runs a while (sud0's start
+ * sector is the long river stretch behind the gate: he may stay in it; aicheck's wander counts his crossings), the
+ * camera flies through a portal of its sector in free-fly (and enters the sector beyond), and back to everything. */
+static uint32_t static_triangles(const tc_viewer *v) {
+    uint32_t count, opaque, i, n = 0;
+    const tc_view_draw *d = tc_viewer_draws((tc_viewer *)v, &count, &opaque);
+    for (i = 0; i < count; i++)
+        if (d[i].mesh < v->level->mesh_count || (d[i].mesh >= v->piece_first && d[i].mesh < v->piece_first + v->piece_count))
+            n += d[i].index_count / 3;
+    return n;
+}
+
+static void sector_scenario(const char *dir) {
+    char path[1024], status[512], what[256];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    uint32_t all, near, alone, i, total = 0, changes = 0;
+    uint16_t last;
+    snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no sud0: sectors skipped)\n"); return; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/sud0.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "sud0";
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "sud0 viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    printf("sectors (sud0): %u sectors\n", level.sectors.count);
+    check(v.sectors && v.mesh_ranges, "sud0 has sectors and its statics have ranges");
+    check(v.sector_mode == TC_VS_SECTOR, "starts with Ed's sector and its list (the default)");
+    for (i = 0; i < level.mesh_count; i++) total += level.meshes[i].index_count / 3;
+    run(&v, 1, 0);
+    near = static_triangles(&v);
+    tc_viewer_status(&v, NULL, status, sizeof(status));
+    check(tc_viewer_ed_sector(&v) != TC_SECTOR_NONE, "Ed has a sector");
+    snprintf(what, sizeof(what), "Ed's sector and its list: %u of %u triangles; title: %s", near, total, status);
+    check(near > 0 && near < total && strstr(status, ", sector ") != NULL && !strstr(status, "alone"), what);
+    check(tc_viewer_status_live(&v), "the title refreshes by itself while sectors are drawn by Ed's");
+    tc_viewer_cycle_sectors(&v);
+    run(&v, 0.1f, 0);
+    all = static_triangles(&v);
+    tc_viewer_status(&v, NULL, status, sizeof(status));
+    snprintf(what, sizeof(what), "K: all sectors: every static triangle drawn (%u of %u)", all, total);
+    check(v.sector_mode == TC_VS_ALL && all == total && !strstr(status, "sector"), what);
+    tc_viewer_cycle_sectors(&v);
+    run(&v, 0.1f, 0);
+    alone = static_triangles(&v);
+    tc_viewer_status(&v, NULL, status, sizeof(status));
+    snprintf(what, sizeof(what), "K: Ed's sector alone: %u triangles, fewer; title: %s", alone, status);
+    check(v.sector_mode == TC_VS_ALONE && alone > 0 && alone < near && strstr(status, " alone") != NULL, what);
+    tc_viewer_cycle_sectors(&v);
+    check(v.sector_mode == TC_VS_SECTOR, "K again: Ed's sector and its list");
+    last = tc_viewer_ed_sector(&v);
+    for (i = 0; i < 60 * 6; i++) {
+        tc_viewer_set_action(&v, TC_VA_FORWARD, true);
+        tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, i % 120 < 30);
+        frame(&v, 1.0f / 60);
+        if (tc_viewer_ed_sector(&v) != last) {
+            changes++;
+            printf("  %.2f s: Ed into %s\n", (double)(i / 60.0f), tc_sectors_name(v.sectors, tc_viewer_ed_sector(&v)));
+            last = tc_viewer_ed_sector(&v);
+        }
+    }
+    tc_viewer_release_all(&v);
+    snprintf(what, sizeof(what), "Ed runs 6 s (%u sector changes), the draw lists stay valid", changes);
+    check(bad_frames == 0, what);
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
 static void portal_scenario(const char *dir) {
     char path[1024];
     size_t size, ai_size;
@@ -406,6 +488,7 @@ int main(int argc, char **argv) {
     check(tc_viewer_status(&v, NULL, status, 8) > 8 && strlen(status) == 7, "status truncates");
 
 done:
+    sector_scenario(dir);
     portal_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");

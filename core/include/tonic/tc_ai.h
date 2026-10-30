@@ -163,16 +163,6 @@ typedef struct tc_ai_transitions {
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
 
-/* .ttai WATR: a water surface (docs/NOTES.md "Swimming"): a horizontal plane at z with the mechanical environment below
- * it, counted only inside the bounding boxes of the sectors that list it (the exe asks the perso's sector; the port
- * has no sectors). boxes = box_count x {min xyz, max xyz}. */
-typedef struct tc_ai_water {
-    float z;
-    float gravity, density, drag;    /* the environment below: g, density (+0x14, water 1000), drag coefficient (+0x10) */
-    uint16_t box_count;
-    tc_vec3 *boxes;
-} tc_ai_water;
-
 /* WPTS: a state's water sample points (State +0x34 list, GAM_00437900): kind 1..6 (the head down to the feet) and a point
  * in the perso's axes; each frame the water flag of the environment there (MecEnv +0x28) is the zone value of its kind. */
 #define TC_AI_MAX_WATER_POINTS 8
@@ -222,11 +212,6 @@ typedef struct tc_ai_model {
     tc_ai_sound *sounds;
     uint32_t mech_event_count;   /* MECE: {frame, mode} rows, by state (tc_ai_state.mech_first) */
     tc_ai_mech_event *mech_events;
-    uint16_t water_count;
-    tc_ai_water *water;
-    uint16_t dry_box_count;      /* the boxes of sectors without water (min, max pairs); the smallest box holding a
-                                  * point decides (tc_mec_env_at) */
-    tc_vec3 *dry_boxes;
     uint16_t water_point_set_count;
     tc_ai_water_points *water_point_sets;
     /* per collision triangle (the .ttlv's order, tc_tri.source) its floor's sound type (GameMaterial +8; 0xFF

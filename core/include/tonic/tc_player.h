@@ -59,6 +59,7 @@ typedef struct tc_player {
 
     bool jump_held;
     float air_time, since_jump, land_timer;
+    uint32_t placed;          /* counts init, respawns and teleports: a perso's sector is looked up again after one */
 } tc_player;
 
 void tc_player_init(tc_player *p, tc_collision *world, tc_vec3 start, float heading);

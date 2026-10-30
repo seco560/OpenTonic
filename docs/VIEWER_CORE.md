@@ -87,6 +87,9 @@ State in the viewer, changed through small functions so both frontends behave th
   level's light persos again: sud0's day / night cycle, Land's lightning, run from their scripts in the .ttlv's
   LAIS; `tc_viewer_status_live` says when to refresh the title), `tc_viewer_step_gamma(v, up)` (x1.1, 0.5-2.5),
   `tc_viewer_step_fov(v, +1/-1)` (5 degree steps, 30-100), `tc_viewer_toggle_fog`.
+- `tc_viewer_cycle_sectors(v)` (K, levels with a .ttlv SECT): the sectors drawn, from Ed's sector: his sector
+  and its list (the default, sky included) / all of them / his sector alone; `tc_viewer_ed_sector` (name:
+  `tc_sectors_name`). docs/NOTES.md "Sectors".
 - `tc_viewer_wheel(v, y)`: orbit zoom while playing, fly speed (0.5-500) in free-fly, both x1.1 per notch.
 - `tc_viewer_status(v, buf, size)`: the UTF-8 readout both title bars show today: `view: anim 1.00×, gamma 1.00,
   FOV 55°[, lighting 1/2][, fog on (G)][  ·  PLAYING as Ed (Tab: free-fly)][  ·  AI ... (I: simple controller)]`.
@@ -112,6 +115,7 @@ typedef struct tc_view_draw {
     uint32_t mesh;      /* tc_viewer_mesh index */
     int32_t texture;    /* level texture for this frame (animated textures stepped), -1 = untextured */
     uint32_t flags;     /* the surface's TC_FLAG_* (alpha test, transparent, billboard) */
+    uint32_t first_index, index_count;  /* the part of the mesh's indices to draw */
     tc_mat4 model;
 } tc_view_draw;
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
@@ -119,7 +123,9 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
 Order: opaque statics, persos (each part's channel matrix at the current sample, skipping parts whose object isn't
 shown; the static Ed perso hidden while playing), Ed's channels at his phase, then every `TC_FLAG_TRANSPARENT` draw
 at the end (`[opaque_count, count)`). A frontend with a missing texture (its handle NULL for that index) falls back
-to the flat pipeline itself. Storage is the viewer's, valid until the next call.
+to the flat pipeline itself. Storage is the viewer's, valid until the next call. Draw the indices
+`[first_index, first_index + index_count)` of the mesh: all of them except in a sector mode, where a static mesh
+(one per material for the whole level) is drawn as the runs of its shown sectors' index ranges, one draw each.
 
 **Shading values, every frame.** Both uniform layouts differ (Swift's `SIMD3<Float>` is 16 bytes, std140 packs the
 float after a vec3), so the core fills a plain struct and each frontend packs it:

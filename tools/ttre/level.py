@@ -152,6 +152,22 @@ class SuperObject:
 
 
 @dataclass(eq=False)
+class Sector:
+    """One of the level's sectors (LevelData.sectors). visible: [(sector index, draw)]; envs: [(gravity, density, drag
+    coefficient, water flag MecEnv +0x28) or None]; surfaces: indices into LevelData.surfaces(); portals: [(target
+    sector index or 0xFFFF, v0, v1, v2, face normal)] world space; floors: [(v0, v1, v2, face normal)] world space."""
+    so: 'SuperObject'
+    name: str
+    virtual: int = 0
+    no_child_lookup: int = 0
+    visible: list = field(default_factory=list)
+    envs: list = field(default_factory=list)
+    surfaces: list = field(default_factory=list)
+    portals: list = field(default_factory=list)
+    floors: list = field(default_factory=list)
+
+
+@dataclass(eq=False)
 class Perso:
     loc: tuple
     family: int
@@ -986,6 +1002,126 @@ class LevelData:
                 node = lv.ptr(node, 4)
         self._surfaces = out
         return out
+
+    def sectors(self):
+        """The level's sectors as the exe uses them (docs/NOTES.md "Sectors"; .ttlv SECT): the father sector's children,
+        in order, as [Sector]. Sector data (+0x94 name):
+          +0x00 ptr GeometricObjectCollide: the sector's portals. Each type 1 element's +0 is the sector its faces lead
+                into (not a game material); a perso moving from its last position to its new one through a face, from
+                the face's front to its back, enters that sector (FUN_00451670, every frame from GAM_0042c810)
+          +0x04 environments (env k: below k of the surfaces), +0x10 water surfaces (FUN_00451b90)
+          +0x1C the characters in it (runtime), +0x28 / +0x34 lights
+          +0x4C {head, tail, n} of {u16 draw, u16, ptr sector, ptr next}: the sectors drawn with it when the frame is
+                drawn from it (FUN_00451d80, list mode 0 = 0x8c1765, reset at level init; +0x58 / +0x64: debug modes);
+                draw > 0: its static geometry too (always so in the 21 levels), else only its characters and surfaces
+          +0x88 u8 virtual (sky, foliage, gates: FUN_00451240 never picks it), +0x89 u8 its IPOs not looked up
+        Sector.floors: the faces FUN_00451240 casts straight down at to find a point's sector (on level load, teleports):
+        the portal object's and its direct IPO children's LOD 0 visual faces, those whose stored face normal faces the
+        ray (front faces only: FUN_00460350); the nearest hit below the point wins. Story-gated IPOs are left out, as
+        from the geometry. Sector.surfaces index self.surfaces(), whose z is the height FUN_0045d880 reads."""
+        if hasattr(self, '_sectors'):
+            return self._sectors
+        lv, un = self.lv, self.un
+        secs = [s for s in self.root.children if s.kind == 'sector'] if self.root else []
+        index = {s.loc: i for i, s in enumerate(secs)}
+        surface_index = {loc: k for k, (loc, _, _) in enumerate(self.surfaces())}
+        out = []
+        for so in secs:
+            data = lv.ptr(so.loc, 4)
+            sec = Sector(so, self.sector_name(so))
+            out.append(sec)
+            if data is None:
+                continue
+            raw = data[0].data
+            sec.virtual, sec.no_child_lookup = raw[data[1] + 0x88], raw[data[1] + 0x89]
+            node = lv.ptr(data, 0x4C)
+            while node is not None and len(sec.visible) < 4096:
+                target = index.get(lv.ptr(node, 4))
+                if target is not None:
+                    sec.visible.append((target, un('H', node)[0]))
+                node = lv.ptr(node, 8)
+            node = lv.ptr(data, 4)
+            while node is not None and len(sec.envs) < 64:
+                entry = lv.ptr(node)
+                env = lv.ptr(entry) if entry else None
+                sec.envs.append((un('f', env)[0], un('f', env, 0x14)[0], un('f', env, 0x10)[0], un('I', env, 0x28)[0])
+                                if env else None)
+                node = lv.ptr(node, 4)
+            node = lv.ptr(data, 0x10)
+            while node is not None and len(sec.surfaces) < 64:
+                srf = lv.ptr(node)
+                if srf in surface_index:
+                    sec.surfaces.append(surface_index[srf])
+                node = lv.ptr(node, 4)
+            portal = lv.ptr(data, 0)
+            if portal:
+                for v0, v1, v2, n, target in self.faces(portal, IDENTITY, collide=True):
+                    sec.portals.append((index.get(target, 0xFFFF), v0, v1, v2, n))
+                    if not sec.virtual and n[2] > 0:
+                        sec.floors.append((v0, v1, v2, n))
+            if sec.virtual or sec.no_child_lookup:
+                continue
+            for ch in so.children:
+                if ch.kind != 'ipo' or getattr(ch, 'gated', False):
+                    continue
+                ipo = lv.ptr(ch.loc, 4)
+                po = lv.ptr(ipo) if ipo else None
+                vs = lv.ptr(po) if po else None
+                objs = lv.ptr(vs, 12) if vs else None
+                geo = lv.ptr(objs) if objs else None  # LOD 0 (GLIGLOU_004427d0(visual set, 0))
+                if geo:
+                    sec.floors += [(v0, v1, v2, n) for v0, v1, v2, n, _ in self.faces(geo, ch.world) if n[2] > 0]
+        self._sectors = out
+        return out
+
+    def faces(self, geo, world, collide=False):
+        """A GeometricObject's (or, collide=True, a GeometricObjectCollide's) indexed-triangle elements as world-space
+        faces [(v0, v1, v2, stored face normal, element +0)]: the normal through the cofactor matrix of world (the
+        inverse transpose up to a positive factor), so its sign against any direction is the one the exe tests in the
+        object's own axes. Other element types are counted in self.warnings."""
+        lv, un = self.lv, self.un
+        nv, = un('I', geo)
+        ne, = un('I', geo, 0x14)
+        pv = lv.ptr(geo, 4)
+        verts = [mat_apply(world, un('3f', pv, 12 * i)) for i in range(nv)] if pv else []
+        a = [world[0:3], world[4:7], world[8:11]]
+        cof = [[a[(i + 1) % 3][(j + 1) % 3] * a[(i + 2) % 3][(j + 2) % 3] -
+                a[(i + 1) % 3][(j + 2) % 3] * a[(i + 2) % 3][(j + 1) % 3] for j in range(3)] for i in range(3)]
+        out = []
+        for k, t in enumerate(un(f'{ne}H', lv.ptr(geo, 0x18)) if ne and lv.ptr(geo, 0x18) else ()):
+            el = lv.ptr(lv.ptr(geo, 0x1C), 4 * k)
+            if t == 3 and not collide:
+                continue  # sprites: FUN_004611b0 tests element types 1, 2, 7, 8, 9 only
+            if t != 1 or el is None:
+                self.warnings.append(f'faces of {geo[1]:#x}: element type {t} skipped')
+                continue
+            nt, = un('H', el, 4)
+            pt, pn, extra = lv.ptr(el, 8), lv.ptr(el, 0x10), lv.ptr(el, 0)
+            for i in range(nt if pt and pn else 0):
+                tri = un('3h', pt, 6 * i)
+                if min(tri) < 0 or max(tri) >= nv:
+                    continue
+                n = un('3f', pn, 12 * i)
+                n = tuple(cof[r][0] * n[0] + cof[r][1] * n[1] + cof[r][2] * n[2] for r in range(3))
+                out.append((verts[tri[0]], verts[tri[1]], verts[tri[2]], n, extra))
+        return out
+
+    def static_sector(self, so):
+        """The index (in sectors()) of the sector a static SuperObject belongs to, or None."""
+        if not hasattr(self, '_static_sector'):
+            self._static_sector = {}
+            for i, s in enumerate(self.sectors()):
+                for o in self.walk(s.so):
+                    self._static_sector[o.loc] = i
+        return self._static_sector.get(so.loc)
+
+    def perso_sector(self, perso_loc):
+        """A perso's current sector in the snapshot (SectorInfo, perso +0x24: +4 the sector), as an index in sectors(),
+        or None (fix persos: stale; some level persos have none)."""
+        if not hasattr(self, '_sector_index'):
+            self._sector_index = {s.so.loc: i for i, s in enumerate(self.sectors())}
+        si = self.lv.ptr(perso_loc, 0x24) if perso_loc else None
+        return self._sector_index.get(self.lv.ptr(si, 4)) if si else None
 
     def meshes(self, persos=True, t=None):
         """Yield (key, Geometric LOD 0, world 3x4) for static IPOs, water surfaces and (optionally)

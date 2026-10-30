@@ -210,6 +210,11 @@ Each item is marked in the code or in docs/NOTES.md.
    current sector (SectorInfo +4: the integrators' 4th argument, the env lookup's input) and which of the sector data's
    {head, tail, count} lists the renderer walks for visibility (GLI); export sectors and track the current one in the
    core. Replaces the water's box rules (docs/NOTES.md "Ghost water") and gives the game's own culling (docs/VITA.md).
+   **Done 2026-10-30, awaiting a playtest** (docs/NOTES.md "Sectors"): portal crossings every frame (FUN_00451670 from
+   GAM_0042c810), the down-ray lookup on teleports (FUN_00451240), the water in the perso's own sector, and drawing from
+   the camera's sector with its +0x4C list (FUN_00451d80, list mode 0); the viewer draws from Ed's (the user's choice) by
+   default (K: all sectors / Ed's alone). Checked against the
+   snapshot's own perso sectors (sectorcheck). Left: per-sector fog and lights (below), moving persos' sectors.
 
 ## Rendering and lighting
 GLI (29 KB) is 0 % read. Everything lighting does now is inferred from the data, not read from the code:
@@ -284,7 +289,7 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   Materials: diffuse 0.7 nearly everywhere; ambient 0.1 (sud0, Totalski, LeCanyon) or 0 (north, pyramide, Land).
   Mean baked light, ours (clamp(R) / 128) vs this: sud0 0.27 / 0.39, Totalski 0.48 / 0.45, LeCanyon 0.51 / 0.47,
   Land 0.60 / 0.46, north 0.62 / 0.41, pyramide 0.93 / 0.63; ours goes to 2x, the exe clamps at 1.
-- **Lights per draw:** drawing a sector (FUN_00451d80) clears the list, pushes the sector's lights (FUN_00452410:
+- **Lights per draw** (the sectors themselves: docs/NOTES.md "Sectors", 2026-10-30): drawing a sector (FUN_00451d80) clears the list, pushes the sector's lights (FUN_00452410:
   sector data +0x34 always; +0x28 when the draw flags and the sector's flags have 0x8000), draws the sector
   (FUN_00451e80), then the sectors of one of its lists +0x4c / +0x58 / +0x64 (mode DAT_004fe730) with the same
   lights: the visibility lists (BUGS.md "Level Sectors"). So the lights depend on the sector being viewed from.

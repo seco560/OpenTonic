@@ -69,18 +69,21 @@ void tc_player_apply_floors(tc_player *p) {
     p->fall_gravity_scale = 1;
     p->max_slope = 10 * TC_PI / 180;
     p->use_floor_grip = false;
+    p->placed = 1;
 }
 
 void tc_player_respawn(tc_player *p) {
     p->position = tc_v3_add(p->start_position, tc_v3(0, 0, 0.3f));
     p->heading = p->start_heading;
     reset_motion(p);
+    p->placed++;
 }
 
 void tc_player_teleport(tc_player *p, tc_vec3 position, float heading) {
     p->position = position;
     p->heading = heading;
     reset_motion(p);
+    p->placed++;
 }
 
 float tc_player_horizontal_speed(const tc_player *p) { return tc_v2_length(tc_v2(p->velocity.x, p->velocity.y)); }

@@ -34,6 +34,7 @@ def level_cmd(cmd, argv):
     with_persos = '--no-persos' not in argv
     for w in data.warnings:
         print('warning:', w, file=sys.stderr)
+    shown = len(data.warnings)
     if cmd == 'level-ai':
         import collections
         from . import ai
@@ -98,6 +99,8 @@ def level_cmd(cmd, argv):
             for view in ('top', 'persp'):
                 export.render_preview(data, os.path.join(out, f'preview_{view}.png'), view=view, persos=with_persos)
             print(f'wrote {out}/preview_top.png, preview_persp.png')
+    for w in data.warnings[shown:]:  # raised while writing (e.g. LevelData.sectors, ttlv.Sections)
+        print('warning:', w, file=sys.stderr)
 
 
 def main(argv):

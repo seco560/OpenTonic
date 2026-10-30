@@ -117,6 +117,7 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         tc_result r = tc_ed_ai_init(&p->driver, &p->model, &p->player, p->level_name);
         p->has_driver = r == TC_OK;
         if (r != TC_OK) v->ai_result = r;
+        if (p->has_driver) tc_ed_ai_set_sectors(&p->driver, l->sectors.count ? &l->sectors : NULL);
     }
     p->use_ai = p->has_driver;
     return p;
@@ -404,31 +405,68 @@ void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out) {
 
 static bool drawable(const tc_mesh *m) { return m->index_count > 0 && m->vertex_count > 0 && m->vertices && m->indices; }
 
+/* ---- sector ranges (tc_viewer_draws draws only the shown sectors' part of a static mesh) ---- */
+
+/* Appends a range to v->ranges (tc_alloc has no realloc). false when out of memory. */
+static bool push_range(tc_viewer *v, uint16_t group, uint32_t first, uint32_t count) {
+    if (v->range_count == v->range_cap) {
+        uint32_t cap = v->range_cap ? v->range_cap * 2 : 256;
+        tc_sector_range *r = (tc_sector_range *)tc_calloc(cap, sizeof(*r));
+        if (!r) return false;
+        if (v->ranges) memcpy(r, v->ranges, v->range_count * sizeof(*r));
+        tc_free(v->ranges);
+        v->ranges = r;
+        v->range_cap = cap;
+    }
+    v->ranges[v->range_count].group = group;
+    v->ranges[v->range_count].first = first;
+    v->ranges[v->range_count].count = count;
+    v->range_count++;
+    return true;
+}
+
+/* The level's ranges of static mesh i (from tc_sectors), or none. */
+static bool level_ranges(const tc_viewer *v, uint32_t i, const tc_sector_range **r, uint32_t *n) {
+    const tc_sectors *s = v->sectors;
+    if (!s || s->mesh_count != v->level->mesh_count || i >= s->mesh_count || !s->ranges) return false;
+    *r = &s->ranges[s->mesh_first_range[i]];
+    *n = s->mesh_first_range[i + 1] - s->mesh_first_range[i];
+    return true;
+}
+
 /* ---- transparent pieces (tc_viewer_draws sorts blended draws back to front) ---- */
 
-/* Piece `group` of static mesh `origin`: its triangles (tri_group[t] == group) with their vertices compacted.
- * map: one UINT32_MAX per vertex of m on entry, restored on return. */
+/* Piece `group` of static mesh `origin`: its triangles (tri_group[t] == group) with their vertices compacted, in their
+ * order, so their sector groups (sector_group[t], NULL: no sectors) stay runs: the piece's ranges go to
+ * piece_ranges[2 k] (first in v->ranges) and [2 k + 1] (count). map: one UINT32_MAX per vertex of m on entry, restored
+ * on return. */
 static bool add_piece(tc_viewer *v, const tc_mesh *m, uint32_t origin, const uint32_t *tri_group, uint32_t group,
-                      uint32_t *map) {
-    uint32_t t, k, nt = m->index_count / 3, ni = 0, nv = 0;
+                      uint32_t *map, const uint16_t *sector_group, uint32_t **piece_ranges) {
+    uint32_t t, k, nt = m->index_count / 3, ni = 0, nv = 0, first_range = v->range_count;
     tc_mesh *p;
+    bool ok = true;
     for (t = 0; t < nt; t++)
         if (tri_group[t] == group) ni += 3;
     if (v->piece_count == v->piece_cap) {
         uint32_t cap = v->piece_cap ? v->piece_cap * 2 : 64;
         tc_mesh *pieces = (tc_mesh *)tc_calloc(cap, sizeof(*pieces));
         uint32_t *origins = (uint32_t *)tc_calloc(cap, sizeof(*origins));
-        if (!pieces || !origins) {
+        uint32_t *ranges = (uint32_t *)tc_calloc((size_t)cap * 2, sizeof(*ranges));
+        if (!pieces || !origins || !ranges) {
             tc_free(pieces);
             tc_free(origins);
+            tc_free(ranges);
             return false;
         }
         if (v->pieces) memcpy(pieces, v->pieces, v->piece_count * sizeof(*pieces));
         if (v->piece_origin) memcpy(origins, v->piece_origin, v->piece_count * sizeof(*origins));
+        if (*piece_ranges) memcpy(ranges, *piece_ranges, (size_t)v->piece_count * 2 * sizeof(*ranges));
         tc_free(v->pieces);
         tc_free(v->piece_origin);
+        tc_free(*piece_ranges);
         v->pieces = pieces;
         v->piece_origin = origins;
+        *piece_ranges = ranges;
         v->piece_cap = cap;
     }
     p = &v->pieces[v->piece_count];
@@ -442,8 +480,13 @@ static bool add_piece(tc_viewer *v, const tc_mesh *m, uint32_t origin, const uin
         memset(p, 0, sizeof(*p));
         return false;
     }
-    for (t = 0; t < nt; t++) {
+    for (t = 0; t < nt && ok; t++) {
         if (tri_group[t] != group) continue;
+        if (sector_group) {
+            tc_sector_range *last = v->range_count > first_range ? &v->ranges[v->range_count - 1] : NULL;
+            if (last && last->group == sector_group[t]) last->count += 3;
+            else ok = push_range(v, sector_group[t], p->index_count, 3);
+        }
         for (k = 0; k < 3; k++) {
             uint32_t vi = m->indices[3 * t + k];
             if (map[vi] == UINT32_MAX) {
@@ -456,6 +499,14 @@ static bool add_piece(tc_viewer *v, const tc_mesh *m, uint32_t origin, const uin
     for (t = 0; t < nt; t++)
         if (tri_group[t] == group)
             for (k = 0; k < 3; k++) map[m->indices[3 * t + k]] = UINT32_MAX;
+    if (!ok) {
+        tc_free(p->indices);
+        tc_free(p->vertices);
+        memset(p, 0, sizeof(*p));
+        return false;
+    }
+    (*piece_ranges)[2 * v->piece_count] = first_range;
+    (*piece_ranges)[2 * v->piece_count + 1] = v->range_count - first_range;
     p->vertex_count = nv;
     v->piece_origin[v->piece_count++] = origin;
     return true;
@@ -464,8 +515,9 @@ static bool add_piece(tc_viewer *v, const tc_mesh *m, uint32_t origin, const uin
 /* The .ttlv holds one mesh per material for the whole level, so a transparent material (water, glass, the OMBRE
  * shadows) would sort as a single draw. Each transparent static is cut by a grid of TC_VIEW_PIECE_SIZE cells over
  * its triangles' centroids into pieces with their own vertices; one that fits a single cell stays whole. Triangles
- * with an index out of range (none in converted levels) go to the first piece. */
-static bool split_transparent(tc_viewer *v) {
+ * with an index out of range (none in converted levels) go to the first piece. Each piece keeps its triangles' sector
+ * groups as ranges (piece_ranges: add_piece). */
+static bool split_transparent(tc_viewer *v, uint32_t **piece_ranges) {
     const tc_level *l = v->level;
     uint32_t i, t, g;
     bool ok = true;
@@ -474,13 +526,21 @@ static bool split_transparent(tc_viewer *v) {
     if (!v->split) return false;
     for (i = 0; ok && i < l->mesh_count; i++) {
         const tc_mesh *m = &l->meshes[i];
-        uint32_t nt = m->index_count / 3, groups = 0, *tri_group, *map;
+        uint32_t nt = m->index_count / 3, groups = 0, *tri_group, *map, nr = 0, r;
+        uint16_t *sector_group = NULL;
+        const tc_sector_range *ranges = NULL;
         int32_t *cells;
         if (!(m->surface.flags & TC_FLAG_TRANSPARENT) || !drawable(m) || nt < 2) continue;
         tri_group = (uint32_t *)tc_calloc(nt, sizeof(*tri_group));
         cells = (int32_t *)tc_calloc((size_t)nt * 3, sizeof(*cells));
         map = (uint32_t *)tc_calloc(m->vertex_count, sizeof(*map));
-        if (!tri_group || !cells || !map) {
+        if (level_ranges(v, i, &ranges, &nr)) {
+            sector_group = (uint16_t *)tc_calloc(nt, sizeof(*sector_group));
+            for (r = 0; sector_group && r < nr; r++)
+                for (t = ranges[r].first / 3; t < (ranges[r].first + ranges[r].count) / 3 && t < nt; t++)
+                    sector_group[t] = ranges[r].group;
+        }
+        if (!tri_group || !cells || !map || (nr && !sector_group)) {
             ok = false;
         } else {
             for (t = 0; t < nt; t++) {
@@ -502,13 +562,14 @@ static bool split_transparent(tc_viewer *v) {
             }
             if (groups > 1) {
                 for (t = 0; t < m->vertex_count; t++) map[t] = UINT32_MAX;
-                for (g = 0; ok && g < groups; g++) ok = add_piece(v, m, i, tri_group, g, map);
+                for (g = 0; ok && g < groups; g++) ok = add_piece(v, m, i, tri_group, g, map, sector_group, piece_ranges);
                 v->split[i] = 1;
             }
         }
         tc_free(tri_group);
         tc_free(cells);
         tc_free(map);
+        tc_free(sector_group);
     }
     return ok;
 }
@@ -534,9 +595,31 @@ static bool mesh_centres(tc_viewer *v) {
     return true;
 }
 
+/* Every mesh's index ranges (tc_viewer.mesh_ranges): the statics' from the level's sectors (copied after the pieces'),
+ * the pieces' from split_transparent; none for persos and Ed, or in a level without sectors. */
+static bool mesh_ranges(tc_viewer *v, const uint32_t *piece_ranges) {
+    uint32_t i, k, n;
+    const tc_sector_range *r;
+    if (!v->sectors || !v->mesh_count) return true;
+    v->mesh_ranges = (uint32_t *)tc_calloc((size_t)v->mesh_count * 2, sizeof(*v->mesh_ranges));
+    if (!v->mesh_ranges) return false;
+    for (i = 0; i < v->level->mesh_count; i++) {
+        if (!level_ranges(v, i, &r, &n)) continue;
+        v->mesh_ranges[2 * i] = v->range_count;
+        v->mesh_ranges[2 * i + 1] = n;
+        for (k = 0; k < n; k++)
+            if (!push_range(v, r[k].group, r[k].first, r[k].count)) return false;
+    }
+    for (i = 0; piece_ranges && i < v->piece_count; i++) {
+        v->mesh_ranges[2 * (v->piece_first + i)] = piece_ranges[2 * i];
+        v->mesh_ranges[2 * (v->piece_first + i) + 1] = piece_ranges[2 * i + 1];
+    }
+    return true;
+}
+
 tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     const tc_level *l = desc->level;
-    uint32_t i, k, n = 0;
+    uint32_t i, k, n = 0, *piece_ranges = NULL;
     tc_vec3 lo, hi;
     float size;
     memset(v, 0, sizeof(*v));
@@ -560,7 +643,18 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     v->light_set_count = l->light_set_count > 1 ? l->light_set_count : 1;
 
-    if (!split_transparent(v)) {
+    v->sectors = l->sectors.count ? &l->sectors : NULL;
+    v->sector_mode = TC_VS_SECTOR; /* the user's default (2026-10-30): Ed's sector and its list; K cycles */
+    v->ed_sector.sector = TC_SECTOR_NONE;
+    if (v->sectors) {
+        v->sector_shown = (uint8_t *)tc_calloc(v->sectors->count, 1);
+        if (!v->sector_shown) {
+            tc_viewer_free(v);
+            return TC_ERR_OUT_OF_MEMORY;
+        }
+    }
+    if (!split_transparent(v, &piece_ranges)) {
+        tc_free(piece_ranges);
         tc_viewer_free(v);
         return TC_ERR_OUT_OF_MEMORY;
     }
@@ -571,6 +665,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     if (v->mesh_count) {
         v->meshes = (const tc_mesh **)tc_calloc(v->mesh_count, sizeof(*v->meshes));
         if (!v->meshes) {
+            tc_free(piece_ranges);
             tc_viewer_free(v);
             return TC_ERR_OUT_OF_MEMORY;
         }
@@ -600,35 +695,26 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         for (i = 0; i < l->ed.part_count; i++) v->meshes[n++] = &l->ed.parts[i].mesh;
     v->piece_first = n;
     for (i = 0; i < v->piece_count; i++) v->meshes[n++] = &v->pieces[i];
-    if (!mesh_centres(v)) {
-        tc_viewer_free(v);
-        return TC_ERR_OUT_OF_MEMORY;
+    {
+        bool ok = mesh_centres(v) && mesh_ranges(v, piece_ranges);
+        tc_free(piece_ranges);
+        if (!ok) {
+            tc_viewer_free(v);
+            return TC_ERR_OUT_OF_MEMORY;
+        }
     }
 
     v->play = play_create(v, desc);
-    if (ai_model(v) && ai_model(v)->water_count && l->mesh_count) {
-        /* Water materials: static meshes (the .ttlv groups them by material) with a triangle lying flat (within 5 cm)
-         * at a water plane's height, centred inside one of its sector boxes. The renderers add the sheen to their
-         * upward-facing fragments only (the falls and pool sides share the rainbow material). */
-        const tc_ai_model *am = ai_model(v);
+    if (v->sectors && v->mesh_ranges && l->mesh_count) {
+        /* Water materials: static meshes (the .ttlv groups them by material) holding some of a water surface's
+         * triangles (a range of a water group: the geometry the sectors list as their surfaces). The renderers add the
+         * sheen to their upward-facing fragments only (the falls and pool sides share the rainbow material). */
         v->mesh_water = (uint8_t *)tc_calloc(l->mesh_count, 1);
-        for (i = 0; v->mesh_water && i < l->mesh_count; i++) {
-            const tc_mesh *m = &l->meshes[i];
-            uint32_t k, w, b;
-            for (k = 0; k + 2 < m->index_count && !v->mesh_water[i]; k += 3) {
-                const float *q0 = m->vertices[m->indices[k]].position, *q1 = m->vertices[m->indices[k + 1]].position,
-                            *q2 = m->vertices[m->indices[k + 2]].position;
-                tc_vec3 c = tc_v3((q0[0] + q1[0] + q2[0]) / 3, (q0[1] + q1[1] + q2[1]) / 3, (q0[2] + q1[2] + q2[2]) / 3);
-                for (w = 0; w < am->water_count && !v->mesh_water[i]; w++) {
-                    const tc_ai_water *wp = &am->water[w];
-                    if (fabsf(q0[2] - wp->z) > 0.05f || fabsf(q1[2] - wp->z) > 0.05f || fabsf(q2[2] - wp->z) > 0.05f) continue;
-                    for (b = 0; b < wp->box_count; b++) {
-                        const tc_vec3 *bx = &wp->boxes[2 * b];
-                        if (c.x >= bx[0].x && c.y >= bx[0].y && c.x <= bx[1].x && c.y <= bx[1].y) { v->mesh_water[i] = 1; break; }
-                    }
-                }
+        for (i = 0; v->mesh_water && i < l->mesh_count; i++)
+            for (k = 0; k < v->mesh_ranges[2 * i + 1]; k++) {
+                uint16_t g = v->ranges[v->mesh_ranges[2 * i] + k].group;
+                if (g < v->sectors->group_count && (v->sectors->groups[g].flags & TC_GROUP_WATER)) v->mesh_water[i] = 1;
             }
-        }
     }
     v->ed_clip = ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
@@ -681,6 +767,9 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->split);
     tc_free(v->mesh_centre);
     tc_free(v->blended_depth);
+    tc_free(v->sector_shown);
+    tc_free(v->mesh_ranges);
+    tc_free(v->ranges);
     memset(v, 0, sizeof(*v));
 }
 
@@ -817,7 +906,9 @@ bool tc_viewer_has_ai(const tc_viewer *v) { return v->play && v->play->has_drive
 
 bool tc_viewer_ai_active(const tc_viewer *v) { return v->playing && tc_viewer_has_ai(v) && v->play->use_ai; }
 
-bool tc_viewer_status_live(const tc_viewer *v) { return tc_viewer_ai_active(v) || (v->light && v->light_scripted); }
+bool tc_viewer_status_live(const tc_viewer *v) {
+    return tc_viewer_ai_active(v) || (v->light && v->light_scripted) || v->sector_mode != TC_VS_ALL;
+}
 
 const tc_player *tc_viewer_player(const tc_viewer *v) { return v->play ? &v->play->player : NULL; }
 
@@ -1012,11 +1103,26 @@ uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events) {
     return v->sound_count;
 }
 
+/* Ed's sector after this frame's moves: his AI's, else tracked here for the simple controller. */
+static void update_sectors(tc_viewer *v) {
+    tc_viewer_play *p = v->play;
+    if (!v->sectors || !p) return;
+    if (p->has_driver) tc_ed_ai_track_sector(&p->driver);
+    else tc_sector_follow(&v->ed_sector, v->sectors, p->player.position, p->player.placed);
+}
+
+uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
+    if (!v->sectors || !v->play) return TC_SECTOR_NONE;
+    return v->play->has_driver ? v->play->driver.sector.sector : v->ed_sector.sector;
+}
+
+
 void tc_viewer_update(tc_viewer *v, float dt) {
     v->sound_count = 0;
     if (v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) look(v, 0); /* the level is about to change: Ed waits */
     else if (v->playing) update_play(v, dt);
     else fly(v, dt);
+    update_sectors(v);
     update_portals(v, v->paused ? 0 : dt);
     update_light(v, v->paused ? 0 : dt); /* the game clock, as Ed's AI */
     if (!v->paused) v->animation_time += dt * v->animation_speed;
@@ -1056,6 +1162,10 @@ void tc_viewer_step_fov(tc_viewer *v, int dir) {
 
 void tc_viewer_toggle_fog(tc_viewer *v) { v->fog_enabled = !v->fog_enabled; }
 
+void tc_viewer_cycle_sectors(tc_viewer *v) {
+    if (v->sectors) v->sector_mode = (tc_view_sectors)((v->sector_mode + 1) % TC_VS_COUNT);
+}
+
 void tc_viewer_wheel(tc_viewer *v, float notches) {
     float step = powf(1.1f, notches);
     if (v->playing) v->orbit_distance = fmaxf(1.5f, fminf(25, v->orbit_distance / step));  /* camera zoom */
@@ -1080,6 +1190,9 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
         APPEND(", light %u/%u", (unsigned)v->light_set + 1, (unsigned)v->light_set_count);
     if (v->light_set_count > 1 && v->light && !v->light_scripted) APPEND("%s", " held");
     if (v->has_fog) APPEND("%s", v->fog_enabled ? ", fog on" : ", fog off");
+    if (v->sectors && v->sector_mode != TC_VS_ALL)
+        APPEND(", sector %s%s", tc_sectors_name(v->sectors, tc_viewer_ed_sector(v)),
+               v->sector_mode == TC_VS_ALONE ? " alone" : "");
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
 #undef APPEND
@@ -1163,10 +1276,10 @@ static void sort_blended(tc_viewer *v, uint32_t n) {
     }
 }
 
-static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model) {
+static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, uint32_t first, uint32_t count) {
     const tc_mesh *m = v->meshes[mesh];
     tc_view_draw *d;
-    if (!drawable(m)) return;
+    if (!drawable(m) || count == 0) return;
     if (m->surface.flags & TC_FLAG_TRANSPARENT) {
         if (!reserve(&v->blended, &v->blended_cap, dl->blended_count + 1)) return;
         d = &v->blended[dl->blended_count++];
@@ -1177,7 +1290,51 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     d->mesh = mesh;
     d->texture = texture_at(v, &m->surface, v->animation_time);
     d->flags = m->surface.flags | (is_water(v, mesh) ? TC_FLAG_WATER : 0);
+    d->first_index = first;
+    d->index_count = count;
     d->model = *model;
+}
+
+/* A mesh whole, or with `shown` (NULL: all) the runs of its ranges whose group is shown, each run of consecutive shown
+ * ranges one draw. */
+static void add_mesh(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, const uint8_t *shown) {
+    uint32_t n = v->mesh_ranges ? v->mesh_ranges[2 * mesh + 1] : 0, k, first = 0, count = 0;
+    const tc_sector_range *r;
+    if (!shown || n == 0) {
+        add_draw(v, dl, mesh, model, 0, v->meshes[mesh]->index_count);
+        return;
+    }
+    r = &v->ranges[v->mesh_ranges[2 * mesh]];
+    for (k = 0; k < n; k++) {
+        if (!tc_sectors_group_shown(v->sectors, r[k].group, shown)) continue;
+        if (count && first + count == r[k].first) {
+            count += r[k].count;
+            continue;
+        }
+        add_draw(v, dl, mesh, model, first, count);
+        first = r[k].first;
+        count = r[k].count;
+    }
+    add_draw(v, dl, mesh, model, first, count);
+}
+
+/* What this frame draws of each sector (v->sector_shown), or NULL for everything: Ed's sector whole and its list (each
+ * listed sector's characters and surfaces, its geometry when its link says so: FUN_00451d80 / 004521b0; the exe draws
+ * from its camera's sector, the port from Ed's), or his sector alone. Everything while his sector is not known. */
+static const uint8_t *shown_sectors(tc_viewer *v) {
+    const tc_sectors *s = v->sectors;
+    uint16_t from, k;
+    if (!s || v->sector_mode == TC_VS_ALL) return NULL;
+    from = tc_viewer_ed_sector(v);
+    if (from >= s->count) return NULL;
+    memset(v->sector_shown, 0, s->count);
+    v->sector_shown[from] = TC_SHOWN_SECTOR | TC_SHOWN_GEOMETRY;
+    for (k = 0; v->sector_mode == TC_VS_SECTOR && k < s->sectors[from].visible_count; k++) {
+        const tc_sector_link *link = &s->sectors[from].visible[k];
+        if (link->sector < s->count)
+            v->sector_shown[link->sector] |= TC_SHOWN_SECTOR | (link->draw > 0 ? TC_SHOWN_GEOMETRY : 0);
+    }
+    return v->sector_shown;
 }
 
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count) {
@@ -1186,11 +1343,13 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
     draw_list dl = {0, 0};
     uint32_t i, k, first = v->perso_first;
     float t = v->animation_time;
+    const uint8_t *shown = shown_sectors(v);
+    bool perso_sectors = shown && v->sectors->perso_count == l->perso_count;
     v->ed_draw_count = 0;
 
     for (i = 0; i < l->mesh_count; i++)
-        if (!v->split || !v->split[i]) add_draw(v, &dl, i, &identity);  /* split ones: as their pieces */
-    for (i = 0; i < v->piece_count; i++) add_draw(v, &dl, v->piece_first + i, &identity);
+        if (!v->split || !v->split[i]) add_mesh(v, &dl, i, &identity, shown);  /* split ones: as their pieces */
+    for (i = 0; i < v->piece_count; i++) add_mesh(v, &dl, v->piece_first + i, &identity, shown);
 
     for (i = 0; i < l->perso_count; first += l->persos[i].part_count, i++) {
         const tc_perso *p = &l->persos[i];
@@ -1198,6 +1357,10 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         tc_mat4 world;
         tc_sample s;
         if (p->sample_count == 0 || (v->playing && (int32_t)i == l->ed.static_perso)) continue;
+        /* drawn with its sector (the sector's character list); unknown: always */
+        if (perso_sectors && v->sectors->perso_sector[i] != TC_SECTOR_NONE &&
+            !(shown[v->sectors->perso_sector[i]] & TC_SHOWN_SECTOR))
+            continue;
         /* Baked samples loop; blend each channel between neighbouring samples so motion is smooth at any display
          * rate and playback speed. Visibility follows the earlier sample. */
         world = tc_mat4_from34(&p->world);
@@ -1210,7 +1373,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
             /* Lerping full matrices is fine for samples this close together; skipped across a part swap. */
             m = tc_channel_matrix(p->transforms, p->shown, nch, s, part->channel);
             model = tc_mat4_mul(&world, &m);
-            add_draw(v, &dl, first + k, &model);
+            add_draw(v, &dl, first + k, &model, 0, part->mesh.index_count);
         }
     }
 
@@ -1229,7 +1392,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
             world = tc_mat4_mul(&model, &m);
             for (k = 0; k < l->ed.part_count; k++)
                 if (l->ed.parts[k].object == obj) {
-                    add_draw(v, &dl, v->ed_first + k, &world);
+                    add_draw(v, &dl, v->ed_first + k, &world, 0, l->ed.parts[k].mesh.index_count);
                     v->ed_draw_count++;
                 }
         }

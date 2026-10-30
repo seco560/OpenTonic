@@ -5,66 +5,17 @@
 /* The fix's air environment 0x36b51c, shared by every sector of every level: g 9.81, density (+0x14) 1.3. Water
  * sectors list a second one (density 1000) for below their surface (docs/NOTES.md "Swimming"). */
 tc_mec_env tc_mec_env_default(void) {
-    tc_mec_env e = {9.81f, 1.3f, 1.0f};
+    tc_mec_env e = {9.81f, 1.3f, 1.0f, 0};
     return e;
 }
 
-/* How far below a sector box's bottom a point still counts as in that sector. The exe asks the perso's sector, so its
- * water does not end at the pool floor; the boxes stop at the sector's geometry (cavedoc's pool: 0.04 above the
- * collision floor), and the swim forces probe half a body (0.5) below Ed's origin. Without this, Ed near a pool's floor
- * left the water (no buoyancy, no drag), sat on the bottom, and his scripts read depth 0 (the surface). One body size;
- * below a floor is solid ground. */
-#define SECTOR_FLOOR_SLACK 1.0f
-
-static bool box_holds(const tc_vec3 *b, tc_vec3 p) {
-    return p.x >= b[0].x && p.y >= b[0].y && p.z >= b[0].z - SECTOR_FLOOR_SLACK && p.x <= b[1].x && p.y <= b[1].y &&
-           p.z <= b[1].z;
-}
-
-static float box_volume(const tc_vec3 *b) {
-    return (b[1].x - b[0].x) * (b[1].y - b[0].y) * (b[1].z - b[0].z);
-}
-
-/* Nothing solid straight above p up to `height` (ceilings: faces turned down; a face turned up is a floor seen from
- * below, e.g. a pool's floor over a probe within SECTOR_FLOOR_SLACK of it, and the ray goes on past it). */
-static bool open_above(tc_collision *world, tc_vec3 p, float height) {
-    tc_hit hit;
-    int guard;
-    for (guard = 0; guard < 8 && height > 0; guard++) {
-        if (!tc_collision_raycast(world, p, tc_v3(0, 0, 1), height, &hit)) return true;
-        if (hit.normal.z < 0) return false;
-        p.z += hit.distance + 1e-3f;
-        height -= hit.distance + 1e-3f;
-    }
-    return true;
-}
-
-/* The surface nearest in height among those whose boxes hold p. The exe asks the perso's sector; without sectors, a
- * .ttai DRYB dry box holding p that is smaller than every water box holding it stands for a dry sector there. */
-float tc_mec_env_at(const tc_ai_model *m, tc_collision *world, tc_vec3 p, tc_mec_env *env) {
-    const tc_ai_water *best = NULL;
-    float best_d = 0, wet_v = INFINITY, depth;
-    uint16_t i, k;
-    for (i = 0; m && i < m->water_count; i++) {
-        const tc_ai_water *w = &m->water[i];
-        float v = INFINITY;
-        for (k = 0; k < w->box_count; k++)
-            if (box_holds(&w->boxes[2 * k], p)) v = fminf(v, box_volume(&w->boxes[2 * k]));
-        if (v == INFINITY) continue;
-        wet_v = fminf(wet_v, v);
-        if (!best || fabsf(w->z - p.z) < best_d) {
-            best = w;
-            best_d = fabsf(w->z - p.z);
-        }
-    }
-    for (i = 0; best && m && i < m->dry_box_count; i++)
-        if (box_holds(&m->dry_boxes[2 * i], p) && box_volume(&m->dry_boxes[2 * i]) < wet_v) best = NULL;
-    *env = tc_mec_env_default();
-    depth = best ? best->z - p.z : 0; /* FUN_0045d880: surface height - point height */
-    if (depth <= 0 || (world && !open_above(world, p, depth))) return 0;
-    env->gravity = best->gravity;
-    env->density = best->density;
-    env->drag = best->drag;
+float tc_mec_env_at(const tc_sectors *s, uint16_t sector, tc_vec3 p, tc_mec_env *env) {
+    tc_sector_env e;
+    float depth = tc_sectors_env(s, sector, p, &e);
+    env->gravity = e.gravity;
+    env->density = e.density;
+    env->drag = e.drag;
+    env->water = e.water;
     return depth;
 }
 
@@ -262,14 +213,14 @@ void tc_mec_swim_request(tc_mec_swim *s, const tc_ai_card *card, int mode, const
                                   s->thrust_lagged);
 }
 
-tc_vec3 tc_mec_swim_velocity(tc_mec_swim *s, const tc_ai_card *card, const tc_ai_model *m, tc_collision *world,
+tc_vec3 tc_mec_swim_velocity(tc_mec_swim *s, const tc_ai_card *card, const tc_sectors *sectors, uint16_t sector,
                              tc_vec3 position, tc_vec3 velocity, float dt, float *depth) {
     float mass = tc_ai_card_f32(card, 0x04), size = tc_ai_card_f32(card, 0x28), factor = tc_ai_card_f32(card, 0x2C);
     float ramp = tc_ai_card_f32(card, 0x34), half = 0.5f * size, s2 = size * size, s3 = s2 * size, d, volume = 0, speed;
     tc_mec_env env;
     tc_vec3 force;
     if (mass <= 0) return velocity;
-    *depth = tc_mec_env_at(m, world, tc_v3_sub(position, tc_v3(0, 0, half)), &env);
+    *depth = tc_mec_env_at(sectors, sector, tc_v3_sub(position, tc_v3(0, 0, half)), &env);
     d = *depth - half;
     force = tc_v3(0, 0, env.gravity > 0 ? -mass * env.gravity : 0);
     if (d >= half) volume = d > ramp ? s3 * factor : (s3 * factor - s3) / (ramp != 0 ? ramp : 1) * d + s3;

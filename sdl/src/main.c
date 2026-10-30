@@ -35,6 +35,7 @@ static const char *controls_text =
     "Animation:  P pause / resume  -  [ slower  -  ] faster\n"
     "Lighting variant:  1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain)\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
+    "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
     "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 8)\n"
     "Supersampling:  F3  off / 1.5x / 2x  (draws the level at that many times the window's pixels; TONIC_SCALE=150|200)\n"
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
@@ -328,6 +329,10 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     }
     if (sc == SDL_SCANCODE_G) {  /* G: level fog on/off */
         if (!k->repeat) { tc_viewer_toggle_fog(v); update_title(a); }
+        return;
+    }
+    if (sc == SDL_SCANCODE_K) {  /* K: sectors drawn: Ed's and its list (default) / all / his alone */
+        if (!k->repeat) { tc_viewer_cycle_sectors(v); update_title(a); }
         return;
     }
     if (sc == SDL_SCANCODE_P) {  /* P: pause/resume animation */

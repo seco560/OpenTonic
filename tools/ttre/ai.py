@@ -229,9 +229,7 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           state's card} when the frame is reached; Ed's jump, state 43, pushes mode 7 at frame 0: the take-off):
           u32 n_rows, n_rows x { u16 frame, u16 mode, u8 first, u8 period, u16 0 } (counters as SNDS); per state
           { u32 first row, u16 n_rows, u16 0 }
-  WATR  water (water_planes, docs/NOTES.md "Swimming"): u16 n, u16 0, n x { f32 z, f32 gravity, f32 density, f32 drag
-          coefficient (the environment below the surface), u16 n_boxes, u16 0, n_boxes x { f32 min[3], f32 max[3] }
-          (the bounding boxes of the sectors that list the surface) }
+  (The water surfaces and environments are the .ttlv's: SECT, looked up in the perso's own sector.)
   WPTS  water sample points (water_points): u16 n_sets, u16 0, n_sets x { u16 n, u16 0, n x { u32 kind 1-6,
           f32 point[3] (the perso's axes) } }; per state u16 set (0xFFFF none)
   ZONE  the portals' zones (portal_zones, docs/NOTES.md "ZDx zones"): u16 n (= PORT's n), u16 0, per portal
@@ -240,8 +238,6 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           the perso's axes: the capture is "the player's origin inside" (COND_13) instead of the radius
   FSND  the floors' sound types (docs/NOTES.md "Footsteps"): u32 n (= the .ttlv's collision triangles), n x u8
           (GameMaterial +8 of the triangle's material, 0xFF none)
-  DRYB  the dry sectors' boxes (dry_boxes; none in a level without water): u16 n, u16 0, n x { f32 min[3],
-          f32 max[3] }: a point inside one, smaller than every water box holding the point, is dry
   LINK  u32 n_triangles, u32 CRC-32 of the .ttlv's COLL chunk: FSND indexes those triangles, so the core ignores it
           when the level's collision differs (an imported level using a donor's .ttai)
 """
@@ -460,115 +456,6 @@ def water_points(d, states):
             e = lv.ptr(e)
         index.append(sets.setdefault(tuple(pts), len(sets)) if pts else 0xFFFF)
     return [list(p) for p in sets], index
-
-
-def sector_box(d, so):
-    """The bounding box (min xyz, max xyz) of a sector's static geometry (empty: min > max)."""
-    lo, hi = [1e9] * 3, [-1e9] * 3
-    for o in d.walk(so):
-        if o.kind != 'ipo' or not o.lods:
-            continue
-        m = o.world
-        for v in o.lods[0].vertices:
-            w = [m[4 * i] * v[0] + m[4 * i + 1] * v[1] + m[4 * i + 2] * v[2] + m[4 * i + 3] for i in range(3)]
-            lo = [min(a, b) for a, b in zip(lo, w)]
-            hi = [max(a, b) for a, b in zip(hi, w)]
-    return lo, hi
-
-
-def water_surface_triangles(d):
-    """The triangles of the level's water surfaces (LevelData.surfaces: the geometry the sectors list as their surfaces,
-    drawn as the visible water), world space. [((x, y, z) x 3)]."""
-    out = []
-    for _, g, m in d.surfaces():
-        w = [tuple(m[4 * i] * v[0] + m[4 * i + 1] * v[1] + m[4 * i + 2] * v[2] + m[4 * i + 3] for i in range(3))
-             for v in g.vertices]
-        for el in g.elements:
-            out += [(w[a], w[b], w[c]) for a, b, c in el.triangles]
-    return out
-
-
-def covers(box, tri):
-    """Whether a water triangle lies over the box: within its height range (1 of slack) and overlapping it seen from
-    above (separating axes: the box's two, the triangle's three edge normals)."""
-    lo, hi = box
-    if not any(lo[2] - 1 <= p[2] <= hi[2] + 1 for p in tri):
-        return False
-    if max(p[0] for p in tri) < lo[0] or min(p[0] for p in tri) > hi[0] or \
-       max(p[1] for p in tri) < lo[1] or min(p[1] for p in tri) > hi[1]:
-        return False
-    corners = [(lo[0], lo[1]), (hi[0], lo[1]), (lo[0], hi[1]), (hi[0], hi[1])]
-    for k in range(3):
-        a, b = tri[k], tri[(k + 1) % 3]
-        nx, ny = b[1] - a[1], a[0] - b[0]
-        t = [nx * p[0] + ny * p[1] for p in tri]
-        c = [nx * x + ny * y for x, y in corners]
-        if max(c) < min(t) or min(c) > max(t):
-            return False
-    return True
-
-
-def dry_boxes(d):
-    """The boxes of the sectors that list no water surface (v11). The exe looks the environment up in the perso's own
-    sector; the port has no sectors: a point in such a box smaller than the water boxes holding it stays dry (sud0: the
-    way into Doc's cave, under the river's surface height). A dry sector wholly inside a water box is kept only when no
-    visible water lies over it: with water drawn over it, it is a piece of that water's area (sud0: rocks in the
-    river); without, a dry place (sud0's tunnel under Doc's house, sctsud17, inside the river's sector box)."""
-    lv, un, out = d.lv, d.un, []
-    planes = water_planes(d)
-    water = [b for _, _, boxes in planes for b in boxes]
-    surface = water_surface_triangles(d) if planes else []
-    inside = lambda a, b: all(b[0][k] - 1 <= a[0][k] and a[1][k] <= b[1][k] + 1 for k in range(3))
-    for so in d.walk():
-        if so.kind != 'sector':
-            continue
-        data = lv.ptr(so.loc, 4)
-        if data and lv.ptr(data, 0x10) and un('I', data, 0x18)[0]:
-            continue
-        lo, hi = sector_box(d, so)
-        box = (tuple(lo), tuple(hi))
-        # a sector wholly inside a water box with water drawn over it is a piece of that water's area (sud0: rocks in
-        # the river): kept wet (the C check under the visible water lost 11 of 63 otherwise)
-        piece_of_water = any(inside(box, w) for w in water) and any(covers(box, t) for t in surface)
-        if lo[0] <= hi[0] and not piece_of_water:
-            out.append(box)
-    return out
-
-
-def water_planes(d):
-    """The level's water surfaces as the mechanics see them (docs/NOTES.md "Swimming"): [(z, (gravity, density, drag),
-    [(min xyz, max xyz) per sector])]. Sector data +4 lists the sector's mechanical environments, +0x10 its surfaces; the
-    env lookup FUN_00451b90 takes environment k + 1 below the k-th surface (in list order), whose height is its +0x5C
-    matrix's z (FUN_0045d880). MecEnv: +0 g, +0x10 drag coefficient, +0x14 density. The exe asks the perso's sector;
-    the port has no sectors, so each surface carries the bounding boxes of the static geometry of the sectors listing it
-    (sud0: the river 15 sectors, the falls' foot, the top pool ...)."""
-    lv, un = d.lv, d.un
-    planes = {}  # surface -> [z, env, boxes]
-    for so in d.walk():
-        if so.kind != 'sector':
-            continue
-        data = lv.ptr(so.loc, 4)
-        if not data:
-            continue
-        envs, node = [], lv.ptr(data, 4)
-        while node and len(envs) < 16:
-            e = lv.ptr(node)
-            envs.append(lv.ptr(e) if e else None)
-            node = lv.ptr(node, 4)
-        srf, n, k = lv.ptr(data, 0x10), un('I', data, 0x18)[0], 0
-        while srf and k < min(n, 16):
-            sp = lv.ptr(srf)
-            env = envs[k + 1] if k + 1 < len(envs) else None
-            if sp and env:
-                lo, hi = sector_box(d, so)
-                p = planes.setdefault(sp, [un('I21f', (sp[0], sp[1] + 0x5C))[3], None, []])
-                g, drag, density = un('f', env)[0], un('f', env, 0x10)[0], un('f', env, 0x14)[0]
-                p[1] = p[1] or (g, density, drag)
-                if lo[0] <= hi[0]:
-                    p[2].append((tuple(lo), tuple(hi)))
-            srf = lv.ptr(srf, 4)
-            k += 1
-    return [(z, env, boxes) for z, env, boxes in planes.values() if boxes]
 
 
 def collide_flags(d, gm):
@@ -1433,11 +1320,6 @@ def export(ai, path):
     out += struct.pack('<I', len(mech_rows)) + b''.join(struct.pack('<2H2BH', *r, 0) for r in mech_rows)
     out += b''.join(struct.pack('<IHH', first, n, 0) for first, n in mech_index)
     cut('MECE')
-    water = water_planes(d)
-    out += struct.pack('<HH', len(water), 0)
-    for z, env, boxes in water:
-        out += struct.pack('<4fHH', z, *env, len(boxes), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in boxes)
-    cut('WATR')
     point_sets, point_index = water_points(d, ai.states)
     out += struct.pack('<HH', len(point_sets), 0)
     for pts in point_sets:
@@ -1458,9 +1340,6 @@ def export(ai, path):
     tris, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True)  # as ttlv.py writes the triangles
     out += struct.pack('<I', len(sounds)) + bytes(x & 0xFF for x in sounds)
     cut('FSND')
-    dry = dry_boxes(d) if water else []
-    out += struct.pack('<HH', len(dry), 0) + b''.join(struct.pack('<6f', *lo, *hi) for lo, hi in dry)
-    cut('DRYB')
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     out += struct.pack('<II', len(tris), zlib.crc32(coll))  # the .ttlv's COLL chunk, byte for byte
     cut('LINK')
@@ -1473,4 +1352,4 @@ def export(ai, path):
             'moving': [i for i, r in enumerate(st_rows) if r[8] > 0], 'buttons': button_rows,
             'strings': [cstr(r) for r in strings], 'cards': len(cards), 'root_states': sum(1 for _, n in root_index if n),
             'sphere_sets': len(sphere_sets), 'triggers': len(triggers), 'portals': gates, 'portal_names': list(names),
-            'places': len(place_rows), 'water': len(water), 'zones': sum(1 for z in zones if z), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': os.path.getsize(path)}
+            'places': len(place_rows), 'zones': sum(1 for z in zones if z), 'missing_effects': missing_fx, 'unresolved': dict(unresolved), 'bytes': os.path.getsize(path)}

@@ -14,7 +14,7 @@ final class ControlsView: NSView {
             case .ed: return "Ed: jump, act, shoot, side-step"
             case .fly: return "Free-fly up / down"
             case .mode: return "Play as Ed / free-fly viewer / simple walking"
-            case .view: return "View: speed, lighting, gamma, FOV, fog, AA, SS"
+            case .view: return "View: speed, lighting, gamma, FOV, fog, sectors, AA, SS"
             case .app: return "App: music, mouse, help, full screen"
             }
         }
@@ -50,7 +50,7 @@ final class ControlsView: NSView {
          k("R", 1, .fly, "up"), k("T"), k("Y"), k("U"), k("I", 1, .mode, "AI mode"), k("O"), k("P", 1, .view, "pause"),
          k("[", 1, .view, "slower"), k("]", 1, .view, "faster"), k("\\")],
         [k("Caps", 1.75), k("A", 1, .move, "left"), k("S", 1, .move, "back"), k("D", 1, .move, "right"), k("F", 1, .fly, "down"),
-         k("G", 1, .view, "fog"), k("H"), k("J"), k("K"), k("L"), k(";"), k("'"), k("Return", 1.75)],
+         k("G", 1, .view, "fog"), k("H"), k("J"), k("K", 1, .view, "sectors"), k("L"), k(";"), k("'"), k("Return", 1.75)],
         [k("Shift", 2.25, .ed, "walk / fast"), k("Z"), k("X"), k("C", 1, .ed, "side-step"), k("V", 1, .app, "intro*"), k("B"), k("N"),
          k("M", 1, .app, "mute"), k(",", 1, .view, "FOV -"), k(".", 1, .view, "FOV +"), k("/"), k("Shift", 2.25, .ed, "walk / fast")],
         [k("Ctrl", 1.25), k("Opt", 1.25), k("Cmd", 1.5, .app, "see below"), k("Space", 5, .ed, "jump"), k("Cmd", 1.5, .app, "see below"),
@@ -63,6 +63,7 @@ final class ControlsView: NSView {
         "Mouse: click the view to capture it and look around, Esc releases it; or drag. Scroll: camera zoom (as Ed) / fly speed (free-fly).",
         "As Ed with his AI (the default): he runs, Shift walks. Simple controller (I): Shift runs. Portals: walk into them.",
         "Cmd-L level select · Cmd-/ this help · Ctrl-Cmd-F full screen · Cmd-Q quit · 1-9 lighting variants (day / night levels)",
+        "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
         "* V (or Play Intro Video) plays the intro movie from the level select screen; when it ends, or is skipped, the ski slope starts.",
     ]
 
