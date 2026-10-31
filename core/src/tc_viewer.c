@@ -1011,62 +1011,300 @@ void tc_viewer_toggle_ai(tc_viewer *v) {
 
 /* ---- demo ---- */
 
+/* What the autopilot is doing (tc_viewer.demo_act). */
+enum { DEMO_RUN, DEMO_WALK, DEMO_PAUSE, DEMO_HOP, DEMO_LEAP, DEMO_POGO, DEMO_SWING, DEMO_SHOOT, DEMO_SIDESTEP };
+#define DEMO_BUTTONS ((1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT) | (1u << TC_VA_LATERAL))
+#define DEMO_DROP 4.0f /* the least drop below Ed he goes for (units) */
+
 static float demo_random(tc_viewer *v) {
     v->rng = v->rng * 1103515245u + 12345u;
     return (float)((v->rng >> 8) & 0xFFFFu) / 65536.0f;
+}
+
+static float demo_between(tc_viewer *v, float lo, float hi) { return lo + (hi - lo) * demo_random(v); }
+
+static float wrap_angle(float a) {
+    a = fmodf(a + TC_PI, 2 * TC_PI);
+    return (a < 0 ? a + 2 * TC_PI : a) - TC_PI;
+}
+
+static tc_vec3 demo_dir(float a) { return tc_v3(sinf(a), cosf(a), 0); }
+
+/* Free way from Ed's chest along a, up to max. */
+static float demo_free(tc_viewer *v, float a, float max) {
+    tc_viewer_play *p = v->play;
+    float d = raycast(p, tc_v3_add(p->player.position, tc_v3(0, 0, 1.0f)), demo_dir(a), max);
+    return d < 0 ? max : d;
+}
+
+/* How far the ground at dist along a lies below Ed's feet; -1 when the way there is blocked or there is no ground
+ * within 80 (the level's edge: not worth jumping into). */
+static float demo_drop(tc_viewer *v, float a, float dist) {
+    tc_viewer_play *p = v->play;
+    tc_vec3 chest = tc_v3_add(p->player.position, tc_v3(0, 0, 1.2f));
+    float d;
+    if (raycast(p, chest, demo_dir(a), dist) >= 0) return -1;
+    d = raycast(p, tc_v3_add(chest, tc_v3_scale(demo_dir(a), dist)), tc_v3(0, 0, -1), 80);
+    return d < 0 ? -1 : d - 1.2f;
+}
+
+/* A drop of DEMO_DROP or more round Ed, up to 12 units away where the way is clear: its depth and way (a), nearer and
+ * deeper ones first; -1 when there is none. */
+static float demo_find_drop(tc_viewer *v, float *a) {
+    float best = -1, best_score = -1e9f;
+    int k, n;
+    for (k = 0; k < 12; k++) {
+        float b = v->demo_aim + (float)k * (TC_PI / 6), free = demo_free(v, b, 12.5f);
+        for (n = 1; n <= 3 && free > 4.0f * (float)n; n++) {
+            float d = demo_drop(v, b, 4.0f * (float)n);
+            if (d >= DEMO_DROP && fminf(d, 20) - 0.8f * 4.0f * (float)n > best_score) {
+                best = d, best_score = fminf(d, 20) - 0.8f * 4.0f * (float)n, *a = b;
+                break; /* the nearest edge that way */
+            }
+        }
+    }
+    return best;
+}
+
+/* The most open way round Ed, small turns from the aim preferred (either side first at random). */
+static float demo_open_way(tc_viewer *v) {
+    float best = v->demo_aim + TC_PI, best_score = -1e9f, sign = demo_random(v) < 0.5f ? -1.0f : 1.0f;
+    int k;
+    for (k = 1; k <= 7; k++) {
+        float off = sign * (k & 1 ? 1.0f : -1.0f) * (float)((k + 1) / 2) * (TC_PI / 4);
+        float score = demo_free(v, v->demo_aim + off, 10) - fabsf(off) * 0.8f;
+        if (score > best_score) best_score = score, best = v->demo_aim + off;
+    }
+    return wrap_angle(best);
+}
+
+static void demo_start(tc_viewer *v, int act) {
+    v->demo_act = act;
+    v->demo_stage = 0;
+    v->demo_act_time = 0;
+    v->demo_mark = 0;
+    v->demo_pace = 1;
+    switch (act) {
+    case DEMO_RUN: v->demo_act_length = demo_between(v, 3, 8); break;
+    case DEMO_WALK: v->demo_act_length = demo_between(v, 2, 4); v->demo_pace = 0.45f; break;
+    case DEMO_PAUSE:
+        v->demo_act_length = demo_between(v, 1.2f, 2.8f);
+        v->demo_pace = 0;
+        v->demo_glance = (demo_random(v) < 0.5f ? -1 : 1) * demo_between(v, 0.5f, 1.3f);
+        v->demo_glance_time = v->demo_act_length;
+        break;
+    case DEMO_HOP:
+        v->demo_act_length = 1.5f;
+        v->demo_mark = demo_between(v, 0.15f, 0.4f); /* the jump held this long: higher */
+        v->demo_flap = demo_random(v) < 0.45f ? 1 : 2; /* often a double jump: a try at flying */
+        v->demo_flap_after = 0.35f;
+        break;
+    case DEMO_LEAP: v->demo_act_length = 4; break; /* to reach the edge; then as long as he is in the air */
+    case DEMO_POGO: v->demo_act_length = demo_between(v, 4, 7); v->demo_flap = 2; break;
+    case DEMO_SWING: case DEMO_SHOOT: v->demo_act_length = 0.9f; break;
+    case DEMO_SIDESTEP:
+        v->demo_act_length = demo_between(v, 0.8f, 1.4f);
+        v->demo_side = demo_random(v) < 0.5f ? -1 : 1;
+        break;
+    default: break;
+    }
+}
+
+/* What next: a drop in sight first, now and then; else a random act (fewer on skis, in the water or without his AI). */
+static void demo_pick(tc_viewer *v) {
+    static const struct { int act, weight; } acts[] = {
+        {DEMO_RUN, 30}, {DEMO_WALK, 8}, {DEMO_PAUSE, 8}, {DEMO_HOP, 16}, {DEMO_POGO, 12}, {DEMO_SWING, 8},
+        {DEMO_SHOOT, 6}, {DEMO_SIDESTEP, 6},
+    };
+    tc_viewer_play *p = v->play;
+    uint32_t card = p->has_driver ? p->driver.card_type : 0;
+    bool plain = !p->has_driver || card == 1 || card == 2; /* simple controller, swimming, skiing */
+    float r, total = 0, best, best_a = 0;
+    size_t i;
+    if (!p->player.grounded) { demo_start(v, DEMO_RUN); return; } /* in the air: carry on */
+    if (!plain && v->demo_leap_wait <= 0) {
+        best = demo_find_drop(v, &best_a);
+        if (best >= DEMO_DROP && demo_random(v) < 0.75f) {
+            v->demo_aim = wrap_angle(best_a);
+            demo_start(v, DEMO_LEAP);
+            v->demo_flap = demo_random(v) < (best >= 6 ? 0.85f : 0.4f) ? 1 : 2; /* high: he tries to fly */
+            v->demo_flap_after = 0.45f;
+            return;
+        }
+    }
+    if (plain) { demo_start(v, demo_random(v) < 0.2f ? DEMO_HOP : demo_random(v) < 0.15f ? DEMO_WALK : DEMO_RUN); return; }
+    for (i = 0; i < sizeof(acts) / sizeof(acts[0]); i++) total += (float)acts[i].weight;
+    r = demo_random(v) * total;
+    for (i = 0; i < sizeof(acts) / sizeof(acts[0]) - 1 && r >= (float)acts[i].weight; i++) r -= (float)acts[i].weight;
+    demo_start(v, acts[i].act);
+    if (acts[i].act == DEMO_RUN && demo_random(v) < 0.15f) { /* a look aside on the way */
+        v->demo_glance = (demo_random(v) < 0.5f ? -1 : 1) * demo_between(v, 0.4f, 0.9f);
+        v->demo_glance_time = demo_between(v, 1.5f, 2.5f);
+    }
 }
 
 void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed) {
     v->demo = on && v->play != NULL;
     if (seed) v->rng = seed;
     v->move_x = v->move_y = v->look_x = v->look_y = 0;
-    v->held &= ~(1u << TC_VA_JUMP);
+    v->held &= ~DEMO_BUTTONS;
     if (!v->demo) return;
     if (!v->playing) tc_viewer_toggle_play(v);
-    v->demo_turn = 0;
-    v->demo_pace = 1;
-    v->demo_next = 2;
-    v->demo_jump_in = 3;
-    v->demo_jump_hold = 0;
-    v->demo_check = 0.75f;
-    v->demo_hard_turn = 0;
-    v->demo_last = v->play->player.position;
+    v->demo_placed = v->play->player.placed - 1; /* the first step starts it */
 }
 
 bool tc_viewer_demo(const tc_viewer *v) { return v->demo; }
 
-/* One frame of the autopilot (tc_viewer_set_demo): sets the stick, the camera's turn and Jump as a player would. */
+/* One frame of the autopilot (tc_viewer_set_demo): the stick and buttons as a player would, and the camera behind Ed. */
 static void demo_step(tc_viewer *v, float dt) {
-    tc_vec3 at = v->play->player.position;
-    float dx, dy;
-    if ((v->demo_next -= dt) <= 0) {
-        v->demo_next = 2 + 3 * demo_random(v);
-        v->demo_turn = (demo_random(v) - 0.5f) * 0.7f;
-        v->demo_pace = demo_random(v) < 0.2f ? 0.45f : 1;
+    tc_viewer_play *p = v->play;
+    tc_player *pl = &p->player;
+    uint32_t card = p->has_driver ? p->driver.card_type : 0, buttons = 0;
+    bool ground = pl->grounded, flying = card == 5, footing = ground || card == 1, wander; /* footing: swimming too */
+    float fwd = 0, side = 0, rel, face, pitch, t, k;
+    if (pl->placed != v->demo_placed) { /* started, respawned or moved: start over from where he faces */
+        v->demo_placed = pl->placed;
+        v->demo_aim = v->demo_facing = v->camera.yaw = wrap_angle(TC_PI - pl->heading);
+        v->demo_turn = 0;
+        v->demo_next_turn = 2;
+        v->demo_probe = v->demo_check = 0.75f;
+        v->demo_last = pl->position;
+        v->demo_glance_time = 0;
+        v->demo_leap_wait = 3;
+        v->demo_air = 0;
+        v->demo_flap = 0;
+        v->demo_jump_free = 1;
+        demo_start(v, DEMO_RUN);
+        v->demo_act_length = 2;
     }
-    if ((v->demo_check -= dt) <= 0) {
-        dx = at.x - v->demo_last.x;
-        dy = at.y - v->demo_last.y;
-        if (dx * dx + dy * dy < 0.25f && v->demo_hard_turn <= 0) { /* stuck against something: turn away, hop */
-            v->demo_hard_turn = 0.6f + 0.6f * demo_random(v);
-            v->demo_turn = demo_random(v) < 0.5f ? -1 : 1;
-            v->demo_jump_in = 0;
+    v->demo_act_time += dt;
+    t = v->demo_act_time;
+    v->demo_leap_wait -= dt;
+    v->demo_glance_time -= dt;
+    if (!ground) v->demo_air += dt;
+    else { /* on the ground: a new fall decides again, unless this act decided already */
+        v->demo_air = 0;
+        if (v->demo_act != DEMO_HOP && v->demo_act != DEMO_LEAP && v->demo_act != DEMO_POGO) v->demo_flap = 0;
+    }
+    if ((v->demo_next_turn -= dt) <= 0) { /* the aim's drift: straight on about as often as a curve */
+        v->demo_next_turn = demo_between(v, 2, 5);
+        v->demo_turn = demo_random(v) < 0.4f ? 0 : demo_between(v, -0.5f, 0.5f);
+    }
+
+    wander = v->demo_act == DEMO_RUN || v->demo_act == DEMO_WALK || v->demo_act == DEMO_POGO;
+    switch (v->demo_act) {
+    case DEMO_RUN: case DEMO_WALK:
+        v->demo_aim += v->demo_turn * dt;
+        fwd = v->demo_pace;
+        break;
+    case DEMO_PAUSE: break;
+    case DEMO_HOP:
+        fwd = 1;
+        if (t < v->demo_mark) buttons |= 1u << TC_VA_JUMP;
+        if (t > 0.5f && ground) t = v->demo_act_time = v->demo_act_length; /* landed */
+        break;
+    case DEMO_LEAP:
+        fwd = 1;
+        if (v->demo_stage == 0) { /* running at the drop: jump at its edge (or off it, running) */
+            float drop = demo_drop(v, v->demo_aim, 1.0f);
+            if (!ground) v->demo_stage = 2;
+            else if (drop < 0 || drop > 2) v->demo_stage = 1, v->demo_mark = t;
+        }
+        if (v->demo_stage == 1) {
+            if (t - v->demo_mark < 0.3f) buttons |= 1u << TC_VA_JUMP;
+            if (!ground) v->demo_stage = 2;
+            else if (t - v->demo_mark > 1) v->demo_act_length = 0; /* the jump didn't leave the ground */
+        }
+        if (v->demo_stage == 2) {
+            v->demo_act_length = t + 1; /* as long as he is in the air */
+            if (ground) v->demo_act_length = 0, v->demo_leap_wait = demo_between(v, 5, 12);
+            else if (t > 25) v->demo_act_length = 0;
+        }
+        break;
+    case DEMO_POGO: /* jump, Action in the air (B89 -> B23: on the pogo, B92), bounce on forward; Action again gets off
+                     * (B92's ButtonJustPressed(action) -> B27) */
+        if (t < 0.3f) buttons |= 1u << TC_VA_JUMP;
+        if (t > 0.55f && t < 0.85f) buttons |= 1u << TC_VA_ACTION;
+        if (t > 1.2f) { v->demo_aim += v->demo_turn * dt; fwd = 0.8f; }
+        if (t > v->demo_act_length - 0.5f && t < v->demo_act_length - 0.2f) buttons |= 1u << TC_VA_ACTION;
+        break;
+    case DEMO_SWING: case DEMO_SHOOT:
+        fwd = 0.7f;
+        if (t > 0.1f && t < 0.3f) buttons |= 1u << (v->demo_act == DEMO_SWING ? TC_VA_ACTION : TC_VA_SHOOT);
+        break;
+    case DEMO_SIDESTEP:
+        buttons |= 1u << TC_VA_LATERAL;
+        side = 0.9f * v->demo_side;
+        break;
+    default: break;
+    }
+
+    if (wander && footing && (v->demo_probe -= dt) <= 0) { /* look ahead: a drop to go for, or a wall to turn off before */
+        float drop = demo_drop(v, v->demo_aim, 2.5f), a = v->demo_aim;
+        bool leaps = v->demo_act != DEMO_POGO && v->demo_leap_wait <= 0 && p->has_driver && card == 0;
+        v->demo_probe = 0.3f;
+        if (leaps && drop < DEMO_DROP && demo_random(v) < 0.3f) drop = demo_find_drop(v, &a); /* now and then all round */
+        if (leaps && drop >= DEMO_DROP && demo_random(v) < 0.6f) {
+            v->demo_aim = wrap_angle(a);
+            demo_start(v, DEMO_LEAP);
+            v->demo_flap = demo_random(v) < (drop >= 6 ? 0.85f : 0.4f) ? 1 : 2;
+            v->demo_flap_after = 0.45f;
+        } else if (demo_free(v, v->demo_aim, 3) < 2.5f || (drop >= DEMO_DROP && demo_random(v) < 0.7f)) {
+            v->demo_aim = demo_open_way(v);
+        }
+    }
+    if ((v->demo_check -= dt) <= 0) { /* stuck against something: the most open way, and a hop */
+        float dx = pl->position.x - v->demo_last.x, dy = pl->position.y - v->demo_last.y;
+        if ((fwd > 0 || v->demo_act == DEMO_SIDESTEP) && footing && dx * dx + dy * dy < 0.25f && t > 0.75f) {
+            v->demo_aim = demo_open_way(v);
+            if (v->demo_act != DEMO_POGO) { /* on the pogo only the turn: getting off takes its Action press */
+                demo_start(v, DEMO_HOP);
+                v->demo_flap = 2;
+            }
         }
         v->demo_check = 0.75f;
-        v->demo_last = at;
+        v->demo_last = pl->position;
     }
-    if (v->demo_hard_turn > 0 && (v->demo_hard_turn -= dt) <= 0) v->demo_next = 0; /* done: a new gentle turn */
-    if (v->demo_jump_hold > 0) v->demo_jump_hold -= dt;
-    else if ((v->demo_jump_in -= dt) <= 0) {
-        v->demo_jump_hold = 0.15f + 0.3f * demo_random(v); /* longer: higher */
-        v->demo_jump_in = 2 + 4 * demo_random(v);
+    /* Falling a long way: he often tries to fly (Jump in the air: B89 -> B26), decided once per fall. */
+    if (!ground && !flying && card != 1 && card != 2 && p->has_driver) {
+        if (v->demo_flap == 0 && v->demo_air > 0.6f && pl->velocity.z < -5)
+            v->demo_flap = demo_random(v) < 0.75f ? 1 : 2, v->demo_flap_after = v->demo_air;
+        if (v->demo_flap == 1 && v->demo_air >= v->demo_flap_after && !(buttons & (1u << TC_VA_JUMP))
+            && v->demo_jump_free >= 0.1f) { /* a fresh press: let go for a few of the AI's ticks first */
+            v->demo_flap = 3; /* pressed: held for a moment below */
+            v->demo_mark = v->demo_air;
+        }
     }
-    v->move_x = 0;
-    v->move_y = v->demo_hard_turn > 0 ? 0.6f : v->demo_pace;
-    v->look_x = v->demo_turn;
-    v->look_y = fmaxf(-1, fminf(1, (-0.3f - v->camera.pitch) * 2)); /* the camera a little above him */
-    if (v->demo_jump_hold > 0) v->held |= 1u << TC_VA_JUMP;
-    else v->held &= ~(1u << TC_VA_JUMP);
+    if (v->demo_flap == 3) {
+        if (v->demo_air - v->demo_mark < 0.3f && !ground) buttons |= 1u << TC_VA_JUMP;
+        else v->demo_flap = 2;
+    }
+    if (flying) { /* the glide: the stick left alone trims it; a gentle bank with the drift */
+        fwd = 0;
+        side = fmaxf(-0.6f, fminf(0.6f, v->demo_turn * 1.5f));
+        v->demo_aim = v->demo_facing;
+    }
+    if (v->demo_act_time >= v->demo_act_length) demo_pick(v);
+    v->demo_aim = wrap_angle(v->demo_aim);
+
+    /* The camera behind him: after the way he moves (where he faces when about still, or side-stepping), smoothed;
+     * a little higher over drops and in flight. Not the look stick: it turns faster than a player's would need to. */
+    face = TC_PI - pl->heading;
+    if (v->demo_act != DEMO_SIDESTEP && pl->velocity.x * pl->velocity.x + pl->velocity.y * pl->velocity.y > 4)
+        face = atan2f(pl->velocity.x, pl->velocity.y);
+    v->demo_facing = wrap_angle(v->demo_facing + wrap_angle(face - v->demo_facing) * (1 - expf(-dt / 0.25f)));
+    k = 1 - expf(-dt / (flying ? 0.35f : 0.7f)); /* a banking glide turns steadily: keep up closer */
+    v->camera.yaw += wrap_angle(v->demo_facing + (v->demo_glance_time > 0 ? v->demo_glance : 0) - v->camera.yaw) * k;
+    pitch = flying || v->demo_act == DEMO_LEAP ? -0.5f : v->demo_act == DEMO_PAUSE ? -0.2f : -0.3f;
+    v->camera.pitch += (pitch - v->camera.pitch) * (1 - expf(-dt / 0.8f));
+
+    /* The stick is camera-relative: towards the aim from where the camera looks. */
+    rel = wrap_angle(v->demo_aim - v->camera.yaw);
+    v->move_x = flying ? side : side + fwd * sinf(rel);
+    v->move_y = flying ? 0 : fwd * cosf(rel);
+    v->look_x = v->look_y = 0;
+    v->held = (v->held & ~DEMO_BUTTONS) | buttons;
+    v->demo_jump_free = buttons & (1u << TC_VA_JUMP) ? 0 : v->demo_jump_free + dt;
 }
 
 bool tc_viewer_can_play(const tc_viewer *v) { return v->play != NULL; }

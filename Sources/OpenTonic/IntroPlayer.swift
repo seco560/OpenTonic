@@ -6,7 +6,7 @@ import AppKit
 /// (English/BNK_200.BNM -> USDOLBY.APM), which the exe fires as event 0 when it starts the video (docs/BUILD.md,
 /// docs/NOTES.md "Intro video"). The picture keeps its 5:3 shape at `screenFraction` of the largest size that fits,
 /// centred on black (larger than the original's small window, but it is 240p underneath).
-/// Esc, Space or Return skips; at the end (or on skip) onDone runs.
+/// Esc, Space or Return skips; at the end (or on skip) onDone runs. No pointer over it.
 final class IntroView: NSView {
     private let player: AVPlayer
     private let video: AVPlayerLayer
@@ -51,6 +51,8 @@ final class IntroView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .blank) }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {

@@ -40,13 +40,34 @@
 - **Unresolved fix→level pointers (answered):** all belong to the 3 fix persos' runtime state and are rewritten at load. In bar: std_game+0xC ×3 (= the new level SuperObject, as raymap patches it), Perso3dData +0x70, +0x94 (Ed only) and +0x164/+0x168/+0x16C ×3, plus 6 triplets of consecutive pointers and 3 single pointers elsewhere in fix (probably linked-list next/prev/header nodes into level data; not traced). None are needed for rendering.
 - Not exported yet: sprites, sector data (lights, fog, neighbours, sky material). Collision: see "Play as Ed".
 
-## Demo mode (2026-10-30)
+## Demo mode (2026-10-30; autopilot redone 2026-10-31)
 The level select's **Demo** button (D; Square on a pad) opens a random main level (no cutscenes, no imports, with a
-.ttai) and lets Ed wander by himself: tc_viewer_set_demo, an autopilot in the core that plays him as a player would
-(stick forward, now and then a walk, the camera turned at a random rate that changes every 2-5 s, a jump every 2-6 s;
-stuck under 0.5 units in 0.75 s: a hard turn and a jump). A new level every 60 s; red portals he walks into are taken
-(still the demo); a key (but M), click or pad button ends it. viewcheck runs it 40 s on north. Both frontends; the level
-select's text is now drawn light on dark in macOS light mode too (darkAqua), the two big buttons restyled.
+.ttai) and lets Ed wander by himself: tc_viewer_set_demo, an autopilot in the core that plays him with the stick and
+buttons as a player would. A new level every 60 s; red portals he walks into are taken (still the demo); a key (but M),
+click or pad button ends it. Both frontends; the level select's text is now drawn light on dark in macOS light mode too
+(darkAqua), the two big buttons restyled.
+
+First version (user, 2026-10-31: "the random camera moving is weird", Ed should vary his movement): the camera *was*
+the steering, turned at a random rate with the stick held forward. Now (tc_viewer.c demo_step, DEMO_* acts):
+- **Steering:** a world-space aim that drifts (straight about as often as a curve, new rate every 2-5 s); the stick is
+  pushed towards it camera-relative. Probes from his chest turn him off walls 2.5 ahead (the most open of 8 ways,
+  small turns preferred); stuck (< 0.5 units in 0.75 s): that way and a hop.
+- **Camera:** behind him, after his horizontal velocity (his heading when about still or side-stepping), smoothed
+  (0.25 s on the facing, 0.7 s on the camera, 0.35 s in flight); glances aside in pauses and now and then on a run.
+  Set directly, not through the look stick.
+- **Acts** (weights): run 30, walk 8, pause 8, hop 16 (45 % a double jump: a try at flying), pogo 12, stick swing 8,
+  shoot 6, side-step 6; on skis, swimming or with the simple controller only run / walk / hop.
+- **Pogo:** jump, Action in the air (B89 -> B23, on the pogo: B92), bounce forward; **Action again gets off**
+  (B92 rule 1: ButtonJustPressed(action) -> B27). Releasing Action is not enough: the first version left Ed on the pogo.
+- **Drops:** a scan of 12 ways for ground 4+ below at 4 / 8 / 12 units (clear way, ground within 80) when an act is
+  picked and on about 30 % of the 0.3 s probes. He runs at it, jumps at the edge, and on 6+ drops mostly (85 %) jumps
+  again in the air to fly; any long fall (0.6 s, vz < -5) gets a try at flying 75 % of the time. 5-12 s between leaps.
+  Most of where he walks is enclosed (in scans up to 25 of 36 probes hit walls), so leaps are about one a minute
+  at most and depend on the level (north: off the plateau, a 20 s glide down 224 units).
+- Buttons are held at least 0.2 s and let go 0.1 s before a fresh press: Ed's AI samples them at its 30 Hz tick.
+viewcheck runs it 60 s each on north (checked: distance, jumps, >= 5 kinds of act, the camera within 50 deg of his way
+>= 75 % of the time he moves; 89 %) and sud0, Land, LeCanyon, pyramide (printed; 84-95 %); `DEMO_TRACE=<level>`
+prints its timeline every 0.25 s.
 
 ## Lighting: the original's formula, sector lights and fog (2026-10-30; supersedes the guesses below)
 Read from the exe (docs/DECOMP.md "Rendering and lighting"), ported to both builds; **L** switches back to the port's

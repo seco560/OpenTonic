@@ -206,13 +206,24 @@ typedef struct tc_viewer {
 
     /* Demo (tc_viewer_set_demo): Ed's autopilot. */
     bool demo;
-    float demo_turn;          /* yaw rate, -1..1 of turn_speed */
+    int demo_act, demo_stage; /* what he is doing (tc_viewer.c DEMO_*) and how far into it */
+    float demo_act_time, demo_act_length, demo_mark; /* seconds into it, how long it lasts, a time within it */
+    float demo_aim;           /* the way he heads (world; camera yaw convention: along (sin, cos)) */
+    float demo_turn;          /* the aim's drift, radians per second */
+    float demo_next_turn;     /* seconds to the next drift change */
     float demo_pace;          /* stick push: 1 runs, ~0.45 walks */
-    float demo_next;          /* seconds to the next change of turn and pace */
-    float demo_jump_in, demo_jump_hold;
+    float demo_side;          /* side-step: -1 left, 1 right */
+    float demo_probe;         /* seconds to the next look ahead for walls and drops */
     float demo_check;         /* seconds to the next stuck check */
-    float demo_hard_turn;     /* seconds of a hard turn left (stuck) */
     tc_vec3 demo_last;        /* Ed at the last stuck check */
+    float demo_facing;        /* Ed's facing, smoothed: what the camera stays behind (camera yaw convention) */
+    float demo_glance, demo_glance_time; /* the camera's look aside from behind him (radians), and its seconds left */
+    float demo_leap_wait;     /* seconds before he goes for another drop */
+    float demo_air;           /* seconds off the ground */
+    int demo_flap;            /* this time in the air: 0 undecided, 1 will try to fly, 2 tried or won't */
+    float demo_flap_after;    /* ... once this long in the air */
+    float demo_jump_free;     /* seconds since Jump was let go (the AI samples buttons at its 30 Hz tick) */
+    uint32_t demo_placed;     /* player.placed last frame: a respawn or teleport starts over */
 
     /* Play mode: the default when the level has Ed, collision and an idle clip. */
     tc_viewer_play *play;     /* NULL: free-fly only */
@@ -350,10 +361,13 @@ void tc_viewer_wheel(tc_viewer *v, float notches);
 void tc_viewer_toggle_play(tc_viewer *v);
 /* I: Ed's own AI <-> the simple controller (levels with a .ttai). */
 void tc_viewer_toggle_ai(tc_viewer *v);
-/* Demo (the level select's Demo button): Ed wanders around by himself. Kept simple: the stick pushed forward (now and
- * then half-way: a walk) while the camera, and so his way, turns at a random rate that changes every 2-5 s; a jump
- * every 2-6 s; stuck (under 0.5 units in 0.75 s): a hard turn one way or the other, and a jump. Enters play mode;
- * whatever the user presses is the frontend's to handle (it ends the demo: off, back to the level select). */
+/* Demo (the level select's Demo button): Ed wanders around by himself, played with the stick and buttons as a player
+ * would. He heads a way that drifts, turns off before walls, and picks what to do next at random: run, walk, stop and
+ * look around, hop (now and then a double jump: a short flight), pogo, a stick swing, a shot, a side-step. Drops of 4
+ * units or more he sees ahead he may run at and jump off; falling a long way he often tries to fly (Jump in the air),
+ * then glides with a gentle bank. Stuck (under 0.5 units in 0.75 s): the most open way and a hop. The camera stays
+ * behind him (smoothed after his way of moving), glancing aside now and then. Enters play mode; whatever the user
+ * presses is the frontend's to handle (it ends the demo: off, back to the level select). */
 void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed); /* seed: its randomness (0: keep the viewer's) */
 bool tc_viewer_demo(const tc_viewer *v);
 

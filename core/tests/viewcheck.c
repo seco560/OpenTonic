@@ -265,10 +265,11 @@ static void sector_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
-/* The demo (tc_viewer_set_demo) on north (no red portal near Ed's start): Ed wanders by himself for 40 s, through
- * frames as the frontends draw them. */
-static void demo_scenario(const char *dir) {
-    char path[1024], what[256];
+/* The demo (tc_viewer_set_demo): Ed wanders by himself for 60 s on a few levels, through frames as the frontends draw
+ * them: he gets about, varies what he does (DEMO_* acts in tc_viewer.c), and the camera stays mostly behind him. North
+ * (no red portal near Ed's start) is checked; the others print what happened. DEMO_TRACE=<level> prints its timeline. */
+static void demo_level(const char *dir, const char *name, bool checked) {
+    char path[1024], what[768];
     size_t size, ai_size = 0;
     uint8_t *data, *ai;
     tc_level level;
@@ -276,39 +277,83 @@ static void demo_scenario(const char *dir) {
     tc_viewer_desc desc;
     tc_vec3 last, p, start;
     float travelled = 0, far_away = 0;
-    int i, jumps = 0;
+    int i, k, jumps = 0, acts[16] = {0}, kinds = 0, flaps = 0, behind = 0, moving = 0, respawns = 0, last_act = -1;
+    int was_flap = 0;
+    float last_time = 0;
+    uint32_t placed;
     bool was_jump = false;
-    snprintf(path, sizeof(path), "%s/north.ttlv", dir);
-    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no north: demo skipped)\n"); return; }
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) {
+        free(data);
+        printf("  (no %s: demo skipped)\n", name);
+        return;
+    }
     free(data);
-    snprintf(path, sizeof(path), "%s/north.ttai", dir);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
     ai = read_file(path, &ai_size);
     memset(&desc, 0, sizeof(desc));
     desc.level = &level;
     desc.ai_data = ai;
     desc.ai_size = ai_size;
-    desc.level_name = "north";
-    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "north viewer"); free(ai); tc_level_free(&level); return; }
+    desc.level_name = name;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "demo viewer"); free(ai); tc_level_free(&level); return; }
     free(ai);
     tc_viewer_set_demo(&v, true, 12345);
-    check(tc_viewer_demo(&v) && v.playing, "demo: on, in play mode");
+    if (checked) check(tc_viewer_demo(&v) && v.playing, "demo: on, in play mode");
     last = start = ed(&v);
-    for (i = 0; i < 60 * 40; i++) {
+    placed = tc_viewer_player(&v)->placed;
+    for (i = 0; i < 60 * 60; i++) {
+        const tc_player *pl;
+        float vx, vy, off;
         frame(&v, 1.0f / 60);
+        pl = tc_viewer_player(&v);
         p = ed(&v);
+        if (pl->placed != placed) { respawns++; placed = pl->placed; last = p; }
         travelled += sqrtf((p.x - last.x) * (p.x - last.x) + (p.y - last.y) * (p.y - last.y));
         far_away = fmaxf(far_away, tc_v3_distance(p, start));
         last = p;
         jumps += !was_jump && ((v.held >> TC_VA_JUMP) & 1u);
         was_jump = (v.held >> TC_VA_JUMP) & 1u;
+        if ((v.demo_act != last_act || v.demo_act_time < last_time) && v.demo_act >= 0 && v.demo_act < 16)
+            acts[v.demo_act]++, last_act = v.demo_act; /* a new act (one can follow its own kind) */
+        last_time = v.demo_act_time;
+        if (getenv("DEMO_TRACE") && strcmp(getenv("DEMO_TRACE"), name) == 0 && i % 15 == 0)
+            printf("    %5.2f act %d t %.1f pos %.1f %.1f %.1f vel %.1f %.1f %.1f ground %d heading-yaw %.2f cam %.2f aim %.2f "
+                   "flap %d\n", i / 60.0, v.demo_act, v.demo_act_time, p.x, p.y, p.z, pl->velocity.x, pl->velocity.y,
+                   pl->velocity.z, pl->grounded, TC_PI - pl->heading, v.camera.yaw, v.demo_aim, v.demo_flap);
+        flaps += v.demo_flap == 3 && !was_flap;
+        was_flap = v.demo_flap == 3;
+        vx = pl->velocity.x, vy = pl->velocity.y;
+        if (vx * vx + vy * vy > 4) { /* moving: is the camera behind him (within 50 degrees of his way)? */
+            off = fmodf(fabsf(v.camera.yaw - atan2f(vx, vy)), 2 * TC_PI);
+            if (off > TC_PI) off = 2 * TC_PI - off;
+            moving++;
+            behind += off < 50 * TC_PI / 180;
+        }
     }
-    snprintf(what, sizeof(what), "demo: Ed wanders 40 s by himself: %.0f units walked, %.0f from his start at most, %d jumps",
-             travelled, far_away, jumps);
-    check(isfinite(p.x) && travelled > 100 && far_away > 15 && jumps >= 5, what);
+    for (k = 0; k < 16; k++) kinds += acts[k] > 0;
+    snprintf(what, sizeof(what), "demo %s 60 s: %.0f units walked, %.0f from the start at most, %d jumps, %d kinds of act "
+             "(run %d walk %d pause %d hop %d leap %d pogo %d swing %d shoot %d side %d), %d fly attempts, %d respawns, "
+             "camera behind him %.0f %% of the time he moves", name, travelled, far_away, jumps, kinds, acts[0], acts[1],
+             acts[2], acts[3], acts[4], acts[5], acts[6], acts[7], acts[8], flaps, respawns,
+             moving ? 100.0 * behind / moving : 0.0);
+    if (checked) check(isfinite(p.x) && travelled > 100 && far_away > 15 && jumps >= 5 && kinds >= 5
+                       && behind > moving * 3 / 4, what);
+    else printf("  info  %s\n", what);
     tc_viewer_set_demo(&v, false, 0);
-    check(!tc_viewer_demo(&v) && v.move_y == 0 && !((v.held >> TC_VA_JUMP) & 1u), "demo off: the stick and Jump let go");
+    if (checked)
+        check(!tc_viewer_demo(&v) && v.move_y == 0 && !(v.held & ((1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) |
+              (1u << TC_VA_SHOOT) | (1u << TC_VA_LATERAL))), "demo off: the stick and the buttons let go");
     tc_viewer_free(&v);
     tc_level_free(&level);
+}
+
+static void demo_scenario(const char *dir) {
+    demo_level(dir, "north", true);
+    demo_level(dir, "sud0", false);
+    demo_level(dir, "Land", false);
+    demo_level(dir, "LeCanyon", false);
+    demo_level(dir, "pyramide", false);
 }
 
 static void portal_scenario(const char *dir) {

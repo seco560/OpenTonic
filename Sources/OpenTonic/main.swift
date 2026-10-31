@@ -115,10 +115,18 @@ final class LoadingScreen: NSView {
     }
 }
 
+extension NSCursor {
+    /// A transparent cursor: the pointer is hidden over the intro, its loading screen and the demo (cursor rects, so it
+    /// shows again over the title bar, the menu bar and other windows).
+    @MainActor static let blank = NSCursor(image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
+                                           hotSpot: .zero)
+}
+
 /// The black behind the loading screen after the intro. Takes the keys (a loading screen can't be skipped), but M
-/// mutes as in a level.
+/// mutes as in a level. No pointer over it, as over the intro.
 final class LoadingBackdrop: NSView {
     override var acceptsFirstResponder: Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .blank) }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 46, !event.isARepeat { Music.shared.muted.toggle() }
     }
@@ -173,6 +181,9 @@ final class GameView: MTKView {
             MainActor.assumeIsolated { self?.setCaptured(false) }  // queue: .main
         }
     }
+
+    /// No pointer in the demo (in play, mouse-look capture hides it).
+    override func resetCursorRects() { if inDemo { addCursorRect(bounds, cursor: .blank) } }
 
     override func mouseDown(with event: NSEvent) {
         if inDemo { onDemoInput?(); return }
@@ -580,6 +591,7 @@ final class GameView: MTKView {
             tc_viewer_set_demo(viewer.raw, true, UInt32.random(in: 1...UInt32.max))
             window.title = "Open Tonic — Demo — \(viewer.level.name)"
             view.onDemoInput = { [weak self] in self?.showPicker() }
+            window.invalidateCursorRects(for: view)  // the pointer goes (resetCursorRects)
         }
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()

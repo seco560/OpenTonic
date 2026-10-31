@@ -63,6 +63,7 @@ typedef struct app {
     char *level_folder;          /* out/ttlv */
     char *data_dir;              /* out: audio/, Vignette/, icon/ next to ttlv/ */
     bool captured;               /* mouse-look capture (viewer convenience, not part of the original controls) */
+    bool cursor_hidden;          /* no pointer over the intro, its loading screen and the demo (update_cursor) */
     SDL_JoystickID pad;          /* the gamepad last used, 0 = none (every gamepad is opened as it connects) */
     bool pad_fast;               /* its right trigger past half way: TC_VA_FAST */
     int nav_dx, nav_dy;          /* level select: the left stick's direction, and when it moves the selection again */
@@ -122,6 +123,16 @@ static void set_captured(app *a, bool on) {
     if (on == a->captured) return;
     a->captured = on;
     SDL_SetWindowRelativeMouseMode(a->window, on);
+}
+
+/* Every frame: the pointer hides over the intro, the loading screen after it and the demo, and shows again on the
+ * level select and in play (where mouse-look capture hides it as before; relative mode keeps it hidden either way). */
+static void update_cursor(app *a) {
+    bool hide = a->intro || a->next_level || (a->demo && a->view);
+    if (hide == a->cursor_hidden) return;
+    a->cursor_hidden = hide;
+    if (hide) SDL_HideCursor();
+    else SDL_ShowCursor();
 }
 
 static char *audio_dir(const app *a) { return path_join(a->data_dir, "audio"); }
@@ -874,6 +885,7 @@ int main(int argc, char **argv) {
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
         if (a.next_level) a.next_time += dt;
         if (a.demo && a.view && (a.demo_time += dt) >= DEMO_SECONDS) next_demo_level(&a);
+        update_cursor(&a);
         pad_update(&a, dt);
         if (a.view) {
             tc_viewer_update(&a.view->viewer, dt);
