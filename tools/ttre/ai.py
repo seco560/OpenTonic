@@ -34,6 +34,13 @@ class Node:
     children: list = field(default_factory=list)
 
 
+def walk_nodes(nodes):
+    """Every node of these trees, depth first."""
+    for n in nodes:
+        yield n
+        yield from walk_nodes(n.children)
+
+
 @dataclass
 class Behaviour:
     index: int
@@ -78,6 +85,15 @@ class AI:
                 scripts = [self.script(lv.ptr(sc, 4 * k)) for k in range(ns if sc else 0)]
                 sched = lv.ptr(sched) if sched else None  # schedule: ptr -> {ptr nodes}
                 self.behaviours.append(Behaviour(i, reflex, scripts, self.script(sched) if sched else None))
+
+    def start_behaviour(self):
+        """The normal behaviour the perso starts in (mind +4 -> intelligence +8, its current behaviour in the snapshot),
+        as a Behaviour, or None."""
+        mind = self.lv.ptr(self.lv.ptr(self.perso, 0xC))
+        intel = self.lv.ptr(mind, 4) if mind else None
+        cur = self.lv.ptr(intel, 8) if intel else None
+        name = self.beh_names.get(cur, '')
+        return next((b for b in self.behaviours if not b.reflex and name == f'B{b.index}'), None)
 
     def script(self, loc):
         """Script location -> list of root Nodes (tree built from depths)."""
@@ -211,8 +227,9 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
           as stored), u16 perso (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the
           screen is covered, 2: never, capture only: the player's scripts do the rest), u8 0, u16 fire_dsg, u16 0,
-          i32 fire_value, u16 n_capture, u16 n_fire, (n_capture + n_fire) x op { u8 op, u8 kind, u16 a, u32 b, u32 c,
-          f32 v[3] } } (ops: ai.POP_*, see portals());
+          i32 fire_value, u16 sector (the perso's, as in the .ttlv's SECT; 0xFFFF unknown: always awake), u16 0,
+          u16 n_capture, u16 n_fire, (n_capture + n_fire) x op { u8 op, u8 kind, u16 a, u32 b, u32 c, f32 v[3] } }
+          (ops: ai.POP_*, see portals());
         u16 n_names, n x { u16 len, bytes }: level and place names the ops refer to (lowercase)
   PLAC  u16 n, u16 0, n x { u16 len, name bytes (lowercase), f32 position[3], f32 heading }: every level perso by
           instance name, for PROC_29 arrivals into this level (other levels' scripts name them)
@@ -912,6 +929,13 @@ def ski_portals(ai, strings):
     for p in d.persos():
         fam, model, inst = d.perso_names(p.loc)
         if model == 'SYM_GenTrou':
+            # Only a hole that starts in its zone-testing behaviour (B0: PROC_18, If COND_13(Me, 1, skier)) catches the
+            # skier. The others start in B1 (the respawn point when the skier's dsg3 reaches 28: killed by a deadly
+            # environment, skymap's acid NBD_TrouAcid1 / 2) or in the empty B2 (skymap's lava JET_Trou5LaveBouillonnante,
+            # NBD_BordelDeTrou: no script switches them on), and never test their zone.
+            first = AI(d, p.loc).start_behaviour()
+            if not first or not any(n.type == 1 and n.param == 13 for n in walk_nodes(first.schedule or [])):
+                continue
             # A hole (its zone test, COND_13): the skier's respawn point := its own dsg0, dsg22 := 0, dsg29 := 1 (fell in);
             # his reflexes R1 / R3 then cover the screen and B10 respawns him there (SetPositionFrom(KW_5, dsg30)).
             # Also dsg31 := own dsg1 (a second point next to the respawn one); dsg32 := own dsg2 (a perso) is not
@@ -1266,8 +1290,10 @@ def export(ai, path):
     gates = portals(ai, names)
     out += struct.pack('<HH', len(gates), 0)
     for pos, radius, rows, perso, fire, fire_dsg, fire_value, cap, fire_ops, _ in gates:
-        out += struct.pack('<4f9fHBBHHi', *pos, radius, *[x for r in rows for x in r], perso, fire, 0, fire_dsg, 0,
-                           struct.unpack('<i', struct.pack('<I', fire_value & 0xFFFFFFFF))[0])
+        sector = d.perso_sector(d.persos()[perso - 1].loc)
+        out += struct.pack('<4f9fHBBHHiHH', *pos, radius, *[x for r in rows for x in r], perso, fire, 0, fire_dsg, 0,
+                           struct.unpack('<i', struct.pack('<I', fire_value & 0xFFFFFFFF))[0],
+                           0xFFFF if sector is None else sector, 0)
         out += struct.pack('<HH', len(cap), len(fire_ops))
         for op, kind, a, b, c, v in cap + fire_ops:
             out += struct.pack('<BBHII3f', op, kind, a, b & 0xFFFFFFFF, c & 0xFFFFFFFF, *v)

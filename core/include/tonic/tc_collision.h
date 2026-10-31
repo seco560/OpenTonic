@@ -21,6 +21,7 @@ typedef struct tc_tri {
     tc_vec3 lo, hi;
     tc_floor floor;
     uint32_t source; /* the triangle's index in the input (degenerate ones are dropped): per-triangle tables (.ttai FSND, CLID) */
+    uint16_t sector; /* tc_collision_set_sectors; 0xFFFF: none, always solid */
 } tc_tri;
 
 typedef struct tc_collision {
@@ -33,6 +34,11 @@ typedef struct tc_collision {
     int32_t *cell_tris;
     uint32_t *stamp;     /* per-triangle visit mark: multi-cell triangles are visited once per query */
     uint32_t query;
+    /* Non-NULL: queries see only the triangles of the sectors whose byte is set (and those without a sector), as the
+     * exe sweeps a perso against its own sector and that sector's collide list (tc_sectors_solid). The caller points
+     * it at a row while it moves a perso. */
+    const uint8_t *solid;
+    uint32_t solid_count;
 } tc_collision;
 
 typedef struct tc_hit {
@@ -47,7 +53,11 @@ typedef struct tc_hit {
 int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count, const tc_floor *floors);
 void tc_collision_free(tc_collision *col);
 
-/* Calls fn once for each triangle whose bounds overlap the box lo..hi. Not reentrant. */
+/* Each triangle's sector from a per-input-triangle table (tc_sectors.collision_sector; NULL clears them), among
+ * sector_count sectors (the length of a solid row). Clears solid. */
+void tc_collision_set_sectors(tc_collision *col, const uint16_t *sector, uint32_t count, uint32_t sector_count);
+
+/* Calls fn once for each triangle whose bounds overlap the box lo..hi (and solid allows). Not reentrant. */
 typedef void (*tc_tri_fn)(const tc_tri *tri, void *user);
 void tc_collision_query(tc_collision *col, tc_vec3 lo, tc_vec3 hi, tc_tri_fn fn, void *user);
 

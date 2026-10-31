@@ -46,7 +46,8 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
   first); `AI_TRACE=<frame>` prints the statements executed from that frame on; `AI_SCRIPT=wander` is a 60 s
   collision stress run (other options in the header of tests/aicheck.c). `make mechcheck` checks the ground/air
   mechanics (steps, walls, falling) on hand-made geometry, no game data needed; `make crashcheck` rides the Totalski
-  skier into a tree (the scripted obstacle crash). `make viewcheck` runs `tc_viewer` headless on bar
+  skier into a tree (the scripted obstacle crash); `make skicheck` rides the skier from 600 random spots on Totalski
+  and skymap and counts the rides that stop (against walls, in creases). `make viewcheck` runs `tc_viewer` headless on bar
   (scripted keys: AI, free-fly and drop, simple controller, settings, the sector modes on sud0; every frame's draw list
   validated). `make sectorcheck` checks every level's sectors (`tc_sector.h`) against the game's own data: the lookup
   finds each level perso's snapshot sector, portal faces lead into their targets.

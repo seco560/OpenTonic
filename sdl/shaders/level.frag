@@ -28,7 +28,7 @@ layout(location = 0) out vec4 outColor;
 vec3 shade() {
     if (u.lighting == 0u) return vColor.rgb;
     if (vColor.a > 0.25 && vColor.a < 0.75) return vec3(1.0);  // a sky (TC_SKY_ALPHA)
-    if (vColor.a > 0.25) return vColor.rgb * u.bakedScale;
+    if (vColor.a > 0.25) return clamp(vColor.rgb * 510.0 - 256.0, 0.0, 255.0) / 255.0 * u.bakedScale;  // R clamped
     vec3 n = vNormal;
     float l = length(n) > 0.0 ? clamp(dot(normalize(n), u.lightDirection), 0.0, 1.0) : 1.0;
     return vec3(u.ambient + (1.0 - u.ambient) * l);

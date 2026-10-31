@@ -154,14 +154,17 @@ class SuperObject:
 
 @dataclass(eq=False)
 class Sector:
-    """One of the level's sectors (LevelData.sectors). visible: [(sector index, draw)]; envs: [(gravity, density, drag
-    coefficient, water flag MecEnv +0x28) or None]; surfaces: indices into LevelData.surfaces(); portals: [(target
-    sector index or 0xFFFF, v0, v1, v2, face normal)] world space; floors: [(v0, v1, v2, face normal)] world space."""
+    """One of the level's sectors (LevelData.sectors). visible: [(sector index, draw)]; active, collide: [sector
+    index]; envs: [(gravity, density, drag coefficient, water flag MecEnv +0x28) or None]; surfaces: indices into
+    LevelData.surfaces(); portals: [(target sector index or 0xFFFF, v0, v1, v2, face normal)] world space; floors:
+    [(v0, v1, v2, face normal)] world space."""
     so: 'SuperObject'
     name: str
     virtual: int = 0
     no_child_lookup: int = 0
     visible: list = field(default_factory=list)
+    active: list = field(default_factory=list)  # +0x64: sectors whose characters run their AI while Ed is in it
+    collide: list = field(default_factory=list)  # +0x58: sectors a perso in it collides with (geometry, persos)
     envs: list = field(default_factory=list)
     fogs: list = field(default_factory=list)  # per env: (near, far, (r, g, b)) of its visual environment, or None: off
     lights: list = field(default_factory=list)  # indices into LevelData.lights, in the order the exe pushes them
@@ -586,8 +589,12 @@ class LevelData:
         return [self.geometric(p) for p in (lv.ptr(objs, 4 * i) for i in range(n_lod)) if p]
 
     def radiosity(self, isi, lods, index=0):
-        """ISI -> baked per-vertex colours per LOD; a LOD whose count doesn't match its vertices
-        (bar/cock01/marmite/pyramide: 8 IPOs, their ISI has no radiosity at +0) gets None."""
+        """ISI -> baked per-vertex colours per LOD, colour k on vertex k. The exe copies as many as the object has
+        vertices (FUN_00446050 -> GLIGLOU_00445270 -> FUN_0044d690, count = the geometric's i16 +0), whatever the
+        radiosity's own count says. 8 IPOs differ (bar, cock01, marmite, pyramide): cock01's ice floors and bar's have
+        4 colours fewer than vertices, the 4 being unused bounding-box corners (the exe reads past the array for them;
+        here black), marmite 13 for 8 and pyramide 80 for 79 (the first ones used). Until 2026-10-31 these got None,
+        which the formula turned black (cock01's see-through ice floors). A LOD with no colours at all gets None."""
         rad = self.lv.ptr(isi, 4 * index) if isi else None
         if rad is None:
             return []
@@ -596,8 +603,10 @@ class LevelData:
         for i, geo in enumerate(lods[:n_lod] if lp else ()):
             nc, = self.un('I', lp, 8 * i)
             cp = self.lv.ptr(lp, 8 * i + 4)
-            ok = cp is not None and nc == len(geo.vertices)
-            out.append([self.un('3h', cp, 8 * k) for k in range(nc)] if ok else None)
+            nv = len(geo.vertices)
+            ok = cp is not None and nc > 0
+            out.append([self.un('3h', cp, 8 * k) for k in range(min(nc, nv))] + [(0, 0, 0)] * max(0, nv - nc)
+                       if ok else None)
         return out
 
     def read_perso(self, loc, world):
@@ -745,16 +754,18 @@ class LevelData:
         _, rebound, grip = self.un('3f', mm)
         return (grip, rebound)
 
-    def collision(self, floors=False, skip_decals=False, sounds=False):
+    def collision(self, floors=False, skip_decals=False, sounds=False, sectors=False):
         """World-space collision triangles [((x, y, z) * 3)]: every static IPO's collide set, plus
         perso collide meshes posed at frame 0 of their initial state (sud0's lava-pit platforms,
         doors, ...; moving persos are treated as static). Ed's family has none.
         floors=True returns (triangles, per-triangle (grip, rebound) or None); sounds=True (triangles, floors, per-triangle
-        floor_sound | collide_id << 8).
+        floor_sound | collide_id << 8); sectors=True (triangles, floors, per-triangle sector index or None): a static's
+        sector (static_sector), a perso's snapshot sector (perso_sector). The exe collides a perso with its own sector's
+        and the sectors of its +0x58 list (Sector.collide) only.
         skip_decals: leave out collide sets that are a single flat quad facing up (2 triangles, normal z > 0.5): the
         ski slopes' speed arrows, spring stars and red direction arrows lying on the snow, which the skier rides over
         (their effects come from trigger persos next to them, ai.ski_portals); as collision their edges stopped him."""
-        out, out_floors, out_sounds = [], [], []
+        out, out_floors, out_sounds, out_sectors = [], [], [], []
 
         def decal(col, m):
             if len(col[1]) != 2:
@@ -769,7 +780,7 @@ class LevelData:
                     return False
             return True
 
-        def add(col, m):
+        def add(col, m, sector):
             if skip_decals and decal(col, m):
                 return
             verts = [mat_apply(m, v) for v in col[0]]
@@ -777,14 +788,18 @@ class LevelData:
             out.extend(tuple(verts[i] for i in (t[::-1] if flip else t)) for t in col[1])
             out_floors.extend(col[2])
             out_sounds.extend(col[3])
+            out_sectors.extend([sector] * len(col[1]))
         for so in self.walk():
             if so.collide and not getattr(so, 'gated', False):
-                add(so.collide, so.world)
+                add(so.collide, so.world, self.static_sector(so) if sectors else None)
         for p in self.persos():
             if p.collides and p.anim:
                 for o, m in p.anim.pose(0):
                     if o in p.collides:
-                        add(p.collides[o], mat_mul(p.world, mat_mul(m, p.objects[o][1])))
+                        add(p.collides[o], mat_mul(p.world, mat_mul(m, p.objects[o][1])),
+                            self.perso_sector(p.loc) if sectors else None)
+        if sectors:
+            return out, out_floors, out_sectors
         if sounds:
             return out, out_floors, out_sounds
         return (out, out_floors) if floors else out
@@ -1008,6 +1023,14 @@ class LevelData:
           +0x4C {head, tail, n} of {u16 draw, u16, ptr sector, ptr next}: the sectors drawn with it when the frame is
                 drawn from it (FUN_00451d80, list mode 0 = 0x8c1765, reset at level init; +0x58 / +0x64: debug modes);
                 draw > 0: its static geometry too (always so in the 21 levels), else only its characters and surfaces
+          +0x58 {head, tail, n} of {ptr sector, ptr next}: the collision list (Sector.collide). A perso's sweeps
+                (MEC_SweepPass_0043c830, from MEC_SweepZones_0043bff0 with its own sector) test the static geometry
+                of its sector (FUN_0043c410), then of each sector on this list, and the characters of them all
+                (FUN_0043c640); skies, foliage and waterfalls (sud0's chute01 / chute02) are on no list: never solid
+          +0x64 {head, tail, n} of {ptr sector, ptr next}: the activity list (Sector.active). Each frame the main loop
+                (0x428b1f) marks the characters of the main character's sector, then those of each sector on its +0x64
+                list (GAM_00428490 -> GAM_00428400: std_game +0x19 := 1); only marked persos run their AI and
+                mechanics (GAM_00428550 / GAM_004287b0), and GAM_00428070 clears the mark again
           +0x88 u8 virtual (sky, foliage, gates: FUN_00451240 never picks it), +0x89 u8 its IPOs not looked up
         Sector.floors: the faces FUN_00451240 casts straight down at to find a point's sector (on level load, teleports):
         the portal object's and its direct IPO children's LOD 0 visual faces, those whose stored face normal faces the
@@ -1034,6 +1057,14 @@ class LevelData:
                 if target is not None:
                     sec.visible.append((target, un('H', node)[0]))
                 node = lv.ptr(node, 8)
+            for off, into in ((0x58, sec.collide), (0x64, sec.active)):
+                node, seen = lv.ptr(data, off), set()
+                while node is not None and node not in seen and len(seen) < 4096:
+                    seen.add(node)
+                    target = index.get(lv.ptr(node))
+                    if target is not None:
+                        into.append(target)
+                    node = lv.ptr(node, 4)
             node = lv.ptr(data, 4)
             while node is not None and len(sec.envs) < 64:
                 entry = lv.ptr(node)

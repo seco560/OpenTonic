@@ -294,7 +294,8 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     if ((e = chunk_end(r)) != TC_OK) goto fail;
 
     if (chunk_need(&cs, "SECT", r)) {
-        e = tc_sectors_read(&level->sectors, r, level->meshes, level->mesh_count, level->perso_count);
+        e = tc_sectors_read(&level->sectors, r, level->meshes, level->mesh_count, level->perso_count,
+                            level->collision_triangle_count);
         if (e == TC_OK) e = chunk_end(r);
         if (e != TC_OK) goto fail;
     }

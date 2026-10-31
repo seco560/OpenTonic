@@ -4,6 +4,7 @@
 #   make aicheck    -> run Ed's AI headless on bar (needs ../files/out/ttlv/bar.ttai)
 #   make mechcheck  -> type 0/4 mechanics on hand-made geometry (no game data needed)
 #   make crashcheck -> Totalski: the skier rides into a tree and crashes (needs ../files/out/ttlv/Totalski.*)
+#   make skicheck   -> Totalski, skymap: random rides; how many stop against walls (needs their .ttlv / .ttai)
 #   make viewcheck  -> the viewer module (tc_viewer) headless on bar: scripted keys, draw lists, title readout
 #   make portalcheck -> Ed walks into portals on sud0, Land and north (docs/PORTALS.md)
 #   make sectorcheck -> every level's sectors against the game's own data (tc_sector.h)
@@ -19,7 +20,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -39,6 +40,9 @@ $(BUILD)/mechcheck: tests/mechcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/crashcheck: tests/crashcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
+$(BUILD)/skicheck: tests/skicheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/viewcheck: tests/viewcheck.c $(BUILD)/libtoniccore.a
@@ -65,6 +69,10 @@ mechcheck: $(BUILD)/mechcheck
 crashcheck: $(BUILD)/crashcheck
 	$(BUILD)/crashcheck ../files/out/ttlv
 
+skicheck: $(BUILD)/skicheck
+	$(BUILD)/skicheck ../files/out/ttlv Totalski
+	$(BUILD)/skicheck ../files/out/ttlv skymap
+
 viewcheck: $(BUILD)/viewcheck
 	$(BUILD)/viewcheck ../files/out/ttlv bar
 
@@ -77,4 +85,4 @@ sectorcheck: $(BUILD)/sectorcheck
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck viewcheck portalcheck sectorcheck clean
+.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck clean

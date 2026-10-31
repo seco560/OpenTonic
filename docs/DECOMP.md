@@ -179,7 +179,10 @@ Each item is marked in the code or in docs/NOTES.md.
 7. **Card 11 (hang)**: gravity in the air (x dt^2, negligible) is not applied; see 3 for the alignment.
 8. **Skier**: the three stopgaps (ski_unstick, slope_cos 70 deg, ski_unpin) were removed on 2026-10-28 at the user's
    request (in the original he slides on anything; with the exe's collision he does not stick: wander on Totalski and
-   skymap, no stalls). The wall stumble is not found.
+   skymap, no stalls). The wall stumble was a misremembering (user, 2026-10-31): nothing to find.
+   **2026-10-31:** the forces, request and speed cap re-read (docs/NOTES.md "Sliding stages", second pass): wall
+   friction by the wall's grip, the steep-face rule FUN_004c1686, the jump clearing the report, the probe from the
+   origin. `make skicheck` measures the stops.
 9. **Other card types**: types 9 and 10 (forces FUN_004c5aa0 and FUN_004c709a, dumped, 8.5 KB together) and the
    fn1 handlers of types 1, 3, 6, 8 and 12 are not read. They matter for other persos and moving platforms.
 10. **ANIM_TIME_SCALE 0.25** for non-Ed persos contradicts the animation clock as read (the user matched it against
@@ -219,7 +222,11 @@ Each item is marked in the code or in docs/NOTES.md.
 ## Rendering and lighting
 **Ported 2026-10-30** (docs/NOTES.md "Lighting: the original's formula"): the vertex colour formula, the sector lights
 (spherical with the per-object cull, parallel, ambient), the sector / env fog, the material coefficients; not
-hotspots, MS lights, the surface waves; the water effect (tint, wobble, lift) ported the same day (docs/NOTES.md "The water effect"). The list below is the state before that:
+hotspots, MS lights, the surface waves; the water effect (tint, wobble, lift) ported the same day (docs/NOTES.md "The water effect").
+**2026-10-31** (docs/NOTES.md "Rendering pass"): the depth test, read (ZFUNC GREATEREQUAL) and ported as reversed
+depth; radiosity copied by the object's vertex count (cock01's ice); z writes stay on for blended surfaces in the
+original (the port's are off, open); the driver's per-triangle far-to-near list, read in part (who flags a triangle
+for it: open), the port's sort key moved to the farthest point. The list below is the state before 2026-10-30:
 GLI (29 KB) is 0 % read. Everything lighting does now is inferred from the data, not read from the code:
 - the radiosity combine (x 255 / 128, overbright x 2)
 - which radiosity set is used (A, B or C, and whether they blend)
@@ -288,7 +295,8 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   (FUN_00445b50, visual material +4 ambient, +0x14 diffuse: add = ambient + G x diffuse, mul = diffuse) and the
   conversion (FUN_00448e60 / 00448cf0 / 00448fb0, same formula): byte = clamp(512 x (acc x diffuse + add), 0, 255)
   (the float-bits trick with 1.5 x 2^14, constant 0x4d26b0). For a baked vertex with no lights:
-  **light = min(1, (R / 256 x diffuse + ambient) x 512 / 255)** per channel, then MODULATE with the texture.
+  **light = min(1, (R / 256 x diffuse + ambient) x 512 / 255)** per channel, then MODULATE with the texture. R is
+  signed until that final clamp (ported 2026-10-31: the .ttlv stores (R + 256) / 2, NOTES "Signed radiosity").
   Materials: diffuse 0.7 nearly everywhere; ambient 0.1 (sud0, Totalski, LeCanyon) or 0 (north, pyramide, Land).
   Mean baked light, ours (clamp(R) / 128) vs this: sud0 0.27 / 0.39, Totalski 0.48 / 0.45, LeCanyon 0.51 / 0.47,
   Land 0.60 / 0.46, north 0.62 / 0.41, pyramide 0.93 / 0.63; ours goes to 2x, the exe clamps at 1.

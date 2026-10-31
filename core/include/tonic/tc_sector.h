@@ -6,7 +6,9 @@
  *     (FUN_00451b90: tc_sectors_env);
  *   - what is drawn: the frame is drawn from the camera's sector, with the sectors of its list (FUN_00451d80, list mode
  *     0). Static triangles belong to membership groups (a sector's geometry, or a water surface drawn when one of the
- *     sectors listing it is), as index ranges of each static mesh; persos to their sector.
+ *     sectors listing it is), as index ranges of each static mesh; persos to their sector;
+ *   - what is solid: a perso collides with its sector's triangles and those of its collide list (+0x58) only
+ *     (tc_sectors_solid); what is awake: the persos in the main character's sector and its activity list (+0x64).
  * The data only says what is where: each mode chooses what to draw (the Tonic Viewer draws every sector). */
 #ifndef TONIC_TC_SECTOR_H
 #define TONIC_TC_SECTOR_H
@@ -45,6 +47,12 @@ typedef struct tc_sector {
     uint8_t no_child_lookup;      /* its IPOs are not looked up on (+0x89) */
     uint16_t visible_count;
     tc_sector_link *visible;      /* drawn with it when the frame is drawn from it (+0x4C), itself not included */
+    uint16_t active_count;
+    uint16_t *active;             /* +0x64: while it is the main character's sector, the characters of these sectors run
+                                   * their AI too (GAM_00428490); the others' sleep. Itself not included */
+    uint16_t collide_count;
+    uint16_t *collide;            /* +0x58: a perso in it collides with these sectors' triangles too, and with no other
+                                   * sector's but its own (MEC_SweepPass_0043c830). Itself not included */
     uint16_t env_count;
     tc_sector_env *envs;
     uint16_t surface_count;
@@ -77,6 +85,10 @@ typedef struct tc_sectors {
     tc_sector_range *ranges;
     uint32_t perso_count;         /* = the level's persos, 0 when it did not match */
     uint16_t *perso_sector;       /* TC_SECTOR_NONE: unknown, drawn always */
+    uint32_t collision_count;     /* = the level's collision triangles, 0 when it did not match */
+    uint16_t *collision_sector;   /* per collision triangle (tc_level.collision): TC_SECTOR_NONE always solid */
+    uint8_t *solid;               /* count x count: row i, byte j = 1 when a perso in sector i collides with sector j's
+                                   * triangles (j == i, or j on i's collide list); NULL when not built */
 } tc_sectors;
 
 /* FUN_00451240: the non-virtual sector with a floor face nearest straight below p (the faces its normal turns up),
@@ -102,6 +114,12 @@ uint16_t tc_sectors_env_index(const tc_sectors *s, uint16_t sector, tc_vec3 p, f
  * TC_SHOWN_GEOMETRY. TC_SECTOR_NONE (or out of range): always. */
 bool tc_sectors_group_shown(const tc_sectors *s, uint16_t g, const uint8_t *shown);
 const char *tc_sectors_name(const tc_sectors *s, uint16_t sector); /* "" for none */
+/* MEC_SweepPass_0043c830: the sectors whose triangles a perso in `sector` collides with, one byte per sector (for
+ * tc_collision.solid), or NULL (unknown sector, or none built): everything is solid. */
+const uint8_t *tc_sectors_solid(const tc_sectors *s, uint16_t sector);
+/* GAM_00428490, each frame: whether a perso in `sector` runs its AI while the main character is in `main`: the same
+ * sector, or one on main's activity list (+0x64). Either unknown (TC_SECTOR_NONE): true. */
+bool tc_sectors_active(const tc_sectors *s, uint16_t main, uint16_t sector);
 
 /* A perso's current sector (SectorInfo: +4 the sector, +0xC the last position). */
 typedef struct tc_sector_track {

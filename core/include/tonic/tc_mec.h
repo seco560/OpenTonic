@@ -105,7 +105,9 @@ void tc_mec_swim_model_axes(const tc_mec_swim *s, const tc_ai_card *card, tc_vec
 typedef struct tc_mec_contact {
     bool ground, wall;           /* report bits 1|2 (ground, steep slope) and 4|8|0x10 (wall, overhang, ceiling) */
     tc_vec3 ground_normal, wall_normal;
-    float ground_grip;           /* floor material mat[2] (snow 0; no material 1) */
+    float ground_grip;           /* floor material mat[2] (snow 0; no material 1) x the touching part's own */
+    float wall_grip;             /* the same for the wall contact: the forces brake by it when there is no ground */
+    bool jumped;                 /* set by a jump request (mode 10 with [3] != 0): the exe clears the report */
     float ground_factor;         /* floor material mat[0] (snow 1; no material 1): scales steering and edge grip */
 } tc_mec_contact;
 
@@ -148,6 +150,7 @@ typedef struct tc_mec_walk {
     tc_vec3 ground_normal;       /* contact record +0xCC (ground, steep slope) */
     tc_vec3 wall_normal;         /* contact record +0x148 (wall, overhang, ceiling) */
     float ground_grip;           /* the ground contact's floor material mat[2] (1 = none) */
+    float wall_grip;             /* the wall contact's (record +0x148: obstacle x own grip) */
     uint32_t ground_tri, wall_tri; /* the contacts' triangles (tc_tri.source; UINT32_MAX none): their materials */
     uint16_t ground_own, wall_own; /* the collide flags of the body part that made them (tc_ai_sphere.flags) */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */

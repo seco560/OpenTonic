@@ -248,7 +248,9 @@ void tc_mec_swim_model_axes(const tc_mec_swim *s, const tc_ai_card *card, tc_vec
  * +0x34 gravity factor 4, +0x38 alignment to the surface per frame 0.6, +0x3C steering factor in the air 0.5,
  * +0x40 extra gravity factor in the air 2.5, +0x44 probe length 2, +0x48 probe cos 0.7986 (37 deg),
  * +0x4C minimum speed 0.001. Steep = normal z below cos 70 deg (DAT_004d30a0). */
-#define SKI_STEEP 0.34202f
+#define SKI_STEEP_FORCES 0.3420201433256687 /* DAT_004d30a0 (a double): cos 70 deg, the forces */
+#define SKI_STEEP_REQUEST 0.5               /* DAT_004d2f30 (a double): the request's push and edge grip */
+#define SKI_STEEP_SPEED 0.17364817766693041 /* DAT_004d3060 (a double): cos 80 deg, the speed cap */
 
 static tc_vec3 rotate_about(tc_vec3 v, tc_vec3 axis, float angle) { /* Rodrigues, axis unit */
     float c = cosf(angle), s = sinf(angle);
@@ -257,6 +259,24 @@ static tc_vec3 rotate_about(tc_vec3 v, tc_vec3 axis, float angle) { /* Rodrigues
 }
 
 static tc_vec3 without(tc_vec3 v, tc_vec3 n) { return tc_v3_sub(v, tc_v3_scale(n, tc_v3_dot(v, n))); }
+
+/* FUN_004c1686: against a steep face, nothing may point up (a rising z becomes -down) and the part into the face goes;
+ * a part away from it stays. The forces pass down 1000, the request 0, the speed cap 15. */
+static tc_vec3 off_steep(tc_vec3 v, tc_vec3 n, float down) {
+    float d;
+    if (v.z > 0) v.z = -down;
+    d = tc_v3_dot(v, n);
+    if (d < 0) v = tc_v3_sub(v, tc_v3_scale(n, d));
+    return v;
+}
+
+/* The steep contact the exe flattens against: the ground when there is one, else a wall / overhang / ceiling. */
+static bool steep_contact(const tc_mec_contact *c, double limit, tc_vec3 *n) {
+    if (c->ground) *n = c->ground_normal;
+    else if (c->wall) *n = c->wall_normal;
+    else return false;
+    return n->z < limit;
+}
 
 void tc_mec_ski_enter(tc_mec_ski *s, float heading) {
     memset(s, 0, sizeof(*s));
@@ -276,8 +296,9 @@ void tc_mec_ski_request(tc_mec_ski *s, const tc_ai_card *card, int mode, const f
     if (mode == 10) {
         push = tc_v3_add(tc_v3_scale(s->y, proposal[2]),
                          tc_v3_scale(tc_v3(proposal[7], proposal[8], proposal[9]), proposal[1]));
-        if (proposal[3] != 0) {
+        if (proposal[3] != 0) { /* the report (and last frame's) is cleared: no ground for the rest of the frame */
             c->ground = c->wall = false;
+            c->jumped = true;
             jump = tc_v3_scale(s->z, proposal[3]);
         }
     }
@@ -296,10 +317,12 @@ void tc_mec_ski_request(tc_mec_ski *s, const tc_ai_card *card, int mode, const f
      * the direction of travel; the last request of the frame wins */
     s->omega = tc_v3_add(tc_v3_scale(s->z, steer * a), tc_v3_scale(tc_v3_cross(planar, s->y), b));
     side = tc_v3_scale(s->x, -tc_v3_dot(planar, s->x) * edge); /* the edges resist sideways slip */
-    if (c->ground ? c->ground_normal.z < 0.5f : (c->wall && c->wall_normal.z < 0.5f)) {
-        tc_vec3 n = c->ground ? c->ground_normal : c->wall_normal;
-        push = without(push, n);
-        side = without(side, n);
+    {
+        tc_vec3 n;
+        if (steep_contact(c, SKI_STEEP_REQUEST, &n)) {
+            push = off_steep(push, n, 0);
+            side = off_steep(side, n, 0);
+        }
     }
     s->force = tc_v3_add(s->force, tc_v3_add(tc_v3_add(push, side), jump));
 }
@@ -320,27 +343,35 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
     }
     s->near_ground = false;
     if (!c->ground && !c->wall) {
-        /* probe below the board: align to the surface under it, and hold it down when riding upside down */
+        /* probe below the board: align to the surface under it, and hold it down when riding upside down. The exe's
+         * ray (FUN_00484130 -> FUN_004687a0) starts at the origin, runs on along -z (faces either way round, the
+         * nearest) and counts within card +0x44. */
         tc_hit hit;
         tc_vec3 down = tc_v3_scale(s->z, -1);
         if (tc_v3_dot(velocity, velocity) > min_speed * min_speed &&
-            tc_collision_raycast(world, tc_v3_add(feet, tc_v3_scale(s->z, 0.4f)), down, tc_ai_card_f32(card, 0x44) + 0.4f, &hit) &&
-            hit.distance - 0.4f < tc_ai_card_f32(card, 0x44) && tc_v3_dot(s->z, hit.normal) > tc_ai_card_f32(card, 0x48)) {
+            tc_collision_raycast(world, feet, down, tc_ai_card_f32(card, 0x44), &hit) &&
+            tc_v3_dot(s->z, hit.normal) > tc_ai_card_f32(card, 0x48)) {
             float hold = tc_v3_dot(up, down);
             if (hold > 0.65f) f = tc_v3_add(f, tc_v3_scale(hit.normal, -tc_ai_card_f32(card, 0x30) * hold));
             s->near_ground = true;
             target = hit.normal;
         }
     } else {
+        /* The ground's record, else the wall's: its grip (obstacle x own, squared) brakes, its normal carries the
+         * weight. Snow has grip 0, so riding along a snow wall costs nothing; a grip 1 face (no material) stops the
+         * skier as a grip 1 floor would. */
         tc_vec3 n = c->ground ? c->ground_normal : c->wall_normal;
-        float grip = c->ground ? c->ground_grip : 1, g2 = tc_mec_per_frame(fminf(fmaxf(grip * grip, 0), 1), dt);
+        float grip = c->ground ? c->ground_grip : c->wall_grip, g2 = tc_mec_per_frame(fminf(fmaxf(grip * grip, 0), 1), dt);
         if (tc_v3_dot(n, s->z) > 0.5f || tc_v3_dot(n, up) > 0.5f) target = n;
         f = tc_v3_sub(f, tc_v3_scale(n, tc_v3_dot(n, gravity)));      /* the surface carries the weight */
         f = tc_v3_add(f, tc_v3_scale(velocity, -mass * g2 / dt));   /* friction per 1/30 s: grip 1 stops dead, snow 0 none */
     }
-    if ((c->ground && c->ground_normal.z < SKI_STEEP) || (!c->ground && c->wall && c->wall_normal.z < SKI_STEEP)) {
-        f = without(f, c->ground ? c->ground_normal : c->wall_normal);
-        s->near_ground = false;
+    {
+        tc_vec3 n;
+        if (steep_contact(c, SKI_STEEP_FORCES, &n)) {
+            f = off_steep(f, n, 1000);
+            s->near_ground = false;
+        }
     }
     /* turn z towards the surface (or up in the air), a fraction per 1/30 s */
     if (tc_v3_dot(velocity, velocity) > min_speed * min_speed) {
@@ -355,7 +386,10 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
     s->force = tc_v3(0, 0, 0);
     speed = tc_v3_length(velocity);
     if (top > 0 && speed > top) velocity = tc_v3_scale(velocity, top / speed);
-    if (c->ground && c->ground_normal.z < SKI_STEEP) velocity = without(velocity, c->ground_normal);
+    { /* FUN_004c3af0 after the cap: against a face steeper than 80 deg he cannot rise (a rising z becomes -15 u/s) */
+        tc_vec3 n;
+        if (steep_contact(c, SKI_STEEP_SPEED, &n)) velocity = off_steep(velocity, n, 15);
+    }
     /* orientation += omega dt */
     speed = tc_v3_length(s->omega);
     if (speed * dt > 1e-7f) {

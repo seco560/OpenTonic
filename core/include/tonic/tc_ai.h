@@ -129,6 +129,7 @@ typedef struct tc_ai_portal {
     tc_ai_zone_prim zone[TC_AI_MAX_ZONE_PRIMS];
     float rows[9];               /* the portal's axes, row-major (its local -Y faces the way in) */
     uint16_t perso;              /* as perso nodes (level perso k + 1) */
+    uint16_t sector;             /* the perso's (.ttlv SECT); it sleeps unless active there (tc_sectors_active) */
     uint8_t fire;
     uint16_t fire_dsg;
     int32_t fire_value;

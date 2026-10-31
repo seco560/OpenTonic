@@ -10,6 +10,7 @@
  *     centre, and a viewer started on the level lights its first frame with the lights of Ed's sector, at once.
  * Usage: sectorcheck [out/ttlv] [level]. Test-only stdio and POSIX <dirent.h>. */
 #include <dirent.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,8 +34,8 @@ static uint8_t *read_file(const char *path, size_t *size) {
 static int failures;
 
 /* The original's light of a baked byte without lights (tc_viewer.c formula_light). */
-static float formula(uint32_t byte, float ambient, float diffuse) {
-    float l = ((float)byte / 255 * (255.0f / 256) * diffuse + ambient) * (512.0f / 255);
+static float formula(float radiosity, float ambient, float diffuse) {
+    float l = (radiosity / 256 * diffuse + ambient) * (512.0f / 255);
     return l < 0 ? 0 : l > 1 ? 1 : l;
 }
 
@@ -65,8 +66,8 @@ static void lighting_check(const char *file, const tc_level *l) {
             uncentred += x->centre[0] == x->position[0] && x->centre[1] == x->position[1] && x->centre[2] == x->position[2];
             if (a != 255 || x->uv2[0] >= 0) continue; /* skies, unbaked, lightmapped */
             baked++;
-            old_sum += (float)r / 128 > 2 ? 2 : (float)r / 128;
-            new_sum += formula(r, m->surface.ambient[0], m->surface.diffuse[0]);
+            old_sum += fminf(255, fmaxf(0, TC_RADIOSITY(r))) / 128;
+            new_sum += formula(TC_RADIOSITY(r), m->surface.ambient[0], m->surface.diffuse[0]);
         }
     }
     for (i = 0; i < l->perso_count; i++)

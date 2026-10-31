@@ -50,7 +50,8 @@ vec4 baked(uint s) {
 // on persos) plus the frame's lights, through the material: min(1, (acc x diffuse + ambient + G x diffuse) x 512 / 255).
 // Under the water effect: + the default tint by depth (GLIGLOU_00442ce0; Shaders.metal game_light).
 vec3 game_light(vec4 bakedColor, vec3 world, vec3 n, vec3 centre) {
-    vec3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (255.0 / 256.0) : vec3(0.0);
+    // stored (R + 256) / 2 per channel (tc_level.h TC_RADIOSITY): R / 256, signed, as the exe adds it
+    vec3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (510.0 / 256.0) - 1.0 : vec3(0.0);
     if (d.water.y > 0.5) acc += vec3(-0.6, -0.3, -0.4) * clamp((d.water.x - world.z) / 7.0, 0.0, 1.0);
     for (uint i = 0u; i < min(lights.count, 48u); i++) {
         Light l = lights.light[i];

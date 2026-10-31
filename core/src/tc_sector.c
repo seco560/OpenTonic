@@ -132,6 +132,18 @@ const char *tc_sectors_name(const tc_sectors *s, uint16_t sector) {
     return s && sector < s->count && s->sectors[sector].name ? s->sectors[sector].name : "";
 }
 
+const uint8_t *tc_sectors_solid(const tc_sectors *s, uint16_t sector) {
+    return s && s->solid && sector < s->count ? s->solid + (size_t)sector * s->count : NULL;
+}
+
+bool tc_sectors_active(const tc_sectors *s, uint16_t main, uint16_t sector) {
+    uint16_t k;
+    if (!s || main >= s->count || sector >= s->count || main == sector) return true;
+    for (k = 0; k < s->sectors[main].active_count; k++)
+        if (s->sectors[main].active[k] == sector) return true;
+    return false;
+}
+
 void tc_sector_place(tc_sector_track *t, const tc_sectors *s, tc_vec3 p) {
     uint16_t found = tc_sectors_find(s, p);
     if (found != TC_SECTOR_NONE) t->sector = found;
@@ -174,6 +186,8 @@ void tc_sectors_free(tc_sectors *s) {
         tc_sector *sec = &s->sectors[i];
         tc_free(sec->name);
         tc_free(sec->visible);
+        tc_free(sec->active);
+        tc_free(sec->collide);
         tc_free(sec->envs);
         tc_free(sec->surfaces);
         tc_free(sec->portals);
@@ -187,12 +201,15 @@ void tc_sectors_free(tc_sectors *s) {
     tc_free(s->mesh_first_range);
     tc_free(s->ranges);
     tc_free(s->perso_sector);
+    tc_free(s->collision_sector);
+    tc_free(s->solid);
     memset(s, 0, sizeof(*s));
 }
 
 /* Index fields out of range read as TC_SECTOR_NONE; ranges that do not tile a mesh's indices exactly, or counts that
  * differ from the level's meshes or persos, leave the ranges or the perso sectors out (everything drawn). */
-tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint32_t mesh_count, uint32_t perso_count) {
+tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint32_t mesh_count, uint32_t perso_count,
+                          uint32_t collision_count) {
     uint16_t n = rd_u16(r), ns = rd_u16(r), i;
     uint32_t k, m, total = 0, nr, np;
     bool ranges_ok = true;
@@ -215,6 +232,20 @@ tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint3
             sec->visible[k].sector = rd_u16(r);
             sec->visible[k].draw = rd_u16(r);
             if (sec->visible[k].sector >= n) sec->visible[k].sector = TC_SECTOR_NONE;
+        }
+        c = rd_u16(r);
+        sec->active = (uint16_t *)rd_array(r, c, sizeof(uint16_t), 2);
+        if (sec->active) sec->active_count = c;
+        for (k = 0; k < sec->active_count; k++) {
+            sec->active[k] = rd_u16(r);
+            if (sec->active[k] >= n) sec->active[k] = TC_SECTOR_NONE;
+        }
+        c = rd_u16(r);
+        sec->collide = (uint16_t *)rd_array(r, c, sizeof(uint16_t), 2);
+        if (sec->collide) sec->collide_count = c;
+        for (k = 0; k < sec->collide_count; k++) {
+            sec->collide[k] = rd_u16(r);
+            if (sec->collide[k] >= n) sec->collide[k] = TC_SECTOR_NONE;
         }
         c = rd_u16(r);
         sec->envs = (tc_sector_env *)rd_array(r, c, sizeof(tc_sector_env), 16);
@@ -309,6 +340,27 @@ tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint3
         }
     } else if (have(r, (size_t)np * 2)) {
         r->offset += (size_t)np * 2;
+    }
+    np = rd_u32(r);
+    if (np == collision_count) {
+        s->collision_sector = (uint16_t *)rd_array(r, np, sizeof(uint16_t), 2);
+        if (s->collision_sector) s->collision_count = np;
+        for (k = 0; k < s->collision_count; k++) {
+            s->collision_sector[k] = rd_u16(r);
+            if (s->collision_sector[k] >= s->count) s->collision_sector[k] = TC_SECTOR_NONE;
+        }
+    } else if (have(r, (size_t)np * 2)) {
+        r->offset += (size_t)np * 2;
+    }
+    if (!r->error && s->count) {
+        s->solid = (uint8_t *)tc_calloc((size_t)s->count * s->count, 1);
+        if (!s->solid) r->error = TC_ERR_OUT_OF_MEMORY;
+        for (i = 0; s->solid && i < s->count; i++) {
+            uint8_t *row = s->solid + (size_t)i * s->count;
+            row[i] = 1;
+            for (k = 0; k < s->sectors[i].collide_count; k++)
+                if (s->sectors[i].collide[k] < s->count) row[s->sectors[i].collide[k]] = 1;
+        }
     }
     if (r->error) return r->error;
     if (ranges_ok) {

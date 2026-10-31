@@ -122,6 +122,10 @@ vita/
   alpha to coverage under MSAA (vitaGL can set up 4x MSAA at init); fallback is the plain alpha test.
 - **Pipelines -> GL state:** the four level pipelines become state sets (blend on/off, depth write on/off); same draw
   order (opaque, then transparent without depth writes, then the overlay and 2D).
+- **Depth:** the core's projection is reversed with 0..1 clip z (TC_DEPTH_REVERSED; docs/NOTES.md "Rendering pass").
+  GL's clip z is -1..1 and GLES2 has no glClipControl: remap in the vertex shader (z' = 2z - w), clear depth to 0,
+  glDepthFunc(GL_GEQUAL), and a positive polygon offset for the shadow. A 16 / 24-bit depth buffer loses the
+  float buffer's even precision, so check the decals (Agent XYZ, sud0's doors) on the hardware.
 - **Data:** `ux0:data/OpenTonic/` with the `files/out` layout (ttlv, Textures, Vignette/Level, audio, video), copied by
   the user (VitaShell over FTP or USB). Converted assets never go into the VPK.
 - **Memory:** vitaGL's pools sized at init (`vglInitExtended`); one level resident at a time, as on desktop.

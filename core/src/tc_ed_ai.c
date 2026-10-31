@@ -42,6 +42,8 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     e->env_depth = 0;
     e->env = tc_mec_env_default();
     e->sectors = NULL;
+    e->stepping = false;
+    e->solid_union = NULL;
     e->sector.sector = TC_SECTOR_NONE;
     e->sector.position = player->position;
     e->sector.placed = player->placed;
@@ -84,6 +86,8 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
 }
 
 void tc_ed_ai_free(tc_ed_ai *e) {
+    tc_free(e->solid_union);
+    e->solid_union = NULL;
     tc_free(e->trigger_wake);
     e->trigger_wake = NULL;
     tc_free(e->portal_armed);
@@ -154,7 +158,10 @@ static bool portal_op(tc_ed_ai *e, const tc_ai_portal *g, const tc_ai_portal_op 
     return true;
 }
 
-/* The portals (tc_ai_portal): capture, then the fire ops in order once the fire condition holds. */
+/* The portals (tc_ai_portal): capture, then the fire ops in order once the fire condition holds. A portal's perso only
+ * captures while awake: in Ed's sector or one on its activity list (tc_sectors_active), as the exe runs only those
+ * persos' AI. skymap's lava hole (JET_Trou5LaveBouillonnante, sctlavabox) has a zone box reaching ~5 units into
+ * sctTunnel20 / 22 beside it; sctTunnel22's list leaves sctlavabox out, so there the hole sleeps. */
 static void run_portals(tc_ed_ai *e) {
     const tc_ai_model *m = e->ai.model;
     uint16_t i, k;
@@ -164,7 +171,8 @@ static void run_portals(tc_ed_ai *e) {
     if (e->portal < 0) {
         for (i = 0; e->portal_armed && i < m->portal_count; i++) {
             const tc_ai_portal *g = &m->portals[i];
-            bool ok = e->portal_armed[i] && portal_inside(g, e->player->position);
+            bool ok = e->portal_armed[i] && tc_sectors_active(e->sectors, e->sector.sector, g->sector) &&
+                      portal_inside(g, e->player->position);
             for (k = 0; ok && k < g->capture_count; k++)
                 if (g->ops[k].op == TC_AI_POP_GUARD && (int32_t)tc_ai_dsgvar_float(&e->ai, g->ops[k].a) != (int32_t)g->ops[k].b)
                     ok = false;
@@ -453,9 +461,33 @@ static void water_zones(tc_ed_ai *e) {
  * he is; here in the next step before anything reads it, which is the same for what the step sees. Looked up again
  * (tc_sector_place) after a teleport or respawn: the exe does so where it sets a perso's position (FUN_00451240 in
  * GAM_00429150 etc.). */
-static void track_sector(tc_ed_ai *e) { tc_sector_follow(&e->sector, e->sectors, e->player->position, e->player->placed); }
+/* What Ed collides with (tc_ed_ai_step): his sector's solid row. Port safety net, not the exe's: where the sector the
+ * floor below him belongs to (tc_sectors_find) is another, its row counts too, so a sector change the portal walk
+ * misses (walking off a ledge under a portal's lower edge: Land's sctsectordebutA into sctsectorsecretroom01 below)
+ * does not drop him through the floor he lands on. */
+static void set_solid(tc_ed_ai *e) {
+    tc_collision *w = e->player->world;
+    const uint8_t *row = tc_sectors_solid(e->sectors, e->sector.sector);
+    if (!w) return;
+    if (row && e->solid_union) {
+        uint16_t found = tc_sectors_find(e->sectors, e->player->position), k;
+        const uint8_t *other = found != e->sector.sector ? tc_sectors_solid(e->sectors, found) : NULL;
+        if (other) {
+            for (k = 0; k < e->sectors->count; k++) e->solid_union[k] = row[k] | other[k];
+            row = e->solid_union;
+        }
+    }
+    w->solid = row;
+}
+
+static void track_sector(tc_ed_ai *e) {
+    tc_sector_follow(&e->sector, e->sectors, e->player->position, e->player->placed);
+    if (e->stepping) set_solid(e);
+}
 
 void tc_ed_ai_set_sectors(tc_ed_ai *e, const tc_sectors *s) {
+    tc_free(e->solid_union);
+    e->solid_union = s && s->count ? (uint8_t *)tc_calloc(s->count, 1) : NULL; /* NULL (out of memory): no safety net */
     e->sectors = s;
     e->sector.sector = TC_SECTOR_NONE;
     track_sector(e);
@@ -463,7 +495,7 @@ void tc_ed_ai_set_sectors(tc_ed_ai *e, const tc_sectors *s) {
 
 void tc_ed_ai_track_sector(tc_ed_ai *e) { track_sector(e); }
 
-void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera) {
+static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera) {
     tc_player *p = e->player;
     tc_ai_perso *a = &e->ai;
     const tc_ai_motion *m = &a->motion;
@@ -595,13 +627,16 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
             c.ground_normal = e->walk.ground_normal;
             c.wall_normal = e->walk.wall_normal;
             c.ground_grip = e->walk.ground_grip;
+            c.wall_grip = e->walk.wall_grip;
         } else {
             c.ground = p->grounded;
             c.wall = p->against_wall;
             c.ground_normal = p->ground_normal;
             c.wall_normal = p->wall_normal;
             c.ground_grip = p->ground_grip;
+            c.wall_grip = 1;
         }
+        c.jumped = false;
         c.ground_factor = 1; /* floor mat[0]: 1 on the ski slopes (not exported yet) */
         /* A speed vector written this frame (ProposalVecA / B: the jump button's (0, -70000, 10000), a spring star's
          * launch) has the mode 10 layout ([2] along the board, [3] up) and is taken once, as one exe frame of a mode 10
@@ -613,12 +648,16 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
             tc_vec3 f = tc_v3_add(tc_v3_scale(e->ski.y, q[2]), tc_v3_scale(tc_v3(q[7], q[8], q[9]), q[1]));
             if (q[3] != 0) {
                 c.ground = c.wall = false;
+                c.jumped = true;
                 f = tc_v3_add(f, tc_v3_scale(e->ski.z, q[3]));
             }
             e->ski.force = tc_v3_add(e->ski.force, tc_v3_scale(f, dt > 0 ? TC_MEC_FRAME / dt : 1));
         }
         if (m->mode_count == 0) tc_mec_ski_request(&e->ski, card, 0, m->proposal, &c, v);
         for (k = 0; k < m->mode_count; k++) tc_mec_ski_request(&e->ski, card, m->modes[k], m->proposal, &c, v);
+        /* FUN_004b00bf's jump clears dynamics +0xC4 and +0xC0: the forces see no contact, and the integrator's re-snap
+         * (last frame's report & 1) cannot pull the take-off back onto the snow */
+        if (c.jumped) e->walk.report = e->walk.report_prev = 0;
         v = tc_mec_ski_velocity(&e->ski, card, e->env, &c, p->world, p->position, v, dt);
         if (body) ski_move(e, body, v, dt);
         else ski_move_capsule(e, v, dt);
@@ -668,6 +707,18 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     }
     tc_player_drive(p, dt, target);
     e->contacts = player_contacts(p);
+}
+
+/* Ed collides with his sector's triangles and those of its collide list only (MEC_SweepPass_0043c830: the perso's
+ * sector, then each sector of its +0x58 list), so skies, foliage and waterfalls (sud0's chute02, before the Canyon
+ * cave) are not solid. Only while he moves: the camera and the other users of the world see everything. */
+void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera) {
+    tc_collision *w = e->player->world;
+    e->stepping = true;
+    set_solid(e);
+    step(e, dt, inputs, stick_x, stick_y, camera);
+    if (w) w->solid = NULL;
+    e->stepping = false;
 }
 
 uint16_t tc_ed_ai_anim(const tc_ed_ai *e) { return e->ai.model->states[e->ai.state].anim; }

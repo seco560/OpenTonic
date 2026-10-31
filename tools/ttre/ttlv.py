@@ -45,6 +45,10 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
           u16 n_sectors, u16 n_surfaces, n_surfaces x f32 z (water surface heights)
           n_sectors x { u16 name_len, name, u8 virtual, u8 no_child_lookup, u16 n_visible,
                         n_visible x { u16 sector, u16 draw } (drawn with it: its +0x4C list),
+                        u16 n_active, n_active x u16 sector (its +0x64 list: while it is the main character's sector,
+                                                     the characters of these sectors run their AI too),
+                        u16 n_collide, n_collide x u16 sector (its +0x58 list: a perso in it collides with these
+                                                     sectors' triangles too, and with no others but its own),
                         u16 n_envs, n_envs x { f32 gravity, f32 density, f32 drag, u32 water (0xFFFFFFFF: none) },
                         u16 n_surfaces, n_surfaces x u16 surface (in list order: env k lies below k of them),
                         u32 n_portals, n_portals x { u16 target sector (0xFFFF: a dead end), u16 0, f32 v[9],
@@ -56,6 +60,7 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
           per MESH mesh: u32 n_ranges, n_ranges x { u16 group (0xFFFF: none, always drawn), u16 0, u32 first_index,
               u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
           u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
+          u32 n_collision (= COLL's triangles), n x u16 sector (a static's sector, a perso's; 0xFFFF: always solid)
   LITE  the original's lighting (docs/DECOMP.md "Rendering and lighting"; reader core/src/tc_level.c):
           u16 n_lights, u16 0, n_lights x { u8 type (1 parallel, 2 spherical, 3 hotspot, 4 ambient), u8 on,
               u8 paint (+0xa6: spherical without N.L), u8 alpha_mode (+0xa7: 0 colour and alpha, 1 alpha only,
@@ -76,7 +81,9 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
                u16 n_anim, u16 0, n_anim x { i32 texture, f32 seconds } (animated texture loop; 0 = static) }
   geometry = { u32 n_vertices, u32 n_indices, n_vertices x vertex, n_indices x u32 }
   vertex (52 bytes; tc_vertex adds the LITE centre) = f32 pos[3], f32 normal[3], f32 uv[2], u32 rgba8 x 3 (the
-             baked sets: radiosity clamped to 0..255; alpha 255 = baked, SKY_ALPHA (128) = baked, a sky's, 0 = none,
+             baked sets: radiosity R stored per channel as (R + 256) / 2, clamped to 0..255 (R -256..254 in steps of
+             2: the exe keeps negative radiosity until its final clamp, so dark corners stay black; RADIOSITY_BIAS);
+             alpha 255 = baked, SKY_ALPHA (128) = baked, a sky's, 0 = none,
              as for all perso parts), f32 uv2[2] (lightmap atlas coordinates, top-left origin; -1 = none; lightmapped
              triangles get their own vertices)
   Sprites (TC_FLAG_BILLBOARD meshes): every vertex holds the centre, normal.xy = the corner offset; unlit.
@@ -107,6 +114,14 @@ ANIM_TIME_SCALE = 0.25
 # 0.25 makes each frame last 4x longer. Hypothesis: the same unexplained 4x as ANIM_TIME_SCALE.
 TEXTURE_TIME_SCALE = {'GEN_ARCH': 0.5}  # user-matched: 0.25 was too slow, 2x that looked natural
 LIGHT_SETS = 3  # baked radiosity sets per vertex (set 0 everywhere; 1-2 only in Land/sud0)
+
+
+def radiosity_byte(r):
+    """A raw radiosity channel (the exe's i16; / 256 = its share of the light) -> its stored byte, (r + 256) / 2: the
+    exe adds it signed and clamps only the final light (docs/DECOMP.md "Vertex colour"), so the negative values at cave
+    mouths (sud0 down to -300) make them black. Above ~220 the light is full anyway (diffuse 0.7, ambient 0.1); below
+    -256 black under all but the strongest lights. Decoded by TC_RADIOSITY (tc_level.h) and the shaders."""
+    return min(max(int(math.floor((r + 256) / 2 + 0.5)), 0), 255)
 SKY_ALPHA = 128  # the baked colours' alpha on a sky's vertices (level.mark_sky): neutral light in the old lighting
 
 
@@ -244,7 +259,7 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
     sky = getattr(key, 'sky', False)
     def packed(baked):
         a = SKY_ALPHA if sky else 255
-        return [struct.unpack('<I', bytes((*(min(max(x, 0), 255) for x in c), a)))[0] for c in baked] if baked else None
+        return [struct.unpack('<I', bytes((*(radiosity_byte(x) for x in c), a)))[0] for c in baked] if baked else None
     sets = [packed(level.baked_colors(key, i)) for i in range(LIGHT_SETS)]
     if sky and sets[0] is None:  # a sky without radiosity: none (0) under the formula, still flagged
         sets[0] = packed([(0, 0, 0)] * len(geo.vertices))
@@ -374,7 +389,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
 
     # Played as the skier (Totalski, skymap): the decals on the slope are not obstacles (LevelData.collision).
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
-    tris, floors = data.collision(floors=True, skip_decals=data.player() != fix_ed)
+    tris, floors, sect.collision_sectors = data.collision(floors=True, skip_decals=data.player() != fix_ed, sectors=True)
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     table = sorted({f for f in floors if f is not None})
     index = {f: i for i, f in enumerate(table)}
@@ -472,6 +487,7 @@ class Sections:
                 self.groups.append((members, True))
             self.surface_group.append(index[(members, True)])
         self.perso_sectors = []
+        self.collision_sectors = []
         self.reordered = 0
 
     def group_of(self, key):
@@ -507,6 +523,8 @@ class Sections:
             out.append(struct.pack('<H', len(name)) + name + struct.pack('<2BH', sec.virtual, sec.no_child_lookup,
                                                                           len(sec.visible)))
             out += [struct.pack('<2H', t, draw) for t, draw in sec.visible]
+            out.append(struct.pack(f'<H{len(sec.active)}H', len(sec.active), *sec.active))
+            out.append(struct.pack(f'<H{len(sec.collide)}H', len(sec.collide), *sec.collide))
             out.append(struct.pack('<H', len(sec.envs)))
             out += [struct.pack('<3fI', *e) if e else struct.pack('<3fI', 0, 0, 0, 0xFFFFFFFF) for e in sec.envs]
             out.append(struct.pack(f'<H{len(sec.surfaces)}H', len(sec.surfaces), *sec.surfaces))
@@ -528,6 +546,8 @@ class Sections:
             out += [struct.pack('<HHII', 0xFFFF if grp is None else grp, 0, first, count) for grp, first, count in ranges]
         out.append(struct.pack('<I', len(self.perso_sectors)))
         out += [struct.pack('<H', 0xFFFF if i is None else i) for i in self.perso_sectors]
+        out.append(struct.pack('<I', len(self.collision_sectors)))
+        out += [struct.pack('<H', 0xFFFF if i is None else i) for i in self.collision_sectors]
         return b''.join(out)
 
 

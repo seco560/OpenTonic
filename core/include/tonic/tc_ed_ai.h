@@ -49,11 +49,13 @@ typedef struct tc_ed_ai {
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;
     tc_mec_env env;
-    /* Ed's sector (tc_sector.h): where his water is looked up. Set the level's sectors with tc_ed_ai_set_sectors (NULL:
+    /* Ed's sector (tc_sector.h): where his water is looked up, which triangles he collides with (tc_sectors_solid). Set the level's sectors with tc_ed_ai_set_sectors (NULL:
      * none, no water); each step moves it on through the portals, and looks it up again after the player was placed
      * (tc_player.placed changed: init, respawn, teleport). */
     const tc_sectors *sectors;
     tc_sector_track sector;
+    bool stepping;               /* inside tc_ed_ai_step: his sector's solid row is set on the player's world */
+    uint8_t *solid_union;        /* his row and the row of the sector found below him, when they differ (set_solid) */
     /* Portals (.ttai PORT): the one in progress (-1 none), whether its fire condition has held, its next fire op and
      * when that may run; per portal whether the player has left its radius since it last captured him. */
     int portal;

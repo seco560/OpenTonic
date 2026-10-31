@@ -38,8 +38,9 @@ typedef enum tc_result {
 const char *tc_result_string(tc_result r);
 
 /* 64 bytes, tightly packed: exactly the GPU vertex layout the viewer uses.
- * color[i]: baked lighting set i, rgba8 little-endian (r in the low byte); alpha 255 = baked, TC_SKY_ALPHA = baked, a
- * sky's (neutral under the port's old lighting), 0 = none (persos: no radiosity).
+ * color[i]: baked lighting set i, rgba8 little-endian (r in the low byte), each channel the radiosity R as (R + 256) / 2
+ * (TC_RADIOSITY; signed, as the exe adds it); alpha 255 = baked, TC_SKY_ALPHA = baked, a sky's (neutral under the
+ * port's old lighting), 0 = none (persos: no radiosity).
  * uv2: lightmap atlas coordinates (texel space / atlas size, top-left origin); -1 = no lightmap.
  * centre: the bounding-sphere centre of the object the vertex comes from, in the mesh's space (.ttlv LITE; the vertex
  * itself without it): a spherical light reaches an object only when this point is within its far range. */
@@ -54,6 +55,8 @@ typedef struct tc_vertex {
 /* Platform backends upload tc_vertex arrays to the GPU as-is (64-byte stride). */
 _Static_assert(sizeof(tc_vertex) == 64, "tc_vertex must stay the packed 64-byte GPU vertex layout");
 #define TC_SKY_ALPHA 128u
+/* A stored colour channel (tc_vertex.color) -> the radiosity, the exe's i16 (-256 .. 254 here; / 256 = its light). */
+#define TC_RADIOSITY(byte) ((float)(byte) * 2.0f - 256.0f)
 
 typedef struct tc_frame { int32_t texture; float seconds; } tc_frame;
 

@@ -69,6 +69,43 @@ viewcheck runs it 60 s each on north (checked: distance, jumps, >= 5 kinds of ac
 >= 75 % of the time he moves; 89 %) and sud0, Land, LeCanyon, pyramide (printed; 84-95 %); `DEMO_TRACE=<level>`
 prints its timeline every 0.25 s.
 
+## Rendering pass (2026-10-31): black ice, z-fighting, the blended sort
+The user: cock01's see-through floors black; Agent XYZ's textures, the door left of Land's start and the one in Doc's
+house flicker; some transparent surfaces drawn wrongly over each other. Not yet seen on screen (needs the re-export the
+next build does by itself: the converter changed).
+- **Black ice = radiosity dropped by a count check.** 8 IPOs (cock01's 5 `GL_COKICESOUM01TXY` floors, bar's 1, marmite's
+  `MA_PFTRANSANUTY`, a pyramide door) have a radiosity count unlike their vertex count, which `level.radiosity` took
+  for "not a radiosity": no baked light, so the formula's acc 0 x ambient 0 = black. The exe copies colour k to vertex
+  k for the object's vertex count whatever the radiosity says (FUN_00446050 -> GLIGLOU_00445270 -> FUN_0044d690). The
+  ice and bar's have 4 colours fewer than vertices; the 4 are unused bounding-box corners. Marmite 13 for 8,
+  pyramide 80 for 79: the first ones used. Now exported that way: the ice is lit 0.86-1.0. cock01's pool (`O8TXY`,
+  a water surface, FUN_0045d990) stays black: surfaces are drawn with the accumulator zeroed, so as read that is the
+  original (ambient 0, no lights in cock01). Ask the user if Wine shows otherwise.
+- **Flicker = z-fighting of decals.** A headless scan for overlapping coplanar triangles (a scratch script) finds:
+  sud0 `JOURNAL.TGA` (Agent XYZ's newspaper) under his cut-out eyes `oeil01nz` / `oeil03nz` 0.015 in front (same
+  mesh); the `GEN_PORTDEFONC` door perso 0.01 off the `MR_CITE02TXY` wall (-194, -152); `PP_MAISON01TY` /
+  `BS_PLANCH01` / `BS_STAIRS01` pieces 0.0001-0.0004 apart around (21-25, 2-8); Land `RUST3` pieces 0.004 apart and
+  `HB_02TXY` / `HB_TOUR3TY` 0.014 under `RUST3` near (186-192, 9-14); Ed's pupils 0.006 over his eyes. The standard
+  depth mapping (near 0.05, float, LESS) fails at such gaps from about 100 units on (0.01) and close by (0.0004).
+- **Depth, read from GliDX6vr.dll:** D3DRENDERSTATE_ZFUNC = 7, GREATEREQUAL (0x10012fe1): depth grows towards the camera
+  and a tie goes to the later draw. **Ported as reversed depth** (TC_DEPTH_REVERSED, tc_viewer.c perspective: 1 at
+  near, 0 at far), cleared to 0, GREATER_OR_EQUAL in both builds, the shadow's depth bias now +2 / +2. With a float
+  buffer that spreads the precision evenly over distance (at 50 units ~1e-5), so the gaps above hold. The SDL build's
+  D24 fallback works the same, without the gain. Exactly coplanar pairs (gap 0: `GD00_BONNET` / `VISAGE`,
+  `MAN_LOTUS01` / `02`, `MR_MAISON01` / `03`) now let the later draw win, as in the original.
+- **Z writes:** only the font code turns them off (FON_004cdd10 -> GLIGLOU_0043e6b0 -> GLI_DRV_vDisableWriteToZBuffer),
+  so the original writes depth for blended surfaces too. The port still draws them without depth writes (left as it
+  was: the worst case is a wrong order, never a missing surface). Difference kept, open.
+- **The blended sort, read:** the driver defers some triangles to a viewing list (FUN_100011d0, two lists of 32768
+  buckets), keyed by the farthest vertex (the smallest 1/w of the three, its top 16 bits), sent bucket by bucket far
+  to near at the end (GLI_DRV_xSendListToViewport): a per-triangle back-to-front sort. Deferred when the driver
+  state's +0x24 has bit 0x8000; **who sets that bit is not found** (not the exe's GLI, not the driver). **Ported in
+  part:** sort_blended now keys each blended draw by the view depth of its bounds' farthest corner (was the centre's
+  distance), so a small pane over a big surface's near half draws after it (tc_viewer.mesh_extent; viewcheck checks
+  the order corner by corner). Still per draw / per 16-unit piece, not per triangle. *Perf shortcut:* the 16-bit
+  bucket sort is a budget trick; a modern version would sort per triangle (a per-frame index buffer) or use
+  order-independent transparency.
+
 ## Lighting: the original's formula, sector lights and fog (2026-10-30; supersedes the guesses below)
 Read from the exe (docs/DECOMP.md "Rendering and lighting"), ported to both builds; **L** switches back to the port's
 old look for comparing (title: "old lighting").
@@ -99,6 +136,15 @@ old look for comparing (title: "old lighting").
   made it parallel, lighting everything). Now four uints, with a static_assert. The SDL build (std140) was right. The CPU
   model of the shader (core data, demo through sct34) never showed a colour cast: the effect lights' instant switch
   above stays (the original's way) but was not the cause.
+- **Signed radiosity (2026-10-31; the user: sud0's cave mouths, the way to Doc's house and the mine entrance, were
+  black before this formula and grey after).** The exe seeds the accumulator with the *signed* i16 / 256 and clamps
+  only the final light (DECOMP.md "Vertex colour"); the export clamped radiosity to 0..255 first, so the mouths'
+  negative vertices (sud0 sctsud22 / 19 / 02 / 07, down to -300; -2685 in set 1) came out at 2 x ambient (0.2)
+  instead of 0. Now each channel is stored as (R + 256) / 2 (ttlv.radiosity_byte, TC_RADIOSITY; R -256..254 in steps
+  of 2, the vertex layout unchanged): both shaders decode it (the old look L: clamp(R) / 128 as before), as do
+  tc_viewer's sky measure and sectorcheck. Per level, baked vertices whose formula light changes (always darker, the
+  negative ones): sud0 5 %, LeCanyon 6 %, Totalski 10 %, skymap 10 %, most levels 0-2 %; the step costs at most 0.005
+  against the exact formula. Not checked on screen; the GLSL is not compiled locally (no glslangValidator).
 - **Data:** .ttlv LITE (ttlv.py): the lights, per sector its lights and per env its fog, per mesh its material's
   ambient / diffuse and its vertices' object centres (tc_vertex is 64 bytes now: + centre). MESH and the rest keep
   their layout.
@@ -224,6 +270,45 @@ old look for comparing (title: "old lighting").
 - **Avoid (clean room):** the 2022 Rayman 2 DS source leak.
 
 ## Next session: start here
+**2026-11-01: the camera first (user).** Analyse the game's own camera thoroughly, then write a list of improvements
+and agree it with the user **before** implementing. Do not just copy it: the user calls the original camera one of the
+game's weak points (its fixed shots hid imperfections), and wants free-cam support built into it, not a separate mode
+to switch to. What is known is under "The camera, first look" below.
+1. **Inventory the camera perso** (fix perso StdCam: 35 behaviours, 25 reflexes, card type 3). Dump its scripts the way
+   `level-ai` dumps Ed's, and name its primitives (PROC 156-199, OP 24, FUNC 58 / 76 / 81) from the typed decompiles.
+   For each behaviour, write down what it does: follow, look-at, fixed shots, water, flight, skiing, cutscenes.
+2. **Map the interface with Ed.** Which camera dsgvars Ed reads and writes (dsg20, 39, 44, 89-93), the messages
+   between them, the camera ops in the portals / arches (TC_AI_POP_CAMERA), and whether `aicheck`'s skipped
+   primitives (3_164 x 214, 4_290 x 87, ...) are camera calls.
+3. **First person in stick mode (E):** how Ed's scripts ask the camera for it, and how the aim works there. Ed
+   can shoot from it. This feeds the shooting work after the camera.
+4. **Read the type 3 mechanics** with types: DNM_IntegrateType3_004b2900 -> FUN_004b3d33 / FUN_004b533c, and
+   DNM_RequestType3_004b3810. That covers target, distance, angles, collision with the level, and smoothing.
+5. **Compare with the port's camera** (tc_viewer.c update_play: an orbit round Ed's chest, a raycast pull-in, mouse
+   and stick look).
+6. **Deliverable: docs/CAMERA.md.** How the original behaves, its weak points, and a list of improvements for the
+   user to choose from. Candidates to weigh, none decided yet:
+   - free look always available: the player's input takes over, and the scripted camera resumes after a delay or
+     on an event;
+   - scripted shots kept as optional "director" hints;
+   - collision that slides instead of popping, and never seeing through walls;
+   - smoothing, field of view, invert and sensitivity, the same behaviour on mouse and pad.
+
+   Constraints: the camera logic goes in the core only (a camera module beside tc_viewer), the frontends keep taking
+   just the matrix, and it must fit the Vita's budget. Remember the camera's sector already picks the frame's lights
+   and fog.
+
+**Then, in order (user, 2026-11-01):**
+- **Proper shooting:** stick mode and first person, shooting while walking and flying. Projectiles are spawned persos,
+  which the port does not run yet.
+- **Further refinements to Ed:**
+  - whether the stick is in his mouth by default (the user recalls it is summoned: check the exe);
+  - LeCanyon: when Ed spawns while falling, Jump doesn't deploy flight. Check the level's scripts and the exe; the
+    user guesses a script forces flying mode.
+- **Bring in decompiled game code subsystem by subsystem**, not piecemeal, discussing each one with the user first.
+
+Later, not next: Tonic Tooling (docs/TOOLING.md).
+
 **2026-10-28: see docs/DECOMP.md.** It has the coverage ledger, where the port is not the exe, and the collision
 library, read and ported (tc_mec_sphere_tri = FUN_00465b60, proved under Unicorn by tools/exe/oracle.py). The level
 files are chunk containers now (docs/BUILD.md "Formats"). The text below is older.
@@ -1328,6 +1413,55 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
 - **Not done:** per-sector fog and lights (the visual environment, +0x28 / +0x34; FUN_00451e80 switches the fog per
   sector), the characters' lists for persos that move (the port's level persos don't), the +0x58 / +0x64 lists, the
   sectors' texture channels (FUN_00451cd0: textures are loaded per sector at init), cock01's water level changing.
+  (+0x58 and +0x64: done 2026-10-31, below.)
+
+### The other two sector lists: collision (+0x58) and activity (+0x64) (2026-10-31)
+User: in skymap the skier dies on the "other" branch where he should ride on; sud0's falls in front of the Canyon
+cave stop Ed like a wall, where he should walk through them. Both are the sectors' other lists, which the port ignored.
+- **Collision, +0x58** ({ptr sector, ptr next}). MEC_SweepZones_0043bff0 hands MEC_SweepPass_0043c830 the perso's own
+  sector (SectorInfo +4); it sweeps the perso's zones against that sector's static tree (FUN_0043c410), then the tree
+  of each sector on its +0x58 list (FUN_00451820), and against the characters of those sectors (FUN_0043c640). No
+  other geometry is solid. The sectors on no list: the skies, foliage (sud0 sctfeuillage*, sctfeuille*), sud0's
+  waterfalls **chute01 / chute02** (chute02 = the falls at y 40..44 before the Canyon cave, virtual, listed by none),
+  Land's sctsol01..04, the north's ciel / toit sectors. Portal neighbours are nearly always on the list (sud0 85 of 92,
+  skymap 82 / 83, Totalski 82 / 82, Land 377 / 382, north 443 / 444), so the sector change one frame late (as the exe)
+  doesn't lose a floor.
+- **Activity, +0x64.** Each frame the main loop (0x428b1f, code Ghidra left unanalysed) calls GAM_00428490 with the
+  main character's sector: it marks the characters of that sector (+0x1C) and, through GAM_00428400, those of each
+  sector on its +0x64 list (std_game +0x19 := 1, if +0x18 "active" is set). Only marked persos run their AI and
+  mechanics (GAM_00428550 / GAM_004287b0 -> GAM_00428070, which clears the mark). The main character is DAT_008c1720's
+  first node (set at level load; KW_5 reads it too, so on the ski levels it must be the skier: the trees' PROC_237(KW_5,
+  B9) crashes him).
+- **skymap's death:** the lava hole JET_Trou5LaveBouillonnante (SYM_GenTrou, in sctlavabox; COND_13 on its ZDD box,
+  180 x 160 x 20 around (3132, -1794, -917), rotated 43 deg) has a box reaching past the ends of sctTunnel20 and 21 and
+  ~5 units into sctTunnel22 / 23. 22's and 23's +0x64 lists leave sctlavabox out, so there the hole sleeps. Rides from
+  tunnels 19-21 with random steering (400, scratch harness): before, 69 caught in sctTunnel23 (the safe branch's next
+  tunnel); now none in 22 or 23. Still caught, as the data says: ~100 at the end of sctTunnel20 (most at (3155, -1837,
+  -913), on the floor, 0.6 under the box's top) and ~10 at the end of sctTunnel21, where sctlavabox is on the list.
+  The box test, the zone's activation (state 0: zone 0), the inverse matrix (FUN_0047b530, a transpose), the activation
+  radius (dsg3 = 100) and the hole's flags were all checked against the exe. **The real answer (same day, the user:
+  still dying on the right-hand branch, tunnel 20 -> 22):** the lava hole never tests its zone at all. A perso starts
+  in the behaviour its intelligence points at (mind +4 -> +8; the model's behaviours are a 12-byte array): skymap's
+  Trou1 / 3 / 4 start in B0 (PROC_18, COND_13: the zone), the acid holes NBD_TrouAcid1 / 2 in B1 (the respawn point
+  once the skier's dsg3 is 28: killed by a deadly environment, Report234, not ported), the lava hole and
+  NBD_BordelDeTrou in the **empty B2**, and no script anywhere references them. ai.ski_portals exported every
+  SYM_GenTrou as if in B0; now only a hole whose starting behaviour tests COND_13 (AI.start_behaviour): skymap 3 of
+  7, Totalski all 11. The same 400 rides: no capture on either branch (tunnel 22 now reached by 136, was 38).
+- **Port:** .ttlv SECT per sector `active` (+0x64) and `collide` (+0x58) lists, per collision triangle its sector (a
+  static's, a perso's snapshot sector); .ttai PORT per portal its perso's sector. Core: tc_sectors_solid (a row per
+  sector: itself and its collide list), tc_collision_set_sectors / tc_collision.solid (queries skip triangles of other
+  sectors), set by tc_ed_ai_step for the length of Ed's step (the camera and the free-fly controller still see all);
+  tc_sectors_active gates run_portals (holes, arches, slope props). Not gated yet: the proximity triggers (TRIG,
+  Totalski's trees: no perso index in the record) and the light persos (LAIS).
+- **Safety net (the port's, not the exe's):** the row of the sector the floor lookup finds below Ed counts too when it
+  differs from his tracked one. Without it Land dropped him through a floor: walking off sctsectordebutA's ledge under
+  the portal's lower edge (the known tracking edge case above) into sctsectorsecretroom01, whose floor is not on
+  debutA's list. Checked (scratch harness: 300 random floor drops per level, 6 s of running with random turns, falls
+  out of the level with the rule / everything solid): sud0 0 / 0, Land 0 / 0 (1 without the net), LeCanyon 1 / 1,
+  cavedoc 1 / 1, marmite 0 / 0, pyramide 3 / 2 (the extra one starts on geometry in no sector), north 9 / 0, all nine
+  dropped onto **sctmortel**, the death plane at z -278.4 under the whole level, which no sector Ed stands in lists.
+  sud0's falls: from the cave floor behind them (32, 47, 1.4) Ed runs out through them into the pool (before: stopped
+  at y 41, slid down the face). All headless checks pass; skicheck unchanged (Totalski 2 / 600, skymap 6 / 588).
 
 ### ZDx zones, read with types (2026-10-24, typing step 3; COND_13 for portals ported, see the last bullet)
 - **List numbering** (GAM_ZoneList_00431520): 0 = ZDD (collide set +0), 1 = ZDM (+8), 2 = ZDE (+4), 3 = ZDR (+0xC);
@@ -1432,7 +1566,7 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   ("youpi" = the YIPEEE) is in Bnk_0 and Bnk_66. **Fix:** resolve T34 nodes and animation sound events through the
   level's .snd by the reference's address, extract the referenced level banks (sfx.py), number their events after
   Bnk_0's in events.tsv; check against the three cues above. Applies to every level (all have a .snd).
-- **The wall stumble is not found statically.** Scripts: the skier's crash B9 (state 274, a hit point, then riding) has
+- **The wall stumble is not found statically** (retracted 2026-10-31: the user misremembered it; see the second pass below). Scripts: the skier's crash B9 (state 274, a hit point, then riding) has
   no wall / speed-loss trigger (only obstacle zones, trees via PROC_237, dsg25 written by NBD_PRESSZTOSTART); the ski
   mechanics change no state; card +0x18 / +0x1C (6000 / 1000 on the riding card) are read by none of the decoded ski
   code. **Next step: observe the original.** GAM_PlayAnim_00415c00 prints every state change with OutputDebugStringA
@@ -1461,6 +1595,37 @@ Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay()
   the last 1.5 s): Totalski wall traps 90 -> 15 of 798 rides, skymap 2 -> 0 of 53; the scripted Totalski wander now
   travels 1001 instead of 702. Left: closed pockets (e.g. a 4 x 5 u walled room at (121, -315, 123) beside the start, all
   static geometry), stops on the flat finish (not traps). Next pass on the sliding mechanics: start from here.
+- **Second pass, read from the exe (2026-10-31; user: the skier still sticks to walls and behaves weirdly).** The
+  sphere path itself (MEC_004bedd6 -> MEC_0043d480 -> the same FUN_00464c80 / FUN_00465b60 sphere-triangle test as Ed's;
+  responses MEC_004bd297 / bc8cd / bcb80 / bd0b8) matched the port. The forces, the request and the speed cap did not:
+  - **Wall friction (the sticking):** DNM_SkiForces_004c4ecd takes the ground record when the report has 1|2, else the
+    **wall** record, and brakes by (own grip x obstacle grip)^2 of that record. The port used grip 1 for any wall, so
+    each frame against a wall dropped the whole velocity. Totalski's walls are 90 % snow (1,547 of 1,714 wall-class
+    faces grip 0; skymap 579 of 931), where the exe brakes nothing. tc_mec_walk now keeps wall_grip (record +0x148).
+    A grip 1 face (no mechanics material) still stops the skier dead, ground or wall, as in the exe.
+  - **Steep faces, FUN_004c1686(v, n, k):** a rising z becomes -k, then only the part *into* the face goes (a part
+    away from it stays). Called by the forces (k 1000, normal z < cos 70), the request's push and edge grip (k 0,
+    < 0.5) and the speed cap DNM_SkiCapSpeed_004c3af0 (k 15, < cos 80): against a face steeper than 80 deg the skier
+    cannot climb, he slides down it at 15 u/s. The three limits are doubles (DAT_004d30a0, 004d2f30, 004d3060; read as
+    floats they look like garbage or 0). The port removed the whole normal part and, on the ground only, projected the
+    velocity (from the first sliding session, not the exe): replaced.
+  - **The jump clears the report** (FUN_004b00bf mode 10 with [3] != 0: dynamics +0xC4 and +0xC0 = 0), so the
+    integrator's re-snap (report_prev & 1) cannot pull the take-off back onto the snow. The port cleared only its local
+    copy. Same for the ProposalVecA launch (springs, the jump button).
+  - **The board's probe** (FUN_00484130 -> FUN_00483dc0 -> FUN_004687a0): a ray from the origin along -z, unbounded,
+    faces either way round, the nearest, counted within card +0x44. The port started it 0.4 higher.
+  - Read and already as the port: edge grip -(planar v . x) x edge x factor along x, the weathervane (planar v x y) x
+    card +0x28 (FUN_004c9c90's velocity at the board's front is computed and unused), steering x air factor twice in
+    the air, the wall's mat[0] as the steering factor when there is no ground (1 on both levels).
+  - **Measured** with `make skicheck` (core/tests/skicheck.c, the trap finder kept this time: 600 random snow drops,
+    random headings, 5 s of random steering; a ride that reached 5 u/s and then covered under 2 units in its last 1.5 s
+    has stopped): Totalski 45 -> 2 of 600 (7.5 -> 0.3 %), skymap 13 -> 6 of 594 (2.2 -> 1.0 %); mean speed 19 -> 24 u/s;
+    wall-contact frames 11.5 -> 6.8 %. The 60 s wander: Totalski 728 -> 1177 units, skymap 1126 -> 1898. Left, as the
+    exe's rules give them: grip 1 walls (skymap's around (3044, -1267, -537)), a 40 deg crease where an overhang meets
+    the slope (Totalski (27, -491, -608): each face's 0.01 push-out lands the target in the other, all 6 passes fail),
+    gentle dips ending at a wall, the walled room beside the start.
+  - **The wall stumble is retracted (user, 2026-10-31):** a misremembering of the original. That matches the code: no
+    script or mechanic reacts to a wall that way. Nothing to trace.
 - **Footsteps (same day, user):** in the original Ed's own step (event 49) plays with the floor's step sound on top, so
   footsteps() now adds TC_AI_STEP_SOUND + v next to event 49 instead of replacing it.
 - Also found: FUNC 104 Report234 = dynamics +0x2E4 = the environment's +0x2C: 255 = a deadly environment (Land's

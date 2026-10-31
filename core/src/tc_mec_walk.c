@@ -19,7 +19,7 @@ void tc_mec_walk_reset(tc_mec_walk *w) {
     memset(w, 0, sizeof(*w));
     w->ground_normal = UP;
     w->wall_normal = tc_v3(1, 0, 0);
-    w->ground_grip = 1;
+    w->ground_grip = w->wall_grip = 1;
     w->ground_tri = w->wall_tri = UINT32_MAX;
 }
 
@@ -446,6 +446,7 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
         }
     } else {
         x->w->wall_normal = h->normal;
+        x->w->wall_grip = hit_grip(h);
         x->w->wall_tri = h->tri ? h->tri->source : UINT32_MAX;
         x->w->wall_own = h->own_flags;
     }

@@ -30,7 +30,10 @@ typedef struct tc_camera {
 void tc_camera_init(tc_camera *c);                /* at the origin, FOV 80 degrees, near 0.05, far 2000 */
 tc_vec3 tc_camera_forward(const tc_camera *c);    /* (sin yaw cos pitch, cos yaw cos pitch, sin pitch) */
 tc_vec3 tc_camera_right(const tc_camera *c);      /* (cos yaw, -sin yaw, 0) */
-/* Right-handed view, perspective with 0..1 clip-space depth (Metal, SDL_GPU). Column-major. */
+/* Right-handed view, perspective with 0..1 clip-space depth (Metal, SDL_GPU), reversed: 1 at near, 0 at far. Column-major.
+ * Frontends clear depth to 0 and test GREATER_OR_EQUAL (the original's D3D ZFUNC), and pull decals towards the camera
+ * with a positive depth bias. */
+#define TC_DEPTH_REVERSED 1
 tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);
 
 /* What the frontend's key bindings map to. Defaults: WASD move, R/F up/down, arrow keys look, Shift fast (in play
@@ -269,14 +272,14 @@ typedef struct tc_viewer {
     uint32_t draw_cap, blended_cap;
     /* Transparent statics drawn as pieces (TC_VIEW_PIECE_SIZE cells), so they sort back to front: the pieces follow
      * Ed's parts in the mesh table, piece_origin[k] = the static mesh piece k came from, split[i] = 1 when static
-     * mesh i is drawn as its pieces. mesh_centre: per mesh, the centre of its vertex bounds (mesh space), the
-     * point blended draws sort by. */
+     * mesh i is drawn as its pieces. mesh_centre / mesh_extent: per transparent mesh, the centre and half size of its
+     * vertex bounds (mesh space): blended draws sort by the box's farthest view depth (sort_blended). */
     tc_mesh *pieces;
     uint32_t *piece_origin;
     uint8_t *split;
-    tc_vec3 *mesh_centre;
+    tc_vec3 *mesh_centre, *mesh_extent;
     uint32_t piece_first, piece_count, piece_cap;
-    float *blended_depth;     /* this frame's blended draws: squared distance of their centre from the eye */
+    float *blended_depth;     /* this frame's blended draws: view depth of their bounds' farthest corner */
     uint32_t blended_depth_cap;
 } tc_viewer;
 

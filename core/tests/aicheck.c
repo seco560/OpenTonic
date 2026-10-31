@@ -227,6 +227,7 @@ int main(int argc, char **argv) {
            path, model.node_count, model.script_count, model.normal_count, model.reflex_count, model.dsg.count,
            model.state_count, model.button_count, model.other_count);
     if (tc_collision_init(&world, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) return 1;
+    tc_collision_set_sectors(&world, level.sectors.collision_sector, level.sectors.collision_count, level.sectors.count);
     start = level.ed.start;
     start_heading = NAN;
     if (getenv("AI_START")) { /* x,y,z[,heading in degrees]: start there instead (e.g. in the water) */

@@ -100,7 +100,8 @@ pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
   (landing, wall runs without tunnelling, jump).
 - `make -C core mechcheck`: the game's ground/air mechanics on hand-made geometry (no game data needed).
 - `make -C core aicheck` (Ed's AI on bar; `AI_SCRIPT=fly|ski|wander`, see tests/aicheck.c) and
-  `make -C core crashcheck` (Totalski: the skier crashes into a tree). `AI_PATH=<file>` logs every frame's position.
+  `make -C core crashcheck` (Totalski: the skier crashes into a tree), `make -C core skicheck` (Totalski, skymap: random
+  rides; how many stop against walls). `AI_PATH=<file>` logs every frame's position.
 - Oracle tests (the exe's own functions under an emulator against the core's ports; needs the unpacked exe, docs/EXE.md):
   `python3 -m venv tools/bin/oracle-venv && tools/bin/oracle-venv/bin/pip install unicorn` once, then
   `tools/bin/oracle-venv/bin/python -m tools.exe.oracle` (docs/DECOMP.md).

@@ -64,14 +64,21 @@ static void frame(tc_viewer *v, float dt) {
             bad = 1;
         if (d[i].underwater && !(d[i].water_z == d[i].water_z)) bad = 1; /* NaN plane */
     }
+    /* blended: back to front by the farthest corner of their bounds along the view (sort_blended), checked here
+     * corner by corner */
     for (i = opaque, prev = INFINITY; i < count && !bad; i++) {
-        tc_vec3 c = v->mesh_centre[d[i].mesh];
+        tc_vec3 c = v->mesh_centre[d[i].mesh], e = v->mesh_extent[d[i].mesh], fw = tc_camera_forward(&v->camera);
         const float *m = d[i].model.m;
-        tc_vec3 w = tc_v3(m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13],
-                          m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14]);
-        float dist = tc_v3_length_sq(tc_v3_sub(w, v->camera.position));
-        if (dist > prev) bad = 1;
-        prev = dist;
+        float far_depth = -INFINITY;
+        int k;
+        for (k = 0; k < 8; k++) {
+            tc_vec3 q = tc_v3(c.x + (k & 1 ? e.x : -e.x), c.y + (k & 2 ? e.y : -e.y), c.z + (k & 4 ? e.z : -e.z));
+            tc_vec3 w = tc_v3(m[0] * q.x + m[4] * q.y + m[8] * q.z + m[12], m[1] * q.x + m[5] * q.y + m[9] * q.z + m[13],
+                              m[2] * q.x + m[6] * q.y + m[10] * q.z + m[14]);
+            far_depth = fmaxf(far_depth, tc_v3_dot(tc_v3_sub(w, v->camera.position), fw));
+        }
+        if (far_depth > prev + 1e-3f * (1 + fabsf(prev))) bad = 1;
+        prev = far_depth;
     }
     if (!(f.view_projection.m[0] == f.view_projection.m[0])) bad = 1; /* NaN */
     bad_frames += bad;

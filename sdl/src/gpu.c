@@ -101,7 +101,8 @@ static SDL_GPUGraphicsPipeline *level_pipeline(gpu *g, SDL_GPUShader *vs, SDL_GP
     info.multisample_state.enable_alpha_to_coverage = coverage && g->msaa > 1;
     info.depth_stencil_state.enable_depth_test = true;
     info.depth_stencil_state.enable_depth_write = depth_write;
-    info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
+    /* reversed depth (TC_DEPTH_REVERSED: 1 at near, cleared to 0), greater-or-equal as the original's D3D ZFUNC */
+    info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
     info.target_info.color_target_descriptions = &color;
     info.target_info.num_color_targets = 1;
     info.target_info.depth_stencil_format = g->depth_format;
@@ -164,12 +165,12 @@ static SDL_GPUGraphicsPipeline *shadow_pipeline(gpu *g) {
     info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
     info.rasterizer_state.enable_depth_clip = true;
     info.rasterizer_state.enable_depth_bias = true;
-    info.rasterizer_state.depth_bias_constant_factor = -2;
-    info.rasterizer_state.depth_bias_slope_factor = -2;
+    info.rasterizer_state.depth_bias_constant_factor = 2; /* towards the camera: + with reversed depth */
+    info.rasterizer_state.depth_bias_slope_factor = 2;
     info.multisample_state.sample_count = sample_count(g->msaa);
     info.depth_stencil_state.enable_depth_test = true;
     info.depth_stencil_state.enable_depth_write = false;
-    info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
     info.target_info.color_target_descriptions = &color;
     info.target_info.num_color_targets = 1;
     info.target_info.depth_stencil_format = g->depth_format;
@@ -628,7 +629,7 @@ SDL_GPURenderPass *gpu_pass_3d(gpu *g, gpu_frame *f, SDL_FColor clear) {
     SDL_GPUDepthStencilTargetInfo depth;
     SDL_zero(depth);
     depth.texture = g->depth;
-    depth.clear_depth = 1;
+    depth.clear_depth = 0; /* reversed: 0 = farthest */
     depth.load_op = SDL_GPU_LOADOP_CLEAR;
     depth.store_op = SDL_GPU_STOREOP_DONT_CARE;
     depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;

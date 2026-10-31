@@ -60,6 +60,7 @@ int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t verte
         t = &col->tris[n++];
         t->a = a; t->b = b; t->c = c;
         t->source = i / 3;
+        t->sector = 0xFFFF;
         t->normal = tc_v3_div(nrm, len);
         t->lo = tc_v3_min(a, tc_v3_min(b, c));
         t->hi = tc_v3_max(a, tc_v3_max(b, c));
@@ -114,6 +115,14 @@ oom:
     return -1;
 }
 
+void tc_collision_set_sectors(tc_collision *col, const uint16_t *sector, uint32_t count, uint32_t sector_count) {
+    uint32_t i;
+    col->solid = NULL;
+    col->solid_count = sector ? sector_count : 0;
+    for (i = 0; i < col->tri_count; i++)
+        col->tris[i].sector = sector && col->tris[i].source < count ? sector[col->tris[i].source] : 0xFFFF;
+}
+
 typedef struct query_ctx { tc_collision *col; tc_vec3 lo, hi; tc_tri_fn fn; void *user; } query_ctx;
 
 static void query_cell(int32_t c, void *user) {
@@ -126,6 +135,7 @@ static void query_cell(int32_t c, void *user) {
         if (col->stamp[i] == col->query) continue;
         col->stamp[i] = col->query;
         t = &col->tris[i];
+        if (col->solid && t->sector < col->solid_count && !col->solid[t->sector]) continue;
         if (t->lo.x <= q->hi.x && t->lo.y <= q->hi.y && t->lo.z <= q->hi.z &&
             t->hi.x >= q->lo.x && t->hi.y >= q->lo.y && t->hi.z >= q->lo.z)
             q->fn(t, q->user);

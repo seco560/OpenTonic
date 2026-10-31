@@ -156,13 +156,14 @@ import TonicCore
         vd.layouts[0].stride = MemoryLayout<tc_vertex>.stride  // 64: pos3 + normal3 + uv floats, 3 x rgba8 baked sets, uv2, centre3
 
 
+        // Reversed depth (TC_DEPTH_REVERSED: 1 at near, cleared to 0), tested greater-or-equal as the original's driver
+        // (D3D ZFUNC GREATEREQUAL): a tie goes to the later draw, and decals 0.01 off a wall no longer z-fight.
         let ds = MTLDepthStencilDescriptor()
-        ds.depthCompareFunction = .less
+        ds.depthCompareFunction = .greaterEqual
         ds.isDepthWriteEnabled = true
         depthState = device.makeDepthStencilState(descriptor: ds)!
         ds.isDepthWriteEnabled = false
         blendedDepthState = device.makeDepthStencilState(descriptor: ds)!
-        ds.depthCompareFunction = .lessEqual
         shadowDepthState = device.makeDepthStencilState(descriptor: ds)!
         ds.depthCompareFunction = .always
         overlayDepthState = device.makeDepthStencilState(descriptor: ds)!
@@ -432,7 +433,7 @@ import TonicCore
         }
         pass.depthAttachment.texture = depth
         pass.depthAttachment.loadAction = .clear
-        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.clearDepth = 0  // reversed: 0 = farthest
         pass.depthAttachment.storeAction = .dontCare
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         var uniforms = Uniforms(viewProjection: float4x4(f.view_projection), lightDirection: SIMD3(f.light_direction),
@@ -524,7 +525,7 @@ import TonicCore
                              fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, s.alpha), eye: SIMD4(SIMD3(f.eye), 0))
         enc.setRenderPipelineState(shadowPipeline)
         enc.setDepthStencilState(shadowDepthState)
-        enc.setDepthBias(-2, slopeScale: -2, clamp: 0)  // pulled towards the camera: no fighting the ground it lies on
+        enc.setDepthBias(2, slopeScale: 2, clamp: 0)  // pulled towards the camera (reversed depth: +): no fighting the ground
         enc.setVertexBytes(&p, length: MemoryLayout<ShadowParams>.stride, index: 3)
         enc.setFragmentBytes(&p, length: MemoryLayout<ShadowParams>.stride, index: 3)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)

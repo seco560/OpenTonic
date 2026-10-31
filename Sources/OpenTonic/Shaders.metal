@@ -80,7 +80,8 @@ static float4 baked(VertexIn in, uint s) {
 // depth below the plane / 7, full from 7 deep (no level sets its own: visual environment +0 is null in all of them).
 static float3 game_light(float4 bakedColor, float3 world, float3 n, float3 centre, constant DrawParams &d,
                          constant Uniforms &u, constant Lights &lights) {
-    float3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (255.0 / 256.0) : float3(0.0);
+    // stored (R + 256) / 2 per channel (tc_level.h TC_RADIOSITY): R / 256, signed, as the exe adds it
+    float3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (510.0 / 256.0) - 1.0 : float3(0.0);
     if (d.water.y > 0.5) acc += float3(-0.6, -0.3, -0.4) * saturate((d.water.x - world.z) / 7.0);
     for (uint i = 0; i < min(lights.count, 48u); i++) {
         Light l = lights.light[i];
@@ -154,7 +155,7 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
 static float3 shade(VertexOut in, constant Uniforms &u) {
     if (u.lighting == 0) return in.color.rgb;
     if (in.color.a > 0.25 && in.color.a < 0.75) return float3(1.0);  // a sky (TC_SKY_ALPHA)
-    if (in.color.a > 0.25) return in.color.rgb * u.bakedScale;
+    if (in.color.a > 0.25) return clamp(in.color.rgb * 510.0 - 256.0, float3(0.0), float3(255.0)) / 255.0 * u.bakedScale;  // R clamped
     float3 n = in.normal;
     float l = length(n) > 0.0 ? saturate(dot(normalize(n), u.lightDirection)) : 1.0;
     return float3(u.ambient + (1.0 - u.ambient) * l);

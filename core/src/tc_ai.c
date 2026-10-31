@@ -50,7 +50,7 @@ static void rd_portals(reader *r, tc_ai_model *m) {
     uint32_t i, k;
     m->portal_count = rd_u16(r);
     (void)rd_u16(r);
-    m->portals = (tc_ai_portal *)rd_array(r, m->portal_count, sizeof(tc_ai_portal), 64);
+    m->portals = (tc_ai_portal *)rd_array(r, m->portal_count, sizeof(tc_ai_portal), 68);
     for (i = 0; m->portals && i < m->portal_count; i++) {
         tc_ai_portal *p = &m->portals[i];
         uint32_t n;
@@ -63,6 +63,8 @@ static void rd_portals(reader *r, tc_ai_model *m) {
         p->fire_dsg = rd_u16(r);
         (void)rd_u16(r);
         p->fire_value = rd_i32(r);
+        p->sector = rd_u16(r);
+        (void)rd_u16(r);
         p->capture_count = rd_u16(r);
         p->fire_count = rd_u16(r);
         n = (uint32_t)p->capture_count + p->fire_count;

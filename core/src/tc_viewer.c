@@ -35,12 +35,17 @@ static tc_mat4 look_at(tc_vec3 eye, tc_vec3 center, tc_vec3 up) {
     return r;
 }
 
+/* Reversed depth (TC_DEPTH_REVERSED): 1 at near, 0 at far, tested GREATER_OR_EQUAL as the original's driver does
+ * (GliDX6vr.dll sets D3DRENDERSTATE_ZFUNC 7, GREATEREQUAL, at 0x10012fe1: depth grows towards the camera, ties go to the
+ * later draw). With a float depth buffer that also spreads the precision evenly over distance: the standard mapping
+ * (near 0.05, LESS) z-fought decals 0.01 off their wall from ~100 units (Agent XYZ's eyes on his newspaper, sud0's
+ * doors; docs/NOTES.md "Depth"). Clip space z 0..1 (Metal, SDL_GPU). */
 static tc_mat4 perspective(float fov_y, float aspect, float near_z, float far_z) {
-    float y = 1 / tanf(fov_y / 2), x = y / aspect, z = far_z / (near_z - far_z);
+    float y = 1 / tanf(fov_y / 2), x = y / aspect, k = near_z / (far_z - near_z);
     tc_mat4 r = {{x, 0, 0, 0,
                   0, y, 0, 0,
-                  0, 0, z, -1,
-                  0, 0, z * near_z, 0}};
+                  0, 0, k, -1,
+                  0, 0, k * far_z, 0}};
     return r;
 }
 
@@ -93,6 +98,7 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         tc_free(p);
         return NULL;
     }
+    tc_collision_set_sectors(&p->world, l->sectors.collision_sector, l->sectors.collision_count, l->sectors.count);
     start = l->ed.start;
     tc_player_init(&p->player, &p->world, tc_v3(start.m[3], start.m[7], start.m[11]), tc_heading_of(&start));
     tc_player_apply_floors(&p->player);
@@ -574,12 +580,13 @@ static bool split_transparent(tc_viewer *v, uint32_t **piece_ranges) {
     return ok;
 }
 
-/* The centre of each transparent mesh's vertex bounds (mesh space): what blended draws sort by. */
+/* The centre and half size of each transparent mesh's vertex bounds (mesh space): what blended draws sort by. */
 static bool mesh_centres(tc_viewer *v) {
     uint32_t i, k;
     if (!v->mesh_count) return true;
     v->mesh_centre = (tc_vec3 *)tc_calloc(v->mesh_count, sizeof(*v->mesh_centre));
-    if (!v->mesh_centre) return false;
+    v->mesh_extent = (tc_vec3 *)tc_calloc(v->mesh_count, sizeof(*v->mesh_extent));
+    if (!v->mesh_centre || !v->mesh_extent) return false;
     for (i = 0; i < v->mesh_count; i++) {
         const tc_mesh *m = v->meshes[i];
         tc_vec3 lo, hi;
@@ -591,6 +598,7 @@ static bool mesh_centres(tc_viewer *v) {
             hi = tc_v3_max(hi, p);
         }
         v->mesh_centre[i] = tc_v3_scale(tc_v3_add(lo, hi), 0.5f);
+        v->mesh_extent[i] = tc_v3_scale(tc_v3_sub(hi, lo), 0.5f);
     }
     return true;
 }
@@ -619,9 +627,9 @@ static bool mesh_ranges(tc_viewer *v, const uint32_t *piece_ranges) {
 
 /* ---- lighting (TC_VL_GAME) ---- */
 
-/* The original's vertex light for a baked colour (0..1 per channel, radiosity / 255) without lights. */
-static float formula_light(float c, float ambient, float diffuse) {
-    return fminf(1, fmaxf(0, (c * (255.0f / 256) * diffuse + ambient) * (512.0f / 255)));
+/* The original's vertex light for a stored baked colour channel (TC_RADIOSITY) without lights. */
+static float formula_light(uint32_t byte, float ambient, float diffuse) {
+    return fminf(1, fmaxf(0, (TC_RADIOSITY(byte) / 256 * diffuse + ambient) * (512.0f / 255)));
 }
 
 /* Per baked set, the mean light of the sky's vertices (TC_SKY_ALPHA) under the formula: how lit the sky is, for the
@@ -640,8 +648,7 @@ static void measure_sky(tc_viewer *v) {
                 uint32_t c = m->vertices[k].color[set];
                 if ((c >> 24) < 64) c = m->vertices[k].color[0]; /* the shaders' fallback to set 0 */
                 for (ch = 0; ch < 3; ch++)
-                    sum[set][ch] += formula_light((float)((c >> (8 * ch)) & 0xFF) / 255, m->surface.ambient[ch],
-                                                  m->surface.diffuse[ch]);
+                    sum[set][ch] += formula_light((c >> (8 * ch)) & 0xFF, m->surface.ambient[ch], m->surface.diffuse[ch]);
             }
         }
     }
@@ -871,6 +878,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->piece_origin);
     tc_free(v->split);
     tc_free(v->mesh_centre);
+    tc_free(v->mesh_extent);
     tc_free(v->blended_depth);
     tc_free(v->sector_shown);
     tc_free(v->sector_water);
@@ -1661,11 +1669,14 @@ static bool is_water(const tc_viewer *v, uint32_t mesh) {
     return mesh < v->level->mesh_count && v->mesh_water[mesh];
 }
 
-/* The blended draws back to front: farthest centre from the eye first, ties in list order (a stable insertion
- * sort: a few dozen to a few hundred draws). Left unsorted if the depth buffer can't grow. */
+/* The blended draws back to front, as the original's driver sorts its deferred triangles: each by its farthest point
+ * (GliDX6vr.dll keys a triangle by its vertices' smallest 1/w, bucketed far to near: GLI_DRV_xSendListToViewport), here
+ * the view depth of the farthest corner of the draw's bounds; ties in list order (a stable insertion sort: a few dozen
+ * to a few hundred draws). Until 2026-10-31 by the centre's distance, which put a small pane over a big surface's
+ * nearer half behind it (cock01's ice over its water). Left unsorted if the depth buffer can't grow. */
 static void sort_blended(tc_viewer *v, uint32_t n) {
     uint32_t i, j;
-    tc_vec3 eye = v->camera.position;
+    tc_vec3 eye = v->camera.position, f = tc_camera_forward(&v->camera);
     if (n > v->blended_depth_cap) {
         float *d = (float *)tc_calloc(n, sizeof(*d));
         if (!d) return;
@@ -1676,10 +1687,14 @@ static void sort_blended(tc_viewer *v, uint32_t n) {
     for (i = 0; i < n; i++) {
         const tc_view_draw *d = &v->blended[i];
         tc_vec3 c = v->mesh_centre ? v->mesh_centre[d->mesh] : tc_v3(0, 0, 0);
+        tc_vec3 e = v->mesh_extent ? v->mesh_extent[d->mesh] : tc_v3(0, 0, 0);
         const float *m = d->model.m;  /* column-major */
         tc_vec3 w = tc_v3(m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13],
                           m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14]);
-        v->blended_depth[i] = tc_v3_length_sq(tc_v3_sub(w, eye));
+        /* the box's reach along the view axis: each model axis's half size projected on it */
+        float reach = fabsf(m[0] * f.x + m[1] * f.y + m[2] * f.z) * e.x + fabsf(m[4] * f.x + m[5] * f.y + m[6] * f.z) * e.y +
+                      fabsf(m[8] * f.x + m[9] * f.y + m[10] * f.z) * e.z;
+        v->blended_depth[i] = tc_v3_dot(tc_v3_sub(w, eye), f) + reach;
     }
     for (i = 1; i < n; i++) {
         tc_view_draw d = v->blended[i];
