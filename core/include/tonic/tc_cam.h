@@ -21,7 +21,7 @@
  *     it eases back out. It never stands past the first surface the sphere meets.
  * The pivot is Ed's drawn origin raised by the original's aim height. Not ported: the original's cuts when Ed is
  * hidden (FUN_004a56e0's search and jump), the presets not read yet (swimming, code 17, the fall's speed-ups), the
- * level's scripted shots, first person (Numpad 0). */
+ * level's scripted shots. */
 #ifndef TONIC_TC_CAM_H
 #define TONIC_TC_CAM_H
 #include <stdbool.h>

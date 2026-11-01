@@ -32,8 +32,7 @@ static const char *controls_text =
     "  Camera:  the mouse, the right stick, the arrow keys or Numpad 4 / 6 turn it round Ed (up / down raise or lower\n"
     "    it); it stays while he stands and eases back behind him once he moves  -  X (middle mouse, L2) recentres it\n"
     "    5 close-up, 0 first person (number row or numpad; L3)  -  ; less / ' more look sensitivity  -  Y invert\n"
-    "    up / down  -  the mouse looks from the\n"
-    "    start of a level (Esc releases it, a click takes it again)\n"
+    "    up / down  -  the mouse looks from the start of a level (Esc releases it, a click takes it again)\n"
     "    (TONIC_LOOK=percent and TONIC_INVERT=x|y|xy set where they start)\n"
     "  (simple collision and physics, not the original game's)\n"
     "\n"
@@ -53,8 +52,8 @@ static const char *controls_text =
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
-    "  R2:  fly faster  -  L2:  recentre the camera  -  D-pad up / down:  camera distance / fly speed\n"
-    "  Start:  level select  -  Select:  controls\n"
+    "  R2:  fly faster  -  L2:  recentre the camera  -  L3 (click):  first person\n"
+    "  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
     "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro, Square the demo  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
@@ -383,8 +382,8 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
         if (!k->repeat) { tc_viewer_step_speed(v, sc == SDL_SCANCODE_RIGHTBRACKET ? 1 : -1); update_title(a); }
         return;
     }
-    /* 1-9: hold a baked lighting set (sud0 and Land have three); 0: the level's own light again (sud0's day / night
-     * cycle, Land's lightning); - / =: display gamma. */
+    /* Alt + 1-9: hold a baked lighting set (sud0 and Land have three); Alt + 0: the level's own light again (sud0's day /
+     * night cycle, Land's lightning); 5 and 0 alone: the camera; - / =: display gamma. */
     bool alt = (k->mod & SDL_KMOD_ALT) != 0;
     if (!alt && (sc == SDL_SCANCODE_5 || sc == SDL_SCANCODE_KP_5 || sc == SDL_SCANCODE_0 || sc == SDL_SCANCODE_KP_0)) {
         /* 5 and 0, number row or numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person) */

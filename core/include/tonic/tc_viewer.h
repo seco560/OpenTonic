@@ -386,7 +386,7 @@ const tc_player *tc_viewer_player(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
  * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]
- * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up]" (look / invert: when not the
+ * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person]" (look / invert: when not the
  * default; light: the set shown, or the change running; held = a number key's pick in a level with light persos;
  * sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with his AI, the
  * camera's normal distance). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
