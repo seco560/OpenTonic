@@ -349,6 +349,9 @@ void tc_ai_force_reflex(tc_ai_perso *p, uint16_t reflex);
 
 /* Raw dsgvar access for tests/debug UIs: value of dsgvar i of the perso as float (ints converted). */
 float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i);
+/* The same for another perso's dsgvar i as this AI holds it (model->others[other]; what this perso's scripts wrote
+ * there): 0 when there is no such perso or dsgvar. */
+float tc_ai_other_dsgvar_float(const tc_ai_perso *p, uint32_t other, uint32_t i);
 /* Another perso writes this one's dsgvar i (Assign(Dot(perso, dsg<i>), ...)); perso ids go in as ints. */
 void tc_ai_dsgvar_set_int(tc_ai_perso *p, uint32_t i, int32_t v);
 void tc_ai_dsgvar_set_float(tc_ai_perso *p, uint32_t i, float v);

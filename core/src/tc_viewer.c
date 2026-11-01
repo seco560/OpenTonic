@@ -7,54 +7,6 @@
 #include "tonic/tc_anim.h"
 #include "tonic/tc_ed_ai.h"
 
-/* ---- camera ---- */
-
-void tc_camera_init(tc_camera *c) {
-    c->position = tc_v3(0, 0, 0);
-    c->yaw = 0;
-    c->pitch = 0;
-    c->vertical_fov = 80 * TC_PI / 180;
-    c->near_z = 0.05f;
-    c->far_z = 2000;
-}
-
-tc_vec3 tc_camera_forward(const tc_camera *c) {
-    return tc_v3(sinf(c->yaw) * cosf(c->pitch), cosf(c->yaw) * cosf(c->pitch), sinf(c->pitch));
-}
-
-tc_vec3 tc_camera_right(const tc_camera *c) { return tc_v3(cosf(c->yaw), -sinf(c->yaw), 0); }
-
-static tc_mat4 look_at(tc_vec3 eye, tc_vec3 center, tc_vec3 up) {
-    tc_vec3 f = tc_v3_normalize(tc_v3_sub(center, eye));
-    tc_vec3 s = tc_v3_normalize(tc_v3_cross(f, up));
-    tc_vec3 u = tc_v3_cross(s, f);
-    tc_mat4 r = {{s.x, u.x, -f.x, 0,
-                  s.y, u.y, -f.y, 0,
-                  s.z, u.z, -f.z, 0,
-                  -tc_v3_dot(s, eye), -tc_v3_dot(u, eye), tc_v3_dot(f, eye), 1}};
-    return r;
-}
-
-/* Reversed depth (TC_DEPTH_REVERSED): 1 at near, 0 at far, tested GREATER_OR_EQUAL as the original's driver does
- * (GliDX6vr.dll sets D3DRENDERSTATE_ZFUNC 7, GREATEREQUAL, at 0x10012fe1: depth grows towards the camera, ties go to the
- * later draw). With a float depth buffer that also spreads the precision evenly over distance: the standard mapping
- * (near 0.05, LESS) z-fought decals 0.01 off their wall from ~100 units (Agent XYZ's eyes on his newspaper, sud0's
- * doors; docs/NOTES.md "Depth"). Clip space z 0..1 (Metal, SDL_GPU). */
-static tc_mat4 perspective(float fov_y, float aspect, float near_z, float far_z) {
-    float y = 1 / tanf(fov_y / 2), x = y / aspect, k = near_z / (far_z - near_z);
-    tc_mat4 r = {{x, 0, 0, 0,
-                  0, y, 0, 0,
-                  0, 0, k, -1,
-                  0, 0, k * far_z, 0}};
-    return r;
-}
-
-tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect) {
-    tc_mat4 p = perspective(c->vertical_fov, aspect, c->near_z, c->far_z);
-    tc_mat4 v = look_at(c->position, tc_v3_add(c->position, tc_camera_forward(c)), tc_v3(0, 0, 1));
-    return tc_mat4_mul(&p, &v);
-}
-
 /* ---- play session ---- */
 
 /* The tc_player points at its world and the AI driver at the player, so the session stays at one address. */
@@ -721,7 +673,9 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->fog_enabled = true;
     v->fly_speed = 10;
     v->turn_speed = 1.6f;
-    v->orbit_distance = 6.0f;
+    v->look_sensitivity = 1;
+    v->orbit_distance = TC_CAM_DISTANCE;
+    tc_cam_reset(&v->cam);
     v->ed_clip = -1;
     v->ed_state = -1;
     tc_camera_init(&v->camera);
@@ -935,15 +889,24 @@ static float axis(const tc_viewer *v, tc_view_action pos, tc_view_action neg) {
 }
 
 /* Arrow keys, the right stick and the mouse turn the camera (both modes). */
+/* The look keys, the right stick and the mouse turn the view, x look_sensitivity, reversed per axis as set. In play mode
+ * they turn the play camera round Ed and raise or lower it (tc_cam_look); not during the demo (its own camera). */
 static void look(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
     float yaw_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_RIGHT, TC_VA_LOOK_LEFT) + v->look_x));
     float pitch_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_UP, TC_VA_LOOK_DOWN) + v->look_y));
-    float pitch;
-    c->yaw += yaw_rate * v->turn_speed * dt + v->mouse_dx * 0.003f;
-    pitch = c->pitch + pitch_rate * v->turn_speed * dt - v->mouse_dy * 0.003f;
-    c->pitch = fmaxf(-1.5f, fminf(1.5f, pitch));
+    float yaw = (yaw_rate * v->turn_speed * dt + v->mouse_dx * 0.003f) * v->look_sensitivity;
+    float pitch = (pitch_rate * v->turn_speed * dt - v->mouse_dy * 0.003f) * v->look_sensitivity;
     v->mouse_dx = v->mouse_dy = 0;
+    if (yaw == 0 && pitch == 0) return;
+    if (v->invert_x) yaw = -yaw;
+    if (v->invert_y) pitch = -pitch;
+    if (v->playing && v->play) {
+        if (!v->demo) tc_cam_look(&v->cam, c, yaw, -pitch); /* looking up: the camera lower, looking up at him */
+        return;
+    }
+    c->yaw += yaw;
+    c->pitch = fmaxf(-TC_CAM_PITCH_LIMIT, fminf(TC_CAM_PITCH_LIMIT, c->pitch + pitch));
 }
 
 /* Free-fly: W/S (the stick's y) fly along the view direction (pitch included); R/F stay world up/down. Keys fly at
@@ -984,6 +947,7 @@ static uint32_t ai_inputs(const tc_viewer *v) {
     size_t i;
     for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
         if (held(v, map[i].a)) r |= 1u << map[i].bit;
+    if (v->cam.first_person) r &= (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_SHOOT); /* he stands while looking */
     return r;
 }
 
@@ -1005,7 +969,8 @@ void tc_viewer_toggle_play(tc_viewer *v) {
         tc_player_teleport(&p->player, tc_v3_add(ground, tc_v3(0, 0, 0.3f)), TC_PI - v->camera.yaw);
     }
     v->camera.yaw = TC_PI - p->player.heading;  /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
-    v->camera.pitch = -0.3f;
+    v->camera.pitch = -TC_CAM_ELEVATION;
+    tc_cam_reset(&v->cam);  /* following him, placed at once */
 }
 
 void tc_viewer_toggle_ai(tc_viewer *v) {
@@ -1156,6 +1121,7 @@ void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed) {
     if (seed) v->rng = seed;
     v->move_x = v->move_y = v->look_x = v->look_y = 0;
     v->held &= ~DEMO_BUTTONS;
+    tc_cam_reset(&v->cam); /* its own camera while on; following Ed after it */
     if (!v->demo) return;
     if (!v->playing) tc_viewer_toggle_play(v);
     v->demo_placed = v->play->player.placed - 1; /* the first step starts it */
@@ -1434,7 +1400,9 @@ static void step_ai(tc_viewer *v, float dt) {
         p->tick_time -= TC_ED_AI_TICK;
         if (++ticks > 8) { p->tick_time = 0; break; } /* a long stall: drop the backlog */
         p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
-        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, ai_inputs(v), v->move_x, v->move_y, v->camera.position);
+        bool still = v->cam.first_person;
+        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, ai_inputs(v), still ? 0 : v->move_x, still ? 0 : v->move_y,
+                      v->camera.position);
         for (n = 0; n < p->driver.ai.sound_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
             v->sounds[v->sound_count++] = p->driver.ai.sounds[n];
         capture_pose(v);
@@ -1458,8 +1426,7 @@ static void update_play(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
     const tc_ed_anim *a;
-    tc_vec3 target, back;
-    float d, hit, rate;
+    float rate;
     int i;
     look(v, dt);
     if (p->use_ai) {
@@ -1467,21 +1434,30 @@ static void update_play(tc_viewer *v, float dt) {
     } else {
         tc_player_input in;
         bool walking_in = v->walk_in != 0;
-        in.move = walking_in ? tc_v2(0, 0) : move_direction(v);
+        in.move = walking_in || v->cam.first_person ? tc_v2(0, 0) : move_direction(v);
         /* Shift runs; the stick runs when pushed most of the way (0.8: the simple controller has only walk and run). */
         in.run = !walking_in && (held(v, TC_VA_FAST) || v->move_x * v->move_x + v->move_y * v->move_y > 0.64f);
         in.jump = !walking_in && held(v, TC_VA_JUMP);
         tc_player_step(&p->player, dt, &in);
         if (p->has_driver) simple_portals(v, dt);
     }
-    /* Third-person orbit around Ed's chest (as drawn); pulled in when the level is in the way. */
-    target = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14] + 1.1f)
-                       : tc_v3_add(p->player.position, tc_v3(0, 0, 1.1f));
-    back = tc_v3_scale(tc_camera_forward(&v->camera), -1);
-    d = v->orbit_distance;
-    hit = raycast(p, target, back, d + 0.3f);
-    if (hit >= 0) d = fmaxf(0.4f, hit - 0.3f);
-    v->camera.position = tc_v3_add(target, tc_v3_scale(back, d));
+    /* The play camera (tc_cam.h): round Ed as drawn, turned by the player; against every surface of the level (no sector
+     * row: the camera must not see through anything). */
+    {
+        tc_cam_target t;
+        const uint8_t *solid = p->world.solid;
+        t.position = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
+        t.behind = TC_PI - p->player.heading; /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
+        t.speed = tc_player_horizontal_speed(&p->player);
+        t.velocity = p->player.velocity;
+        t.distance = v->orbit_distance;
+        t.manual = v->demo;
+        t.situation = tc_viewer_camera_situation(v);
+        t.world = &p->world;
+        p->world.solid = NULL;
+        tc_cam_update(&v->cam, &v->camera, &t, dt);
+        p->world.solid = solid;
+    }
 
     if (p->use_ai) return; /* the AI's state clock picked the frame (step_ai) */
     if (v->walk_in == 1) { /* the step-in: once through at its own rate, then the cover */
@@ -1561,6 +1537,42 @@ void tc_viewer_step_speed(tc_viewer *v, int dir) {
 
 void tc_viewer_toggle_pause(tc_viewer *v) { v->paused = !v->paused; }
 
+void tc_viewer_recenter_camera(tc_viewer *v) {
+    if (v->playing && !v->demo) tc_cam_recenter(&v->cam);
+}
+
+void tc_viewer_toggle_closeup(tc_viewer *v) {
+    if (v->playing && !v->demo) v->cam.closeup = !v->cam.closeup;
+}
+
+void tc_viewer_toggle_first_person(tc_viewer *v) {
+    if (!v->playing || v->demo || !v->play) return;
+    v->cam.first_person = !v->cam.first_person;
+    v->camera.yaw = TC_PI - v->play->player.heading; /* entering: looking the way he faces; leaving: behind him */
+    v->camera.pitch = v->cam.first_person ? 0 : -TC_CAM_ELEVATION;
+    v->cam.reach = -1;
+}
+
+int tc_viewer_camera_situation(const tc_viewer *v) {
+    const tc_viewer_play *p = v->play;
+    if (!p || !p->use_ai || !p->has_driver || p->driver.camera < 0) return -1;
+    return (int)tc_ai_other_dsgvar_float(&p->driver.ai, (uint32_t)p->driver.camera, 40);
+}
+
+void tc_viewer_set_look(tc_viewer *v, float sensitivity, bool invert_x, bool invert_y) {
+    v->look_sensitivity = sensitivity > 0 ? fmaxf(0.25f, fminf(4, sensitivity)) : 1;
+    v->invert_x = invert_x;
+    v->invert_y = invert_y;
+}
+
+void tc_viewer_step_look(tc_viewer *v, int dir) {
+    float s = v->look_sensitivity * (dir > 0 ? 1.25f : 0.8f);
+    if (fabsf(s - 1) < 0.01f) s = 1; /* the steps land back on 1 exactly */
+    tc_viewer_set_look(v, s, v->invert_x, v->invert_y);
+}
+
+void tc_viewer_toggle_invert_y(tc_viewer *v) { v->invert_y = !v->invert_y; }
+
 void tc_viewer_set_light_set(tc_viewer *v, uint32_t n) {
     if (n >= v->light_set_count) return;
     v->light_set = v->light_next = v->light_target = n;
@@ -1575,8 +1587,9 @@ void tc_viewer_step_gamma(tc_viewer *v, bool up) {
 }
 
 void tc_viewer_step_fov(tc_viewer *v, int dir) {
-    float deg = roundf(v->camera.vertical_fov * 180 / TC_PI) + (dir > 0 ? 5.0f : -5.0f);
-    v->camera.vertical_fov = fmaxf(30, fminf(100, deg)) * TC_PI / 180;
+    /* in the original's measure, horizontal at 4:3: 86 degrees by default, 5 degree steps, 50-120 */
+    float deg = roundf(tc_camera_hfov_43(v->camera.vertical_fov) * 180 / TC_PI) + (dir > 0 ? 5.0f : -5.0f);
+    v->camera.vertical_fov = tc_camera_vfov_from_hfov_43(fmaxf(50, fminf(120, deg)) * TC_PI / 180);
 }
 
 void tc_viewer_toggle_fog(tc_viewer *v) { v->fog_enabled = !v->fog_enabled; }
@@ -1606,7 +1619,9 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
         if (w > 0) n += (size_t)w;                                           \
     } while (0)
     APPEND("anim %.2f\xc3\x97, gamma %.2f, FOV %.0f\xc2\xb0%s", (double)v->animation_speed, (double)v->gamma,
-           (double)(v->camera.vertical_fov * 180 / TC_PI), extra ? extra : "");
+           (double)(tc_camera_hfov_43(v->camera.vertical_fov) * 180 / TC_PI), extra ? extra : "");
+    if (fabsf(v->look_sensitivity - 1) > 0.001f) APPEND(", look %.0f %%", (double)(v->look_sensitivity * 100));
+    if (v->invert_x || v->invert_y) APPEND(", invert %s", v->invert_x && v->invert_y ? "XY" : v->invert_x ? "X" : "Y");
     if (v->light_set_count > 1 && v->light_rate > 0)
         APPEND(", light %u\xe2\x86\x92%u", (unsigned)v->light_set + 1, (unsigned)v->light_next + 1);
     else if (v->light_set_count > 1)
@@ -1620,6 +1635,8 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
                v->sector_mode == TC_VS_ALONE ? " alone" : "");
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
+    if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
+    if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
 #undef APPEND
     return n;
 }
@@ -1857,7 +1874,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         }
     }
 
-    if (v->playing && v->play && v->ed_clip >= 0) {
+    if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person) { /* first person: not drawn */
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;

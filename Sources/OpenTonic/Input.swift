@@ -1,3 +1,4 @@
+import Foundation
 import TonicCore
 
 /// Key bindings for the viewer: macOS virtual key codes -> the core's actions (tc_viewer.h, which also decides what
@@ -8,10 +9,28 @@ struct KeyBindings {
         13: TC_VA_FORWARD, 1: TC_VA_BACK, 0: TC_VA_LEFT, 2: TC_VA_RIGHT,     // W S A D
         15: TC_VA_UP, 3: TC_VA_DOWN,                                         // R F
         123: TC_VA_LOOK_LEFT, 124: TC_VA_LOOK_RIGHT, 126: TC_VA_LOOK_UP, 125: TC_VA_LOOK_DOWN,  // arrows
+        86: TC_VA_LOOK_LEFT, 88: TC_VA_LOOK_RIGHT,                           // Numpad 4 / 6: the original's camera orbit
         56: TC_VA_FAST, 60: TC_VA_FAST,                                      // left/right Shift
         49: TC_VA_JUMP,                                                      // Space (play mode)
         14: TC_VA_ACTION, 12: TC_VA_SHOOT, 8: TC_VA_LATERAL,                 // E Q C (play mode, Ed's AI)
     ]
 
     func action(_ code: UInt16) -> tc_view_action? { actions[code] }
+}
+
+/// The look settings (tc_viewer_set_look): sensitivity and invert, for mouse, keys and stick alike. Kept across levels
+/// and launches in UserDefaults ("lookSensitivity", default 1; "invertX", "invertY"); ; ' and Y change them.
+@MainActor enum LookSettings {
+    static func apply(_ v: UnsafeMutablePointer<tc_viewer>) {
+        let d = UserDefaults.standard
+        tc_viewer_set_look(v, d.object(forKey: "lookSensitivity") as? Float ?? 1, d.bool(forKey: "invertX"),
+                           d.bool(forKey: "invertY"))
+    }
+
+    static func save(_ v: UnsafeMutablePointer<tc_viewer>) {
+        let d = UserDefaults.standard
+        d.set(v.pointee.look_sensitivity, forKey: "lookSensitivity")
+        d.set(v.pointee.invert_x, forKey: "invertX")
+        d.set(v.pointee.invert_y, forKey: "invertY")
+    }
 }

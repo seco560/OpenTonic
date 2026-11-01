@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "tc_math.h"
+#include "tc_cam.h"
 #include "tc_level.h"
 #include "tc_player.h"
 #include "tc_transition.h"
@@ -17,24 +18,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Camera in engine space (Z up). Hor+: widescreen widens the view, never stretches it. */
-typedef struct tc_camera {
-    tc_vec3 position;
-    float yaw;            /* radians, 0 = looking along +Y */
-    float pitch;          /* radians, positive = up */
-    float vertical_fov;   /* radians */
-    float near_z, far_z;
-} tc_camera;
-
-void tc_camera_init(tc_camera *c);                /* at the origin, FOV 80 degrees, near 0.05, far 2000 */
-tc_vec3 tc_camera_forward(const tc_camera *c);    /* (sin yaw cos pitch, cos yaw cos pitch, sin pitch) */
-tc_vec3 tc_camera_right(const tc_camera *c);      /* (cos yaw, -sin yaw, 0) */
-/* Right-handed view, perspective with 0..1 clip-space depth (Metal, SDL_GPU), reversed: 1 at near, 0 at far. Column-major.
- * Frontends clear depth to 0 and test GREATER_OR_EQUAL (the original's D3D ZFUNC), and pull decals towards the camera
- * with a positive depth bias. */
-#define TC_DEPTH_REVERSED 1
-tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);
 
 /* What the frontend's key bindings map to. Defaults: WASD move, R/F up/down, arrow keys look, Shift fast (in play
  * mode with Ed's AI: SpeedUp, he walks), Space jump, E Action, Q Shoot, C Lateral. */
@@ -205,7 +188,9 @@ typedef struct tc_viewer {
     float move_x, move_y;     /* left stick, x right, y forward, 0 in the dead zone (tc_viewer_set_move_stick) */
     float look_x, look_y;     /* right stick after the dead zone, x right, y up (tc_viewer_set_look_stick) */
     float fly_speed;          /* free-fly units per second (x4 with TC_VA_FAST) */
-    float turn_speed;         /* radians per second */
+    float turn_speed;         /* radians per second (look keys, the right stick at full push), x look_sensitivity */
+    float look_sensitivity;   /* x the mouse's 0.003 rad per point and turn_speed; 1 = default (tc_viewer_set_look) */
+    bool invert_x, invert_y;  /* look input reversed: x turns the other way, y looks down for up */
 
     /* Demo (tc_viewer_set_demo): Ed's autopilot. */
     bool demo;
@@ -231,7 +216,8 @@ typedef struct tc_viewer {
     /* Play mode: the default when the level has Ed, collision and an idle clip. */
     tc_viewer_play *play;     /* NULL: free-fly only */
     bool playing;
-    float orbit_distance;
+    tc_cam cam;               /* the play camera's state (tc_cam.h) */
+    float orbit_distance;     /* the play camera's distance behind Ed (TC_CAM_DISTANCE; the wheel zooms it) */
     bool has_exit_camera;     /* where the camera was when play mode was last left */
     tc_vec3 exit_camera;
     int ed_clip;              /* index into level->ed.anims, -1 none */
@@ -351,7 +337,7 @@ void tc_viewer_toggle_pause(tc_viewer *v);          /* P */
 void tc_viewer_set_light_set(tc_viewer *v, uint32_t n);  /* 1-9: that set, held; ignored past light_set_count */
 void tc_viewer_follow_light(tc_viewer *v);   /* 0: the level's light persos set the light again (if it has any) */
 void tc_viewer_step_gamma(tc_viewer *v, bool up);   /* - =: x1.1, 0.5-2.5 */
-void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps, 30-100 */
+void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps of the horizontal at 4:3 (86 default), 50-120 */
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
 void tc_viewer_cycle_lighting(tc_viewer *v);        /* L: the original's lighting <-> the port's earlier one */
 void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list (default) -> all -> his alone -> ... */
@@ -359,6 +345,22 @@ void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list
 uint16_t tc_viewer_ed_sector(const tc_viewer *v);
 /* Wheel notches (positive = up): orbit zoom while playing, fly speed in free-fly; x1.1 per notch. */
 void tc_viewer_wheel(tc_viewer *v, float notches);
+/* The play camera (tc_cam.h, docs/CAMERA.md): the look input turns it round Ed (and up / down); it stays while he stands
+ * and eases back behind him once he moves and the player leaves it alone. Recentre: behind him at the default height (X,
+ * the middle mouse button, the pad's L2). Close-up: the original's Numpad 5 preset, on / off. Nothing outside play mode. */
+void tc_viewer_recenter_camera(tc_viewer *v);
+void tc_viewer_toggle_closeup(tc_viewer *v);         /* 5 (number row or numpad) */
+/* 0 (number row or numpad), the pad's L3: first person at Ed's head, looking with the mouse / stick; Ed stands (his
+ * movement inputs are held back) and is not drawn. Again: back to the follow, behind him. */
+void tc_viewer_toggle_first_person(tc_viewer *v);
+/* What Ed's scripts tell the camera he is doing (the camera perso's dsg40, docs/CAMERA.md: 0 normal, 10 swimming, 11
+ * dying, 12 flight, 13 stick mode, 15 landing, 16 jumping, ...); -1 without his AI. */
+int tc_viewer_camera_situation(const tc_viewer *v);
+/* Look settings, for mouse, keys and stick alike; the frontends keep them (a new viewer starts at 1, not inverted).
+ * sensitivity is clamped to 0.25..4. */
+void tc_viewer_set_look(tc_viewer *v, float sensitivity, bool invert_x, bool invert_y);
+void tc_viewer_step_look(tc_viewer *v, int dir);      /* ; ': x1.25 steps, 0.25-4 */
+void tc_viewer_toggle_invert_y(tc_viewer *v);         /* Y */
 /* Tab: enter/leave play mode. Entering puts the orbit camera behind Ed; leaving keeps the camera where it is.
  * Re-entering after flying more than 1 unit away drops Ed onto the ground below the camera, facing the view. */
 void tc_viewer_toggle_play(tc_viewer *v);
@@ -383,10 +385,11 @@ bool tc_viewer_status_live(const tc_viewer *v);
 const tc_player *tc_viewer_player(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
- * "anim 1.00×, gamma 1.00, FOV 80°<extra>[, light 1/2|1→2[ held]][, fog on|off][, old lighting][, sector sctX[ alone]]
- * [, free-fly][, simple controller]" (light: the set shown, or the change running; held = a number key's pick in a level
- * with light persos; sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with
- * his AI). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
+ * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]
+ * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up]" (look / invert: when not the
+ * default; light: the set shown, or the change running; held = a number key's pick in a level with light persos;
+ * sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with his AI, the
+ * camera's normal distance). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".
  * Returns the length snprintf would have written. */
 size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t size);
 

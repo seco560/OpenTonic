@@ -29,11 +29,16 @@ static const char *controls_text =
     "  With Ed's AI (levels with a .ttai, the default; I switches to the simple controller):\n"
     "    Ed runs by default, hold Shift to walk  -  E stick (Action)  -  Q Shoot  -  C Lateral\n"
     "  Simple controller:  hold Shift to run\n"
-    "  Camera:  arrow keys or mouse orbit around Ed\n"
+    "  Camera:  the mouse, the right stick, the arrow keys or Numpad 4 / 6 turn it round Ed (up / down raise or lower\n"
+    "    it); it stays while he stands and eases back behind him once he moves  -  X (middle mouse, L2) recentres it\n"
+    "    5 close-up, 0 first person (number row or numpad; L3)  -  ; less / ' more look sensitivity  -  Y invert\n"
+    "    up / down  -  the mouse looks from the\n"
+    "    start of a level (Esc releases it, a click takes it again)\n"
+    "    (TONIC_LOOK=percent and TONIC_INVERT=x|y|xy set where they start)\n"
     "  (simple collision and physics, not the original game's)\n"
     "\n"
     "Animation:  P pause / resume  -  [ slower  -  ] faster\n"
-    "Lighting variant:  1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain)\n"
+    "Lighting variant:  Alt + 1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain), Alt + 0 the level's own\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
     "Lighting:  L  the original's (default: its formula, the lights and fog of Ed's sector) / the port's old one\n"
@@ -48,7 +53,8 @@ static const char *controls_text =
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
-    "  R2:  fly faster  -  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
+    "  R2:  fly faster  -  L2:  recentre the camera  -  D-pad up / down:  camera distance / fly speed\n"
+    "  Start:  level select  -  Select:  controls\n"
     "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro, Square the demo  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
@@ -62,10 +68,15 @@ typedef struct app {
     intro *intro;                /* the intro movie, over the (still open) level select screen */
     char *level_folder;          /* out/ttlv */
     char *data_dir;              /* out: audio/, Vignette/, icon/ next to ttlv/ */
-    bool captured;               /* mouse-look capture (viewer convenience, not part of the original controls) */
+    bool captured;               /* mouse-look capture (viewer convenience, not part of the original controls); on
+                                    from the start of a level (not the demo), Esc releases it, a click takes it again */
+    bool skip_motion;            /* the first motion after capturing: dropped (set_captured) */
     bool cursor_hidden;          /* no pointer over the intro, its loading screen and the demo (update_cursor) */
     SDL_JoystickID pad;          /* the gamepad last used, 0 = none (every gamepad is opened as it connects) */
     bool pad_fast;               /* its right trigger past half way: TC_VA_FAST */
+    bool pad_recenter;           /* its left trigger past half way: recentre the camera (on the press) */
+    float look_sensitivity;      /* the look settings (TONIC_LOOK, TONIC_INVERT; ; ' Y), given to every level's viewer */
+    bool invert_x, invert_y;
     int nav_dx, nav_dy;          /* level select: the left stick's direction, and when it moves the selection again */
     float nav_repeat;
     bool help;
@@ -123,6 +134,10 @@ static void set_captured(app *a, bool on) {
     if (on == a->captured) return;
     a->captured = on;
     SDL_SetWindowRelativeMouseMode(a->window, on);
+    if (on) {  /* the switch can report a jump of its own (the pointer moved to the window's middle): not a look */
+        SDL_GetRelativeMouseState(NULL, NULL);
+        a->skip_motion = true;
+    }
 }
 
 /* Every frame: the pointer hides over the intro, the loading screen after it and the demo, and shows again on the
@@ -206,6 +221,7 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     close_picker(a);
     a->view = v;
     a->pad_fast = false;  /* the new viewer holds nothing */
+    tc_viewer_set_look(&v->viewer, a->look_sensitivity, a->invert_x, a->invert_y);
     /* Level music from the user-edited table out/audio/music.tsv (next to out/ttlv); sound effects from out/audio/sfx. */
     char *audio = audio_dir(a);
     sfx_stop_all();
@@ -219,6 +235,7 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     SDL_snprintf(a->title_base, sizeof a->title_base, "Open Tonic \xe2\x80\x94 %s%s", a->demo ? "Demo \xe2\x80\x94 " : "",
                  v->level.name);
     if (a->demo) tc_viewer_set_demo(&v->viewer, true, SDL_rand_bits() | 1u);  /* through a red portal too */
+    else if (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS) set_captured(a, true);  /* mouse look from the start */
     a->title[0] = 0;
     update_title(a);  /* play mode is on from the start when the level has Ed */
     SDL_Log("Loaded %s: %u meshes, %u persos (%u parts), %u triangles, %u textures, %u missing", v->level.name, s->meshes,
@@ -368,12 +385,22 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     }
     /* 1-9: hold a baked lighting set (sud0 and Land have three); 0: the level's own light again (sud0's day / night
      * cycle, Land's lightning); - / =: display gamma. */
-    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
+    bool alt = (k->mod & SDL_KMOD_ALT) != 0;
+    if (!alt && (sc == SDL_SCANCODE_5 || sc == SDL_SCANCODE_KP_5 || sc == SDL_SCANCODE_0 || sc == SDL_SCANCODE_KP_0)) {
+        /* 5 and 0, number row or numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person) */
+        if (!k->repeat) {
+            if (sc == SDL_SCANCODE_0 || sc == SDL_SCANCODE_KP_0) tc_viewer_toggle_first_person(v);
+            else tc_viewer_toggle_closeup(v);
+            update_title(a);
+        }
+        return;
+    }
+    if (alt && sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {  /* Alt + 1-9: a lighting set */
         tc_viewer_set_light_set(v, (uint32_t)(sc - SDL_SCANCODE_1));
         update_title(a);
         return;
     }
-    if (sc == SDL_SCANCODE_0) {
+    if (alt && sc == SDL_SCANCODE_0) {  /* Alt + 0: the level's own light again */
         tc_viewer_follow_light(v);
         update_title(a);
         return;
@@ -406,6 +433,20 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     }
     if (sc == SDL_SCANCODE_K) {  /* K: sectors drawn: Ed's and its list (default) / all / his alone */
         if (!k->repeat) { tc_viewer_cycle_sectors(v); update_title(a); }
+        return;
+    }
+    if (sc == SDL_SCANCODE_X) {  /* X: recentre the camera behind Ed */
+        if (!k->repeat) { tc_viewer_recenter_camera(v); update_title(a); }
+        return;
+    }
+    if (sc == SDL_SCANCODE_SEMICOLON || sc == SDL_SCANCODE_APOSTROPHE || sc == SDL_SCANCODE_Y) {  /* ; ': look sensitivity, Y: invert */
+        if (!k->repeat) {
+            if (sc == SDL_SCANCODE_Y) tc_viewer_toggle_invert_y(v);
+            else tc_viewer_step_look(v, sc == SDL_SCANCODE_APOSTROPHE ? 1 : -1);
+            a->look_sensitivity = v->look_sensitivity;
+            a->invert_y = v->invert_y;
+            update_title(a);
+        }
         return;
     }
     if (sc == SDL_SCANCODE_P) {  /* P: pause/resume animation */
@@ -534,6 +575,11 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     }
     if (a->view) {
         if (button == SDL_GAMEPAD_BUTTON_START || a->demo) { show_picker(a); return; }  /* level select (Ctrl+L); ends the demo */
+        if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {  /* L3: first person (0) */
+            tc_viewer_toggle_first_person(&a->view->viewer);
+            update_title(a);
+            return;
+        }
         if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {  /* R3: play as Ed / free-fly (Tab) */
             tc_viewer_toggle_play(&a->view->viewer);
             update_title(a);
@@ -577,6 +623,9 @@ static void pad_update(app *a, float dt) {
             a->pad_fast = fast;
             tc_viewer_set_action(v, TC_VA_FAST, fast);
         }
+        bool recenter = !a->help && pad_axis(g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 0.5f;  /* L2: recentre the camera */
+        if (recenter && !a->pad_recenter && !a->demo) { tc_viewer_recenter_camera(v); update_title(a); }
+        a->pad_recenter = recenter;
         int wheel = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_UP) - SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
         if (wheel && !a->help) tc_viewer_wheel(v, (float)wheel * 10 * dt);  /* 10 notches a second */
     } else if (a->picker_open && !a->help) {
@@ -636,6 +685,11 @@ static void handle(app *a, const SDL_Event *e) {
         }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        if (e->button.button == SDL_BUTTON_MIDDLE && a->view && !a->demo && !a->help && !a->intro && !a->next_level) {
+            tc_viewer_recenter_camera(&a->view->viewer);  /* the middle button: recentre the camera (X) */
+            update_title(a);
+            break;
+        }
         if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro || a->next_level) break;
         if (a->view && a->demo) show_picker(a);  /* a click ends the demo */
         else if (a->view) set_captured(a, true);
@@ -653,6 +707,7 @@ static void handle(app *a, const SDL_Event *e) {
         break;
     case SDL_EVENT_MOUSE_MOTION:
         if (a->view && a->captured) {
+            if (a->skip_motion) { a->skip_motion = false; break; }
             tc_viewer_mouse_look(&a->view->viewer, e->motion.xrel, e->motion.yrel);
         } else if (a->picker_open && !a->intro && !a->next_level) {
             picker_set_hover(&a->picker, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y));
@@ -817,6 +872,15 @@ static int scale_setting(void) {
     return e ? SDL_atoi(e) : 100;
 }
 
+/* TONIC_LOOK=percent (25-400, default 100) and TONIC_INVERT=x, y or xy: the look settings at the start (; ' Y change
+ * them). */
+static void look_settings(app *a) {
+    const char *e = SDL_getenv("TONIC_LOOK"), *inv = SDL_getenv("TONIC_INVERT");
+    a->look_sensitivity = e && SDL_atoi(e) > 0 ? (float)SDL_atoi(e) / 100 : 1;
+    a->invert_x = inv && (SDL_strchr(inv, 'x') || SDL_strchr(inv, 'X'));
+    a->invert_y = inv && (SDL_strchr(inv, 'y') || SDL_strchr(inv, 'Y'));
+}
+
 /* TONIC_MSAA=1/2/4/8: the level's starting antialiasing (F2 cycles it). */
 static int msaa_setting(void) {
     const char *e = SDL_getenv("TONIC_MSAA");
@@ -844,6 +908,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     gpu_set_scale(&a.g, scale_setting());
+    look_settings(&a);
 
     const char *level_file = NULL;
     if (argc > 1 && path_is_file(argv[1])) {

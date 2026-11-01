@@ -270,6 +270,16 @@ old look for comparing (title: "old lighting").
 - **Avoid (clean room):** the 2022 Rayman 2 DS source leak.
 
 ## Next session: start here
+**2026-11-01, later: the analysis is done, see docs/CAMERA.md** (steps 1-6 below; what is still unread is listed at
+its end). The user chose the suggested first set (recentring the only way out of free view): **implemented the same
+day; the user's first playtest: "decent", good in some places, bad in others (where: not said yet). Second pass the
+same day (CAMERA.md "Second pass"): free view ends after 3 s idle, the mouse captured from the start, the jump /
+flight / dying presets from the camera's scripts. Third pass (CAMERA.md "Third pass", the user's "option 2"): free
+view removed, the original's numpad orbit on the mouse / stick. Fourth pass ("Fourth pass": the user saw jitter walking
+towards the camera): a rope follow, a collision pull-in bug fixed, first person on 0, 5 / 0 on both key rows, lighting
+variants on Alt + digits. **Awaiting the next playtest.** viewcheck's north demo is seed-sensitive
+(15/24 seeds pass, before and after the camera work).
+
 **2026-11-01: the camera first (user).** Analyse the game's own camera thoroughly, then write a list of improvements
 and agree it with the user **before** implementing. Do not just copy it: the user calls the original camera one of the
 game's weak points (its fixed shots hid imperfections), and wants free-cam support built into it, not a separate mode

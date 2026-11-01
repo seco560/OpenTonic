@@ -611,6 +611,10 @@ static void dsg_set(tc_ai_perso *p, int32_t perso, uint32_t i, value v) {
 }
 
 float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i) { return as_float(dsg_get(p, 0, i)); }
+float tc_ai_other_dsgvar_float(const tc_ai_perso *p, uint32_t other, uint32_t i) {
+    if (!p->model || other >= p->model->other_count) return 0;
+    return as_float(dsg_get(p, p->model->others[other].id, i));
+}
 void tc_ai_dsgvar_set_int(tc_ai_perso *p, uint32_t i, int32_t v) { dsg_set(p, 0, i, v_int(v)); }
 void tc_ai_dsgvar_set_float(tc_ai_perso *p, uint32_t i, float v) { dsg_set(p, 0, i, v_float(v)); }
 void tc_ai_dsgvar_set_vec(tc_ai_perso *p, uint32_t i, tc_vec3 v) { dsg_set(p, 0, i, v_vec(v)); }

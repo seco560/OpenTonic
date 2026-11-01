@@ -193,6 +193,27 @@ PROC	85	CollectNearby85	0x489a70	0x55
 PROC	86	CollectNearby86	0x489a70	0x56: func_0x0041fff0
 PROC	154	ShowText?	0x48af30	0x9A
 PROC	155	ClearText	0x48af30	GAM_00418cb0(slot 0..19)
+PROC	156	UpdateCamera	0x492d30	camera's per-frame step: FUN_004a0f90 context, FUN_004a3130 modes, queues mech request 0x11 (docs/CAMERA.md)
+PROC	159	ClearCameraFlag20	0x493120	cine +0xC4 &= ~0x20
+PROC	160	SetCameraByteCA	0x493170	cine +0xCA := arg (-1: +1), wraps past 9
+PROC	163	SetCameraDistance	0x493540	(cam, op, min, max) record +0x30 / +0x34; op 0 set, 1 add, 2 min, 3 max, -1..-3 default; min <= max
+PROC	164	SetCameraDistance2	0x4937a0	(cam, op, min, max) record +0x38 / +0x3C (B2: distance -1.3 .. +3)
+PROC	165	SetCameraLinearSpeed	0x493a00	(cam, op, max, min) record +0x68 / +0x6C (default 200 / 12; FUN_004a2a10 clamps 2 x target speed)
+PROC	166	SetCameraPair70	0x493c90	(cam, op, a, b) record +0x70 / +0x74 (default 25 / 7)
+PROC	167	SetCameraValue78	0x493ef0	record +0x78 (default 3.14)
+PROC	168	SetCameraPair7C	0x494000	(cam, op, a, b) record +0x7C / +0x80 (default 10 / 5)
+PROC	169	SetCameraValue88	0x494260	record +0x88 (default 0.04)
+PROC	170	SetCameraPivotOffset	0x494370	(cam, op, vec) record +0x0C: offset in the target's frame of the point the distance is kept from (FUN_004a1e10)
+PROC	171	SetCameraLookOffset	0x494520	(cam, op, vec) record +0x18: offset in the target's frame of the look-at point (FUN_004a1c60)
+PROC	172	SetCameraOffset24	0x494690	(cam, op, vec) record +0x24 (B2: (0, 0, 1.35))
+PROC	173	SetCameraAngle	0x494800	(cam, slot, op, value) slots 0..6 = record +0x40 +0x48 +0x50 +0x54 +0x58 +0x44 +0x4C; 0..4 wrap 2 pi, 5..6 clamp 0..pi; op 0 set, 1 add, -1 default
+PROC	177	SetCameraMode	0x494e00	(cam, mode) record +0x98: 0 follow, 1 freeze where it is, 2 locked position turning to the target, 3, 5 path, 0x65 / 0x68 / 0x69 special
+PROC	180	SetCameraTarget	0x495300	(cam, perso) cine +0x10 := the perso (GAM_004311f0), resets the visibility counters
+PROC	182	LockCameraAxis	0x495480	(cam, lo, hi) cine +0x7C / +0x80, axis byte := 2 (z), flag 0x80 on both records
+PROC	184	CameraFlag	0x495800	(cam, word, op, bit) word 0/1: record +0x94 / +0x92 (3: next frame), op -1 toggle, 0 clear, 1 set; bit index -> mask table
+PROC	195	SetCameraTriple5C	0x496470	record +0x5C / +0x60 / +0x64 (default 0.35 each)
+PROC	196	SetCameraValue84	0x496640	record +0x84 (default 0.6)
+PROC	197	SetCameraTargetChannel	0x496790	(cam, op, channel) record +0xA0: the target's channel to follow (0xFF none); first person uses Ed's 0x27
 PROC	237	ForceBehaviour	0x48b730	(perso, behaviour): set another perso's normal behaviour (NOTES "Skiing": the skier takeover; portals)
 PROC	238	ForceReflex	0x48b800	(perso, reflex): set another perso's reflex
 PROC	242	SetHeading	0x48ba00	(deg): rotation about Z = deg x pi / 180 - pi / 2 (docs/PORTALS.md)

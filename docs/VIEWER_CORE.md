@@ -75,8 +75,8 @@ It covers: creating the session only when the level has Ed, collision and an `id
 one-shot clips; starting in play mode; Tab (`tc_viewer_toggle_play`: the orbit camera behind Ed on entry; on
 re-entry after flying more than 1 unit away, raycast down from the camera and drop Ed 0.3 above the ground, facing
 the view); I (`tc_viewer_toggle_ai`); the per-frame step (AI with last frame's camera eye, or the simple controller);
-the orbit camera (target 1.1 above Ed, pulled in to `max(0.4, hit - 0.3)` when the level is in the way, distance
-1.5-25, default 4.5); Ed's clip (the AI's `"s<anim>"` and frame, or the movement state's clip with walk/run
+the play camera (since 2026-11-01 its own module, `tc_cam.h`, and `tc_camera` with it: it follows behind Ed until the
+player looks around, then free view until a recentre; a swept sphere for collision; docs/CAMERA.md "Implemented"); Ed's clip (the AI's `"s<anim>"` and frame, or the movement state's clip with walk/run
 playing at the rate that matches Ed's ground speed, `dt * rate / 4 * speed`); Ed's model matrix (the AI's, so
 the skier's board tilts); and the AI status string for the title bar (`B<n> R<n> state <n>[-><n>]`).
 
@@ -92,7 +92,7 @@ State in the viewer, changed through small functions so both frontends behave th
   `tc_sectors_name`). docs/NOTES.md "Sectors".
 - `tc_viewer_wheel(v, y)`: orbit zoom while playing, fly speed (0.5-500) in free-fly, both x1.1 per notch.
 - `tc_viewer_status(v, buf, size)`: the UTF-8 readout both title bars show today: `view: anim 1.00×, gamma 1.00,
-  FOV 80°[, lighting 1/2][, fog on (G)][  ·  PLAYING as Ed (Tab: free-fly)][  ·  AI ... (I: simple controller)]`.
+  FOV 86°[, lighting 1/2][, fog on (G)][  ·  PLAYING as Ed (Tab: free-fly)][  ·  AI ... (I: simple controller)]`.
   Frontends add their own prefix (level name, stats) and extras (SDL: `AA 4x`).
 
 ### 5. Level setup at load

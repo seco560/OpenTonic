@@ -406,7 +406,7 @@ static void portal_scenario(const char *dir) {
     tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(g->position, tc_v3_scale(front, 8)),
                        atan2f(-front.x, front.y));
     v.camera.yaw = TC_PI - tc_viewer_player(&v)->heading;
-    tc_viewer_step_fov(&v, 1); /* 85 degrees and a zoomed-out camera: kept across the level change (the carry) */
+    tc_viewer_step_fov(&v, 1); /* 91 degrees and a zoomed-out camera: kept across the level change (the carry) */
     tc_viewer_wheel(&v, -2);
     zoom = v.orbit_distance;
     for (i = 0; i < 60 * 25 && !pending; i++) {
@@ -443,11 +443,12 @@ static void portal_scenario(const char *dir) {
     desc.carry = &carry;
     if (tc_viewer_init(&w, &desc) != TC_OK) { check(0, "bar with the carry"); return; }
     free(ai);
-    check(fabsf(w.camera.vertical_fov - 85 * TC_PI / 180) < 1e-4f, "bar keeps sud0's field of view (85 degrees)");
+    check(fabsf(tc_camera_hfov_43(w.camera.vertical_fov) - 91 * TC_PI / 180) < 1e-4f,
+          "bar keeps sud0's field of view (91 degrees horizontal at 4:3, one step up from the original's 86)");
     {
         char what[96];
-        snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default 6)", (double)zoom);
-        check(zoom != 6.0f && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
+        snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default %.0f)", (double)zoom, (double)TC_CAM_DISTANCE);
+        check(zoom != TC_CAM_DISTANCE && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
     }
     tc_viewer_overlay(&w, &o);
     check(o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO, "bar starts with the reveal");
@@ -540,12 +541,38 @@ int main(int argc, char **argv) {
         frame(&v, 1.0f / 60);
     }
     tc_viewer_release_all(&v);
-    check(fabsf(v.camera.yaw - fov - v.turn_speed) < 0.05f, "right stick: turns the camera at turn_speed");
+    printf("  right stick: yaw %.3f -> %.3f (turn_speed %.2f)\n", (double)fov, (double)v.camera.yaw, (double)v.turn_speed);
+    check(fabsf(remainderf(v.camera.yaw - fov - v.turn_speed, 2 * TC_PI)) < 0.05f, "right stick: turns the camera at turn_speed");
     for (int i = 0; i < 60; i++) { /* and back, so the runs below face where they did */
         tc_viewer_set_look_stick(&v, -1, 0);
         frame(&v, 1.0f / 60);
     }
     tc_viewer_release_all(&v);
+    {   /* the play camera (tc_cam.h; camcheck has the details): turned by the player, it stays while Ed stands */
+        char status[512];
+        float yaw = v.camera.yaw;
+        run(&v, 1, 0);
+        check(fabsf(v.camera.yaw - yaw) < 1e-4f, "Ed standing: the camera stays where the stick turned it");
+        tc_viewer_recenter_camera(&v);
+        run(&v, 1, 0);
+        check(fabsf(remainderf(v.camera.yaw - (TC_PI - tc_viewer_player(&v)->heading), 2 * TC_PI)) < 0.01f &&
+                  fabsf(v.camera.pitch + TC_CAM_ELEVATION) < 0.01f,
+              "recentre: behind Ed, at the follow's elevation");
+        tc_viewer_toggle_closeup(&v);
+        tc_viewer_status(&v, NULL, status, sizeof(status));
+        check(v.cam.closeup && strstr(status, ", close-up") != NULL, "Numpad 5: the close-up (title too)");
+        tc_viewer_toggle_closeup(&v);
+        tc_viewer_set_look(&v, 2, false, true);
+        fov = v.camera.pitch;
+        tc_viewer_mouse_look(&v, 0, 10); /* the mouse 10 points down, inverted: up, twice as far */
+        frame(&v, 1.0f / 60);
+        check(fabsf(v.camera.pitch - fov - 0.06f) < 0.03f, "look settings: x2, invert Y (the mouse moved down looks up)");
+        tc_viewer_status(&v, NULL, status, sizeof(status));
+        check(strstr(status, ", look 200 %, invert Y") != NULL, "look settings in the title");
+        tc_viewer_set_look(&v, 1, false, false);
+        tc_viewer_recenter_camera(&v);
+        run(&v, 1, 0);
+    }
 
     tc_viewer_toggle_play(&v);
     check(!v.playing, "Tab: free-fly");
@@ -584,7 +611,7 @@ int main(int argc, char **argv) {
     run(&v, 0.5f, 0);
     check(v.animation_time == b.x && tc_v3_distance(a, ed(&v)) < 1e-4f, "P: clock and AI stop");
     tc_viewer_toggle_pause(&v);
-    check(fabsf(v.animation_speed - 2.0f / 3) < 1e-6f && fabsf(v.camera.vertical_fov - fov - 5 * TC_PI / 180) < 1e-4f,
+    check(fabsf(v.animation_speed - 2.0f / 3) < 1e-6f && fabsf(tc_camera_hfov_43(v.camera.vertical_fov) - roundf(tc_camera_hfov_43(fov) * 180 / TC_PI) * TC_PI / 180 - 5 * TC_PI / 180) < 1e-4f,
           "[ [ .: speed 2/3, FOV +5");
     tc_viewer_status(&v, ", AA 4x", status, sizeof(status));
     printf("  status: %s\n", status);

@@ -51,6 +51,8 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
   (scripted keys: AI, free-fly and drop, simple controller, settings, the sector modes on sud0; every frame's draw list
   validated). `make sectorcheck` checks every level's sectors (`tc_sector.h`) against the game's own data: the lookup
   finds each level perso's snapshot sector, portal faces lead into their targets.
+  `make camcheck` checks the play camera (`tc_cam.h`) on hand-made geometry (follow, free view, recentre, a wall),
+  then the line of sight from Ed's head to the camera through 60 s demos on five levels (docs/CAMERA.md).
   The tests (not the library) use POSIX `<dirent.h>` to list the level folder.
 
 ## Vita backend sketch (VitaSDK + vitaGL)

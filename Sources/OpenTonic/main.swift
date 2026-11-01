@@ -167,9 +167,13 @@ final class GameView: MTKView {
     private var captured = false
     var isCaptured: Bool { captured }
 
+    /// The first mouse movement after capturing is dropped: detaching the pointer can report a jump of its own.
+    private var skipMove = false
+
     func setCaptured(_ on: Bool) {
         guard on != captured else { return }
         captured = on
+        skipMove = on
         if on { NSCursor.hide() } else { NSCursor.unhide() }
         CGAssociateMouseAndMouseCursorPosition(on ? 0 : 1)
         window?.acceptsMouseMovedEvents = on
@@ -190,8 +194,17 @@ final class GameView: MTKView {
         setCaptured(true)
     }
 
+    /// The middle button: recentre the camera (X).
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2, !inDemo, let v = viewer else { return super.otherMouseDown(with: event) }
+        tc_viewer_recenter_camera(v)
+        updateTitle()
+    }
+
     override func mouseMoved(with event: NSEvent) {
-        if captured, let v = viewer { tc_viewer_mouse_look(v, Float(event.deltaX), Float(event.deltaY)) }
+        guard captured, let v = viewer else { return }
+        if skipMove { skipMove = false; return }
+        tc_viewer_mouse_look(v, Float(event.deltaX), Float(event.deltaY))
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -235,15 +248,24 @@ final class GameView: MTKView {
             if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
             return
         }
-        // 1-9: hold a baked lighting set (sud0 and Land have three); 0: the level's own light again (sud0's day /
-        // night cycle, Land's lightning); - / =: display gamma.
+        // 5 and 0, on the number row or the numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person).
+        if event.keyCode == 23 || event.keyCode == 87 || event.keyCode == 29 || event.keyCode == 82,
+           !event.modifierFlags.contains(.option) {
+            if !event.isARepeat {
+                if event.keyCode == 29 || event.keyCode == 82 { tc_viewer_toggle_first_person(v) } else { tc_viewer_toggle_closeup(v) }
+                updateTitle()
+            }
+            return
+        }
+        // Option + 1-9: hold a baked lighting set (sud0 and Land have three); Option + 0: the level's own light again
+        // (sud0's day / night cycle, Land's lightning); - / =: display gamma.
         let digits: [UInt16: UInt32] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
-        if let n = digits[event.keyCode] {
+        if event.modifierFlags.contains(.option), let n = digits[event.keyCode] {
             tc_viewer_set_light_set(v, n)
             updateTitle()
             return
         }
-        if event.keyCode == 29 {
+        if event.keyCode == 29, event.modifierFlags.contains(.option) {
             tc_viewer_follow_light(v)
             updateTitle()
             return
@@ -276,6 +298,18 @@ final class GameView: MTKView {
         }
         if event.keyCode == 40 {  // K: sectors drawn: Ed's and its list (default) / all / his alone
             if !event.isARepeat { tc_viewer_cycle_sectors(v); updateTitle() }
+            return
+        }
+        if event.keyCode == 7 {  // X: recentre the camera behind Ed
+            if !event.isARepeat { tc_viewer_recenter_camera(v); updateTitle() }
+            return
+        }
+        if event.keyCode == 41 || event.keyCode == 39 || event.keyCode == 16 {  // ; ': look sensitivity, Y: invert up / down
+            if !event.isARepeat {
+                if event.keyCode == 16 { tc_viewer_toggle_invert_y(v) } else { tc_viewer_step_look(v, event.keyCode == 39 ? 1 : -1) }
+                LookSettings.save(v)
+                updateTitle()
+            }
             return
         }
         if event.keyCode == 35 {  // P: pause/resume animation
@@ -517,10 +551,10 @@ final class GameView: MTKView {
         let alert = NSAlert()
         alert.messageText = "Open Tonic Controls"
         alert.informativeText = "Coloured keys are bound to their respective functions\n\n"
-            + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera, R3 (click) "
-            + "free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, R1 lateral (free-fly: up), L1 "
-            + "free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, Start level select, "
-            + "Select / Options these controls."
+            + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera round him "
+            + "(L2 recentres it, L3 first person), R3 (click) free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, "
+            + "R1 lateral (free-fly: up), L1 free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, "
+            + "Start level select, Select / Options these controls."
         alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
@@ -554,7 +588,9 @@ final class GameView: MTKView {
         let view = GameView(frame: window.contentLayoutRect, device: MTLCreateSystemDefaultDevice())
         do {
             let r = try Renderer(view: view)
-            r.load(try Viewer(level: Level(url: url), carry: carry))
+            let loaded = try Viewer(level: Level(url: url), carry: carry)
+            LookSettings.apply(loaded.raw)
+            r.load(loaded)
             r.onLoading = { [weak view] in view?.showLoading($0) }
             r.onPendingLevel = { [weak self] in self?.openPortalLevel($0) }
             r.onGamepad = { [weak self, weak view] command in
@@ -564,6 +600,16 @@ final class GameView: MTKView {
                 case .togglePlay:
                     if let v = view?.renderer?.viewer?.raw {
                         tc_viewer_toggle_play(v)
+                        view?.updateTitle()
+                    }
+                case .firstPerson:
+                    if let v = view?.renderer?.viewer?.raw, !tc_viewer_demo(v) {
+                        tc_viewer_toggle_first_person(v)
+                        view?.updateTitle()
+                    }
+                case .recenter:
+                    if let v = view?.renderer?.viewer?.raw, !tc_viewer_demo(v) {
+                        tc_viewer_recenter_camera(v)
                         view?.updateTitle()
                     }
                 case .press:
@@ -584,7 +630,9 @@ final class GameView: MTKView {
         gameView = view
         window.contentView = view
         window.makeFirstResponder(view)
-        if wasCaptured { view.setCaptured(true) }
+        // Mouse look from the start (not in the demo, and only while the app is in front: capturing detaches the
+        // pointer system-wide); Esc releases it, a click takes it again.
+        if (wasCaptured || NSApp.isActive) && !demo { view.setCaptured(true) }
         let r = renderer!, viewer = r.viewer!, s = viewer.stats
         window.title = "Open Tonic — \(viewer.level.name)"
         if demo {  // through a red portal too: still the demo
