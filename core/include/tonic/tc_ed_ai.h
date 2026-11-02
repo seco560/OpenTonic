@@ -45,6 +45,7 @@ typedef struct tc_ed_ai {
     float time;                  /* seconds since init */
     float *trigger_wake;         /* per model trigger (tc_ai_trigger): when it may fire again */
     uint32_t triggers_fired;     /* debug count */
+    uint32_t restarts;           /* debug count: the port's respawns after dying (GameAction0) */
     /* Totalski / skymap: the skier starts in a behaviour that waits for Jump behind a text box (B2); with auto_start
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;

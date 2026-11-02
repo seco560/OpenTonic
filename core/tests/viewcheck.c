@@ -308,7 +308,7 @@ static void demo_level(const char *dir, const char *name, bool checked) {
     /* The demo is chaotic: anything that changes Ed's inputs (the camera's position feeds his AI) reshuffles the run. 12345
      * gave north 4 kinds of act after the play camera (2026-11-01) and 6 before; over seeds 1-8 the spread is the same
      * either side. Seed 2 has 5 jumps and 8 kinds on north with both cameras. */
-    tc_viewer_set_demo(&v, true, 2);
+    tc_viewer_set_demo(&v, true, getenv("DEMO_SEED") ? (uint32_t)atoi(getenv("DEMO_SEED")) : 2); /* DEMO_SEED: try others */
     if (checked) check(tc_viewer_demo(&v) && v.playing, "demo: on, in play mode");
     last = start = ed(&v);
     placed = tc_viewer_player(&v)->placed;

@@ -9,6 +9,7 @@
 #   make portalcheck -> Ed walks into portals on sud0, Land and north (docs/PORTALS.md)
 #   make sectorcheck -> every level's sectors against the game's own data (tc_sector.h)
 #   make camcheck   -> the play camera (tc_cam.h) on hand-made geometry, then the demo's line of sight on a few levels
+#   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 CC ?= cc
 AR ?= ar
@@ -21,7 +22,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -57,6 +58,8 @@ $(BUILD)/sectorcheck: tests/sectorcheck.c $(BUILD)/libtoniccore.a
 
 $(BUILD)/camcheck: tests/camcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+$(BUILD)/castcheck: tests/castcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -89,7 +92,10 @@ sectorcheck: $(BUILD)/sectorcheck
 camcheck: $(BUILD)/camcheck
 	$(BUILD)/camcheck ../files/out/ttlv
 
+castcheck: $(BUILD)/castcheck
+	$(BUILD)/castcheck ../files/out/ttlv
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck clean
+.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck clean

@@ -439,6 +439,19 @@ tc_result tc_ai_model_load_scripts(tc_ai_model *m, const uint8_t *data, size_t s
     return e;
 }
 
+tc_result tc_ai_model_load_dsg(tc_ai_model *m, const uint8_t *data, size_t size) {
+    reader r;
+    tc_result e;
+    memset(m, 0, sizeof(*m));
+    r.data = data;
+    r.size = size;
+    r.offset = 0;
+    r.error = TC_OK;
+    rd_dsg_def(&r, &m->dsg);
+    if ((e = chunk_end(&r)) != TC_OK) tc_ai_model_free(m);
+    return e;
+}
+
 void tc_ai_model_link(tc_ai_model *m, const tc_level *level) {
     if (m->link_triangles == level->collision_triangle_count && m->link_crc == level->collision_crc) return;
     tc_free(m->floor_sounds);
@@ -503,6 +516,7 @@ static bool truthy(value v) {
 
 typedef struct run {
     tc_ai_perso *p;
+    int32_t ctx;             /* OP 24's perso (AI_00491380, DAT_004ffcf4): functions and fields read it; 0 = Me */
     tc_ai_intel *intel;
     uint32_t slot;           /* 0 schedule, 1 + k rule k */
     bool meta_ran;           /* exe DAT_0051b01b */
@@ -545,9 +559,19 @@ static int other_index(const tc_ai_perso *p, int32_t id) {
     return -1;
 }
 
+/* Another perso by id: the live one (the cast), or NULL. */
+static tc_ai_perso *live(const tc_ai_perso *p, int32_t id) {
+    tc_ai_perso *q;
+    if (id == 0 || !p->find) return NULL;
+    q = p->find(p->find_user, id);
+    return q && q->model ? q : NULL;
+}
+
 static uint8_t *dsg_mem(const tc_ai_perso *p, int32_t perso, const tc_ai_dsg_def **def) {
     int o;
+    tc_ai_perso *q;
     if (perso == 0) { *def = &p->model->dsg; return p->dsg; }
+    if ((q = live(p, perso)) != NULL) { *def = &q->model->dsg; return q->dsg; }
     o = other_index(p, perso);
     if (o < 0) return NULL;
     *def = &p->model->others[o].dsg;
@@ -583,7 +607,11 @@ static value dsg_get(const tc_ai_perso *p, int32_t perso, uint32_t i) {
     case 12: return v_vec(tc_v3(bits_to_float(rd_le(b, 4)), bits_to_float(rd_le(b + 4, 4)), bits_to_float(rd_le(b + 8, 4))));
     default: {
         value v = v_int((int32_t)rd_le(b, 4));
-        if (t == 10) v.type = V_PERSO; /* raw pointer from the snapshot: only null-ness is meaningful */
+        if (t == 10) { /* a perso id (set by the scripts); the snapshot's raw pointers name no perso of the cast */
+            v.type = V_PERSO;
+            if (v.i == 0) v.i = -1; /* a null pointer: no perso (not Me) */
+            else if (p->self_id && v.i == p->self_id) v.i = 0;
+        }
         return v;
     }
     }
@@ -606,7 +634,10 @@ static void dsg_set(tc_ai_perso *p, int32_t perso, uint32_t i, value v) {
         wr_le(b + 4, float_bits(v.v.y), 4);
         wr_le(b + 8, float_bits(v.v.z), 4);
         break;
-    default: wr_le(b, (uint32_t)as_int(v), 4); break;
+    default:
+        if (v.type == V_PERSO && v.i == 0 && p->self_id) v.i = p->self_id; /* "Me", as the writer's id */
+        wr_le(b, (uint32_t)as_int(v), 4);
+        break;
     }
 }
 
@@ -650,7 +681,9 @@ static float heading_to(const tc_ai_perso *p, tc_vec3 target) {
 
 static tc_vec3 perso_position(const tc_ai_perso *p, int32_t perso) {
     int o = perso == 0 ? -1 : other_index(p, perso);
+    tc_ai_perso *q = live(p, perso);
     if (perso == 0) return p->position;
+    if (q) return q->position;
     return o >= 0 && p->other_positions ? p->other_positions[o] : p->position;
 }
 
@@ -845,7 +878,12 @@ static lval lvalue(run *r, uint32_t i) {
 
 static value field_get(run *r, int32_t perso, uint32_t f) {
     tc_ai_perso *p = r->p;
-    if (perso != 0) return f == 0 ? v_vec(perso_position(p, perso)) : v_int(0);
+    if (perso != 0) {
+        tc_ai_perso *q = live(p, perso);
+        if (q && f == 1) return v_vec(tc_v3(sinf(q->heading), -cosf(q->heading), 0));
+        if (q && f == 2) return v_vec(q->velocity);
+        return f == 0 ? v_vec(perso_position(p, perso)) : v_int(0);
+    }
     switch (f) {
     case 0: return v_vec(p->position);
     case 1: return v_vec(tc_v3(sinf(p->heading), -cosf(p->heading), 0));
@@ -883,6 +921,10 @@ static void lval_set(run *r, lval l, value v) {
         (&whole.v.x)[l.component] = as_float(v);
         v = whole;
     }
+    if (l.kind == 1 && l.perso > 0 && r->p->keep_off_main) { /* port: nor his dsgvars (they start his own reflexes) */
+        const tc_ai_perso *q = live(r->p, l.perso);
+        if (q && (q->main_actor == 0 || q->read_only_for_cast)) { r->p->forces_blocked++; return; }
+    }
     if (l.kind == 1 && l.perso >= 0) dsg_set(r->p, l.perso, l.index, v);
     else if (l.kind == 2) field_set(r, l.perso, l.index, v);
 }
@@ -910,8 +952,14 @@ static value arith(int op, value a, value b) {
     }
 }
 
+/* A perso without buttons of its own (the cast) reads the main actor's: its button nodes index his (cast.py). */
 static int32_t button_counter(run *r, uint32_t param) {
-    return param < r->p->model->button_count ? r->p->button_counter[param] : -2;
+    const tc_ai_perso *src = r->p;
+    if (!src->model->button_count && src->main_actor) {
+        const tc_ai_perso *q = live(src, src->main_actor);
+        if (q) src = q;
+    }
+    return param < src->model->button_count ? src->button_counter[param] : -2;
 }
 
 static float button_analog(const tc_ai_perso *p, uint32_t b) {
@@ -989,13 +1037,42 @@ static bool condition(run *r, uint32_t i) {
         uint32_t stored = (uint32_t)as_int(arg(r, i, 0)), duration = (uint32_t)as_int(arg(r, i, 1));
         return (stored <= p->time_ms ? p->time_ms - stored : stored - p->time_ms) >= duration;
     }
-    case 56: {
+    case 56: { /* InBehaviour(perso, behaviour): the behaviour indexes that perso's model */
         value who = arg(r, i, 0);
         uint32_t b = arg_param(r, i, 1);
-        if (who.type != V_PERSO || who.i != 0 || b == TC_AI_NONE) return false;
-        return (b & TC_AI_REFLEX_FLAG) ? p->reflex.behaviour == (b & 0xFFFF) + p->model->normal_count
-                                       : p->normal.behaviour == b;
+        tc_ai_perso *q = who.type == V_PERSO ? (who.i == 0 ? p : live(p, who.i)) : NULL;
+        if (!q || b == TC_AI_NONE) return false;
+        return (b & TC_AI_REFLEX_FLAG) ? q->reflex.behaviour == (b & 0xFFFF) + q->model->normal_count
+                                       : q->normal.behaviour == b;
     }
+    case 61: { float d = argf(r, i, 0); return d * d > p->main_distance2; }
+    case 13: { /* COND_13Etc_00497d70 -> GAM_ZoneHolds_00420280: b's origin inside ZDD zone k (1-based) of a */
+        value a = arg(r, i, 0), b = arg(r, i, 2);
+        int32_t k = as_int(arg(r, i, 1));
+        const tc_ai_perso *za = a.type == V_PERSO ? (a.i == 0 ? p : live(p, a.i)) : NULL;
+        const tc_cast_entry *e = za ? za->zones_of : NULL;
+        const float *m;
+        tc_vec3 x, q;
+        uint32_t z, j;
+        if (!e) { unknown(r, i); return false; }
+        if (b.type != V_PERSO || b.i < 0) return false;
+        x = b.i == 0 ? p->position : perso_position(p, b.i);
+        m = e->zone_inverse;
+        if (za->zones_follow) q = global_to_local(za, tc_v3_sub(x, za->position));
+        else q = tc_v3(m[0] * x.x + m[1] * x.y + m[2] * x.z + m[3], m[4] * x.x + m[5] * x.y + m[6] * x.z + m[7],
+                       m[8] * x.x + m[9] * x.y + m[10] * x.z + m[11]);
+        for (z = 0; z < e->zone_count; z++) {
+            const tc_cast_zone *zn = &e->zones[z];
+            if ((int32_t)zn->index != k) continue;
+            for (j = 0; j < zn->count; j++) {
+                const tc_cast_zone_prim *c = &zn->prims[j];
+                if (c->kind == 7 && tc_v3_distance(q, c->a) <= c->b.x) return true;
+                if (c->kind == 8 && q.x >= c->a.x && q.y >= c->a.y && q.z >= c->a.z && q.x <= c->b.x && q.y <= c->b.y &&
+                    q.z <= c->b.z) return true;
+            }
+        }
+        return false;
+    } /* FUN_00498bb0: the main actor within d */
     case 57: return can_change_state(p, arg_param(r, i, 0));
     case 58: return p->wanted_state == arg_param(r, i, 0);
     case 62: {
@@ -1038,7 +1115,10 @@ static bool condition(run *r, uint32_t i) {
 static value function(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     switch (N(r, i)->param) {
-    case 0: case 3: { value who = arg(r, i, 0); return v_vec(perso_position(p, who.type == V_PERSO ? who.i : 0)); }
+    case 0: case 3: { /* GetPosition: of OP 24's perso (FUNC 0 takes none); PositionOf(perso) */
+        value who = arg(r, i, 0);
+        return v_vec(perso_position(p, who.type == V_PERSO ? who.i : r->ctx));
+    }
     case 2: { /* horizontal angle (degrees, CCW, 0 = facing) from this perso to another, in this perso's frame */
         value who = arg(r, i, 0);
         tc_vec3 d = global_to_local(p, tc_v3_sub(perso_position(p, who.type == V_PERSO ? who.i : 0), p->position));
@@ -1060,8 +1140,58 @@ static value function(run *r, uint32_t i) {
     case 31: return v_float(argf(r, i, 0) * TC_PI / 180);
     case 32: return v_float(argf(r, i, 0) * 180 / TC_PI);
     case 33: return v_float(fabsf(argf(r, i, 0)));
-    case 34: return v_int(p->hit_points);
-    case 37: return v_int(0);
+    case 34: case 37: { /* FUNC_Counter34Etc_0049ad30: the hit points (std game +0x14; the main actor's elsewhere) and
+                          * their maximum (+0x15) of a perso */
+        value who = arg(r, i, 0);
+        const tc_ai_perso *q = who.type == V_PERSO && who.i != 0 ? live(p, who.i) : NULL;
+        if (!q) q = p; /* the main character's are a global table (GAM_00419490): the skier's Counter34(fix Ed) */
+        return v_int(N(r, i)->param == 34 ? q->hit_points : q->hit_points_max);
+    }
+    case 4: case 5: case 6: case 7: case 8: case 9: case 10:
+    case 14: case 15: case 16: case 17: case 18: case 19: case 20: {
+        /* FUNC_GetPositionEtc_0049a140 -> AI_00491ba0: from that perso to this one (OP 24's), in that perso's axes
+         * (FUNC 4 / 14: the world's), then AI_00491ab0's part: 4 the length, 5 |x| ... (x, y, xy, z, xz, yz). 14-20 use
+         * other points of both (AI_00491920, not read): the origins here. */
+        static const uint8_t part[] = {7, 1, 2, 4, 3, 5, 6};
+        uint32_t f = N(r, i)->param, k = f >= 14 ? f - 14 : f - 4;
+        value who = arg(r, i, 0);
+        const tc_ai_perso *me = r->ctx != 0 ? live(p, r->ctx) : p;
+        const tc_ai_perso *q = who.type == V_PERSO ? (who.i == 0 ? p : live(p, who.i)) : NULL;
+        tc_vec3 d;
+        if (!me) me = p;
+        if (!q && who.type == V_PERSO && who.i > 0 && other_index(p, who.i) >= 0) { /* a model copy: position only */
+            d = tc_v3_sub(me->position, perso_position(p, who.i));
+        } else if (!q) {
+            return v_float(NAN); /* no such perso: every comparison fails */
+        } else {
+            d = tc_v3_sub(me->position, q->position);
+            if (part[k] != 7) d = global_to_local(q, d);
+        }
+        switch (part[k]) {
+        case 1: return v_float(d.x);
+        case 2: return v_float(d.y);
+        case 3: return v_float(sqrtf(d.x * d.x + d.y * d.y));
+        case 4: return v_float(d.z);
+        case 5: return v_float(sqrtf(d.x * d.x + d.z * d.z));
+        case 6: return v_float(sqrtf(d.y * d.y + d.z * d.z));
+        default: return v_float(tc_v3_length(d));
+        }
+    }
+    case 54: { value v = v_int(-1); v.type = V_PERSO; return v; } /* FUNC_54_0049b240: the perso this one stands on
+        * (dynamics report 0x30000, the std game +0x1C chain): the port's persos are static collision, so none */
+    case 93: { /* FUNC_93Etc_0049b740 case 0x5d: a save value (GAM_004195f0: -1 out of range) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        int32_t n = as_int(arg(r, i, 0));
+        return v_int(n >= 0 && n < 31 ? g->values[n] : -1);
+    }
+    case 95: return v_int(0);  /* GAM_00419440 (not read): as before */
+    case 164: return v_int(0); /* the control type (0x8C175C): the port runs type 0 (docs/DECOMP.md) */
+    case 40: case 41: case 42: { /* FUNC_40Etc_0049aff0: the lives byte; 41 adds one, 42 takes one first */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        if (N(r, i)->param == 41) g->lives++;
+        if (N(r, i)->param == 42) g->lives--;
+        return v_int(g->lives);
+    }
     case 43: return v_int((int32_t)p->time_ms);
     case 49: return v_float(button_analog(p, arg_param(r, i, 0)));
     case 88: return v_float(tc_v3_length(p->velocity));
@@ -1085,16 +1215,22 @@ static value function(run *r, uint32_t i) {
             reach = hit.distance;
         return v_vec(tc_v3_add(o, tc_v3_scale(d, reach)));
     }
-    case 102: {
+    case 102: case 103: if (r->ctx != 0) { /* OP 24's perso (Ed's dsg57, the thing he carries): its own frame */
+        const tc_ai_perso *q = live(p, r->ctx);
+        tc_vec3 v = argv3(r, i, 0);
+        if (!q) return v_vec(v);
+        if (N(r, i)->param == 102) return v_vec(tc_v3_add(q->position, local_to_global(q, v)));
+        return v_vec(global_to_local(q, tc_v3_sub(v, q->position)));
+    }
+    if (N(r, i)->param == 103) {
+        tc_vec3 d = tc_v3_sub(argv3(r, i, 0), p->position);
+        if (!p->has_axes) return v_vec(global_to_local(p, d));
+        return v_vec(tc_v3(tc_v3_dot(d, p->axes[0]), tc_v3_dot(d, p->axes[1]), tc_v3_dot(d, p->axes[2])));
+    } else {
         tc_vec3 v = argv3(r, i, 0);
         if (!p->has_axes) return v_vec(tc_v3_add(p->position, local_to_global(p, v)));
         return v_vec(tc_v3_add(p->position, tc_v3_add(tc_v3_add(tc_v3_scale(p->axes[0], v.x), tc_v3_scale(p->axes[1], v.y)),
                                                         tc_v3_scale(p->axes[2], v.z))));
-    }
-    case 103: {
-        tc_vec3 d = tc_v3_sub(argv3(r, i, 0), p->position);
-        if (!p->has_axes) return v_vec(global_to_local(p, d));
-        return v_vec(tc_v3(tc_v3_dot(d, p->axes[0]), tc_v3_dot(d, p->axes[1]), tc_v3_dot(d, p->axes[2])));
     }
     case 50: { value v = v_int(-1); v.type = V_PERSO; return v; }
     case 91: return v_float(p->report_2bc);
@@ -1102,7 +1238,7 @@ static value function(run *r, uint32_t i) {
     case 51: return v_float(p->env_depth);
     case 52: return v_float(p->position.z + p->env_depth);
     case 104: return v_float(0);
-    default: unknown(r, i); return v_int(0);
+    default: unknown(r, i); return v_float(NAN); /* not modelled: compares false (not as 0, which is also Me) */
     }
 }
 
@@ -1131,6 +1267,16 @@ static value operation(run *r, uint32_t i) {
     case 18: return v_vec(tc_v3_scale(argv3(r, i, 0), argf(r, i, 1)));
     case 19: { float d = argf(r, i, 1); return v_vec(d != 0 ? tc_v3_div(argv3(r, i, 0), d) : tc_v3(0, 0, 0)); }
     case 20: return v_vec(tc_v3_scale(argv3(r, i, 0), -1));
+    case 24: { /* OP_24_004913d0: evaluate the second child as that perso's (AI_00491380: none when it is Me) */
+        value who = arg(r, i, 0), v;
+        uint32_t c = child(r, i, 1);
+        int32_t saved = r->ctx;
+        if (c == TC_AI_NONE) return v_int(0);
+        r->ctx = who.type == V_PERSO ? who.i : 0;
+        v = eval(r, c);
+        r->ctx = saved;
+        return v;
+    }
     default: unknown(r, i); return v_int(0);
     }
 }
@@ -1140,13 +1286,14 @@ static value eval(run *r, uint32_t i) {
     value v = v_int(0);
     switch (n->type) {
     case TC_AI_KEYWORD:
-        if (n->param == 4 || n->param == 5) { v.type = V_PERSO; v.i = 0; } /* Me; KW_5 = the main actor (the player) */
+        if (n->param == 4) { v.type = V_PERSO; v.i = 0; } /* Me */
+        else if (n->param == 5) { v.type = V_PERSO; v.i = r->p->main_actor; } /* the main actor (the player) */
         else unknown(r, i);
         return v;
     case TC_AI_COND: return v_int(condition(r, i));
     case TC_AI_OP: return operation(r, i);
     case TC_AI_FUNC: return function(r, i);
-    case TC_AI_FIELD: return field_get(r, 0, n->param);
+    case TC_AI_FIELD: return field_get(r, r->ctx, n->param);
     case TC_AI_DSGVAR: case TC_AI_DSGVAR_REF: return dsg_get(r->p, 0, n->param);
     case TC_AI_INT: return v_int((int32_t)n->param);
     case TC_AI_REAL: return v_float(bits_to_float(n->param));
@@ -1160,6 +1307,21 @@ static value eval(run *r, uint32_t i) {
 }
 
 /* ---- statements ---- */
+
+/* The removal guard (tc_ai_perso.removal_guard): q stays, frozen, unless the main actor was near it lately. */
+static bool kept_as_prop(tc_ai_perso *p, tc_ai_perso *q) {
+    if (!p->removal_guard || q->main_actor == 0) return false;
+    if (q->near_main_ms && q->time_ms - q->near_main_ms <= TC_AI_REMOVAL_MS) return false;
+    q->frozen = true;
+    p->removals_kept++;
+    return true;
+}
+
+/* The perso a procedure acts on: Me, another (live) perso, or NULL. */
+static tc_ai_perso *target(run *r, value who) {
+    if (who.type != V_PERSO) return NULL;
+    return who.i == 0 ? r->p : live(r->p, who.i);
+}
 
 static void set_mech_mode(tc_ai_perso *p, int mode) {
     p->motion.mech_mode = mode;
@@ -1243,7 +1405,78 @@ static uint32_t procedure(run *r, uint32_t i) {
         set_mech_mode(p, mech[c - 51]);
         return 0;
     case 58: case 254: pr[0] = argf(r, i, 0); set_mech_mode(p, 10); return 0;
-    case 66: { value who = arg(r, i, 0); if (who.type == V_PERSO && who.i == 0) p->hit_points = as_int(arg(r, i, 1)); return 0; }
+    case 66: case 68: case 69: { /* PROC_SetCounter66Etc_00489590: 66 hit points := n (FUN_004cebf0), 68 := the maximum
+                                  * (FUN_004cec10), 69 += n up to the maximum (FUN_004cec30) */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        int32_t n = c == 68 ? 0 : as_int(arg(r, i, 1));
+        if (!q) return 0;
+        if (c == 66) q->hit_points = n;
+        else if (c == 68) q->hit_points = q->hit_points_max;
+        else q->hit_points = q->hit_points + n <= q->hit_points_max ? q->hit_points + n : q->hit_points_max;
+        return 0;
+    }
+    case 143: case 144: { /* PROC_142Etc_0048ac30: a save value + 1 / := v (GAM_00419620) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        int32_t n = as_int(arg(r, i, 0));
+        if (n >= 0 && n < 31) g->values[n] = (int16_t)(c == 143 ? g->values[n] + 1 : as_int(arg(r, i, 1)));
+        return 0;
+    }
+    case 77: case 78: case 79: { /* PROC_77Etc_004899e0: the lives byte := n, + 1, - 1 (GAM_00437a00 / a10 / a30) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        if (c == 77) g->lives = (uint8_t)as_int(arg(r, i, 0));
+        else if (c == 78) g->lives++;
+        else g->lives--;
+        return 0;
+    }
+    case 5: case 6: { /* ActivatePerso (GAM_Objinit_004199f0: not when dead) / DeactivatePerso (GAM_Objinit_00419a10) */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        if (q && q != p && q->main_actor == 0) return 0; /* port: the player stays (his host does not read it anyway) */
+        if (q && c == 6 && kept_as_prop(p, q)) return 0;
+        if (q && c == 5 && !q->dead) q->active = true;
+        if (q && c == 6) q->active = false;
+        return 0;
+    }
+    case 17: case 18: case 19: case 20: case 21: case 22: { /* PROC_4Etc_00488580 -> GAM_00424280(perso, mechanics,
+        * animation, radius) / GAM_004242d0 (22: the radius only): 17 (0, 0, always), 18 (0, 0, r), 19 (0, 1, always),
+        * 20 (0, 1, r), 21 (1, 1, always); the radius is stored squared, -1 as it is */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        float radius = (c == 18 || c == 20 || c == 22) ? argf(r, i, 1) : -1;
+        if (!q) return 0;
+        if (c != 22) {
+            q->run_mechanics = c == 21;
+            q->run_animation = c >= 19;
+        }
+        q->radius2 = radius == -1 ? -1 : radius * radius;
+        return 0;
+    }
+    case TC_AI_PROC_FREEZE: { /* port: a story-checked RemovePerso (cast.py): it stays, a prop */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        if (!q || q->main_actor == 0) return 0;
+        q->frozen = true;
+        p->removals_kept++;
+        return q == p ? F_STOP : 0;
+    }
+    case 257: { /* PROC_4Etc_00488580 case 0x101 -> GAM_Objinit_00419b60: out of the world (inactive); re-initialised
+                 * when std game +0x20 is 1 (GAM_Objinit_00419a80), else dead; its own AI stops at once */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        if (!q || (q != p && q->main_actor == 0)) return 0;
+        if (kept_as_prop(p, q)) return q == p ? F_STOP : 0;
+        q->active = false;
+        if (q->reinit) q->reinit_requested = true;
+        else q->dead = true;
+        return q == p ? F_STOP : 0;
+    }
+    case 237: case 238: { /* ForceBehaviour / ForceReflex (0x48b730 / 0x48b800): another perso's (its model's index) */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        uint32_t b = arg_param(r, i, 1);
+        if (!q || b == TC_AI_NONE || ((b & TC_AI_REFLEX_FLAG) != 0) != (c == 238)) return 0;
+        if (q == p) return change_behaviour(r, c == 238, b);
+        if (p->keep_off_main && q->main_actor == 0) { p->forces_blocked++; return 0; }
+        if (c == 237) tc_ai_force_behaviour(q, (uint16_t)(b & 0xFFFF));
+        else tc_ai_force_reflex(q, (uint16_t)(b & 0xFFFF));
+        q->forced_by = p->self_id;
+        return 0;
+    }
     case 120: case 121: {
         uint32_t ch = arg_param(r, i, 0);
         if (ch < 64) {
@@ -1307,7 +1540,8 @@ static uint32_t procedure(run *r, uint32_t i) {
         }
         return 0;
     }
-    case 0: case 5: case 25: case 26: case 32: case 33: case 70: case 71: case 79: case 80:
+    case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */
+    case 25: case 26: case 32: case 33: case 70: case 71: case 80:
     case 84: case 85: case 86: case 105: case 106: case 107: case 108:
     case 154: case 155: case 236: case 278: case 279: case 291: case 292:
         return 0; /* world, sound, text, camera and channel effects: no-ops for now */
@@ -1455,6 +1689,7 @@ static bool run_intel(tc_ai_perso *p, tc_ai_intel *in) {
     run r;
     int loops;
     r.p = p;
+    r.ctx = 0;
     r.intel = in;
     for (loops = 0; loops < 8; loops++) {
         const tc_ai_behaviour *b = &m->behaviours[in->behaviour];
@@ -1511,6 +1746,10 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     p->rng = 0x1234567u;
     p->global_flags = 0xFFFFFFFFu;
     p->hit_points = 4;
+    p->hit_points_max = 4;
+    p->active = true;
+    p->run_mechanics = p->run_animation = 1;
+    p->radius2 = -1;
     p->transparency = 255;
     p->change_level = -1;
     p->g_flags = 0x20;
@@ -1561,7 +1800,7 @@ static void update_buttons(tc_ai_perso *p) {
     }
 }
 
-void tc_ai_step(tc_ai_perso *p, float dt) {
+static void step_begin(tc_ai_perso *p, float dt) {
     tc_vec3 axes[3];
     int32_t mode = p->motion.mech_mode;
     float proposal[32];
@@ -1576,7 +1815,9 @@ void tc_ai_step(tc_ai_perso *p, float dt) {
      * the jump animation's event (or SetMechMode7) applies it; the *_set flags say what changed this frame. */
     memcpy(p->motion.proposal, proposal, sizeof(proposal));
     p->dt = dt;
-    p->time_ms += (uint32_t)(dt * 1000 + 0.5f);
+}
+
+static void think(tc_ai_perso *p) {
     update_buttons(p);
     p->running_reflex = true;
     if (p->reflex.behaviour == 0xFFFF || !run_intel(p, &p->reflex)) {
@@ -1584,5 +1825,17 @@ void tc_ai_step(tc_ai_perso *p, float dt) {
         run_intel(p, &p->normal);
     }
     p->running_reflex = false;
+}
+
+void tc_ai_step(tc_ai_perso *p, float dt) {
+    step_begin(p, dt);
+    p->time_ms += (uint32_t)(dt * 1000 + 0.5f);
+    think(p);
     advance_state(p, dt);
+}
+
+void tc_ai_step_parts(tc_ai_perso *p, float dt, bool think_now, bool animate) {
+    step_begin(p, dt);
+    if (think_now) think(p);
+    if (animate) advance_state(p, dt);
 }

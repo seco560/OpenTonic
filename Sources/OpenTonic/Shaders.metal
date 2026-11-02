@@ -125,7 +125,9 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
     float4 world = d.model * float4(in.position, 1.0);
     out.normal = (d.model * float4(in.normal, 0.0)).xyz;  // shade() renormalises
     if (d.billboard != 0) {  // centre + corner offset in the camera plane; unlit (zero normal = full light)
-        world.xyz += u.camRight.xyz * in.normal.x + u.camUp.xyz * in.normal.y;
+        // sized by the model's scale: a perso's sprites shrink and grow with their channel (the Bonus's pickup)
+        float s = length(d.model[0].xyz);
+        world.xyz += (u.camRight.xyz * in.normal.x + u.camUp.xyz * in.normal.y) * s;
         out.normal = float3(0.0);
     }
     // The water effect's lift (GLIGLOU_00442da0): with the camera not below the water, vertices below it are drawn

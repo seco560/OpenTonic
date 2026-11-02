@@ -198,6 +198,10 @@ Each item is marked in the code or in docs/NOTES.md.
    Ed-relative and smooths the air control through dsg154 / dsg155, which carries momentum on keys too. It is not
    ported.
 
+12. **The other persos (the cast, 2026-11-02; docs/NOTES.md "The cast"):** their AI runs, their mechanics do not (they
+   stand, turning in place); the talking characters may not take Ed over (cast.py MAY_FORCE_MAIN); FUNC 54 (standing on
+   a perso) is always none; the cast's animation clock is the exe's (the 0.25 of item 10 stays for the baked loops only).
+
 ## Plan, in order (mechanics first)
 1. **The user checks in the game**: the ledge hang (jump at a ledge too high to step on), shimmy, climb; steps
    (up to about 0.45 now); head-on wall hits (the 0.85 rebound).

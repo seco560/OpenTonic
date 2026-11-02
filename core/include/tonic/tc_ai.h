@@ -74,6 +74,10 @@ typedef struct tc_ai_button { uint16_t inputs; uint8_t analog; int16_t lo, hi; }
 typedef struct tc_ai_other { uint16_t id; uint8_t role; tc_ai_dsg_def dsg; } tc_ai_other;
 
 #define TC_AI_NONE16 0xFFFFu
+#define TC_AI_REMOVAL_MS 3000u
+/* A procedure of the port's own (tools/ttre/cast.py PORT_FREEZE): a RemovePerso under a story check, rewritten: the target
+ * stays as a prop (frozen). */
+#define TC_AI_PROC_FREEZE 0x8101u
 /* A mechanics ID card (MEC hidcard): type 0-12 picks the engine's handler pair; words = the card after its type
  * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
 typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
@@ -227,6 +231,9 @@ tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size)
 /* A model of scripts only (no states, buttons or other persos): the body of a SCPT chunk, as the .ttlv's LAIS holds
  * for the level persos that set the light (tc_level.light_persos). */
 tc_result tc_ai_model_load_scripts(tc_ai_model *model, const uint8_t *data, size_t size);
+/* A model of dsgvars only (a .ttai dsg block: ai.perso_dsg_block): a perso that does not run, whose dsgvars others
+ * read and write (tc_cast's ghosts). */
+tc_result tc_ai_model_load_dsg(tc_ai_model *model, const uint8_t *data, size_t size);
 /* Drops the per-triangle table (floor sounds) unless it was written for this level's collision: an
  * imported level runs a donor level's .ttai. Call once after loading both files. */
 void tc_ai_model_link(tc_ai_model *model, const tc_level *level);
@@ -267,7 +274,23 @@ typedef struct tc_ai_intel {
 #define TC_AI_MAX_LIGHT_CALLS 4
 typedef struct tc_ai_light_call { int32_t set, duration_ms; bool absolute; } tc_ai_light_call;
 
-typedef struct tc_ai_perso {
+/* Game counters the scripts share (NULL in a perso: its own). lives: the byte at *DAT_008bc840 (PROC 77 sets, 78 adds
+ * one, 79 takes one; FUNC 40 reads, 41 / 42 add / take one and read): what the gold Eds count; its starting value
+ * (the save data's) is not read, the port starts at 0. */
+typedef struct tc_ai_globals {
+    uint8_t lives;
+    /* The save values (31 i16 at DAT_004ec6d0, GAM_004195f0 / GAM_00419620): FUNC 93 reads one, PROC 143 adds one, PROC
+     * 144 sets one (story progress, the bees ...). Their starting values are the save data's: the port starts at 0. */
+    int16_t values[31];
+    /* Port: where the main actor comes back after dying (GameAction0, tc_ed_ai): where he stood when a save point (the
+     * cast's DFM_Save, TC_CAST_SAVE_POINT) took itself out; none: his start. */
+    bool has_checkpoint;
+    tc_vec3 checkpoint;
+    float checkpoint_heading;
+} tc_ai_globals;
+
+typedef struct tc_ai_perso tc_ai_perso;
+struct tc_ai_perso {
     const tc_ai_model *model;
     /* Host -> AI, every frame before tc_ai_step. */
     uint32_t inputs;             /* 1 << TC_AI_IN_* held */
@@ -322,6 +345,8 @@ typedef struct tc_ai_perso {
     float float13, float14;      /* FIELD 13 / 14 */
     int32_t change_level;        /* ChangeLevel's string index, -1 none */
     bool cover_requested;        /* GameAction2: start the cover transition; the host clears it */
+    bool restart_requested;      /* GameAction0 (GAM_Objinit_00419e50 -> engine state 9: back from the last save); the
+                                    host clears it (tc_ed_ai: the port's respawn) */
     /* Sound events started this step (animation events passed, PlaySound3D): global event indices; reset each step. */
     uint16_t sounds[TC_AI_MAX_SOUNDS];
     uint8_t sound_count;
@@ -329,19 +354,58 @@ typedef struct tc_ai_perso {
     uint8_t light_call_count;
     uint8_t g_flags, g_armed;    /* Proc9's deferred result (exe DAT_0051b019 / DAT_0051b018) */
 
+    /* The cast (tc_cast.h). find: another perso by id (perso nodes: level perso k + 1), or NULL; its dsgvars, position,
+     * behaviours, hit points and activity are then the live ones (without: this model's copies, tc_ai_other, and the
+     * host's other_positions). */
+    tc_ai_perso *(*find)(void *user, int32_t id);
+    void *find_user;
+    int32_t main_actor;          /* KW_5 (the main actor) as a perso id: 0 = this perso is it (Ed) */
+    int32_t self_id;             /* this perso's id (0: unknown): a perso stored in a dsgvar is kept as its id, so
+                                    "Me" written into another perso's dsgvar names the writer there */
+    float main_distance2;        /* host-fed: squared distance from this perso's origin to the main actor's
+                                    (GAM_0042a680, DAT_008bc744; COND 61) */
+    tc_ai_globals *globals;
+    tc_ai_globals own_globals;
+    /* The std game's activity (host-run, GAM_00428070 / GAM_PersoFrame_0042b520): the AI runs while active and the main
+     * actor is within the radius (radius2 < 0: always); the animation plays with run_mechanics or run_animation. PROC 5
+     * / 6 (de)activate, PROC 17-22 set the rest, PROC 257 takes the perso out: inactive, then dead (PROC 5 cannot wake
+     * it) unless `reinit`, when the host starts it again from its initial behaviour (reinit_requested). */
+    bool active, dead, reinit, reinit_requested;
+    uint8_t run_mechanics, run_animation;
+    float radius2;
+    int32_t hit_points_max;      /* FUNC 37, std game +0x15 (Ed: the port's 4) */
+    int32_t forced_by;           /* diagnostics: the id of the perso whose PROC 237 / 238 last set this one's behaviour */
+    const tc_cast_entry *zones_of; /* host-fed (the cast): its ZDD zones for COND 13 (NULL: not modelled) */
+    bool zones_follow;           /* ... in its live axes (position, heading: the main actor), not zones_of->zone_inverse */
+    /* Port (the cast): PROC 257 / 6 from this perso take another out (or itself) only when the main actor was near
+     * the target lately (near_main_ms, host-fed: within the last TC_AI_REMOVAL_MS): the pickups. Otherwise (a story
+     * check: Doc already rescued as the port's flags say) the target stays as a prop: frozen, drawn, not thinking. */
+    bool removal_guard;
+    uint32_t near_main_ms;       /* host-fed: the clock when the main actor was last within reach (0 never) */
+    bool frozen;
+    uint32_t removals_kept;      /* diagnostics */
+    bool read_only_for_cast;     /* port: the cast does not write this perso's dsgvars (the camera's copy, which the main
+                                    actor's scripts read: the cutscene triggers' camera modes would hold him) */
+    bool keep_off_main;          /* port: this perso's PROC 237 / 238 and dsgvar writes leave the main actor alone (the
+                                    cast, unless allowed: tools/ttre/cast.py MAY_FORCE_MAIN) */
+    uint32_t forces_blocked;     /* diagnostics: how many times */
+
     /* Diagnostics: use counts of the primitives the interpreter skipped, [kind * TC_AI_UNKNOWN_STRIDE + index]
      * (kind = node type 0-9). */
     uint32_t *unknown;
     /* Optional: called after every executed statement (node index, result flags) for debugging. */
     void (*trace)(void *user, uint32_t node, uint32_t flags);
     void *trace_user;
-} tc_ai_perso;
+};
 
 /* A model without states runs its scripts only (no animation clock). */
 tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *model);
 void tc_ai_free(tc_ai_perso *p);
 /* One engine frame: buttons, reflex then normal intelligence, then the state's animation clock. */
 void tc_ai_step(tc_ai_perso *p, float dt);
+/* A step in parts, for the cast: the clock (time_ms) is the host's; think = run the AI (reflex, then normal);
+ * animate = the state's animation clock and its events. tc_ai_step = the clock, think and animate. */
+void tc_ai_step_parts(tc_ai_perso *p, float dt, bool think, bool animate);
 /* Another perso sets this one's normal behaviour (PROC_237): it starts from its beginning on the next step. */
 void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t behaviour);
 /* The same for the reflex (PROC_238); reflex = index among the reflexes. */

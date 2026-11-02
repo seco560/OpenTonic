@@ -40,6 +40,137 @@
 - **Unresolved fix→level pointers (answered):** all belong to the 3 fix persos' runtime state and are rewritten at load. In bar: std_game+0xC ×3 (= the new level SuperObject, as raymap patches it), Perso3dData +0x70, +0x94 (Ed only) and +0x164/+0x168/+0x16C ×3, plus 6 triplets of consecutive pointers and 3 single pointers elsewhere in fix (probably linked-list next/prev/header nodes into level data; not traced). None are needed for rendering.
 - Not exported yet: sprites, sector data (lights, fog, neighbours, sky material). Collision: see "Play as Ed".
 
+## The cast (2026-11-02): the level persos run their own AI
+Every level perso with an AI model now runs its scripts in play mode (core/src/tc_cast.c, tc_cast.h; exporter
+tools/ttre/cast.py; .ttlv CAST chunk). Before, they looped their initial animation. Per level, about 100-170 run
+(sud0 166, north 158, Land 128); the cutscene levels have 0-1 (their directors are excluded, below).
+
+**Read from the exe this session** (names in tools/exe/ai_names.tsv):
+- The gate, GAM_00428070 / GAM_PersoFrame_0042b520: std game +0x2A runs the mechanics, +0x2B plays the animation without
+  them, +0x2C is the squared activation radius (-1 always): the AI runs only while the main actor's origin is closer
+  (GAM_0042a680 -> DAT_008bc744). PROC 17-22 set the three (17 (0,0,always), 18 (0,0,r), 19 (0,1,always), 20 (0,1,r),
+  21 (1,1,always), 22 r). The pickups' `Proc9(1); PROC_20(Me, r)` sleeps until Ed comes within r.
+- PROC 257 (case 0x101, GAM_Objinit_00419b60): the perso leaves the world (inactive); std game +0x20 == 1: re-initialised,
+  else +0x17 "dead" (PROC 5 ActivatePerso cannot wake it). PROC 6 deactivates.
+- COND 61 is "the main actor within r" (r^2 > DAT_008bc744), not a speed test. OP 24 (perso, expr) evaluates expr as
+  that perso (AI_00491380). FUNC 4-10 / 14-20: distances from this perso to another in the other's axes (AI_00491ba0 /
+  AI_00491ab0: 3D, x, y, z, xy, xz, yz). FUNC 54: the perso this one stands on (none in the port: persos are static
+  collision). FUNC 93 / PROC 143 / 144: 31 i16 save values at DAT_004ec6d0. FUNC 34 / 37, PROC 66 / 68 / 69: hit points
+  and their maximum (std game +0x14 / +0x15; the main actor's in a save table). FUNC 40-42, PROC 77-79: the lives byte.
+- COND 13 (a, k, b): b's origin inside ZDD zone k of a: now for the cast too (spheres, boxes), and for Ed's own zone 1
+  (a sphere r 3, 3 ahead), tested in his moving axes.
+- Float13 / Float14 (fields) are Perso3dData +0x188 / +0x18C: the shadow's scale. PROC 212-214: on / off / set of
+  something at perso +0x3C (a light or effect, not read further).
+
+**Interpreter changes (core/src/tc_ai.c):** persos share one id space (level perso k + 1) through tc_ai_perso.find: other
+persos' dsgvars, positions, behaviours and hit points are the live ones (without the cast, the old per-model copies). A
+perso stored in a dsgvar keeps its id ("Me" written into Ed's dsg57 by a lever names the lever there); a null perso
+pointer reads as none, not Me. Unknown functions return NaN (every comparison fails) instead of 0, which equalled Me: the
+sud0 slab (dalfou) took `OP_24(Ed, FUNC_54) == Me` for true and grabbed Ed at the start. FUNC 95 and 164 keep their
+old 0. KW_5 is the main actor's id. A scripts-only perso reads the main actor's buttons (cast.py maps its button nodes).
+
+**Port choices, not the exe:**
+- Left out of the cast: the camera and its directors (Camera, GenD_Cam), gen_cheatCode, World (lives / death /
+  respawn), the portals and level changers (ai.portals, PROC 7 / 8 / 29: .ttai PORT), the skier's start (PROC 6 on the
+  fix Ed), the light persos (LAIS), Totalski's obstacles (TRIG).
+- The cast may not force the main actor's behaviours nor write his dsgvars, except families in cast.py MAY_FORCE_MAIN:
+  the levers (sud_mecalevier) and the popcorn machines (distrib). The talking characters (gd00 on cock01, Agent XYZ,
+  the outro's cinematique) hand Ed to behaviours that wait for conversations and cutscenes the port does not run: he
+  would stand there for good. marmite's magnet switch (JET_SwAimant) is held out too (MAY_NOT_FORCE_MAIN): Ed holds it
+  with dsg3 = 1 and leaning it to let go does not take yet.
+- The cast does not move (no mechanics for other card types); persos with the mechanics flag turn in place by their
+  turn requests. Sounds: only global (Bnk_0) events; levels' own banks are not read, so many cast sounds are silent;
+  only those within TC_CAST_HEARING (30) of Ed are played, flat.
+- **Perf shortcuts:** the activation radius and the sector activity lists are the original's
+  budget tricks, but the scripts depend on them (the pickups sleep until Ed is near): kept faithful.
+
+**Fixes after the user's first playtest (2026-11-02, "a total mess"): a sound flood in cavedoc (shearing, 5 fps) and
+the story characters vanishing in sud0.** Both were the stub class this section warns about, and castcheck printed the
+symptoms (1928 sounds heard in cavedoc; sud0's drawn parts 161 -> 98 standing still) without checking them.
+- **The flood:** HEG_Inventaire (a progress tracker on every level) compares the fix game perso's dsg26 (PERSO@0x22f232,
+  the third perso-in-fix) with a sum of save values, then plays Ed's "yippee" and adds 10 to it. That perso does not run:
+  its dsgvars read 0 and the write was dropped, so the jingle replayed every few ticks. Now every perso the cast names
+  that does not run has one shared copy of its dsgvars (CAST ghosts, from the snapshot); those the main actor keeps a
+  copy of (the camera, the skier's fix game perso) share his copy and his fed position; the cast may read the camera's
+  but not write it (read_only_for_cast: the cutscene triggers' camera modes, which Ed's scripts read).
+- **Sound throttle (port):** at most TC_CAST_SOUNDS_PER_TICK (4) cast sounds a tick, the same event from the same perso
+  not again within 250 ms. A safety net: castcheck checks the scripts' raw output (at most 40 per perso in 10 s standing).
+- **The vanishing:** Doc (docfou), Suzy and others test `GlobalFlag(7)` (and 8, 112, 128, 256, 512) and RemovePerso
+  themselves: flag 7 says Doc is rescued, and the port sets every flag (Ed's abilities). The port's game state is
+  incoherent: all flags on (late game), save values 0 (new game). The user: keep them, "even if just as temporary
+  props". cast.py rewrites a RemovePerso under a GlobalFlag / save value If into PORT_FREEZE (TC_AI_PROC_FREEZE: the
+  target stays, frozen: drawn in its state, not thinking); other removals by the cast (the sud0 mushroom's event) are
+  kept the same way unless Ed was within TC_CAST_NEAR (10) of the target in the last 3 s (the pickups). castcheck:
+  no drawn perso leaves the world while Ed is far. Open: a coherent game state (a profile of flags and save values per
+  point in the story, or the game's own SaveGame data), which would let these characters be what the story says.
+
+**Second playtest (2026-11-02): the collectibles play no sound or animation; the first cavedoc machine makes Ed
+scratch his head.**
+- **The sound:** the Bonus's collect sound (and most of the cast's) is in its level's own bank: the scripts' pointer
+  (0xc01332c on north) names an event record in level memory. Each level's .snd maps the address of every sound
+  reference (the T34 node itself, an animation event's value) to an event id; ids are unique over all 86 banks (388
+  events), so the bank follows (Bonus: 0x50000 = Bnk_9's cloch01, a bell). tools/ttre/sfx.py now extracts the 44
+  level-bank events the levels name (35 with audio) as LEVEL_SOUND (1024) + rank, files <bank>_<name>.wav in
+  events.tsv; cast.py resolves script and animation sounds by address (sfx.sound_at). The frontends read any index.
+  Not done: the 137 ids the .snd files name that are in no Bnk_* (probably the English voice banks).
+- **The animation:** it did play (state 3, 38 frames: the core object hides, the three swirl sprites shrink, gather and
+  rise 3 up while scaling to 1-5 %), but the swirls are sprites, and both renderers expanded sprite corners in the
+  camera plane without the model's scale: they kept full size and only drifted. Shaders.metal and level.vert now scale
+  the corner by length(model[0]) (static sprites: the identity, unchanged). Neither shader could be compiled here (no
+  Metal toolchain, no glslangValidator): first seen in the app.
+- **Totalski:** headless, a no-input descent collects every Bonus it passes within its radius 3 (3 of 3). The
+  silent, unshrinking pickup behind a fast skier may be what looked like no trigger; open until the user re-checks.
+- **The cavedoc machine (JET_AReparer, "to repair"):** broken by design. It gives Super Ed only while the crate
+  BEM_Caisse1 (perso 7, family boitetuyo) is in its B2; otherwise it forces Ed's head-scratch (0x6900a0). The crate
+  reaches B2 from its B0 ("in place"); it is pushable (its B4: SetMoveDirection under mode 12 along Ed's push), so the
+  puzzle is pushing the crate into place. The cast runs no mechanics, so the crate cannot be pushed: unsolvable in the
+  port until the cast moves. Not seen: which helper (BEM_RecaleCaisse, BEM_RemetCaissePositionOrigine) drives B0.
+
+**Dying and respawning (2026-11-02, third playtest: "Ed can die now and we don't handle respawning").** Read: Ed's
+death is his own scripts': B73 (GameAction2, the cover; dsg134 := 1) -> B99, which waits for GameState63, refills the
+hit points (SetCounter71 / SetHitPoints from Counter37) and calls GameAction0 (PROC 0 = GAM_Objinit_00419e50: sounds
+off, engine state 9: back from the last save) when lives are left (TakeLife), else sets dsg133 to the level and calls
+ChangeLevel('death') (the continue screen). The skier: B9 with no hit points -> B16 -> B15, the same two ends. PROC 0
+was a no-op and Ed's ChangeLevel was read by nobody: he stayed covered for good.
+- **Port:** GameAction0 sets tc_ai_perso.restart_requested; tc_ed_ai, and Ed's ChangeLevel('death') (there is no
+  game over screen yet, and the port starts with 0 lives, so every death takes that branch), put him at the last
+  checkpoint or his start, refill his hit points, force his start behaviour and reflex (B63 reads dsg134 = 1 and skips
+  the arrival), and report a teleport: the viewer reveals. The original reloads the level from the save; the port keeps
+  the level as it is (taken pickups stay taken). Ed's other ChangeLevel calls stay unhandled, as before.
+- **Checkpoints (port):** where Ed stood when a save point (cast.py SAVE_POINTS: DFM_Save, which shows the "saved"
+  text with PROC 118 = FON_004ce7a0 -> GAM_004213b0 and takes itself out) fired.
+- **A regression found on the way:** on the ski levels the cast's ghosts took the fix Ed (who is not the player there),
+  so the skier's Counter34(fix Ed) read the ghost's 4: he could never reach game over. The fix Ed is now an alias of
+  the main actor there (CAST main_alias), as the exe's Counter34 reads the main character's global table.
+- castcheck: every level's Ed (the skier by crashing with no hit points) dies and is back playing in 4-9 s; Super Ed
+  (BigBoss) does not die of hit points (info). Not seen in the app; the lives start value (save data) is still open.
+
+**Super Ed (the popcorn / Crunch machines, family distrib):** within 5 the machine waits for Action with Ed close
+(`Dot(Ed, dsg0) < 3`) and the zones (COND_13 both ways), sets Ed's dsg57 = itself and dsg15 = its dsg0 (the duration in
+ms: north 39000, cock01 15000 / 5000, BigBoss 9999999 = the level), forces Ed's B11 (walk to it, eat: state 31, the
+shadow grows), then B93 with reflex R13: Super Ed. His model is in Ed's own object list (states 28 / 112 / 203 show
+objects 28, 80 ... instead of 0, 37, 97), so the exported state animations draw it. R13 ends it when TimeElapsed(dsg104,
+dsg15) (B65, R4). castcheck: on 6 levels Super Ed starts, runs, draws 14 other parts, and wears off on time. Not ported:
+PROC 212-214 (the effect at perso +0x3C), the shadow's growth (the port's shadow stand-in has no scale).
+
+**Checks:** `make castcheck` (sud0, north, Land; any levels as arguments): the cast's first-frame poses equal the baked
+loops' (0.000 apart, paused at time 0), Ed runs with the cast awake, the sleepers wake when he comes near and the pickups
+take themselves out (north: 4 Bonus, a life, 2 hives, a trigger; lives counted), the levers take Ed over and let go
+(Action, Jump; lean + Action), Super Ed. All 21 levels pass (138 checks). Env: FORCE_TRACE, GAP_TRACE.
+viewcheck's north demo stays seed-sensitive (with the cast: 8 of seeds 1-12 pass, without: 5; DEMO_SEED picks one).
+
+**Open:**
+- The levers' own state never changes when Ed pulls (0 -> 0), so whatever they open does not open yet.
+- The talking characters, cutscenes, Agent XYZ: next to the cutscene work (below).
+- Not modelled: META_28 paths (the mines), PROC 72-76 (another counter family), waypoints (FUNC 11), CollectNearby,
+  touched objects, the cast's mechanics (card types 9 / 10) and collision with the moving persos.
+
+**Walkable cutscene levels (user, 2026-11-02): the first "remastered" feature.** bar, spynorth, pyr_fou ... become
+places Ed walks around in: he arrives at one spot, talks to / interacts with the scene's character to start the
+scene, then walks out at another spot and goes on to the main level (tc_level_after_cutscene). Needs: the scene's
+director persos (now excluded: they end in a level change) and the camera perso's AI, the actors' movement, an
+"interact to start" trigger, and the arrival / exit places (the user: "we'll get to that").
+
 ## Demo mode (2026-10-30; autopilot redone 2026-10-31)
 The level select's **Demo** button (D; Square on a pad) opens a random main level (no cutscenes, no imports, with a
 .ttai) and lets Ed wander by himself: tc_viewer_set_demo, an autopilot in the core that plays him with the stick and
@@ -270,6 +401,9 @@ old look for comparing (title: "old lighting").
 - **Avoid (clean room):** the 2022 Rayman 2 DS source leak.
 
 ## Next session: start here
+**2026-11-02: the cast runs (see "The cast" above): pickups, levers, Super Ed. Next per the user: the walkable cutscene
+levels, then shooting.** The user must re-export (the converter stamp changed: the next build does it).
+
 **2026-11-01, later: the analysis is done, see docs/CAMERA.md** (steps 1-6 below; what is still unread is listed at
 its end). The user chose the suggested first set (recentring the only way out of free view): **implemented the same
 day; the user's first playtest: "decent", good in some places, bad in others (where: not said yet). Second pass the
@@ -451,7 +585,9 @@ headless tests, and ask before large explorations.
 ## Sound events (2026-10-25): Ed's sound effects
 - **Global sound events = Bnk_0's events** (84; the fix bank, always loaded). The snapshot stores a sound reference as
   a pointer 0x9bdfe0c + 0x20 x index (where Bnk_0's event 0 lived); **fix.snd** lists them as { u32 index, u32 address }
-  pairs (fix.rts = their relocation table). Levels have no .snd (their own sounds: not looked at).
+  pairs (fix.rts = their relocation table). **Corrected 2026-11-02: levels do have a .snd** (`<level>/<Level>.snd`,
+  encrypted as the snapshots): { u32 event id, u32 address } for every place in the level's memory that holds a sound
+  reference; see "The cast", second playtest.
 - **Bank** (.bnm, plain): { u32 version 0, events offset, n_events, resources offset, n_resources, data offset, ... };
   event 0x20 { u32 id, u32 kind (1 play, 2 stop), u32 (index-like, unreliable), ... }; resource 0x5c { u32 id, u32 type
   (1 audio = the vgmstream streams, `bnm/<resource index>/...`; 8 / 10 tiny raw waveforms), u32, u32 size, u32 data

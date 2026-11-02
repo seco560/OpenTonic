@@ -6,6 +6,7 @@
 #include "tonic/tc_alloc.h"
 #include "tonic/tc_anim.h"
 #include "tonic/tc_ed_ai.h"
+#include "tonic/tc_cast.h"
 
 /* ---- play session ---- */
 
@@ -17,6 +18,8 @@ struct tc_viewer_play {
     bool has_model;
     tc_ed_ai driver;
     bool has_driver;
+    tc_cast cast;                /* the level persos that run their own AI (.ttlv CAST), with Ed as the main actor */
+    bool has_cast;
     bool use_ai;
     char level_name[128];        /* tc_ed_ai keeps a pointer to it */
     /* Ed's AI and mechanics step in fixed ticks of TC_ED_AI_TICK; drawing interpolates between the last two. */
@@ -77,12 +80,18 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         if (r != TC_OK) v->ai_result = r;
         if (p->has_driver) tc_ed_ai_set_sectors(&p->driver, l->sectors.count ? &l->sectors : NULL);
     }
+    if (p->has_driver && l->cast.count) {
+        tc_result r = tc_cast_init(&p->cast, l, &p->driver.ai);
+        p->has_cast = r == TC_OK;
+        if (r != TC_OK) v->ai_result = r;
+    }
     p->use_ai = p->has_driver;
     return p;
 }
 
 static void play_destroy(tc_viewer_play *p) {
     if (!p) return;
+    if (p->has_cast) tc_cast_free(&p->cast);
     if (p->has_driver) tc_ed_ai_free(&p->driver);
     if (p->has_model) tc_ai_model_free(&p->model);
     tc_collision_free(&p->world);
@@ -1293,6 +1302,8 @@ bool tc_viewer_status_live(const tc_viewer *v) {
 
 const tc_player *tc_viewer_player(const tc_viewer *v) { return v->play ? &v->play->player : NULL; }
 
+const tc_cast *tc_viewer_cast(const tc_viewer *v) { return v->play && v->play->has_cast ? &v->play->cast : NULL; }
+
 /* The simple controller at a portal (the ski levels' finish, or I pressed anywhere): when one captures, Ed faces it and
  * plays the step-in (state 228's animation, as the AI's walk-in does), then the cover; once the screen is covered the
  * portal fires as with the AI (its dsgvar condition set as Ed's B106 would). Capture-only portals (the holes) need the
@@ -1405,6 +1416,11 @@ static void step_ai(tc_viewer *v, float dt) {
                       v->camera.position);
         for (n = 0; n < p->driver.ai.sound_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
             v->sounds[v->sound_count++] = p->driver.ai.sounds[n];
+        if (p->has_cast) { /* after Ed, on his clock and from his sector */
+            tc_cast_step(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
+            for (n = 0; n < p->cast.sounds_out_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
+                v->sounds[v->sound_count++] = p->cast.sounds_out[n];
+        }
         capture_pose(v);
     }
     t = p->tick_time / TC_ED_AI_TICK;
@@ -1637,6 +1653,9 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
+    if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
+        APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,
+               (unsigned)v->play->cast.globals.lives, (int)v->play->driver.ai.hit_points);
 #undef APPEND
     return n;
 }
@@ -1851,6 +1870,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         uint32_t nch = p->channel_count, base;
         tc_mat4 world;
         tc_sample s;
+        const tc_cast_actor *actor;
         if (p->sample_count == 0 || (v->playing && (int32_t)i == l->ed.static_perso)) continue;
         /* drawn with its sector (the sector's character list); unknown: always */
         if (perso_sectors && v->sectors->perso_sector[i] != TC_SECTOR_NONE &&
@@ -1861,6 +1881,32 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         world = tc_mat4_from34(&p->world);
         sec = v->sectors && v->sectors->perso_count == l->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
         z = water && sec < v->sectors->count ? v->sector_water[sec] : NAN; /* drawn in its sector's pass */
+        actor = v->playing && v->play && v->play->has_cast && v->play->use_ai ? tc_cast_actor_of(&v->play->cast, i) : NULL;
+        if (actor) { /* its own AI's state animation; parts keyed by object (channel numbering differs per animation) */
+            const tc_cast_anim *an;
+            tc_mat34 w34;
+            uint32_t ch;
+            if (!tc_cast_pose(&v->play->cast, actor, v->play->tick_time / TC_ED_AI_TICK, &w34, &an, &s)) continue;
+            world = tc_mat4_from34(&w34);
+            nch = an->channel_count;
+            for (ch = 0; ch < nch; ch++) {
+                uint16_t obj = an->shown[s.s0 * nch + ch];
+                tc_mat4 m, model;
+                if (obj == TC_HIDDEN || (ch < 64 && (actor->ai.hidden_channels >> ch) & 1u)) continue;
+                m = tc_channel_matrix(an->transforms, an->shown, nch, s, ch);
+                model = tc_mat4_mul(&world, &m);
+                /* An object's parts (one per material) under the channel it first appears with: the same geometry
+                 * repeats under every channel that shows it in the initial animation. */
+                uint16_t c0 = 0;
+                bool found = false;
+                for (k = 0; k < p->part_count; k++) {
+                    if (p->parts[k].object != obj) continue;
+                    if (!found) c0 = p->parts[k].channel, found = true;
+                    if (p->parts[k].channel == c0) add_draw(v, &dl, first + k, &model, 0, p->parts[k].mesh.index_count, z);
+                }
+            }
+            continue;
+        }
         s = tc_sample_at_time(t, p->sample_rate, p->sample_count);
         base = s.s0 * nch;
         for (k = 0; k < p->part_count; k++) {

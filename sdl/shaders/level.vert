@@ -89,7 +89,9 @@ void main() {
     vec4 world = d.model * vec4(inPosition, 1.0);
     vNormal = (d.model * vec4(inNormal, 0.0)).xyz;  // shade() renormalises
     if (d.billboard != 0u) {  // centre + corner offset in the camera plane; unlit (zero normal = full light)
-        world.xyz += u.camRight.xyz * inNormal.x + u.camUp.xyz * inNormal.y;
+        // sized by the model's scale: a perso's sprites shrink and grow with their channel (the Bonus's pickup)
+        float s = length(d.model[0].xyz);
+        world.xyz += (u.camRight.xyz * inNormal.x + u.camUp.xyz * inNormal.y) * s;
         vNormal = vec3(0.0);
     }
     // The water effect's lift (GLIGLOU_00442da0; Shaders.metal level_vertex): only with the camera not below the water;

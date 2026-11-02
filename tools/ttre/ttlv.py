@@ -40,6 +40,9 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         the state animations for the AI: one per distinct A3D, named "s<k>" (k = the first state using it; .ttai states
         point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
         ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
+  CAST* the level persos whose own AI the core runs, their families' states and state animations (cast.py has the
+        layout). Their PRSO entries hold a part for every object those animations show (channel 0xFFFF: not in the
+        initial animation).
   SECT* the sectors (level.LevelData.sectors, docs/NOTES.md "Sectors"; reader core/src/tc_sector.c). Data only: which
         sectors are drawn, and where water is, is the core's choice per mode (the Tonic Viewer draws them all):
           u16 n_sectors, u16 n_surfaces, n_surfaces x f32 z (water surface heights)
@@ -97,7 +100,7 @@ import math
 import os
 import struct
 
-from . import ai, chunks, export, gf, level
+from . import ai, cast, chunks, export, gf, level
 
 ALPHA_TEST = 1 << 0  # TC_FLAG_ALPHA_TEST: a cut-out (texture flags 0x12, see surface())
 TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8, see surface())
@@ -362,12 +365,23 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
     blobs, n_parts, ed_blob, lite_parts = [], 0, None, []
     ed_loc = data.player()
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
+    # The cast (cast.py): every object their families' animations show, as extra parts on channel 0xFFFF
+    cast_list, cast_skipped = cast.select(data) if persos else ([], {})
+    cast_locs, family_cache, prso_index = {loc for loc, _, _ in cast_list}, {}, {}
+    for p in data.persos() if cast_locs else ():
+        if p.loc in cast_locs:
+            p3d = data.lv.ptr(p.loc)
+            fam = data.lv.ptr(p3d, 0x14) if p3d else None
+            if fam not in family_cache:
+                family_cache[fam] = cast.family_anims(data, data.family_states(fam))
+            cast.load_cast_objects(data, p, family_cache[fam][1])
     for p in data.persos() if persos else ():
         a = p.anim
         if not a or not p.objects or (p.loc == fix_ed and ed_loc != fix_ed):
             continue  # (the fix Ed is left out where another perso is the player: unplaced there)
         if p.loc == ed_loc:
             ed_blob = len(blobs)
+        prso_index[p.loc] = len(blobs)
         sect.perso_sectors.append(data.perso_sector(p.loc))
         k = max(1, round(60 / a.fps)) if a.n_frames > 1 else 1
         poses = [a.pose(s / k) for s in range(a.n_frames * k)]
@@ -380,6 +394,13 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                     add_geometry(pm, None, geo, scale, surface)
                     parts += [struct.pack('<2H', ch, obj) + fitted_surface(mm) + geometry(mm) for mm in pm.values()]
                     lite_parts += pm.values()
+        if p.loc in cast_locs:  # the objects only its other states show
+            for obj in sorted(set(p.objects) - {o for row in a.objects for o in row}):
+                geo, scale = p.objects[obj]
+                pm = {}
+                add_geometry(pm, None, geo, scale, surface)
+                parts += [struct.pack('<2H', 0xFFFF, obj) + fitted_surface(mm) + geometry(mm) for mm in pm.values()]
+                lite_parts += pm.values()
         n_parts += len(parts)
         blobs.append(struct.pack('<12f2Hf', *p.world, len(a.chans), len(poses), a.fps * k * ANIM_TIME_SCALE)
                      + struct.pack(f'<{len(a.chans)}h', *a.parents(0)) + struct.pack('<I', len(parts)) + b''.join(parts)
@@ -427,6 +448,11 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
         if unresolved:
             data.warnings.append(f'light perso {a.perso[1]:#x}: unresolved script references {unresolved}')
         lais.append(struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4))
+    cast_body = None
+    if cast_list:
+        cast_body, listing = cast.chunk(data, cast_list, prso_index, family_cache)
+        with open(os.path.splitext(path)[0] + '_cast.txt', 'w', encoding='utf-8') as f:
+            f.write(f'{len(cast_list)} persos run their AI; left out: {cast_skipped}\n' + '\n'.join(listing) + '\n')
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
     mesh = struct.pack('<I', len(meshes)) + b''.join(fitted_surface(m) + geometry(m) for m in meshes.values())
@@ -436,6 +462,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
            ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
            ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
+           ('CAST', cast_body) if cast_body else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else [])))]
     chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),

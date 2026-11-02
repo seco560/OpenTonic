@@ -32,6 +32,8 @@ class Node:
     depth: int
     ref: tuple = None  # resolved pointer target (sna, offset), if the param is a relocated pointer
     children: list = field(default_factory=list)
+    loc: tuple = None  # where the node is (sna, offset): the .snd tables name sound references by address
+    event: int = None  # T34: the core's sound event, when the converter resolved it (cast.py: the level's own sounds)
 
 
 def walk_nodes(nodes):
@@ -104,7 +106,7 @@ class AI:
             param, _, _, depth, typ = self.d.un('IBBBB', loc, o)
             if depth == 0:
                 break
-            n = Node(typ, param, depth, self.lv.ptr(loc, o))
+            n = Node(typ, param, depth, self.lv.ptr(loc, o), loc=(loc[0], loc[1] + o))
             while stack and stack[-1].depth >= depth:
                 stack.pop()
             (stack[-1].children if stack else roots).append(n)
@@ -1073,9 +1075,49 @@ def started_by_others(ai):
     return found
 
 
-def export(ai, path):
+def perso_dsg_block(d, perso):
+    """A perso's dsgvars as the .ttai writes them (u16 count, u16 0, u32 size, count x {u32 offset, u8 type, 3 pad}, the
+    buffer padded to 4), and the count. mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def
+    {ptr default buffer, ptr infos (16 B {u32 offset, u32 type, ...}), u32 buffer size, u32 count}."""
+    lv = d.lv
+    brain = lv.ptr(perso, 0xC)
+    m = lv.ptr(brain) if brain else None
+    dm = lv.ptr(m, 0xC) if m else None
+    dsg, buf = [], b''
+    if dm:
+        dfn = lv.ptr(lv.ptr(dm))
+        infos, (size, count) = lv.ptr(dfn, 4), d.un('2I', dfn, 8)
+        src = lv.ptr(dm, 4) or lv.ptr(dfn)
+        dsg = [d.un('2I', infos, 16 * i) for i in range(count)]
+        buf = bytes(d.un(f'{size}B', src))
+    out = struct.pack('<HHI', len(dsg), 0, len(buf))
+    for off, typ in dsg:
+        out += struct.pack('<IB3x', off, typ)
+    return out + buf + b'\0' * (-len(buf) % 4), len(dsg)
+
+
+def button_order(ai):
+    """{button entry location: index} as export() numbers the perso's buttons (first use, in its script order)."""
+    order = {}
+    def rec(n):
+        if n.type == 14 and n.ref:
+            order.setdefault(n.ref, len(order))
+        for c in n.children:
+            rec(c)
+    for b in ai.behaviours:
+        for s in ([b.schedule] if b.schedule else []) + b.scripts:
+            for r in s:
+                rec(r)
+    return order
+
+
+def export(ai, path, behaviours=None, main_buttons=None):
     """Write the perso's AI as .ttai (format above). Returns a summary dict. path None: returns (the SCPT chunk's
-    body, unresolved references by node type) without writing anything (a perso that runs only its scripts)."""
+    body, unresolved references by node type) without writing anything (a perso that runs only its scripts).
+    behaviours: {behaviour location: index | 0x10000 for reflexes} of other persos' models, for references into them
+    (ForceBehaviour(Ed, ...), InBehaviour(Ed, ...): cast.py); the index is within the model that owns it.
+    main_buttons: button_order() of the main actor: this perso's button nodes then index his buttons (the core reads
+    his counters: a scripts-only perso has no buttons of its own)."""
     d, lv = ai.d, ai.lv
     beh_index = {}
     lists = []
@@ -1101,8 +1143,12 @@ def export(ai, path):
         t, ref = n.type, n.ref
         if t == 34:  # a sound event: snapshot pointer -> global event index
             from .sfx import event_index
+            if n.event is not None:
+                return n.event
             k = event_index(n.param)
             return k if k is not None else 0xFFFFFFFF
+        if t == 14 and ref and main_buttons is not None:
+            return main_buttons.get(ref, 0xFFFFFFFF)
         if t == 14 and ref:
             if btn is None:
                 btn = Buttons(d, ref)
@@ -1117,6 +1163,8 @@ def export(ai, path):
             return ai.state_index[ref]
         if t == 32 and ref in beh_index:
             return beh_index[ref]
+        if t == 32 and behaviours and ref in behaviours:
+            return behaviours[ref]
         if ref is not None or t in (14, 15, 20, 24, 25, 32):
             unresolved[t] += 1
             return 0xFFFFFFFF
@@ -1159,22 +1207,7 @@ def export(ai, path):
             initial[k] = beh_index[ref] & 0xFFFF
 
     def dsg_block(perso):
-        # mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def {ptr default buffer,
-        # ptr infos (16 B {u32 offset, u32 type, ...}), u32 buffer size, u32 count}
-        brain = lv.ptr(perso, 0xC)
-        m = lv.ptr(brain) if brain else None
-        dm = lv.ptr(m, 0xC) if m else None
-        dsg, buf = [], b''
-        if dm:
-            dfn = lv.ptr(lv.ptr(dm))
-            infos, (size, count) = lv.ptr(dfn, 4), d.un('2I', dfn, 8)
-            src = lv.ptr(dm, 4) or lv.ptr(dfn)
-            dsg = [d.un('2I', infos, 16 * i) for i in range(count)]
-            buf = bytes(d.un(f'{size}B', src))
-        out = struct.pack('<HHI', len(dsg), 0, len(buf))
-        for off, typ in dsg:
-            out += struct.pack('<IB3x', off, typ)
-        return out + buf + b'\0' * (-len(buf) % 4), len(dsg)
+        return perso_dsg_block(d, perso)
     own_dsg, n_dsg = dsg_block(ai.perso)
 
     out, parts = bytearray(), []

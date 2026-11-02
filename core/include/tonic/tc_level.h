@@ -118,6 +118,58 @@ typedef struct tc_ed {
  * for tc_ai_model_load_scripts). */
 typedef struct tc_light_perso { uint32_t size; uint8_t *scripts; } tc_light_perso;
 
+/* .ttlv CAST (tools/ttre/cast.py): the level persos whose own AI the core runs (tc_cast.h), as data. A family's states
+ * and state animations are shared by its persos; each perso has its scripts (a .ttai SCPT body) and the std game's
+ * activity fields of the snapshot. */
+typedef struct tc_cast_sound { uint16_t frame, event; uint8_t first, period; } tc_cast_sound;
+typedef struct tc_cast_state {
+    int16_t next;                /* -1 none; itself = loop */
+    uint16_t frames;
+    uint8_t speed, flags, repeats; /* frames per second (0: 30); flags 1: only the listed transitions */
+    uint16_t anim;               /* index into the family's anims, 0xFFFF none */
+    uint16_t transition_count, prohibited_count, sound_count;
+    uint16_t *transitions;       /* transition_count pairs { target, via } */
+    uint16_t *prohibited;
+    tc_cast_sound *sounds;
+} tc_cast_state;
+typedef struct tc_cast_anim {
+    uint16_t channel_count, frame_count;
+    float rate;                  /* the A3D's own frames per second (the AI's state clock picks the frame) */
+    tc_mat34 *transforms;        /* [frame * channel_count + channel], channel -> perso */
+    uint16_t *shown;             /* object shown, TC_HIDDEN none */
+} tc_cast_anim;
+typedef struct tc_cast_family { uint16_t state_count, anim_count; tc_cast_state *states; tc_cast_anim *anims; } tc_cast_family;
+/* A ZDD zone of a cast perso (COND 13): spheres (kind 7: a centre, b.x radius) and boxes (8: a min, b max) in its axes. */
+#define TC_CAST_ZONE_PRIMS 8
+typedef struct tc_cast_zone_prim { uint32_t kind; tc_vec3 a, b; } tc_cast_zone_prim;
+typedef struct tc_cast_zone { uint16_t index, count; tc_cast_zone_prim prims[TC_CAST_ZONE_PRIMS]; } tc_cast_zone;
+typedef struct tc_cast_entry {
+    uint16_t id;                 /* as perso nodes: level perso k + 1 */
+    uint16_t prso;               /* its entry in tc_level.persos (drawn with its parts, keyed by object), 0xFFFF none */
+    uint16_t family, sector, initial_state;
+    uint8_t hit_points, hit_points_max, active, dead, mechanics, animation, reinit; /* std game +0x14 ... +0x2B */
+    uint8_t flags;               /* TC_CAST_MAY_FORCE_MAIN */
+    float radius2;               /* std game +0x2C: -1 always, else the squared activation radius */
+    tc_mat34 world;
+    uint16_t zone_count;
+    float zone_inverse[12];      /* world -> its axes, row-major 3x4 */
+    tc_cast_zone *zones;         /* index = k of COND_13(Me, k, ..) */
+    uint32_t size;
+    uint8_t *scripts;            /* for tc_ai_model_load_scripts */
+} tc_cast_entry;
+#define TC_CAST_MAY_FORCE_MAIN 1u /* its PROC 237 / 238 may set the main actor's behaviours (tools/ttre/cast.py) */
+#define TC_CAST_SAVE_POINT 2u     /* a save point: when it takes itself out, the main actor's checkpoint is where he is */
+typedef struct tc_cast_data {
+    uint16_t main_actor;         /* the player's perso id */
+    uint16_t main_alias;         /* the fix Ed where another perso is the player (the skier): the same as him, 0 none */
+    uint16_t family_count, count;
+    tc_cast_family *families;
+    tc_cast_entry *entries;
+    tc_cast_entry main_zones;    /* the main actor's ZDD zones (zones, zone_count only: in his moving axes) */
+    uint16_t ghost_count;        /* the persos the cast's scripts name that do not run: their dsgvars, shared */
+    struct tc_cast_ghost { uint16_t id; tc_vec3 position; uint32_t size; uint8_t *dsg; } *ghosts;
+} tc_cast_data;
+
 /* A light of the original (.ttlv LITE; GLI light record, docs/DECOMP.md "Rendering and lighting"). The sectors list
  * which of them light a frame drawn from them (tc_sector.lights). */
 typedef enum tc_light_type {
@@ -155,6 +207,7 @@ typedef struct tc_level {
     int has_ed;
     tc_ed ed;
     tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
+    tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
     int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
     uint32_t light_count;        /* centres (without it only the port's old lighting works) */
     tc_light *lights;

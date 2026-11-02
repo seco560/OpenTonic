@@ -383,6 +383,9 @@ bool tc_viewer_ai_active(const tc_viewer *v);  /* playing with the AI: its statu
 bool tc_viewer_status_live(const tc_viewer *v);
 /* Ed's physics state, NULL without a play session. */
 const tc_player *tc_viewer_player(const tc_viewer *v);
+/* The level persos running their own AI while playing (tc_cast.h), or NULL (no CAST chunk, no Ed AI). */
+struct tc_cast;
+const struct tc_cast *tc_viewer_cast(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
  * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]

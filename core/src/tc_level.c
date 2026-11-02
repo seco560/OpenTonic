@@ -97,6 +97,29 @@ void tc_level_free(tc_level *level) {
     }
     tc_free(level->ed.anims);
     tc_sectors_free(&level->sectors);
+    for (i = 0; level->cast.families && i < level->cast.family_count; i++) {
+        tc_cast_family *f = &level->cast.families[i];
+        for (k = 0; f->states && k < f->state_count; k++) {
+            tc_free(f->states[k].transitions);
+            tc_free(f->states[k].prohibited);
+            tc_free(f->states[k].sounds);
+        }
+        for (k = 0; f->anims && k < f->anim_count; k++) {
+            tc_free(f->anims[k].transforms);
+            tc_free(f->anims[k].shown);
+        }
+        tc_free(f->states);
+        tc_free(f->anims);
+    }
+    tc_free(level->cast.families);
+    for (i = 0; level->cast.entries && i < level->cast.count; i++) {
+        tc_free(level->cast.entries[i].scripts);
+        tc_free(level->cast.entries[i].zones);
+    }
+    tc_free(level->cast.entries);
+    tc_free(level->cast.main_zones.zones);
+    for (i = 0; level->cast.ghosts && i < level->cast.ghost_count; i++) tc_free(level->cast.ghosts[i].dsg);
+    tc_free(level->cast.ghosts);
     tc_free(level->lights);
     memset(level, 0, sizeof *level);
 }
@@ -174,6 +197,141 @@ static void read_lite(tc_level *level, reader *r) {
             c[0] = rd_f32(r), c[1] = rd_f32(r), c[2] = rd_f32(r);
             for (v = first; m && v < m->vertex_count && v - first < count; v++) memcpy(m->vertices[v].centre, c, sizeof c);
         }
+    }
+}
+
+/* n zones of a CAST record into e->zones. */
+static void read_zones(tc_cast_entry *e, reader *r) {
+    uint32_t k, j;
+    e->zones = (tc_cast_zone *)rd_array(r, e->zone_count, sizeof(tc_cast_zone), 4);
+    if (!e->zones) e->zone_count = 0;
+    for (k = 0; k < e->zone_count && !r->error; k++) {
+        tc_cast_zone *z = &e->zones[k];
+        uint16_t n;
+        z->index = rd_u16(r);
+        n = rd_u16(r);
+        for (j = 0; j < n && !r->error; j++) {
+            tc_cast_zone_prim q;
+            q.kind = rd_u32(r);
+            q.a.x = rd_f32(r), q.a.y = rd_f32(r), q.a.z = rd_f32(r);
+            q.b.x = rd_f32(r), q.b.y = rd_f32(r), q.b.z = rd_f32(r);
+            if (z->count < TC_CAST_ZONE_PRIMS) z->prims[z->count++] = q;
+        }
+    }
+}
+
+/* .ttlv CAST (tools/ttre/cast.py). Families and entries past what was allocated are dropped (out of memory). */
+static void read_cast(tc_cast_data *c, reader *r) {
+    uint32_t i, k, j;
+    c->main_actor = rd_u16(r);
+    c->family_count = rd_u16(r);
+    c->count = rd_u16(r);
+    c->main_alias = rd_u16(r);
+    c->main_zones.zone_count = rd_u16(r);
+    (void)rd_u16(r);
+    read_zones(&c->main_zones, r);
+    c->ghost_count = rd_u16(r);
+    (void)rd_u16(r);
+    c->ghosts = (struct tc_cast_ghost *)rd_array(r, c->ghost_count, sizeof(*c->ghosts), 20);
+    if (!c->ghosts) c->ghost_count = 0;
+    for (i = 0; i < c->ghost_count && !r->error; i++) {
+        struct tc_cast_ghost *g = &c->ghosts[i];
+        uint32_t size;
+        g->id = rd_u16(r);
+        (void)rd_u16(r);
+        g->position.x = rd_f32(r), g->position.y = rd_f32(r), g->position.z = rd_f32(r);
+        size = rd_u32(r);
+        if (!have(r, size)) { r->error = TC_ERR_TRUNCATED; break; }
+        g->dsg = (uint8_t *)tc_alloc(size ? size : 1);
+        if (!g->dsg) { r->error = TC_ERR_OUT_OF_MEMORY; break; }
+        memcpy(g->dsg, r->data + r->offset, size);
+        g->size = size;
+        r->offset += size;
+    }
+    c->families = (tc_cast_family *)rd_array(r, c->family_count, sizeof(tc_cast_family), 4);
+    if (!c->families) c->family_count = 0;
+    for (i = 0; i < c->family_count && !r->error; i++) {
+        tc_cast_family *f = &c->families[i];
+        f->state_count = rd_u16(r);
+        f->anim_count = rd_u16(r);
+        f->states = (tc_cast_state *)rd_array(r, f->state_count, sizeof(tc_cast_state), 16);
+        if (!f->states) f->state_count = 0;
+        for (k = 0; k < f->state_count && !r->error; k++) {
+            tc_cast_state *s = &f->states[k];
+            s->next = rd_i16(r);
+            s->frames = rd_u16(r);
+            s->speed = rd_u8(r);
+            s->flags = rd_u8(r);
+            s->repeats = rd_u8(r);
+            (void)rd_u8(r);
+            s->anim = rd_u16(r);
+            s->transition_count = rd_u16(r);
+            s->prohibited_count = rd_u16(r);
+            s->sound_count = rd_u16(r);
+            s->transitions = (uint16_t *)rd_array(r, 2u * s->transition_count, 2, 2);
+            for (j = 0; s->transitions && j < 2u * s->transition_count; j++) s->transitions[j] = rd_u16(r);
+            s->prohibited = (uint16_t *)rd_array(r, s->prohibited_count, 2, 2);
+            for (j = 0; s->prohibited && j < s->prohibited_count; j++) s->prohibited[j] = rd_u16(r);
+            s->sounds = (tc_cast_sound *)rd_array(r, s->sound_count, sizeof(tc_cast_sound), 8);
+            for (j = 0; s->sounds && j < s->sound_count; j++) {
+                s->sounds[j].frame = rd_u16(r);
+                s->sounds[j].event = rd_u16(r);
+                s->sounds[j].first = rd_u8(r);
+                s->sounds[j].period = rd_u8(r);
+                (void)rd_u16(r);
+            }
+            if ((s->transition_count && !s->transitions) || (s->prohibited_count && !s->prohibited) ||
+                (s->sound_count && !s->sounds))
+                s->transition_count = s->prohibited_count = s->sound_count = 0;
+            if (s->anim != 0xFFFF && s->anim >= f->anim_count) s->anim = 0xFFFF;
+        }
+        f->anims = (tc_cast_anim *)rd_array(r, f->anim_count, sizeof(tc_cast_anim), 8);
+        if (!f->anims) f->anim_count = 0;
+        for (k = 0; k < f->anim_count && !r->error; k++) {
+            tc_cast_anim *a = &f->anims[k];
+            a->channel_count = rd_u16(r);
+            a->frame_count = rd_u16(r);
+            a->rate = rd_f32(r);
+            rd_samples(r, (uint32_t)a->frame_count * a->channel_count, &a->transforms, &a->shown);
+            if (!a->transforms || !a->shown) a->frame_count = 0;
+        }
+    }
+    c->entries = (tc_cast_entry *)rd_array(r, c->count, sizeof(tc_cast_entry), 76);
+    if (!c->entries) c->count = 0;
+    for (i = 0; i < c->count && !r->error; i++) {
+        tc_cast_entry *e = &c->entries[i];
+        uint32_t size;
+        e->id = rd_u16(r);
+        e->prso = rd_u16(r);
+        e->family = rd_u16(r);
+        e->sector = rd_u16(r);
+        e->initial_state = rd_u16(r);
+        e->hit_points = rd_u8(r);
+        e->hit_points_max = rd_u8(r);
+        e->active = rd_u8(r);
+        e->dead = rd_u8(r);
+        e->mechanics = rd_u8(r);
+        e->animation = rd_u8(r);
+        e->reinit = rd_u8(r);
+        e->flags = rd_u8(r);
+        (void)rd_u16(r);
+        e->radius2 = rd_f32(r);
+        rd_mat34(r, &e->world);
+        e->zone_count = rd_u16(r);
+        (void)rd_u16(r);
+        if (e->zone_count) {
+            for (k = 0; k < 12; k++) e->zone_inverse[k] = rd_f32(r);
+            read_zones(e, r);
+        }
+        size = rd_u32(r);
+        if (!have(r, size)) break;
+        e->scripts = (uint8_t *)tc_alloc(size ? size : 1);
+        if (!e->scripts) { r->error = TC_ERR_OUT_OF_MEMORY; break; }
+        memcpy(e->scripts, r->data + r->offset, size);
+        e->size = size;
+        r->offset += size + (4 - size % 4) % 4;
+        if (r->offset > r->size) r->error = TC_ERR_TRUNCATED;
+        if (e->family >= c->family_count) e->size = 0; /* not run */
     }
 }
 
@@ -330,6 +488,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         }
         if ((e = chunk_end(r)) != TC_OK) goto fail;
         level->has_ed = 1;
+    }
+
+    if (chunk_need(&cs, "CAST", r)) {
+        read_cast(&level->cast, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 
     if (chunk_need(&cs, "LITE", r)) {

@@ -538,6 +538,31 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     water_zones(e);
     tc_ai_step(a, dt);
     footsteps(e);
+    /* Port: dying (B73 -> B99: cover, HP refilled, then GameAction0, or ChangeLevel('death') without lives) restarts Ed
+     * where the last save point was (tc_ai_globals.checkpoint) or at his start: his start behaviour and reflex (B63
+     * reads his dsg134 = 1, the death's, and skips the arrival), then the reveal. The original reloads the level from
+     * the save; the port keeps the level as it is, and has no game over screen yet. Ed's other ChangeLevel calls stay
+     * unhandled, as before. */
+    if (a->change_level >= 0) {
+        const char *to = (uint32_t)a->change_level < a->model->string_count ? a->model->strings[a->change_level] : NULL;
+        if (to && same_name(to, "death")) a->restart_requested = true;
+        a->change_level = -1;
+    }
+    if (a->restart_requested) {
+        const tc_ai_globals *g = a->globals ? a->globals : &a->own_globals;
+        a->restart_requested = false;
+        if (g->has_checkpoint) tc_player_teleport(p, g->checkpoint, g->checkpoint_heading);
+        else tc_player_respawn(p);
+        tc_mec_walk_reset(&e->walk);
+        e->contacts = 0;
+        if (a->hit_points <= 0) a->hit_points = a->hit_points_max;
+        a->hidden_channels = 0;
+        a->transparency = 255;
+        tc_ai_force_behaviour(a, a->model->initial_normal);
+        if (a->model->initial_reflex < a->model->reflex_count) tc_ai_force_reflex(a, a->model->initial_reflex);
+        e->restarts++;
+        e->events.teleported = true; /* the host reveals */
+    }
     if (a->cover_requested) { /* GameAction2 */
         a->cover_requested = false;
         e->events.cover = true;

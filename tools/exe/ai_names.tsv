@@ -56,7 +56,7 @@ COND	47	SlopeMaterialIs	0x4985e0
 COND	56	InBehaviour	0x498bb0	(perso, behaviour ref)
 COND	57	CanChangeState	0x498bb0	GAM_00437600: already there, or allowed by the transition/prohibited tables
 COND	58	InState	0x498bb0	GAM_00437680: current state == arg
-COND	61	SpeedAbove?	0x498bb0	arg^2 > DAT_008bc744
+COND	61	MainActorWithin	0x498bb0	arg^2 > DAT_008bc744 = squared distance from this perso to the main actor (GAM_0042a680); read 2026-11-02 (was SpeedAbove?)
 COND	62	LevelIs	0x498bb0	strcmpi(arg string, current level name); node type 20 = string
 COND	65	IsValid	0x498af0	object/perso reference is non-null (65-68)
 COND	90	GlobalFlag?	0x4991d0	func_0x00419680(mask), masks 256/512 seen
@@ -158,14 +158,14 @@ META	21	GoToWaypoint?	0x49fc50	"W"
 META	40	RotateChannelToward	0x49d730	"MVV"
 PROC	0	GameAction0	0x488530	GAM_Objinit_00419e50 (0-3: global game actions)
 PROC	2	GameAction2	0x488530	GAM_00429070
-PROC	5	ActivatePerso?	0x488580	GAM_Objinit_004199f0
+PROC	5	ActivatePerso	0x488580	GAM_Objinit_004199f0 (not when dead, +0x17)
 PROC	7	ChangeLevel	0x488580	GAM_Basic_004105f0(level name string)
 PROC	9	Proc9	0x488580	AI_0048f490(arg); AI_0048f4b0(1)
 PROC	10	Proc10	0x488580	GAM_0041ec90(perso object)
 PROC	25	ClearPersoFlag10000	0x488580
 PROC	26	SetPersoFlag10000	0x488580
 PROC	27	SetPositionFrom?	0x488aa0	AI_00488010(perso, a, b)
-PROC	79	Proc79	0x4899e0	0x4D-0x4F: GAM_00437a00/a10/a30
+PROC	79	TakeLife	0x4899e0
 PROC	236	Nop	0x495df0
 PROC	244	JumpBallistic	0x48bbe0	(vector, height): impulse and mechanics slot 9
 DSGTYPE	0	DsgVarTypes	0x4e5910	table: 12 bytes {value type, getter, setter} per dsgvar type (1 char, 2 byte?, 3 ubyte, 5 ushort, 6/7 int, 0x19 perso ref, 0x23 ...)
@@ -184,7 +184,7 @@ FUNC	34	Counter34?	0x49ad30	main actor: GAM_00419490(); others: 0x4CE.. table (h
 FUNC	37	Counter37?	0x49ad30
 FUNC	91	Report2BC	0x49b610	dynamics +0x2BC
 FUNC	92	Report2C0	0x49b610	dynamics +0x2C0
-PROC	66	SetCounter66?	0x489590	FUN_004cebf0(perso, value) (same 0x4CE.. table as FUNC_34)
+PROC	66	SetHitPoints	0x489590	std game +0x14 := n (FUN_004cebf0)
 PROC	70	SetCounter70?	0x489590	AI_00489790 -> FUN_004cecb0
 PROC	71	SetCounter71?	0x489590	AI_004896d0 -> GAM_00423ac0
 PROC	80	CollectInZone80	0x489a70	GAM_ZdxStuff_00420580 into a list
@@ -243,3 +243,30 @@ NODE	32	Behaviour	0x48e500
 NODE	33	Channel	0x48e3e0
 FUNC	102	LocalToGlobalPoint	0x49ab10	the perso world matrix with its translation (FUN_0047b2f0)
 FUNC	103	GlobalToLocalPoint	0x49ab10	the inverse
+COND	13	InZone	0x497d70	(a, k, b): b origin inside ZDD zone k of a (GAM_ZoneHolds_00420280); cast + portals
+OP	24	InPersoContext	0x4913d0	(perso, expr): expr evaluated as that perso (AI_00491380 sets DAT_004ffcf4; functions read it)
+FUNC	4	DistanceTo	0x49a140	(perso): this (or OP 24 perso) to perso, 3D (AI_00491ba0 part 7)
+FUNC	5	DistanceX	0x49a140	|x| in the target axes
+FUNC	6	DistanceY	0x49a140	y in the target axes
+FUNC	7	DistanceZ	0x49a140	z in the target axes
+FUNC	8	DistanceXY	0x49a140	horizontal, target axes
+FUNC	9	DistanceXZ	0x49a140
+FUNC	10	DistanceYZ	0x49a140
+FUNC	11	DistanceToWaypoint	0x49a140	AI_00491990 (waypoints not exported)
+FUNC	40	Lives	0x49aff0	byte at *DAT_008bc840; 41 ++ then read, 42 -- then read
+FUNC	54	StandingOnPerso	0x49b240	the perso under this one (report 0x30000, std game +0x1C chain); port: none
+FUNC	93	SaveValue	0x49b740	GAM_004195f0: i16 [0..30] at DAT_004ec6d0
+PROC	6	DeactivatePerso	0x488580	GAM_Objinit_00419a10
+PROC	17	SetActivity(0,0,always)	0x488580	GAM_00424280: +0x2A mechanics, +0x2B animation, +0x2C radius^2
+PROC	18	SetActivity(0,0,r)	0x488580
+PROC	19	SetActivity(0,1,always)	0x488580
+PROC	20	SetActivity(0,1,r)	0x488580
+PROC	21	SetActivity(1,1,always)	0x488580
+PROC	22	SetActivityRadius	0x488580	GAM_004242d0
+PROC	68	FillHitPoints	0x489590	+0x14 := +0x15 (FUN_004cec10)
+PROC	69	AddHitPoints	0x489590	+= n up to +0x15 (FUN_004cec30)
+PROC	77	SetLives	0x4899e0
+PROC	78	AddLife	0x4899e0
+PROC	143	IncSaveValue	0x48ac30	GAM_00419620
+PROC	144	SetSaveValue	0x48ac30
+PROC	257	RemovePerso	0x488580	case 0x101 -> GAM_Objinit_00419b60: inactive; re-init if std game +0x20 == 1, else dead
