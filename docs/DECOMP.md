@@ -201,6 +201,8 @@ Each item is marked in the code or in docs/NOTES.md.
 12. **The other persos (the cast, 2026-11-02; docs/NOTES.md "The cast"):** their AI runs, their mechanics do not (they
    stand, turning in place); the talking characters may not take Ed over (cast.py MAY_FORCE_MAIN); FUNC 54 (standing on
    a perso) is always none; the cast's animation clock is the exe's (the 0.25 of item 10 stays for the baked loops only).
+   **2026-11-04:** the entity loop read (docs/ENGINE.md): the always-awake and run-first lists are followed; World and
+   the pit markers may force Ed (docs/NOTES.md "Falling into pits"). Moving collision is the next item there.
 
 ## Plan, in order (mechanics first)
 1. **The user checks in the game**: the ledge hang (jump at a ledge too high to step on), shimmy, climb; steps

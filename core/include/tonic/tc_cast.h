@@ -85,6 +85,10 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
                   tc_sample *s);
 /* Diagnostics: the primitives the cast's scripts skipped, summed (as tc_ai_perso.unknown, 10 * TC_AI_UNKNOWN_STRIDE). */
 void tc_cast_unknown(const tc_cast *c, uint32_t *out);
+/* After the main actor's death and the port's respawn: the original reloads the level, so the level logic that took
+ * itself out comes back. Port: the undrawn persos that started active and are out (or frozen by the removal guard)
+ * now (the pit markers: they fire once and RemovePerso themselves) start again; drawn ones (the pickups) stay as they are. */
+void tc_cast_respawn(tc_cast *c);
 
 #ifdef __cplusplus
 }

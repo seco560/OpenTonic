@@ -237,16 +237,13 @@ void tc_cast_free(tc_cast *c) {
     memset(c, 0, sizeof(*c));
 }
 
-void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
-    uint32_t i, k;
-    tc_vec3 main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
-    c->sounds_out_count = 0;
-    c->awake = c->thinking = 0;
-    for (i = 0; i < c->ghost_count; i++) /* the shared ones: where the main actor's host says they are (the camera's eye) */
-        if (c->ghosts[i].main_other >= 0 && c->main && c->main->other_positions)
-            c->ghosts[i].ai.position = c->main->other_positions[c->ghosts[i].main_other];
-    for (i = 0; i < c->count; i++) {
-        tc_cast_actor *a = &c->actors[i];
+/* One perso's frame (GAM_00428070 for a marked perso): awake when the main character's sector or its activity list
+ * (+0x64) holds it (GAM_00428490), or it is on the engine's always-awake list (0x8c172c, marked every frame by the
+ * main loop at 0x428a8f); then its AI within the activation radius, its animation (docs/ENGINE.md). */
+static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors *s, uint16_t main_sector,
+                       tc_vec3 main_pos) {
+    uint32_t k;
+    {
         tc_ai_perso *p = &a->ai;
         bool think, animate, was_active;
         float d2;
@@ -255,13 +252,13 @@ void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_secto
         a->thought = false;
         if (p->reinit_requested) { /* PROC 257 on a perso that comes back (std game +0x20 = 1): from its start, out */
             tc_ai_free(p);
-            if (start_actor(c, a) != TC_OK) { memset(p, 0, sizeof(*p)); continue; }
+            if (start_actor(c, a) != TC_OK) { memset(p, 0, sizeof(*p)); return; }
             p->active = false;
         }
-        if (!p->model || !p->active) { a->awake = false; continue; }
-        a->awake = !s || main_sector == TC_SECTOR_NONE || a->entry->sector == TC_SECTOR_NONE ||
-                   tc_sectors_active(s, main_sector, a->entry->sector);
-        if (!a->awake) continue;
+        if (!p->model || !p->active) { a->awake = false; return; }
+        a->awake = (a->entry->flags & TC_CAST_ALWAYS_AWAKE) || !s || main_sector == TC_SECTOR_NONE ||
+                   a->entry->sector == TC_SECTOR_NONE || tc_sectors_active(s, main_sector, a->entry->sector);
+        if (!a->awake) return;
         c->awake++;
         d2 = tc_v3_length_sq(tc_v3_sub(p->position, main_pos));
         p->main_distance2 = d2;
@@ -296,6 +293,23 @@ void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_secto
                 c->sounds_out[c->sounds_out_count++] = e;
             }
     }
+}
+
+/* The exe's order (docs/ENGINE.md "The frame"): the run-first list (0x8c1738, GAM_004287b0: the platforms, lifts,
+ * crates) before the dynamic world's walk (GAM_00428550). Port: within each pass in level perso order (the exe walks
+ * the list's order, then the tree's); the main actor stepped before both (tc_viewer). */
+void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
+    uint32_t i, pass;
+    tc_vec3 main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+    c->sounds_out_count = 0;
+    c->awake = c->thinking = 0;
+    for (i = 0; i < c->ghost_count; i++) /* the shared ones: where the main actor's host says they are (the camera's eye) */
+        if (c->ghosts[i].main_other >= 0 && c->main && c->main->other_positions)
+            c->ghosts[i].ai.position = c->main->other_positions[c->ghosts[i].main_other];
+    for (pass = 0; pass < 2; pass++)
+        for (i = 0; i < c->count; i++)
+            if (((c->actors[i].entry->flags & TC_CAST_RUN_FIRST) != 0) == (pass == 0))
+                step_actor(c, &c->actors[i], dt, s, main_sector, main_pos);
 }
 
 const tc_cast_actor *tc_cast_actor_of(const tc_cast *c, uint32_t prso) {
@@ -339,6 +353,17 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
         }
     }
     return true;
+}
+
+void tc_cast_respawn(tc_cast *c) {
+    uint32_t i;
+    for (i = 0; i < c->count; i++) {
+        tc_cast_actor *a = &c->actors[i];
+        /* out, or kept frozen by the removal guard (a removal with the main actor further than TC_CAST_NEAR) */
+        if (a->entry->prso != 0xFFFF || !a->entry->active || (a->ai.active && !a->ai.frozen) || !a->ai.model) continue;
+        tc_ai_free(&a->ai);
+        if (start_actor(c, a) != TC_OK) memset(&a->ai, 0, sizeof(a->ai));
+    }
 }
 
 void tc_cast_unknown(const tc_cast *c, uint32_t *out) {

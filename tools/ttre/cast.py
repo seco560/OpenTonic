@@ -3,8 +3,8 @@ core/src/tc_cast.c). docs/NOTES.md "The cast".
 
 Every level perso with an AI model runs its scripts in the original. The port runs them too, except:
   - the player, the fix persos (Ed, the camera: their own code paths) and the families in EXCLUDED_FAMILIES (the
-    camera directors and the cheat-code reader, whose effects the port does not model; World, the level's game
-    flow: lives, death, respawn, which the port does its own way for now);
+    camera directors and the cheat-code reader, whose effects the port does not model). World (the level's game flow:
+    the collect-N rewards, north's fall height) runs since 2026-11-04; the respawn after a death stays the port's;
   - the persos the converter already reduced to data: the portals (ai.portals: the arches, the walk-in passages) and
     level changers (scripts that teleport or change level: PROC 7 / 8 / 29; .ttai PORT), the skier's start (PROC 6 deactivates the fix Ed), the light persos (PROC 283;
     .ttlv LAIS), Totalski's obstacles (.ttai TRIG).
@@ -31,7 +31,8 @@ CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes),
   n_cast x {
     u16 perso id, u16 PRSO index (0xFFFF: not drawn), u16 family, u16 sector (0xFFFF none),
     u16 initial state, u8 hit points, u8 max, u8 active, u8 dead, u8 mechanics, u8 animation, u8 re-init,
-    u8 flags (1: may force the main actor's behaviours, MAY_FORCE_MAIN; 2: a save point, SAVE_POINTS),
+    u8 flags (1: may force the main actor's behaviours, MAY_FORCE_MAIN; 2: a save point, SAVE_POINTS; 4: on the engine's
+      always-awake list, 8: on its run-first list: LevelData.engine_lists),
     u16 0, f32 radius2 (raw +0x2C), f32 world[12] (row-major 3x4),
     u16 n_zones, u16 0, [n_zones > 0: f32 inverse world[12]], n_zones x { u16 k (1-based ZDD zone of COND_13(Me, k, ..)),
       u16 n_prims, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3] } },
@@ -43,11 +44,16 @@ import struct
 
 from . import ai
 
-EXCLUDED_FAMILIES = {'Camera', 'GenD_Cam', 'gen_cheatCode', 'World', 'gen_arche'}
+EXCLUDED_FAMILIES = {'Camera', 'GenD_Cam', 'gen_cheatCode', 'gen_arche'}
 # Port choice: only these families may force the main actor's behaviour or reflex (PROC 237 / 238). The others (the
 # talking characters, Agent XYZ, the cutscene and trap triggers) hand Ed to behaviours that wait for conversations,
 # cameras and cutscenes the port does not run yet: he would stand there for good. Checked headless (castcheck).
-MAY_FORCE_MAIN = {'sud_mecalevier', 'distrib'}  # the levers; the popcorn (Crunch) machines: Super Ed
+MAY_FORCE_MAIN = {'sud_mecalevier', 'distrib',  # the levers; the popcorn (Crunch) machines: Super Ed
+                  'World'}  # the game flow: north's fall height (R0: z < -105 -> Ed's B60), the collect-N reward (B41)
+# ... and these AI models, whatever their family: the "holes of nothingness" (genplainesud; 11 on carota, cock01, Land,
+# sud0, one script): when Ed drops below the marker, his falling death (B15, then B60: falling 1 s, then B73's cover),
+# his hit points 0, the camera frozen watching him (docs/NOTES.md "Falling into pits").
+MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn'}
 # ... but not these instances: marmite's magnet switch keeps Ed holding it (his dsg3 = 1: Jump and Shoot steer the
 # magnet; leaning it to let go with Action does not take in the port yet, castcheck 2026-11-02): he would be stuck.
 MAY_NOT_FORCE_MAIN = {'JET_SwAimant'}
@@ -244,6 +250,8 @@ def chunk(d, cast, prso_index, family_cache):
     main = next((k + 1 for k, p in enumerate(persos) if p.loc == player), 0)
     main_buttons = ai.button_order(ai.AI(d, player)) if player else {}
     families, fam_blocks, entries, listing = {}, [], [], []
+    always, first, _ = d.engine_lists()
+    always, first = set(always), set(first)
     for loc, pid, a in cast:
         p3d = lv.ptr(loc)
         fam = lv.ptr(p3d, 0x14) if p3d else None
@@ -267,9 +275,13 @@ def chunk(d, cast, prso_index, family_cache):
         sector = d.perso_sector(loc)
         world = persos[pid - 1].world
         names = d.perso_names(loc)
-        flags = 1 if names[0] in MAY_FORCE_MAIN and names[2] not in MAY_NOT_FORCE_MAIN else 0
+        flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
         if names[0] in SAVE_POINTS:
             flags |= 2
+        if loc in always:
+            flags |= 4  # the engine's always-awake list (LevelData.engine_lists)
+        if loc in first:
+            flags |= 8  # its run-first list
         zs = zones(d, loc, a)
         zone_block = struct.pack('<HH', len(zs), 0)
         if zs:
@@ -282,7 +294,8 @@ def chunk(d, cast, prso_index, family_cache):
                        + zone_block + struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4))
         listing.append(f'{pid:5d} {names[0]:24s} {names[2]:32s} family {families[fam]:3d} states {len(a.states):3d} '
                        f'prso {prso_index.get(loc, -1):4d} sector {sector} active {active} mech {mech} anim {anim} '
-                       f'r2 {radius2:g}' + (f' story removals kept {frozen}' if frozen else '')
+                       f'r2 {radius2:g}' + (' always' if flags & 4 else '') + (' first' if flags & 8 else '')
+                       + (f' story removals kept {frozen}' if frozen else '')
                        + (f' unresolved {unresolved}' if unresolved else ''))
     # the main actor's own ZDD zones (spheres, boxes), for the cast's COND_13(Ed, k, Me): the machine in front of Ed
     main_zones = [(k, z[:8]) for k, z in ((k, ai.zdd_zone(d, player, k - 1)) for k in range(1, 9)) if z] if player else []

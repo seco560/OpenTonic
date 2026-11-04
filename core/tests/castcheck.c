@@ -307,12 +307,12 @@ static void level(const char *dir, const char *name) {
     visited -= unreached;
     check(visited == 0 || woke * 10 >= visited * 9, "the sleepers wake when Ed comes within their radius");
     /* The persos allowed to force Ed (tools/ttre/cast.py MAY_FORCE_MAIN: the levers): Ed beside one, Action; he must be
-     * taken over, then let go (back to running) */
+     * taken over, then let go (back to running). Only drawn ones: World and the pit markers are invisible (above). */
     for (i = 0; i < c->count; i++) {
         const tc_cast_actor *a = &c->actors[i];
         int side, k, taken_over = 0;
         unsigned forced_into = 0, held_on, state_before, state_after;
-        if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai.active) continue;
+        if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai.active || a->entry->prso == 0xFFFF) continue;
         for (side = 0; side < 4 && !taken_over; side++) {
             float h = side * TC_PI / 2;
             tc_player_teleport((tc_player *)tc_viewer_player(&v),
@@ -398,6 +398,50 @@ static void level(const char *dir, const char *name) {
      * behaviour he does not leave by running (Transit: B54 at the flight spy's spot, with that spy switched off too;
      * marmite: still holding a lever). The real check is "Ed runs with the cast awake" above. */
     printf("  info  Ed %s after the visits\n", moved > 2 ? "runs" : "does not run");
+    /* Falling into a pit (docs/NOTES.md "Falling into pits"): the invisible markers allowed to force Ed that are not
+     * always awake are the holes of nothingness (cast.py MAY_FORCE_MAIN_MODELS), plus north's World below z -105. Ed
+     * dropped half a unit above one must be put into his falling death (B60: falling, B77's 1000 ms, the cover) within
+     * 1 s, covered within 1.2 s of it whether or not he lands (carota and Land have pit floors 8-18 below their markers,
+     * in his own sector's collision list: the original's data), and back playing; twice for the first marker (each
+     * fires once and takes itself out; the respawn brings it back: tc_cast_respawn). In a fresh viewer: the visits
+     * above leave Ed anywhere, even stepping into a portal. */
+    tc_viewer_free(&v);
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "the viewer starts again"); free(ai); tc_level_free(&lv); return; }
+    c = tc_viewer_cast(&v);
+    run(&v, 3, 0);
+    for (i = 0; i <= c->count; i++) {
+        const tc_cast_actor *a = i < c->count ? &c->actors[i] : NULL;
+        tc_vec3 at;
+        uint32_t f, fell_at = 0, covered_at = 0, back_at = 0, landed = 0;
+        char what[160];
+        static int second_fall;
+        if (i == 0) second_fall = 0;
+        if (a) {
+            if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || (a->entry->flags & TC_CAST_ALWAYS_AWAKE) ||
+                a->entry->prso != 0xFFFF || !a->ai.active)
+                continue;
+            at = tc_v3_add(a->ai.position, tc_v3(0, 0, 0.5f));
+        } else if (strcmp(name, "north") == 0) {
+            at = tc_v3(0, 0, -100); /* World's R0: z < -105 */
+        } else continue;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), at, 0);
+        for (f = 0; f < 60 * 12 && !back_at; f++) {
+            frame(&v);
+            if (!fell_at && c->main->normal.behaviour == 60) fell_at = f + 1;
+            if (fell_at && !covered_at && v.phase != TC_VP_PLAY) covered_at = f + 1;
+            if (fell_at && !covered_at && (c->main->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE))) landed++;
+            if (covered_at && v.phase == TC_VP_PLAY && c->main->hit_points > 0) back_at = f + 1;
+        }
+        printf("  pit %s %u at (%.1f, %.1f, %.1f): falling death after %.2f s, covered %.2f s later, on ground %u "
+               "frames before it, back playing after %.1f s\n", a ? "marker" : "World", a ? (unsigned)a->entry->id : 0,
+               (double)at.x, (double)at.y, (double)at.z, fell_at / 60.0, covered_at > fell_at ? (covered_at - fell_at) / 60.0 : 0,
+               landed, back_at / 60.0);
+        snprintf(what, sizeof(what), "falling into the pit (%s %u): the falling death, the cover after 1 s, then back",
+                 a ? "marker" : "World", a ? (unsigned)a->entry->id : 0);
+        check(fell_at && fell_at <= 60 && covered_at && covered_at - fell_at <= 72 && back_at, what);
+        run(&v, 1, 0);
+        if (a && !second_fall) { second_fall = 1; i--; } /* the same pit again */
+    }
     check(bad_frames == 0, "every frame's draw list is valid");
     bad_frames = 0;
     tc_viewer_free(&v);

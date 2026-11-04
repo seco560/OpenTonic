@@ -21,6 +21,8 @@ extern "C" {
 typedef struct tc_ed_ai_events {
     bool cover;                  /* start the cover transition (GameAction2, or a zone portal); then set screen_covered */
     bool teleported;             /* the player was moved within the level (PROC_8): start the reveal */
+    bool restarted;              /* the port's respawn after a death (GameAction0 / ChangeLevel('death')): the original
+                                    reloads the level; the host brings back the cast's level logic (tc_cast_respawn) */
     bool camera_set;             /* ... and the camera put at `camera` */
     tc_vec3 camera;
     const char *level;           /* change level (ChangeLevel / PROC_29), lowercase; NULL none */
@@ -42,6 +44,8 @@ typedef struct tc_ed_ai {
     tc_mec_ski ski;
     tc_mec_walk walk;            /* card types 0 / 4 (ground, air) when the .ttai has the state's collision spheres */
     uint32_t contacts;           /* what the AI sees next frame (TC_AI_CONTACT_*) */
+    uint32_t placed_seen;        /* tc_player.placed after the last step: a placement since (the viewer's portal places,
+                                    the free-fly drop) clears last frame's contacts, as the driver's own teleports do */
     float time;                  /* seconds since init */
     float *trigger_wake;         /* per model trigger (tc_ai_trigger): when it may fire again */
     uint32_t triggers_fired;     /* debug count */

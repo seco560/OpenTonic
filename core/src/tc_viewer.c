@@ -28,6 +28,7 @@ struct tc_viewer_play {
     tc_mat4 pose_prev, pose_cur, pose_draw; /* Ed's model matrix after the last two ticks, and this frame's */
     int clip_prev, clip_cur;     /* level->ed.anims index after those ticks */
     float phase_prev, phase_cur;
+    float rate_cur;              /* animation frames per second of the state after the last tick */
     bool loop_cur;
 };
 
@@ -1391,6 +1392,7 @@ static void capture_pose(tc_viewer *v) {
     p->clip_cur = i >= 0 ? i : ed_anim(v->level, "idle");
     p->phase_cur = tc_ed_ai_frame(&p->driver);
     p->loop_cur = tc_ed_ai_loops(&p->driver);
+    p->rate_cur = (float)p->driver.ai.frame_rate;
     if (!p->have_pose) {
         p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
         p->have_pose = true;
@@ -1414,6 +1416,10 @@ static void step_ai(tc_viewer *v, float dt) {
         bool still = v->cam.first_person;
         tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, ai_inputs(v), still ? 0 : v->move_x, still ? 0 : v->move_y,
                       v->camera.position);
+        if (p->driver.events.restarted) {
+            p->driver.events.restarted = false;
+            if (p->has_cast) tc_cast_respawn(&p->cast);
+        }
         for (n = 0; n < p->driver.ai.sound_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
             v->sounds[v->sound_count++] = p->driver.ai.sounds[n];
         if (p->has_cast) { /* after Ed, on his clock and from his sector */
@@ -1429,12 +1435,16 @@ static void step_ai(tc_viewer *v, float dt) {
     v->ed_state = -1;
     v->ed_loop = p->loop_cur;
     v->ed_phase = p->phase_cur;
-    if (p->clip_prev == p->clip_cur && p->clip_cur >= 0) {
+    if (p->clip_cur >= 0) {
         float count = (float)v->level->ed.anims[p->clip_cur].sample_count, d = p->phase_cur - p->phase_prev;
         if (d < 0 && p->loop_cur) d += count; /* wrapped round the loop */
         /* Only a loop wraps: an ended state holds its last frame at phase == count (the portal step-in, Ed hidden),
          * which wrapped to 0 drew him whole again where the step-in began. */
-        if (d >= 0 && d < count / 2) v->ed_phase = p->loop_cur ? fmodf(p->phase_prev + d * t, count) : p->phase_prev + d * t;
+        if (p->clip_prev == p->clip_cur && d >= 0 && d < count / 2)
+            v->ed_phase = p->loop_cur ? fmodf(p->phase_prev + d * t, count) : p->phase_prev + d * t;
+        else /* a new clip this tick: the drawing runs a tick behind, so start it from its frame 0 at the tick's rate
+              * (showing phase_cur at once jumped a tick ahead, then held it for the rest of the tick) */
+            v->ed_phase = fmaxf(0, p->phase_cur - (1 - t) * p->rate_cur * TC_ED_AI_TICK);
     }
 }
 

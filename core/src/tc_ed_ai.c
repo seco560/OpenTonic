@@ -47,6 +47,7 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     e->sector.sector = TC_SECTOR_NONE;
     e->sector.position = player->position;
     e->sector.placed = player->placed;
+    e->placed_seen = player->placed;
     tc_mec_walk_reset(&e->walk);
     e->contacts = 0;
     e->auto_start = false;
@@ -505,6 +506,12 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     uint32_t type;
 
     e->time += dt;
+    if (p->placed != e->placed_seen) {
+        /* Port: placed from outside since the last step. A grounded Ed standing still does not move, so his contacts
+         * stay (tc_mec_walk_step, dynamics +0x38C) and he stood on air where he was put. */
+        tc_mec_walk_reset(&e->walk);
+        e->contacts = 0;
+    }
     run_triggers(e);
     run_portals(e);
     a->screen_covered = e->screen_covered;
@@ -551,6 +558,7 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     if (a->restart_requested) {
         const tc_ai_globals *g = a->globals ? a->globals : &a->own_globals;
         a->restart_requested = false;
+        e->events.restarted = true;
         if (g->has_checkpoint) tc_player_teleport(p, g->checkpoint, g->checkpoint_heading);
         else tc_player_respawn(p);
         tc_mec_walk_reset(&e->walk);
@@ -742,6 +750,7 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     e->stepping = true;
     set_solid(e);
     step(e, dt, inputs, stick_x, stick_y, camera);
+    e->placed_seen = e->player->placed; /* its own teleports reset as they go */
     if (w) w->solid = NULL;
     e->stepping = false;
 }

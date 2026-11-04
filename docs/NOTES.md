@@ -171,6 +171,68 @@ scene, then walks out at another spot and goes on to the main level (tc_level_af
 director persos (now excluded: they end in a level change) and the camera perso's AI, the actors' movement, an
 "interact to start" trigger, and the arrival / exit places (the user: "we'll get to that").
 
+## Falling into pits, the entity loop, the walk cycle (2026-11-04)
+User: "deaths when Ed falls into pits (though he's meant to fall through them and for now he just hits the ground)";
+"every time [the walk cycle] loops there's a bit of a choppy jerk". The loop itself: docs/ENGINE.md.
+
+**Who kills Ed in a pit (read).** Not a floor material: no pit floor carries a collide identifier (census of all 21
+levels: 0x8 = the hang spheres, 0x400 = lava / fire, Ed's death cause 26; 0x1000 = Land's zappers; 0x20, 0x100 on
+marmite). Two kinds of perso:
+- **The holes of nothingness** (model ZOR_LesTrousDeNeantCestBonMangezEn, family genplainesud, invisible; 11 on carota,
+  cock01, Land, sud0, one script): `SetActivity(always)`, then every frame: when Ed's z is below the marker's (and his
+  dsg134 != 2) they force his B15, freeze the camera where it is and point it at him (camera dsg39 = 6, dsg44, 89-92),
+  set his hit points 0, his dsg119 = now, dsg40 = 1, force **B60** (states 44 -> 282, falling) and R4, and
+  RemovePerso themselves. B60 -> B77 waits 1000 ms (dsg119) -> R4, B73 (the cover) -> B99 -> the respawn. Only the
+  height is tested: each marker is a death height for its part of the level.
+- **North's World** (ARG_World_is_Stone) R0: Ed's z < -105 does the same (camera at Ed + (0.8, -1, 6)). The other 20
+  levels' World have no such rule. Also forcing B60, not ported (cutscene drivers): Transit's training spy (a slope
+  plane), BigBoss's HEG_Traffic (z < 42), the armoured guard SDO_Garde_ArmurePoursuit (catches Ed).
+- **The port before:** the cast could not force Ed (cast.py MAY_FORCE_MAIN), so only the hit points went through;
+  Ed's own R0 (hit points 0 -> B14) waited for him to land (sud0: B61 at the pit floor 37 below, the cover 3 s later),
+  and World did not run at all.
+- **Now:** World and the hole model may force the main actor (cast.py MAY_FORCE_MAIN / MAY_FORCE_MAIN_MODELS); World
+  runs (it was in EXCLUDED_FAMILIES). The camera writes are taken by the camera ghost, which the port camera does not
+  read: **not ported**, the camera keeps following Ed down (the original's "watch him fall" = camera mode 6 is a
+  candidate for the camera work). Most pit floors are 85-135 below their markers (Ed never reaches them in the 1 s);
+  carota's two and one of Land's are 8-18 below, in Ed's own sector's collision list: he lands there before the cover,
+  as the data says.
+- **Respawn (port):** a marker fires once and takes itself out; the original's death reloads the level and brings it
+  back. tc_cast_respawn (on tc_ed_ai's `restarted` event) restarts the undrawn persos that started active and are out
+  or frozen now; drawn ones (the pickups) stay taken, as before. Without it the second fall into a pit landed on its
+  floor again.
+- **World also gives the collect-N rewards** (read): its counters (dsg0 10 / dsg1, or dsg21 / dsg22) reach each other
+  -> Ed's B41 + R4 -> B54: he lands and plays a victory animation (states 204 / 348 / 349), then B0. Who counts
+  (the pickups writing World's dsgvars) is not traced. A reward in the middle of Super Ed ends it (R4 replaces R13),
+  as in the original as far as read.
+
+**The engine's lists (read, docs/ENGINE.md):** World never ran in the port even once allowed: it sits in one sector
+(north: sctmur12, on 23 of 162 activity lists). The exe marks the persos of the list 0x8c172c every frame whatever the
+sector (main loop 0x428a8f), and runs the list 0x8c1738 before the tree walk (GAM_004287b0): both read from the level's
+.gpt (LevelData.engine_lists), exported as CAST flags 4 (always awake) and 8 (run first); tc_cast follows them.
+
+**Teleports kept the contacts (port bug, fixed).** A grounded Ed standing still does not move (tc_mec_walk_step: his
+contacts stay, as the exe's dynamics +0x38C), so a teleport from outside the driver (the viewer's portal places, the
+free-fly drop, every test teleport) left him standing on air with last frame's ground. tc_ed_ai now clears the
+contacts when tc_player.placed changed since its last step (the driver's own teleports already did).
+
+**The walk cycle's jerk (port, two causes, both fixed; neither in the data).** Measured headless at 60, 75, 120 and 144
+Hz: the drawn phase and Ed's position advance evenly through the loop on walk and run, stick and keys; the exported
+frames loop cleanly (the last-to-first step is like the others). What did jerk:
+1. **Part swaps:** the walk swaps a foot's mesh 7 times a cycle (channel 0 at frames 1-2, 2-3, 8-9, 22-23; channel 1
+   at 10, 14, 20), three of them round the loop, and tc_channel_matrix held the channel's matrix for the whole step
+   across a swap: that foot moved at 30 Hz while the rest moved smoothly. The channel's transform is continuous across
+   those swaps (steps of 0.06-0.16, like its neighbours'), so it is blended now unless a side is hidden or it moves
+   more than 0.5 (TC_SWAP_BLEND_MAX, port; the original draws whole frames only).
+2. **State changes:** on a new clip the viewer drew its tick's phase at once (a tick ahead of the interpolated
+   timeline) and held it for the rest of the tick (3 frames of one pose at 60 Hz). It now starts the clip from frame
+   0 at the state's rate.
+Not seen in the app: whether this was the jerk the user sees (if it persists, next suspects: the camera, frame pacing).
+
+**Checks:** castcheck's pit check (each marker, twice; north's World at (0, 0, -100)): the falling death within 1 s,
+the cover 1.07 s later, back playing; the lever test skips undrawn persos (World and the markers were taken for levers:
+that visit left Ed in other states and failed the next tests). Exports for these are in the scratchpad only: the next
+build re-exports.
+
 ## Demo mode (2026-10-30; autopilot redone 2026-10-31)
 The level select's **Demo** button (D; Square on a pad) opens a random main level (no cutscenes, no imports, with a
 .ttai) and lets Ed wander by himself: tc_viewer_set_demo, an autopilot in the core that plays him with the stick and

@@ -19,8 +19,8 @@ tc_sample tc_sample_at_phase(float phase, uint32_t sample_count, bool loop);
 /* Advance a phase (in samples) by `samples`; loop: wrap to 0..n, else clamp to n - 1. */
 float tc_phase_advance(float phase, float samples, uint32_t sample_count, bool loop);
 
-/* Channel -> object matrix at sample s. Blends toward s1 only while the channel shows the same
- * object there (no lerp across a part swap). Visibility follows s0: the caller checks shown[]. */
+/* Channel -> object matrix at sample s, blended toward s1; across a part swap only while both are shown and the
+ * channel moves less than 0.5 units (else s0's). Visibility follows s0: the caller checks shown[]. */
 tc_mat4 tc_channel_matrix(const tc_mat34 *transforms, const uint16_t *shown, uint32_t channel_count,
                           tc_sample s, uint32_t channel);
 

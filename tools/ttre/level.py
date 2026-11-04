@@ -1012,6 +1012,37 @@ class LevelData:
         self._surfaces = out
         return out
 
+    def engine_lists(self):
+        """The engine's own perso lists, read from the level's .gpt (docs/ENGINE.md "The frame"): one stream read in
+        GAM_Initeng_0040de70 (0x40e259) fills the globals 0x8c1714..0x8c175c, ending with three {head, tail, n} lists
+        and the world perso:
+          0x8c1720  the main character (n = 1; read again right after the block)
+          0x8c172c  always awake: the main loop marks each of them every frame (0x428a8f, FUN_0043bce0), whatever
+                    sector the main character is in: the camera, World, the cheat-code reader, HEG_Inventaire, ...
+          0x8c1738  run first (n at 0x8c1740): GAM_004287b0 runs them before the dynamic world's walk (GAM_00428550),
+                    when marked: the moving platforms, lifts, bridges, pushable crates
+          0x8c1744  the world perso's SuperObject (World; the main loop hands it to 0x42ea30 every frame)
+        Nodes of the last two are {SuperObject, next, prev, list} (the first list's are laid out otherwise). The block sits at a fixed place after the perso-in-fix records
+        (gpt + 0x4db4 - 0x24 with 3 of them: all 21 levels). Returns (always [perso loc], first [perso loc], world
+        perso loc or None); empty when a list's walk does not give its count (a layout this reader does not know)."""
+        lv, g = self.lv, self.lv.gpt
+        base = 4 + 0x60 * len(self.perso_in_fix) + 0x4c90 - 0x24
+        out = []
+        for k in (1, 2):
+            o = base + 12 * k
+            n, = self.un('I', (g, o + 8))
+            node, locs = lv.ptr((g, o)), []
+            while node and len(locs) <= n:
+                so = lv.ptr(node)
+                locs.append(lv.ptr(so, 4) if so else None)
+                node = lv.ptr(node, 4)
+            if len(locs) != n:
+                self.warnings.append(f'engine list {k}: walked {len(locs)}, count {n}')
+                return [], [], None
+            out.append(locs)
+        so = lv.ptr((g, base + 36))
+        return out[0], out[1], lv.ptr(so, 4) if so else None
+
     def sectors(self):
         """The level's sectors as the exe uses them (docs/NOTES.md "Sectors"; .ttlv SECT): the father sector's children,
         in order, as [Sector]. Sector data (+0x94 name):
