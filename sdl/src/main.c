@@ -385,13 +385,6 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     /* Alt + 1-9: hold a baked lighting set (sud0 and Land have three); Alt + 0: the level's own light again (sud0's day /
      * night cycle, Land's lightning); 5 and 0 alone: the camera; - / =: display gamma. */
     bool alt = (k->mod & SDL_KMOD_ALT) != 0;
-    if (!alt && (sc == SDL_SCANCODE_9 || sc == SDL_SCANCODE_KP_9)) { /* 9: the classic camera / the faithful one */
-        if (!k->repeat) {
-            tc_viewer_toggle_camera_model(v);
-            update_title(a);
-        }
-        return;
-    }
     if (!alt && (sc == SDL_SCANCODE_5 || sc == SDL_SCANCODE_KP_5 || sc == SDL_SCANCODE_0 || sc == SDL_SCANCODE_KP_0)) {
         /* 5 and 0, number row or numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person) */
         if (!k->repeat) {

@@ -248,11 +248,6 @@ final class GameView: MTKView {
             if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
             return
         }
-        // 9 (number row or numpad): the classic camera / the faithful one.
-        if event.keyCode == 25 || event.keyCode == 92, !event.modifierFlags.contains(.option) {
-            if !event.isARepeat { tc_viewer_toggle_camera_model(v); updateTitle() }
-            return
-        }
         // 5 and 0, on the number row or the numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person).
         if event.keyCode == 23 || event.keyCode == 87 || event.keyCode == 29 || event.keyCode == 82,
            !event.modifierFlags.contains(.option) {

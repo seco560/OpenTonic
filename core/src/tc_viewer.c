@@ -25,6 +25,8 @@ struct tc_viewer_play {
     /* Ed's AI and mechanics step in fixed ticks of TC_ED_AI_TICK; drawing interpolates between the last two. */
     float tick_time;             /* seconds not yet stepped */
     bool have_pose;
+    bool ski_shot;          /* the skier has ridden: the camera's shot is the ski follow (stands for the start trigger,
+                               tc_viewer_camera_shot) */
     tc_mat4 pose_prev, pose_cur, pose_draw; /* Ed's model matrix after the last two ticks, and this frame's */
     int clip_prev, clip_cur;     /* level->ed.anims index after those ticks */
     float phase_prev, phase_cur;
@@ -324,6 +326,7 @@ static void update_portals(tc_viewer *v, float dt) {
             if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
             c->vertical_fov = v->camera.vertical_fov;
             c->orbit_distance = v->orbit_distance;
+            c->closeup = v->cam.closeup;
             v->carry = c;
             v->phase = TC_VP_LOADING;
             v->loading_time = 0;
@@ -820,6 +823,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     if (v->play) tc_viewer_toggle_play(v);
     if (desc->carry && desc->carry->vertical_fov > 0) v->camera.vertical_fov = desc->carry->vertical_fov;
     if (desc->carry && desc->carry->orbit_distance > 0) v->orbit_distance = desc->carry->orbit_distance;
+    if (desc->carry) v->cam.closeup = desc->carry->closeup != 0;
     if (desc->carry && v->play) arrive(v, desc->carry);
     return TC_OK;
 }
@@ -1555,11 +1559,20 @@ static void update_play(tc_viewer *v, float dt) {
         const uint8_t *solid = p->world.solid;
         t.position = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
         t.behind = TC_PI - p->player.heading; /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
+        if (p->use_ai && p->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
+                                       * the last tick's: the ski follow holds within 0.05 rad of it and stepped at 30 Hz
+                                       * with it */
+            t.behind -= remainderf(atan2f(p->pose_draw.m[1], p->pose_draw.m[0]) - atan2f(p->pose_cur.m[1], p->pose_cur.m[0]),
+                                   2 * TC_PI); /* behind = pi - heading: a heading change counts negative */
         t.speed = tc_player_horizontal_speed(&p->player);
         t.velocity = p->player.velocity;
         t.distance = v->orbit_distance;
         t.manual = v->demo;
         t.situation = tc_viewer_camera_situation(v);
+        /* riding on a sliding stage (the skier is the player there: the cast's main alias; Ed's own slides on the walking
+         * levels use the same card and keep the walking camera, his scripts setting the shot to 0): tc_viewer_camera_shot */
+        if (p->use_ai && p->has_driver && p->driver.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
+        t.shot = tc_viewer_camera_shot(v);
         t.world = &p->world;
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;
@@ -1650,11 +1663,6 @@ void tc_viewer_recenter_camera(tc_viewer *v) {
     if (v->playing && !v->demo) tc_cam_recenter(&v->cam);
 }
 
-void tc_viewer_toggle_camera_model(tc_viewer *v) {
-    v->cam.faithful = !v->cam.faithful;
-    tc_cam_reset(&v->cam); /* placed afresh behind Ed in the other model */
-}
-
 void tc_viewer_toggle_closeup(tc_viewer *v) {
     if (v->playing && !v->demo) v->cam.closeup = !v->cam.closeup;
 }
@@ -1665,6 +1673,19 @@ void tc_viewer_toggle_first_person(tc_viewer *v) {
     v->camera.yaw = TC_PI - v->play->player.heading; /* entering: looking the way he faces; leaving: behind him */
     v->camera.pitch = v->cam.first_person ? 0 : -TC_CAM_ELEVATION;
     v->cam.placed = false;
+}
+
+int tc_viewer_camera_shot(const tc_viewer *v) {
+    const tc_viewer_play *p = v->play;
+    int shot;
+    if (!p || !p->use_ai || !p->has_driver || p->driver.camera < 0) return -1;
+    shot = (int)tc_ai_other_dsgvar_float(&p->driver.ai, (uint32_t)p->driver.camera, TC_AI_CAMERA_SHOT_DSG);
+    /* The sliding stages' start trigger (Totalski's YBA_GenD_DepartMap: once the skier is in his riding behaviour, the
+     * camera's dsg39 := 5, then it removes itself) is not in the cast: the converter reduces it to the port's ski start
+     * (PROC 6, tools/ttre/cast.py). Its write stands here: once he has ridden (his skiing card, type 2), the ski follow,
+     * unless the scripts pick a shot of their own (5 or 6). Only there: the skier is the player (the cast's main alias). */
+    if (p->ski_shot && shot != TC_CAM_SHOT_SKI && shot != TC_CAM_SHOT_FIXED) shot = TC_CAM_SHOT_SKI;
+    return shot;
 }
 
 int tc_viewer_camera_situation(const tc_viewer *v) {
@@ -1750,7 +1771,6 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
-    if (v->playing && v->cam.faithful) APPEND("%s", ", faithful camera");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
     if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
         APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,

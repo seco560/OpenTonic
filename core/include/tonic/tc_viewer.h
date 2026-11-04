@@ -129,6 +129,7 @@ typedef struct tc_viewer_carry {
     uint8_t dsg[TC_VIEWER_CARRY_DSG];
     float vertical_fov;       /* the camera's field of view (, .) kept across the change, radians; 0 = the default */
     float orbit_distance;     /* the play camera's zoom (wheel) kept across the change; 0 = the default */
+    uint8_t closeup;          /* the play camera's close-up (5) kept across the change */
 } tc_viewer_carry;
 
 typedef struct tc_viewer_desc {
@@ -352,13 +353,15 @@ void tc_viewer_wheel(tc_viewer *v, float notches);
  * the middle mouse button, the pad's L2). Close-up: the original's Numpad 5 preset, on / off. Nothing outside play mode. */
 void tc_viewer_recenter_camera(tc_viewer *v);
 void tc_viewer_toggle_closeup(tc_viewer *v);         /* 5 (number row or numpad) */
-void tc_viewer_toggle_camera_model(tc_viewer *v);    /* 9: the classic camera (default) / the faithful one (CAMERA.md 5th pass) */
 /* 0 (number row or numpad), the pad's L3: first person at Ed's head, looking with the mouse / stick; Ed stands (his
  * movement inputs are held back) and is not drawn. Again: back to the follow, behind him. */
 void tc_viewer_toggle_first_person(tc_viewer *v);
 /* What Ed's scripts tell the camera he is doing (the camera perso's dsg40, docs/CAMERA.md: 0 normal, 10 swimming, 11
  * dying, 12 flight, 13 stick mode, 15 landing, 16 jumping, ...); -1 without his AI. */
 int tc_viewer_camera_situation(const tc_viewer *v);
+/* What the level's scripts tell the camera to shoot (its dsg39, tc_cam.h TC_CAM_SHOT_*: 5 the ski follow, 6 a fixed
+ * place); -1 without his AI. */
+int tc_viewer_camera_shot(const tc_viewer *v);
 /* Look settings, for mouse, keys and stick alike; the frontends keep them (a new viewer starts at 1, not inverted).
  * sensitivity is clamped to 0.25..4. */
 void tc_viewer_set_look(tc_viewer *v, float sensitivity, bool invert_x, bool invert_y);

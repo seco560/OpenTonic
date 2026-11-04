@@ -2,7 +2,8 @@
 
 How Tonic Trouble's camera works (read from the exe and the level data, 2026-11-01), how the port's camera worked
 before, the original's weak points, and a list of improvements. **The user chose the suggested first set (A1, B1, B2,
-C1, D1, E1), with recentring as the only way out of free view; it is implemented: see "6. Implemented" at the end.**
+C1, D1, E1), with recentring as the only way out of free view; it is implemented: see "6. Implemented" and the passes
+after it. The camera today: "Sixth pass" near the end.**
 
 Sources: the camera's scripts (dumped as `level-ai` dumps Ed's), the typed decompiles of its primitives
 (`files/out/_decomp_artifacts/typed/ai/`), the camera module `0x4A0B70`–`0x4A5F00`, the type 3 mechanics
@@ -421,15 +422,195 @@ The user: the faithful model "stays lazy way too long, while still being jerky, 
 The fourth pass's camera is restored as the default (`tc_cam_classic` in core/src/tc_cam.c, unchanged except: its line
 of sight also tests the drawn persos, and the 0.5 minimum distance is gone, so walls no longer put the eye inside them;
 Ed is hidden when the eye is nearer than 0.5 to his pivot instead of being drawn round it). **9** (number row or
-numpad, both apps) switches to the fifth pass's faithful model and back; the title shows ", faithful camera". Not
+numpad, both apps) switched to the fifth pass's faithful model and back (removed in the sixth pass). Not
 looked into yet: why the faithful model is wrong on Totalski (the skier's averaged target and speed cap at ski speeds
 are the first suspects). In camcheck's harsh scripted walks (Ed pushed into walls, camera behind him) the classic eye
 is within 0.5 of him in many frames (bar 1,114, pyramide 1,160, cavedoc 770): there the old floor had it inside Ed or
 the wall; now he is hidden. If that vanishing reads badly in play, the floor can come back (TC_CAM_CLASSIC_MIN).
 
+### Sixth pass (2026-11-04): one camera, merged (the user: "take elements from both")
+The 9 toggle is gone; `tc_cam` is one model again (core/src/tc_cam.c, the numbers and their sources in `tc_cam.h`).
+**Measured first, then built** (a scratch probe: camcheck's scripted walk with Ed's AI on bar, sud0, north, Land,
+cavedoc, pyramide, LeCanyon, and random steering on Totalski / skymap, per frame: the eye's acceleration, the view's
+angular acceleration, Ed's jitter on screen, the distance while running, frames Ed is hidden). What it showed:
+- **The faithful model** trailed: 9-10 units behind a running Ed instead of 7, **14-16 on Totalski / skymap** (the
+  averaged target ~0.13 s behind, the mover's ease-in, the look-at lag: the "lazy" and "completely wrong on Totalski").
+  Its turning was 3-10x rougher at the 99th percentile (the look-at clamp and the mover's regimes switching), and
+  its averaged target did *not* steady Ed on screen (his on-screen jitter was worse than the classic's): Ed as drawn is
+  already blended between his AI's ticks (`pose_draw`), so a 30 Hz camera only added lag.
+- **The classic model** was responsive and smooth in the open, but: **snaps of ~0.4 rad in one frame when Ed jumped
+  near a wall** (on 6 of 7 levels: the jump's height hold took the *pulled-in eye's* height, level with his head, so the
+  view swung from 0.45 rad down to level); Ed hidden far more in tight rooms (bar 1114 of 3440 walk frames); the
+  world bobbing with his height (steps, bumps); and, found on the way, two jolts: the front stretch and the hold's
+  release both started at full speed (the release: from standing still to Ed's fall speed plus the catch-up, ~13 u/s
+  in one frame; the old fall test dropped him 1 unit at once while still held, which hid it).
+
+The merged camera (**port** unless marked):
+- **The classic's base:** per frame round Ed as drawn, the player's orbit, the rope, the presets eased (the original's
+  data), recentre, close-up, first person, the drawn-perso sight, no minimum distance.
+- **Rig vs eye (the fifth pass's split):** the rig is where the camera would be with no walls; walls only pull the eye
+  in along the line to it. The jump's hold takes the rig's height: the snaps are gone.
+- **The watchdog's swing (the original's watchdog, FUN_004a56e0, every 8 ticks; the original cuts):** when a wall
+  has the eye nearer than 2 and the player isn't turning, it looks round Ed in pi / 4 steps for an open side and turns
+  there. Now critically damped (gathers speed and slows down, ~1.4 s), starting from the camera's current turning
+  speed, its speed dying out after it ends, and 1 s of rest before the next (it hunted in pyramide's small room).
+- **The camera's height** goes through a second-order filter (two 0.08 s lags combined as 2 h1 - h2): **no lag on a
+  steady climb or fall** (slopes, lifts, the slides), steps and bumps rounded off (a 0.5 step: 0.17 per frame at most,
+  0.055 overshoot). The camera orbits and aims at Ed's head with that height, so the world doesn't bob; Ed moves a
+  little on screen instead. A teleport of over 5 (a respawn) places it afresh behind him.
+- **No jolts:** the front stretch eases in two stages (0.25 s each); the hold lets go as a critically damped spring
+  from standing still; the rope fades in over 0.25 s whenever it takes over again (after the player's grace, a
+  recentre or a swing: on Totalski it came back at -4.4 rad/s in one frame after a long swing).
+- Ed is hidden when the eye is nearer than 0.9 to his head (the classic: 0.5, which let the near plane cut his mesh).
+- Not taken from the faithful model: the 30 Hz tick, the averaged target, the speed-capped mover, the look-at lag.
+
+Measured after (the probe; the classic -> merged; p99 = 99th percentile over the walk):
+
+| | view turning p99 / max (rad/s²) | eye acceleration p99 (u/s²) | distance running (7 wanted) | Ed hidden (walk frames of 3440) |
+|---|---|---|---|---|
+| bar | 11 / 1544 -> 16 / 121 | 1366 -> 604 | 4.0 -> 6.7 | 1114 -> 249 |
+| sud0 | 26 / 1706 -> 10 / 118 | 564 -> 545 | 7.2 -> 7.2 | 202 -> 88 |
+| north | 10 / 1542 -> 14 / 109 | 421 -> 474 | 6.8 -> 7.1 | 206 -> 71 |
+| Land | 8 / 126 -> 6 / 118 | 1345 -> 412 | 6.6 -> 7.2 | 197 -> 6 |
+| cavedoc | 26 / 1709 -> 27 / 78 | 558 -> 552 | 6.2 -> 7.1 | 748 -> 289 |
+| pyramide | 10 / 1546 -> 22 / 85 | 526 -> 553 | 6.2 -> 6.0 | 1160 -> 970 |
+| LeCanyon | 9 / 1532 -> 7 / 116 | 439 -> 412 | 6.2 -> 6.2 | 234 -> 99 |
+| Totalski | 6 / 19 -> 12 / 28 | 865 -> 737 | 7.4 -> 7.4 | 42 -> 60 |
+| skymap | 5 / 13 -> 9 / 34 | 390 -> 269 | 8.2 -> 8.2 | 13 -> 16 |
+
+(The faithful model for comparison: distance running 7.6-9.9, Totalski 14.3, skymap 15.9; turning p99 14-68.)
+The higher turning p99 in bar / pyramide / the slides is the swings (deliberate turns, smooth now); without them the
+classic's numbers hold. Cavedoc's remaining bumps (~30 rad/s², every 1/3 s) are Ed's swim strokes, followed exactly.
+
+camcheck (all pass; what changed in the test, so it isn't read as tuned to pass):
+- The synthetic part ran the faithful model (`c.faithful = true`); now the one camera. Ed's synthetic position moves
+  every frame (the viewer blends his ticks), his facing still steps at 30 Hz.
+- "Walking at the camera: no frame's move over 1.5 x Ed's speed" (the fifth pass's mover) became "the front stretch
+  starts smoothly" (the change of the camera's own speed per frame < 0.02, from the two 0.25 s stages: 56 u/s² at
+  most; one 0.5 s stage started at 7 u/s at once). The stretch has to back off faster than he walks to open the
+  distance in front of him.
+- "Ed bobbing 0.3 at 5 Hz moves the camera < 0.1" and "Ed moved 3 at once: no jump" (the averaged target's) became
+  "a step up 0.5 rounded off (< 0.2 per frame, overshoot < 0.08)", "a steady 3 u/s climb followed with no lag", and
+  "a teleport of 41 places it afresh". The merged camera follows Ed horizontally exactly, as the classic did.
+- The fall now continues at 8 u/s until the hold lets go (it dropped him 1 at once, which his drawn origin never does).
+- New: a jump with a wall 1.6 behind him: largest pitch step 0.013 rad (the classic snapped ~0.4).
+- The jitter check judges each frame by the state it started in (the watchdog sets its flag at the end of a frame) and
+  counts swing reversals within one swing (it counted across two swings, and the rope's last frame before a swing).
+- Clipping (the walks / demos): Ed's mesh cut by the near plane: bar 14 -> 3, north 76 -> 0, pyramide 4 -> 5;
+  persos between Ed and the eye: Land walk 3 -> 0, bar demo 4 -> 2. Worse: **the bar demo hides Ed in 286 frames
+  (102 before**: the 0.9 hide distance; the demo uses its own direction, without the watchdog), and **one Land walk
+  frame has the near plane 0.036 above a floor** (not looked into).
+- All other suites pass (check, aicheck, mechcheck, crashcheck, skicheck, viewcheck, portalcheck, sectorcheck,
+  castcheck), `swift build`, the SDL frontend compiles (syntax check). docs/controls.png re-rendered (9 is free).
+
+Not seen in the app (never run here): the feel of all of it; in particular the swing (does turning round Ed on its own
+in tight rooms feel helpful, or does it turn his camera-relative controls under the player), and Ed moving slightly on
+screen on steps now that the world doesn't.
+
+### Seventh pass (2026-11-04): the sliding stages' camera, from the exe (the user: "look at the sliding camera next")
+**Read** (the camera's scripts dumped on Totalski, skymap and sud0: identical but for button addresses; the skier's and
+the level persos' scripts; the decompiles):
+- Totalski and skymap use the same StdCam. **What differs is the shot the level asks for: the camera's dsg39**, which
+  its reflex 2 dispatches: 0 B2 (the walking follow), 1 B4, 2 B5, 4 B22, **5 B6, 6 B8**, 7 B10, 8 B20.
+  - **5 (B6 -> B23, the ski follow)** is set by the skier's B1 / B11 / B17 / B22, Totalski's start trigger
+    (YBA_GenD_DepartMap: once the skier is in his riding behaviour) and skymap's JET_InitSkymap.
+  - **6 (B8 -> B7, a fixed place looking at the target: mode 3, PROC 183 / 192 / 194, the place in dsg92 / dsg93)**:
+    the finish and retry triggers (SYM_Gen_Arrivee, NBD_Arrivee_Et_Retry), the skier's crash and respawn (B10, B17,
+    B22), skymap's JET_InitSkymap (first) and its arrival cut (EBK_Cam_Arrivee, which also sets the speed and later 255).
+  - Ed's own scripts write dsg39 once (0) and never read it.
+- **Camera B6:** mode 0 (follow); look offset and +0x24 = 0, so it aims at the target's origin (B2's +0x24 is
+  (0, 0, 1.35): +0x24 is added to the target point itself, FUN_004a1aa0); angle 0 within 0.05 rad of behind his facing,
+  elevation 0.2 within 0.1 (measured from the world horizontal: FUN_004b6909 projects on the plane under world up);
+  distance 2 .. 2.7, second range 1.9 .. 7; SetCameraLinearSpeed(110, 130) (FUN_004a2a10 raises 2 x his speed to +0x6C,
+  130, then caps it at +0x68, 110: always 110 u/s); SetCameraPair70(1, 15) (record +0x70 = 1, +0x74 = 15: PROC 166);
+  SetCameraPair7C(2, 2) (the look-at lag 2); dsg8 = 1 (the numpad locked). CameraFlag word 0: mask 1 off, **2 on
+  (the target is GAM_0042b89b: a least-squares line through the last 8 positions, read at the newest; constants 0.5,
+  1/3; no lag at a steady speed)**, **4 on (FUN_004a1f30: an angle outside its window steps back at most DAT_0052134c =
+  pi / 8 a tick, instead of snapping to the edge)**, 0x10 / 0x200 / 0x800 off, 0x400 default; word 1: 0x800 on (not
+  found tested anywhere: unknown), 0x1 / 0x40 default (the record's default flags: +0x92 0, +0x94 8), the rest off.
+  CameraFlag's op -1 = the default record's bit (PROC 184 reads record +0).
+- **Not resolved: which of +0x70 / +0x74 is the mover's ease-in and which its speeding-up limit.** FUN_004b2e4b reads
+  the ease-in from the proposal's +0 and the speeding-up divisor from its +0x30 (or the card's +0xC with word-1 flag
+  0x40); the camera's values reach the proposal through untyped copies not followed (the record is copied each frame
+  to the working record at 0x521380, GAM_cineinfo_004271b0; nothing reads its +0x70 / +0x74 by name). The fifth pass
+  took +0x70 = speeding-up, +0x74 = ease-in: for B6 that is ease-in 15, no speeding-up limit, a camera trailing
+  2.7 + 15 s / (1 + s) behind (s his move per tick): measured ~11-12 at the port's 60-90 u/s, looking down up to 1.05
+  rad on descents. The other way round (ease-in 1 = none, speeding-up 15) is a tight chase at 2 .. 2.7 gaining speed
+  at 220 u/s^2. **The port takes the second**: it fits B6's other settings (the forced speed 110, just above the
+  skier's top speed, does nothing with an ease-in of 15; the second range ends at 7). All other behaviours set equal
+  pairs (10 / 10, 1 / 1, 2 / 2, 20 / 20). One swap of TC_CAM_SKI_EASE / TC_CAM_SKI_ACCEL tries the other.
+
+**Ported, then dropped after the playtest** (the user: "pure garboleum: way too jittery, jumping everywhere, moving too
+fast with Ed, zooming too close"; see "Eighth pass" for what replaced it; this was `ski_rig` in core/src/tc_cam.c):
+- The shot: `tc_viewer_camera_shot` (the camera's dsg39), passed as `tc_cam_target.shot`. 5 -> the ski follow; 6 keeps
+  the ski follow going (B8's fixed places are **not ported**); anything else -> the walking camera.
+- **The start trigger's write stands in the viewer** (port): YBA_GenD_DepartMap is not in the cast (the converter
+  reduces it to the port's ski start, PROC 6), so once the skier rides (his card type 2) on a level where he is the
+  player (the cast's main alias), the shot is 5 unless the scripts set 5 or 6. And the cast may now write the camera's
+  dsg39 (`TC_AI_CAMERA_SHOT_DSG`, the one exception to read_only_for_cast; Ed's scripts never read it).
+- From the exe: the follow from the body's own direction, the angles into their windows (yaw within 0.05 of behind his
+  facing, elevation 0.1 .. 0.3 + the player's rise; pi / 8 a tick at most outside), the distance into 2 .. 2.7 (times
+  the wheel's zoom), aimed at his origin; the type 3 mover at 110 u/s with the two limits (per tick in the exe, as
+  rates here); the fitted target (a least-squares line over 0.27 s of frames, read at now).
+- **The port's, beyond the exe:**
+  - his facing from his drawn pose (blended between his AI's ticks, as his position already was) through a lag-free
+    0.05 s filter: the camera held to the tick's facing stepped with him every other frame (0.1-0.19 rad when steering);
+    only on the slides (the walking camera keeps the tick's facing, unchanged);
+  - the body collides and slides (up to 3 contacts: the exe's FUN_004b3d33 idea; the sphere sweep): it rides on the snow
+    rising behind him and along the banks;
+  - the line of sight is the exe's thin can-see ray (r 0.1) from 0.45 out of his origin (the body's sphere from his
+    origin, 0.63 above the board, scraped the snow and the banks he rides against: he was hidden 33-51 % of a ride);
+  - blocked from him, it rises (0.1 s ease) to the lowest elevation that sees him; hidden 0.5 s, it cuts to the spot
+    its follow wants (the original's watchdog, every tick on skis, cuts);
+  - the player's turn moves it at once and the window takes it back after 0.5 s (B6 locks the numpad); no watchdog
+    swing; leaving it, the walking follow starts from where it is.
+
+Measured (scratch probes; the walking camera's numbers on every walking level unchanged from the sixth pass):
+- Totalski, a ride with gentle steering: 2.60 from his origin on average, hidden 1.6 % (spans under 0.5 s); skymap
+  2.51, 3.8 %. Riding without input (he drifts into the banks): 4.9 % / 7.7 %.
+- Turning, the probe's hard steering (left / right every 1.5 s): p50 2 rad/s^2, **p99 ~340 (Totalski) / ~280 (skymap)**
+  against the walking camera's ~12 there: this camera turns with his facing within 0.05 rad at 2.7 units, as B6
+  does. The largest single-frame jerks come with the eye pulled in against a bank during crashes, where the exe's pi / 8
+  a tick catch-up turns it hard.
+- camcheck (new, "the ski camera"): down a 27 degree slope at 30 u/s it settles 2.67 behind, on the snow, never
+  pulled in; a 1 rad turn in 0.5 s (his facing in 30 Hz steps): largest yaw step 0.0485 rad a frame (the bound 0.05,
+  set below stepping with him: 0.067), back in the window; leaving it moves the eye 0.4 in the first frame (bound 1).
+- Not seen in the app: all of the feel. In particular: is 2.7 behind and ~1 above the snow what the original looked like
+  (the reading question above), the turning with his steering, and the rise over banks.
+
+### Eighth pass (2026-11-04): the slides on the approved camera, with a ski preset
+The B6 port is gone (the user's playtest above; its own probe had shown turning 25x rougher than the sixth pass, which
+I reported as "inherent in B6" instead of stopping). Kept from the seventh pass: the reading (above), the shot plumbing
+(`tc_viewer_camera_shot`, `tc_cam_target.shot`), the start trigger's stand-in, the cast's dsg39 exception, and his
+facing from the drawn pose on the slides. The slides now run the sixth pass's camera with a preset (**all the port's**,
+not the original's B6; `TC_CAM_SKI_*` in tc_cam.h), chosen when the shot is 5 and the close-up (5) is off:
+- 7 behind plus 0.04 per u/s of his speed, at most +3 (9 at 50 u/s), eased as the presets are; 0.35 rad up; no front
+  stretch (it zoomed out whenever he turned sharply);
+- the rope with his velocity smoothed over 0.45 s (0.2 walking) and 3 u/s of sideways speed ignored (0.5): his steering
+  wobble doesn't swing the view, a real turn brings it round;
+- the height filter at 0.1 s (0.08), still with no lag on a steady descent;
+- no watchdog swing (tried: at his speed it turned the view three times as much, p99 13.5 against 4.0, and hid him no
+  less, 72 against 66 frames).
+
+Measured (the probe's hard steering; the sixth pass on the slides -> this): Totalski turning p99 11.7 -> 4.0, max 28 ->
+18, hidden 60 -> 66 frames of 3440; skymap 9.5 -> 2.9, 34 -> 17, 16 -> 21. The walking levels' numbers are unchanged.
+camcheck "the slides' preset": 9.00 behind at 50 u/s at -0.35; weaving -+ 0.2 rad at 1.5 Hz turns the view not at all
+(the smoothed sideways speed, ~2.3 u/s, stays under the dead zone); a 1 rad turn is behind his new way within 0.06
+after 4 s; the close-up still wins. Not seen in the app: the feel, in particular whether 7-9 back and 0.35 up suit the
+slides, and how quickly it comes round in sharp turns.
+
+### The close-up kept (2026-11-04, the user: "persist the camera height level set by 5")
+The close-up (5) was already kept through jumps, swimming, flights (the flight and dying presets take over meanwhile,
+then it is back) and in-level teleports and respawns. It was lost by `tc_cam_reset` (entering play with Tab, a new
+level's start, the demo) and by a portal to another level (a new viewer). Now `tc_cam_reset` keeps it, and the portal
+carry takes it along (`tc_viewer_carry.closeup`, beside the zoom and the field of view). Not carried: a level opened
+from the level select (the zoom isn't either). Checks: camcheck (survives a reset; still on after a flight and a
+teleport), viewcheck (bar keeps sud0's close-up through the portal).
+
 ### Next (user, 2026-11-04)
-1. **One camera:** merge the classic and the faithful models into a single good, functional camera, taking the best
-   of each (classic: the responsive rope and orbit; faithful: the averaged target against 30 Hz jitter, the drawn-perso
-   sight, the rig vs the pulled-in eye, no minimum distance, the watchdog's swing), then remove the 9 toggle.
-2. **The sliding stages** (Totalski, skymap): find how the camera differs there; the exe may load another camera setup
-   (the skier's camera perso or presets, level camera directors, another camera model): read it from the exe and data.
+1. ~~One camera~~ (the sixth pass above), awaiting the user's playtest.
+2. ~~The sliding stages~~: the B6 port (seventh pass) dropped; the slides' preset on the approved camera (eighth pass),
+   awaiting the user's playtest. Open: B8's fixed places (finish, retry, respawn, skymap's transition and arrival).
+3. Candidates seen on the way (not done): hold Ed's control frame while the stick stays pushed, so the rope and the
+   swing don't curve his path (his controls are camera-relative: Ed's scripts read the camera's angle, FUNC 2); raise
+   the eye over his head when a wall pulls it in close, instead of hiding him.

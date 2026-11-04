@@ -11,6 +11,10 @@
 
 static int failures;
 
+/* Camera B2's distance band (7 -+ 0.3): the tolerance of the distance checks (the camera keeps the preset's distance
+ * exactly, eased between presets; the fifth pass's faithful model settled anywhere in the band). */
+#define BAND 0.3f
+
 static void check(int ok, const char *what) {
     printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);
     if (!ok) failures++;
@@ -66,7 +70,7 @@ static float off_centre(const tc_camera *view, tc_vec3 pivot) {
 }
 
 static void synthetic(void) {
-    tc_cam c;
+    tc_cam c = {0}; /* zeroed: tc_cam_reset keeps the close-up it finds */
     tc_camera view;
     tc_cam_target t;
     tc_collision col;
@@ -75,9 +79,8 @@ static void synthetic(void) {
     float d, off, before;
     int i;
 
-    printf("placement, orbit and the lazy follow (no collision; the faithful model, 9):\n");
+    printf("placement, orbit and the follow (no collision):\n");
     tc_camera_init(&view);
-    c.faithful = true;
     tc_cam_reset(&c);
     memset(&t, 0, sizeof(t));
     t.position = tc_v3(0, 0, 0);
@@ -104,32 +107,43 @@ static void synthetic(void) {
     snprintf(what, sizeof(what), "Ed standing: it stays where the player turned it (off %.4f, pitch %.3f), in the band (%.2f)",
              (double)off, (double)view.pitch, (double)d);
     check(fabsf(off - 1.0f) < 1e-3f && fabsf(view.pitch + TC_CAM_ELEVATION + 0.2f) < 0.01f &&
-              d > TC_CAM_DISTANCE - TC_CAM_BAND - 0.01f && d < (TC_CAM_DISTANCE + TC_CAM_BAND) * TC_CAM_FRONT_STRETCH, what);
+              d > TC_CAM_DISTANCE - BAND - 0.01f && d < (TC_CAM_DISTANCE + BAND) * TC_CAM_FRONT_STRETCH, what);
 
-    {   /* Ed walking: his controls are camera-relative, so his way comes from the camera's yaw each frame (as the AI
-         * makes it), his position steps at the AI's 30 Hz (every other frame here) */
-        float max_step = 0, prev, max_move = 0;
-        tc_vec3 ed = t.position, last;
+    {   /* Ed walking: his controls are camera-relative, so his way comes from the camera's yaw (as the AI makes it), at
+         * the AI's 30 Hz (every other frame here); his drawn position moves every frame (the viewer blends his last two
+         * ticks: pose_draw) */
+        float max_step = 0, prev, max_jolt = 0;
+        tc_vec3 ed = t.position, last, rel, rel_step = tc_v3(0, 0, 0);
         tc_cam_recenter(&c);
         run(&c, &view, &t, 1);
         t.speed = 5;
         prev = view.yaw;
-        last = view.position;
+        last = tc_v3_sub(view.position, pivot_of(t.position));
         for (i = 0; i < 240; i++) { /* straight at the camera ("back" held) */
-            t.velocity = tc_v3(-5 * sinf(view.yaw), -5 * cosf(view.yaw), 0);
-            t.behind = atan2f(t.velocity.x, t.velocity.y);
+            if (i % 2 == 0) {
+                t.velocity = tc_v3(-5 * sinf(view.yaw), -5 * cosf(view.yaw), 0);
+                t.behind = atan2f(t.velocity.x, t.velocity.y);
+            }
             ed = tc_v3_add(ed, tc_v3_scale(t.velocity, 1.0f / 60));
-            if (i % 2 == 0) t.position = ed;
+            t.position = ed;
             tc_cam_update(&c, &view, &t, 1.0f / 60);
             max_step = fmaxf(max_step, fabsf(wrap(view.yaw - prev)));
-            max_move = fmaxf(max_move, tc_v3_distance(view.position, last));
+            /* the camera's own move (relative to Ed, who follows exactly): the front stretch opening the distance */
+            rel = tc_v3_sub(view.position, pivot_of(t.position));
+            if (i > 0) max_jolt = fmaxf(max_jolt, tc_v3_distance(tc_v3_sub(rel, last), rel_step));
+            rel_step = tc_v3_sub(rel, last);
             prev = view.yaw;
-            last = view.position;
+            last = rel;
         }
         d = tc_v3_distance(view.position, pivot_of(t.position));
-        snprintf(what, sizeof(what), "walking at the camera: it doesn't turn (largest step %.5f rad), backs off (%.2f away), "
-                 "no frame's move over 5 / 60 x 1.5 (%.3f)", (double)max_step, (double)d, (double)max_move);
-        check(max_step < 1e-3f && d > TC_CAM_DISTANCE - TC_CAM_BAND - 1.0f && max_move < 5.0f / 60 * 1.5f, what);
+        /* the jolt bound: the stretch's two 0.25 s stages start it at most 3.5 / 0.25^2 = 56 u/s^2 (0.016 per frame per
+         * frame); one 0.5 s stage (the fourth pass) jumped to 7 u/s at once (0.117). Until 2026-11-04 this check bounded
+         * the move per frame by 1.5 x Ed's speed instead (the fifth pass's mover); the stretch has to back off faster
+         * than he walks to open the distance in front of him. */
+        snprintf(what, sizeof(what), "walking at the camera: it doesn't turn (largest step %.5f rad), backs off (%.2f away: "
+                 "the front stretch), starting smoothly (largest change of its speed %.4f / frame)", (double)max_step,
+                 (double)d, (double)max_jolt);
+        check(max_step < 1e-3f && d > TC_CAM_DISTANCE - BAND - 1.0f && max_jolt < 0.02f, what);
 
         max_step = 0; /* running sideways (across the view): the lazy follow brings it round behind his way */
         t.velocity = tc_v3(5 * cosf(view.yaw), -5 * sinf(view.yaw), 0);
@@ -137,12 +151,12 @@ static void synthetic(void) {
         prev = view.yaw;
         for (i = 0; i < 60 * 8; i++) {
             ed = tc_v3_add(ed, tc_v3_scale(t.velocity, 1.0f / 60));
-            if (i % 2 == 0) t.position = ed;
+            t.position = ed;
             tc_cam_update(&c, &view, &t, 1.0f / 60);
             max_step = fmaxf(max_step, fabsf(wrap(view.yaw - prev)));
             prev = view.yaw;
         }
-        off = wrap(yaw_from(c.body, c.pivot) - t.behind);
+        off = wrap(view.yaw - t.behind);
         snprintf(what, sizeof(what), "running sideways: comes round behind his way (off %.3f after 8 s), smoothly (largest "
                  "step %.4f)", (double)off, (double)max_step);
         check(fabsf(off) < 0.15f && max_step < 0.02f, what);
@@ -155,35 +169,50 @@ static void synthetic(void) {
         run(&c, &view, &t, 1);
     }
 
-    {   /* Ed's 30 Hz steps and a bob: the averaged target keeps the view steady */
-        float zmin = 1e9f, zmax = -1e9f, yaw_min = 1e9f, yaw_max = -1e9f;
-        for (i = 0; i < 120; i++) {
-            if (i % 2 == 0) t.position = tc_v3(0, 0, 0.15f * sinf(2 * TC_PI * 5 * (float)i / 60)); /* 5 Hz, 0.3 tall */
-            tc_cam_update(&c, &view, &t, 1.0f / 60);
-            if (i < 30) continue;
-            zmin = fminf(zmin, view.position.z), zmax = fmaxf(zmax, view.position.z);
-            yaw_min = fminf(yaw_min, view.pitch), yaw_max = fmaxf(yaw_max, view.pitch);
-        }
-        snprintf(what, sizeof(what), "Ed bobbing 0.3 at 5 Hz: the camera moves %.3f up and down, its pitch %.4f rad",
-                 (double)(zmax - zmin), (double)(yaw_max - yaw_min));
-        check(zmax - zmin < 0.1f && yaw_max - yaw_min < 0.02f, what);
-        t.position = tc_v3(0, 0, 0);
-        run(&c, &view, &t, 2);
-    }
-
-    {   /* a step of 3 (under the teleport's 5): the mover gains speed gradually, no frame jumps */
-        tc_vec3 last = view.position;
-        float max_move = 0;
-        t.position = tc_v3(3, 0, 0);
+    {   /* the camera's height: a step up rounded off, a steady climb followed with no lag (the slides, lifts) */
+        float z0, max_move = 0, top = -1e9f, last, want;
+        run(&c, &view, &t, 1);
+        z0 = view.position.z;
+        last = z0;
+        t.position = tc_v3(0, 0, 0.5f); /* a step up 0.5 */
         for (i = 0; i < 60; i++) {
             tc_cam_update(&c, &view, &t, 1.0f / 60);
-            max_move = fmaxf(max_move, tc_v3_distance(view.position, last));
-            last = view.position;
+            max_move = fmaxf(max_move, fabsf(view.position.z - last));
+            top = fmaxf(top, view.position.z - z0);
+            last = view.position.z;
         }
-        snprintf(what, sizeof(what), "Ed moved 3 at once: the camera follows without a jump (largest move %.3f / frame)",
-                 (double)max_move);
-        check(max_move < 0.5f, what);
+        snprintf(what, sizeof(what), "Ed steps up 0.5: the camera rises over several frames (largest %.3f / frame), "
+                 "overshooting %.3f, settled at +%.3f", (double)max_move, (double)(top - 0.5f), (double)(last - z0));
+        check(max_move < 0.2f && top - 0.5f < 0.08f && fabsf(last - z0 - 0.5f) < 0.01f, what);
+        t.velocity = tc_v3(0, 0, 3);
+        for (i = 0; i < 90; i++) { /* climbing 3 u/s (a lift) */
+            t.position.z += 3.0f / 60;
+            tc_cam_update(&c, &view, &t, 1.0f / 60);
+        }
+        want = pivot_of(t.position).z + sinf(TC_CAM_ELEVATION) * TC_CAM_DISTANCE;
+        snprintf(what, sizeof(what), "a steady climb at 3 u/s: the camera's height keeps up (%.3f off the follow's)",
+                 (double)(view.position.z - want));
+        check(fabsf(view.position.z - want) < 0.02f, what);
+        snprintf(what, sizeof(what), "  ... and looks at him at the follow's elevation (pitch %.4f)", (double)view.pitch);
+        check(fabsf(view.pitch + TC_CAM_ELEVATION) < 1e-3f, what);
+        t.velocity = tc_v3(0, 0, 0);
         t.position = tc_v3(0, 0, 0);
+        tc_cam_reset(&c);
+        run(&c, &view, &t, 1);
+    }
+
+    {   /* a teleport (a respawn): placed afresh behind him, not dragged across */
+        tc_cam_look(&c, &view, 1.5f, 0);
+        run(&c, &view, &t, 1);
+        t.position = tc_v3(40, 10, 3);
+        t.behind = 0.5f;
+        tc_cam_update(&c, &view, &t, 1.0f / 60);
+        d = tc_v3_distance(view.position, pivot_of(t.position));
+        snprintf(what, sizeof(what), "Ed teleported 41: placed behind him at once (%.3f away, off %.4f)", (double)d,
+                 (double)wrap(view.yaw - t.behind));
+        check(fabsf(d - TC_CAM_DISTANCE) < 1e-3f && fabsf(wrap(view.yaw - t.behind)) < 1e-5f, what);
+        t.position = tc_v3(0, 0, 0);
+        t.behind = 0;
         tc_cam_reset(&c);
         run(&c, &view, &t, 1);
     }
@@ -191,13 +220,46 @@ static void synthetic(void) {
     tc_cam_look(&c, &view, -2.0f, -0.3f);
     tc_cam_recenter(&c);
     run(&c, &view, &t, 1);
-    off = wrap(yaw_from(c.body, c.pivot) - t.behind);
+    off = wrap(view.yaw - t.behind);
     snprintf(what, sizeof(what), "recentre: behind him, the default height (off %.5f, rise %.5f)", (double)off, (double)c.rise);
     check(fabsf(off) < 1e-3f && c.rise == 0 && !c.recentering, what);
     tc_cam_look(&c, &view, 0, 5);
     check(c.rise <= TC_CAM_RISE_MAX + 1e-6f, "height change held within its limits");
     tc_cam_recenter(&c);
     run(&c, &view, &t, 2);
+
+    {   /* the jump starts with a wall pulling the eye in: the hold takes the rig's height, not the eye's (until
+         * 2026-11-04 it took the eye's: the view snapped ~0.4 rad as he jumped near a wall) */
+        tc_collision wc;
+        tc_vec3 wt[6];
+        float pitch0, worst = 0;
+        t.behind = TC_PI;
+        wall(wt, 1.6f);
+        if (tc_collision_init(&wc, wt, 6, NULL) != 0) { check(0, "collision init"); return; }
+        t.world = &wc;
+        tc_cam_reset(&c);
+        c.since_look = 0;
+        run(&c, &view, &t, 0.3f);
+        pitch0 = view.pitch;
+        t.situation = TC_CAM_SIT_JUMP;
+        for (i = 0; i < 20; i++) {
+            float p = view.pitch;
+            c.since_look = 0; /* no watchdog swing in this one */
+            t.position.z = 1.2f * sinf(TC_PI * (float)i / 40);
+            tc_cam_update(&c, &view, &t, 1.0f / 60);
+            worst = fmaxf(worst, fabsf(view.pitch - p));
+        }
+        snprintf(what, sizeof(what), "a jump with a wall 1.6 behind him: no snap (largest pitch step %.4f rad; was %.3f, "
+                 "held %d)", (double)worst, (double)pitch0, c.holding);
+        check(worst < 0.05f && c.holding, what);
+        t.situation = 0;
+        t.world = NULL;
+        t.position = tc_v3(0, 0, 0);
+        t.behind = 0;
+        tc_collision_free(&wc);
+        tc_cam_reset(&c);
+        run(&c, &view, &t, 1);
+    }
 
     printf("first person:\n");
     c.first_person = true;
@@ -216,25 +278,47 @@ static void synthetic(void) {
 
     printf("presets:\n");
     c.closeup = true;
+    tc_cam_reset(&c);
+    check(c.closeup, "the close-up (5) survives a reset (entering play, a new level's start)");
+    c.closeup = false;
+    tc_cam_reset(&c);
+    c.closeup = true;
     run(&c, &view, &t, 3);
     d = tc_v3_distance(view.position, pivot_of(t.position));
     snprintf(what, sizeof(what), "close-up (Numpad 5): %.2f away (%.1f -+ %.1f), pitch %.3f (-%.2f)", (double)d,
-             (double)TC_CAM_CLOSEUP_DISTANCE, (double)TC_CAM_BAND, (double)view.pitch, (double)TC_CAM_CLOSEUP_ELEVATION);
-    check(fabsf(d - TC_CAM_CLOSEUP_DISTANCE) < TC_CAM_BAND + 0.01f && fabsf(view.pitch + TC_CAM_CLOSEUP_ELEVATION) < 0.01f, what);
+             (double)TC_CAM_CLOSEUP_DISTANCE, (double)BAND, (double)view.pitch, (double)TC_CAM_CLOSEUP_ELEVATION);
+    check(fabsf(d - TC_CAM_CLOSEUP_DISTANCE) < BAND + 0.01f && fabsf(view.pitch + TC_CAM_CLOSEUP_ELEVATION) < 0.01f, what);
     c.closeup = false;
     run(&c, &view, &t, 3);
 
+    {   /* the close-up through a flight and a teleport: the flight's preset meanwhile, then the close-up again */
+        c.closeup = true;
+        run(&c, &view, &t, 2);
+        t.situation = TC_CAM_SIT_FLIGHT;
+        run(&c, &view, &t, 2);
+        t.situation = 0;
+        t.position = tc_v3(30, 0, 0); /* a respawn */
+        run(&c, &view, &t, 3);
+        d = tc_v3_distance(view.position, pivot_of(t.position));
+        snprintf(what, sizeof(what), "the close-up after a flight and a teleport: still on, %.2f away, pitch %.3f", (double)d,
+                 (double)view.pitch);
+        check(c.closeup && fabsf(d - TC_CAM_CLOSEUP_DISTANCE) < BAND + 0.01f &&
+                  fabsf(view.pitch + TC_CAM_CLOSEUP_ELEVATION) < 0.01f, what);
+        c.closeup = false;
+        t.position = tc_v3(0, 0, 0);
+        run(&c, &view, &t, 3);
+    }
     t.situation = TC_CAM_SIT_FLIGHT;
     before = tc_v3_distance(view.position, pivot_of(t.position));
     run(&c, &view, &t, 0.1f);
     d = tc_v3_distance(view.position, pivot_of(t.position));
     snprintf(what, sizeof(what), "flight: the distance moves towards %.1f (%.2f -> %.2f after 0.1 s)",
              (double)TC_CAM_FLIGHT_DISTANCE, (double)before, (double)d);
-    check(d < before - 0.05f && d > TC_CAM_FLIGHT_DISTANCE + TC_CAM_BAND, what);
+    check(d < before - 0.05f && d > TC_CAM_FLIGHT_DISTANCE + BAND, what);
     run(&c, &view, &t, 3);
     d = tc_v3_distance(view.position, pivot_of(t.position));
     snprintf(what, sizeof(what), "flight: %.2f behind, level with the pivot (pitch %.3f)", (double)d, (double)view.pitch);
-    check(fabsf(d - TC_CAM_FLIGHT_DISTANCE) < TC_CAM_BAND + 0.01f && fabsf(view.pitch) < 0.01f, what);
+    check(fabsf(d - TC_CAM_FLIGHT_DISTANCE) < BAND + 0.01f && fabsf(view.pitch) < 0.01f, what);
     t.situation = 0;
     run(&c, &view, &t, 3);
 
@@ -261,11 +345,17 @@ static void synthetic(void) {
         t.position.z = -1;
         run(&c, &view, &t, 0.1f);
         check(c.holding, "fall: still held 1 below the take-off");
-        {
-            float before_z = view.position.z;
-            t.position.z = -2;
-            run(&c, &view, &t, 1.0f / 30);
-            check(!c.holding, "fall: let go 2 below the take-off (3 below the take-off pivot - 0.2)");
+        {   /* falling on at 8 u/s (his drawn origin moves every frame: until 2026-11-04 this dropped him 1 at once,
+             * which the camera's height smoothing now rounds off over a few frames) */
+            float before_z;
+            for (i = 0; i < 120 && c.holding; i++) {
+                t.position.z -= 8.0f / 60;
+                tc_cam_update(&c, &view, &t, 1.0f / 60);
+            }
+            snprintf(what, sizeof(what), "fall: let go 3 below the take-off pivot - 0.2 (Ed at %.2f)", (double)t.position.z);
+            check(!c.holding && t.position.z < -1.85f && t.position.z > -2.0f, what);
+            before_z = view.position.z;
+            run(&c, &view, &t, 1.0f / 30); /* he lands */
             snprintf(what, sizeof(what), "fall: no jump as it lets go (the camera moved %.3f that tick)",
                      (double)fabsf(view.position.z - before_z));
             check(fabsf(view.position.z - before_z) < 0.2f, what);
@@ -309,8 +399,8 @@ static void synthetic(void) {
     run(&c, &view, &t, 4);
     d = tc_v3_distance(view.position, pivot_of(t.position));
     snprintf(what, sizeof(what), "cleared: back in the band after 4 s (%.3f, the band's near edge %.1f)", (double)d,
-             (double)(TC_CAM_DISTANCE - TC_CAM_BAND));
-    check(d > TC_CAM_DISTANCE - TC_CAM_BAND - 0.01f, what);
+             (double)(TC_CAM_DISTANCE - BAND));
+    check(d > TC_CAM_DISTANCE - BAND - 0.01f, what);
     tc_collision_free(&col);
     wall(tris, 3);           /* and back: in at once */
     if (tc_collision_init(&col, tris, 6, NULL) != 0) { check(0, "collision init"); return; }
@@ -349,6 +439,63 @@ static void synthetic(void) {
              (double)view.position.y, c.hide_target);
     check(view.position.y < 0.3f && c.hide_target, what);
     tc_collision_free(&col);
+}
+
+/* The slides' preset (TC_CAM_SHOT_SKI: this camera tuned for skiing, the port's): further back with speed, lower, its
+ * steering wobble ignored. */
+static void ski(void) {
+    tc_cam c = {0};
+    tc_camera view;
+    tc_cam_target t;
+    char what[256];
+    float y = 0, d, max_step = 0, prev, want;
+    int i;
+    printf("the slides' preset:\n");
+    tc_camera_init(&view);
+    tc_cam_reset(&c);
+    memset(&t, 0, sizeof(t));
+    t.distance = TC_CAM_DISTANCE;
+    t.shot = TC_CAM_SHOT_SKI;
+    t.speed = 50;
+    t.velocity = tc_v3(0, 50, 0);
+    for (i = 0; i < 180; i++) { /* 3 s straight at 50 u/s */
+        y += 50.0f / 60;
+        t.position = tc_v3(0, y, 0);
+        tc_cam_update(&c, &view, &t, 1.0f / 60);
+    }
+    d = tc_v3_distance(view.position, pivot_of(t.position));
+    want = TC_CAM_SKI_DISTANCE + 50 * TC_CAM_SKI_PULLBACK;
+    snprintf(what, sizeof(what), "at 50 u/s: %.2f behind (%.1f: 7 + the pull-back), pitch %.3f (-%.2f)", (double)d,
+             (double)want, (double)view.pitch, (double)TC_CAM_SKI_ELEVATION);
+    check(fabsf(d - want) < 0.05f && fabsf(view.pitch + TC_CAM_SKI_ELEVATION) < 0.01f, what);
+    prev = view.yaw;
+    for (i = 0; i < 240; i++) { /* weaving: his way swings -+ 0.2 rad at 1.5 Hz, his facing at 30 Hz */
+        float a = 0.2f * sinf(2 * TC_PI * 1.5f * (float)i / 60);
+        if (i % 2 == 0) t.behind = a;
+        t.velocity = tc_v3(50 * sinf(a), 50 * cosf(a), 0);
+        t.position = tc_v3_add(t.position, tc_v3_scale(t.velocity, 1.0f / 60));
+        tc_cam_update(&c, &view, &t, 1.0f / 60);
+        if (i > 60) max_step = fmaxf(max_step, fabsf(wrap(view.yaw - prev)));
+        prev = view.yaw;
+    }
+    snprintf(what, sizeof(what), "weaving -+ 0.2 rad at 1.5 Hz: the view turns at most %.4f rad a frame (his own way "
+             "turns up to 0.031)", (double)max_step);
+    check(max_step < 0.01f, what);
+    for (i = 0; i < 240; i++) { /* a 1 rad turn: it comes round behind his new way */
+        t.behind = 1;
+        t.velocity = tc_v3(50 * sinf(1.0f), 50 * cosf(1.0f), 0);
+        t.position = tc_v3_add(t.position, tc_v3_scale(t.velocity, 1.0f / 60));
+        tc_cam_update(&c, &view, &t, 1.0f / 60);
+    }
+    snprintf(what, sizeof(what), "after a 1 rad turn, 4 s on: behind his way (off %.3f)", (double)wrap(view.yaw - 1));
+    check(fabsf(wrap(view.yaw - 1)) < 0.1f, what);
+    c.closeup = true;
+    t.speed = 0;
+    t.velocity = tc_v3(0, 0, 0);
+    for (i = 0; i < 240; i++) tc_cam_update(&c, &view, &t, 1.0f / 60);
+    d = tc_v3_distance(view.position, pivot_of(t.position));
+    snprintf(what, sizeof(what), "the close-up (5) still wins on the slides (%.2f away)", (double)d);
+    check(fabsf(d - TC_CAM_CLOSEUP_DISTANCE) < BAND, what);
 }
 
 /* ---- the demo on real levels: the camera behind a surface? ---- */
@@ -538,9 +685,9 @@ static void clip_frame(tc_viewer *v, tc_collision *col, tc_vec3 head, clip_stats
     for (k = 0; k < KIND_COUNT; k++) st->clipped[k] += clipped[k], st->blocked[k] += blocked[k];
     if ((clipped[KIND_LEVEL] || clipped[KIND_PERSO]) && !collision_near(col, eye, 0.4f)) st->clipped_no_col++;
     if (getenv("CLIP_DEBUG") && (clipped[KIND_LEVEL] || clipped[KIND_PERSO] || clipped[KIND_ED]) && st->frames % 7 == 0)
-        printf("    clip f%d eye (%.2f %.2f %.2f) head (%.2f %.2f %.2f) len %.2f body %.2f speed %.2f nearest %.3f "
+        printf("    clip f%d eye (%.2f %.2f %.2f) head (%.2f %.2f %.2f) len %.2f rig %.2f pull %.2f nearest %.3f "
                "kinds %d%d%d sit %d\n", st->frames, (double)eye.x, (double)eye.y, (double)eye.z, (double)head.x,
-               (double)head.y, (double)head.z, (double)len, (double)tc_v3_distance(v->cam.body, v->cam.pivot), (double)v->cam.speed, (double)nearest,
+               (double)head.y, (double)head.z, (double)len, (double)tc_v3_distance(v->cam.rig, v->cam.pivot), (double)v->cam.pull, (double)nearest,
                clipped[0], clipped[1], clipped[2], tc_viewer_camera_situation(v));
     if ((blocked[KIND_LEVEL] || blocked[KIND_PERSO]) &&
         !(len > 0.6f && tc_collision_raycast(col, tc_v3_add(head, tc_v3_scale(seg, 0.3f / len)),
@@ -640,23 +787,25 @@ static void level_clip(const char *dir, const char *name) {
 static void jitter_phase(tc_viewer *v, const char *level, const char *name, tc_view_action a, int frames) {
     float prev = v->camera.yaw, largest = 0, largest_swing = 0, last = 0, last_swing = 0;
     int i, reversals = 0, swing_reversals = 0, swing_frames = 0;
+    bool was_swinging = false;
     char what[256];
     for (i = 0; i < frames; i++) {
         uint32_t c, o;
         float d;
-        bool swinging;
+        bool swinging = v->cam.swinging; /* the state this frame's turn starts in (the watchdog sets it at the end) */
         tc_viewer_set_action(v, a, true);
         tc_viewer_update(v, 1.0f / 60);
         tc_viewer_draws(v, &c, &o);
         d = remainderf(v->camera.yaw - prev, 2 * TC_PI);
         prev = v->camera.yaw;
-        swinging = v->cam.swinging;
+        if (swinging && !was_swinging) last_swing = 0; /* a new swing: reversals are counted within one */
+        was_swinging = swinging;
         if (getenv("JIT_DEBUG") && (swinging || i % 15 == 0))
-            printf("    %s %s f%d yaw %.4f d %.4f eye-head %.2f body-pivot %.2f speed %.1f look-pivot %.2f reach %.2f hide %d swing %d\n",
+            printf("    %s %s f%d yaw %.4f d %.4f eye-head %.2f rig-pivot %.2f pull %.2f reach %.2f hide %d swing %d\n",
                    level, name, i, (double)v->camera.yaw, (double)d,
                    (double)tc_v3_distance(v->camera.position, tc_v3_add(tc_viewer_player(v)->position, tc_v3(0, 0, 1.35f))),
-                   (double)tc_v3_distance(v->cam.body, v->cam.pivot), (double)v->cam.speed,
-                   (double)tc_v3_distance(v->cam.look, v->cam.pivot), (double)v->cam.reach, v->cam.hide_target, swinging);
+                   (double)tc_v3_distance(v->cam.rig, v->cam.pivot), (double)v->cam.pull, (double)v->cam.reach,
+                   v->cam.hide_target, swinging);
         if (swinging) { /* the watchdog's deliberate swing round to an open side: its own bound, no back and forth */
             swing_frames++;
             largest_swing = fmaxf(largest_swing, fabsf(d));
@@ -712,6 +861,7 @@ static void level_jitter(const char *dir, const char *name) {
 int main(int argc, char **argv) {
     field_of_view();
     synthetic();
+    ski();
     if (argc > 1) {
         const char *levels[] = {"north", "sud0", "Land", "bar", "LeCanyon"};
         const char *clip_levels[] = {"bar", "sud0", "north", "Land", "cavedoc", "pyramide"};

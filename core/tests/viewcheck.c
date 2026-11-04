@@ -411,6 +411,7 @@ static void portal_scenario(const char *dir) {
     v.camera.yaw = TC_PI - tc_viewer_player(&v)->heading;
     tc_viewer_step_fov(&v, 1); /* 91 degrees and a zoomed-out camera: kept across the level change (the carry) */
     tc_viewer_wheel(&v, -2);
+    tc_viewer_toggle_closeup(&v); /* and the close-up (5) */
     zoom = v.orbit_distance;
     for (i = 0; i < 60 * 25 && !pending; i++) {
         tc_viewer_set_action(&v, TC_VA_FORWARD, i < 60);
@@ -453,6 +454,7 @@ static void portal_scenario(const char *dir) {
         snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default %.0f)", (double)zoom, (double)TC_CAM_DISTANCE);
         check(zoom != TC_CAM_DISTANCE && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
     }
+    check(w.cam.closeup && w.playing, "bar keeps sud0's close-up (5)");
     tc_viewer_overlay(&w, &o);
     check(o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO, "bar starts with the reveal");
     for (i = 0; i < 60 * 4; i++) {

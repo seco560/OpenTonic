@@ -385,7 +385,8 @@ struct tc_ai_perso {
     bool frozen;
     uint32_t removals_kept;      /* diagnostics */
     bool read_only_for_cast;     /* port: the cast does not write this perso's dsgvars (the camera's copy, which the main
-                                    actor's scripts read: the cutscene triggers' camera modes would hold him) */
+                                    actor's scripts read: the cutscene triggers' camera modes would hold him), except
+                                    TC_AI_CAMERA_SHOT_DSG */
     bool keep_off_main;          /* port: this perso's PROC 237 / 238 and dsgvar writes leave the main actor alone (the
                                     cast, unless allowed: tools/ttre/cast.py MAY_FORCE_MAIN) */
     uint32_t forces_blocked;     /* diagnostics: how many times */
@@ -413,6 +414,9 @@ void tc_ai_force_reflex(tc_ai_perso *p, uint16_t reflex);
 
 /* Raw dsgvar access for tests/debug UIs: value of dsgvar i of the perso as float (ints converted). */
 float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i);
+/* The camera perso's dsgvar that picks its shot (camera reflex 2: 5 the ski follow, 6 a fixed place; tc_cam.h
+ * TC_CAM_SHOT_*): the cast may write it to the camera (read_only_for_cast's exception). */
+#define TC_AI_CAMERA_SHOT_DSG 39
 /* The same for another perso's dsgvar i as this AI holds it (model->others[other]; what this perso's scripts wrote
  * there): 0 when there is no such perso or dsgvar. */
 float tc_ai_other_dsgvar_float(const tc_ai_perso *p, uint32_t other, uint32_t i);

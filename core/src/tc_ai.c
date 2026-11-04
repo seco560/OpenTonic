@@ -923,7 +923,10 @@ static void lval_set(run *r, lval l, value v) {
     }
     if (l.kind == 1 && l.perso > 0 && r->p->keep_off_main) { /* port: nor his dsgvars (they start his own reflexes) */
         const tc_ai_perso *q = live(r->p, l.perso);
-        if (q && (q->main_actor == 0 || q->read_only_for_cast)) { r->p->forces_blocked++; return; }
+        /* the camera's shot (its dsg39: the sliding stages' start / finish triggers pick the ski camera with it) is
+         * written, never read, by the main actor's scripts: the cast may set it (docs/CAMERA.md "Seventh pass") */
+        bool shot = q && q->read_only_for_cast && l.index == TC_AI_CAMERA_SHOT_DSG && q->main_actor != 0;
+        if (q && !shot && (q->main_actor == 0 || q->read_only_for_cast)) { r->p->forces_blocked++; return; }
     }
     if (l.kind == 1 && l.perso >= 0) dsg_set(r->p, l.perso, l.index, v);
     else if (l.kind == 2) field_set(r, l.perso, l.index, v);
