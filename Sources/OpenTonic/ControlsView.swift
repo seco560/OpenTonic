@@ -44,8 +44,8 @@ final class ControlsView: NSView {
         [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4"), k("", 0.5),
          k("F5"), k("F6"), k("F7"), k("F8"), k("", 0.5), k("F9"), k("F10"), k("F11"), k("F12")],
         [k("`"), k("1", 1, .view, "⌥ light 1"), k("2", 1, .view, "⌥ light 2"), k("3", 1, .view, "⌥ light 3"), k("4", 1, .view),
-         k("5", 1, .camera, "close-up"), k("6", 1, .view), k("7", 1, .view), k("8", 1, .view), k("9", 1, .view),
-         k("0", 1, .camera, "1st person"),
+         k("5", 1, .camera, "close-up"), k("6", 1, .view), k("7", 1, .view), k("8", 1, .view), k("9", 1, .camera, "camera"),
+         k("0", 1, .camera, "1st pers"),
          k("-", 1, .view, "darker"), k("=", 1, .view, "brighter"), k("Delete", 1.5)],
         [k("Tab", 1.5, .mode, "Ed / fly"), k("Q", 1, .ed, "shoot"), k("W", 1, .move, "forward"), k("E", 1, .ed, "act"),
          k("R", 1, .fly, "up"), k("T"), k("Y", 1, .camera, "invert"), k("U"), k("I", 1, .mode, "AI mode"), k("O"), k("P", 1, .view, "pause"),
@@ -62,7 +62,8 @@ final class ControlsView: NSView {
     private let unit: CGFloat = 54, gap: CGFloat = 6, margin: CGFloat = 18
     private static let notes = [
         "Mouse: click the view to capture it and look around, Esc releases it; or drag. Scroll: camera zoom (as Ed) / fly speed (free-fly).",
-        "Camera: mouse, arrows, right stick or Numpad 4 / 6 turn it round Ed; it stays while he stands, follows as he moves. X / middle button / L2 recentre; 5 close-up, 0 first person (row or numpad).",
+        "Camera: mouse, arrows, right stick or Numpad 4 / 6 turn it round Ed; it stays while he stands, follows as he moves.",
+        "X / middle button / L2 recentre; 5 close-up, 0 first person, 9 the classic / faithful camera (number row or numpad).",
         "As Ed with his AI (the default): he runs, Shift walks. Simple controller (I): Shift runs. Portals: walk into them.",
         "Cmd-L level select · Cmd-/ this help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 lighting variants (day / night levels), ⌥0 the level's own",
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",

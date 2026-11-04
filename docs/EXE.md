@@ -88,6 +88,19 @@ Re-run it after ApplyTypes (docs/TYPES.md) so the dump shows the new types and n
   references to 0x4ec6ac match exactly (evidence `ev_ce5ba4ce…`, `ev_d023d678…`, `ev_9ae218e3…`, `ev_93993f39…`).
   REA stays the tool for single questions with an evidence trail; the index is for sweeps over the whole exe.
 
+## The registry (2026-11-04)
+`docs/registry.tsv`: one row per function of the full dump (3,971) and per AI primitive, with what is known about it
+and what the port does with it. Regenerate after changing the port or the docs: `python3 -m tools.exe.registry`.
+- Statuses written by hand win (`tools/exe/registry_status.tsv`: implemented / partial / stub / known / unknown, with
+  a descriptive name and a note). Started with the camera module and the type 3 mechanics; add rows as subsystems are
+  read or ported.
+- Otherwise guessed: a function the core's comments cite is `implemented?` (or `known` when the line says "not
+  ported", "open", ...); cited only by docs/ is `known`; with a descriptive name only, `named`; else `unknown`. The
+  `port` column gives the citing lines: check them before relying on a guess.
+- AI primitives from the interpreter itself (core/src/tc_ai.c): an own `case` is implemented, the explicit no-op list
+  is a stub, anything falling to `unknown()` is missing (what aicheck prints as "skipped primitives").
+- Names here are not applied to the Ghidra project (tools/exe/names.tsv is); the dump's index keeps its names.
+
 ## Driver DLLs = the platform boundary
 The engine keeps hardware access in swappable DLLs (`DLL/`), selected via Ubi.ini. These are what the port replaces.
 - **Renderer, `GliDX6vr.dll`:** 48 `GLI_DRV_*` exports over DDRAW/D3D6.

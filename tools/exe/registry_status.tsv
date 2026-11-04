@@ -1,0 +1,68 @@
+# Hand-kept status of exe functions for the registry (python3 -m tools.exe.registry -> docs/registry.tsv). These win
+# over the automatic guesses (citations in core/ and docs/). One row per function: addr<TAB>name<TAB>status<TAB>note.
+# name: a descriptive name (empty: keep the dump's). status:
+#   implemented  the port does what it does (core/, port choices noted)
+#   partial      the port does part of it, or an approximation (note says what is missing)
+#   stub         the port has a placeholder that does nothing (or a constant)
+#   known        read and understood (docs), not ported
+#   unknown      looked at, not understood
+# Keep notes short; the docs hold the detail (docs/CAMERA.md "Fifth pass" for the camera rows).
+#
+# ---- the camera module (2026-11-04, docs/CAMERA.md "Fifth pass"; core/src/tc_cam.c) ----
+00425ee0	CAM_InitConstants	implemented	compiled-in Camera.cst values (0x521320..0x52137a); their values are tc_cam.h's TC_CAM_*
+00495b10	PROC_198_SetCameraConstant	known	sets one of 0x521320..0x52137a by index; B0 sets 15 (watch ticks) = 8
+00492d30	PROC_156_UpdateCamera	partial	tc_cam_update stands in for it; the camera's own scripts don't run
+004a0f90	CAM_BuildContext	known	the context: +0 dyn+0xB0, +8 cine record, +0xC working params (0x521380), +0x10 current params, +0x14 SO, +0x18 camera pos
+004a1080	CAM_ContextToProposal	known	unanalysed code (not in the dump; disassembled): writes the type 3 proposal (dyn+0x314..+0x388)
+004a3130	CAM_Modes	partial	mode 0 (follow) only; modes 1-6, 0x65, 0x68, 0x69 not ported
+004a1aa0	CAM_TargetPoint	implemented	averaged target (GAM_0042b730) + offset +0x24 (the aim height); channel targets not ported
+004a1e10	CAM_PivotPoint	partial	pivot offset +0x0C is 0 in the follow presets: pivot = target point
+004a1c60	CAM_LookAtPoint	partial	look offset +0x18 (0, -0.05, 0 by default) ignored
+004a1310	CAM_TargetAxis	known	which axis of the target's matrix is "forward"; the port uses Ed's heading
+004a1ee0	CAM_BehindDirection	implemented	tc_cam_target.behind
+004a2380	CAM_FollowWanted	partial	lazy direction + distance band ported; the angle window's tolerance is pi (no swing behind Ed: port choice)
+004a2180	CAM_MeasureAngles	partial	horizontal angle and elevation of the camera round the pivot
+004a1f30	CAM_ClampAngleWindow	known	[centre, centre + tolerance]; flag 4 steps by DAT_0052134c (pi/8); port: no clamp
+004a2250	CAM_DirectionFromAngles	implemented	offset_of in tc_cam.c
+004a1690	CAM_ClampHeightBand	partial	cine +0xA4/+0xA8; the port has only the jump's hold
+004a2e20	CAM_SlopeTilt	known	flag 0x800: elevation follows the slope, 0.01 rad per frame (DAT_00521320); not ported
+004a2a10	CAM_LinearSpeed	implemented	2 x averaged target speed in [12, 200]; the hidden-counter speed-ups (x1.5) not ported
+004a2bb0	CAM_StopOnReversal	known	zeroes the move when the camera's velocity and the move differ by > pi/4
+004a2c80	CAM_IdealPosition	known	the follow with zero tolerances: "dead behind"; not used by the port
+004a5f00	CAM_StillTarget	known	counter cine +0xBA while the target's 0.2 s average speed < 0.001 (max 30)
+004a56e0	CAM_Watchdog	partial	every 8 ticks: Ed hidden -> search 13 spots and cut; port: swings when a wall pulls the eye nearer than 2
+004a5600	CAM_TooClose	partial	nearer than the second range's minimum -> search 7 spots; port: folded into the watchdog's swing
+004a5400	CAM_SearchSpot	partial	port: the most open of 8 turns of the wanted offset; the exe's score and validation not ported
+004a4f20	CAM_SearchCandidates	partial	the wanted offset turned by the angle table; the z > 0.5 variants and the velocity candidate not ported
+004a3760	CAM_AngleTable	implemented	cos / sin of k x base (pi/4 normal, pi/8 failure), mirrored to a full circle
+004a4660	CAM_ScoreSpot	unknown	the candidates' sort key (ftol-heavy); not decoded
+004a49e0	CAM_CompareSpots	known	qsort compare: score, then alignment with the move
+004a4bb0	CAM_ValidateSpot	known	can-go / can-see checks on a candidate
+004a4830	CAM_SpotReachable	known	used by the compare
+004a5530	CAM_SearchFallback	known	search with flags 0x14, then mode 0x68 (cinematic)
+004a5c60	CAM_CutTo	known	the hard cut (flag +0x95 0x10); port swings instead
+004a5b90	CAM_PlaceAt	known	called by the cut
+004a4200	CAM_CanGo	known	3 rays round the line, offsets 0.35 x 0.35 (DAT_00521328/2C, count DAT_00521374)
+004a4260	CAM_CanSee	partial	1 ray (radius 0.1, DAT_00521330/34); port: a both-faces ray + the drawn persos (clear_distance)
+004a3f20	CAM_RaysAround	known	n rays round the segment, rotated 2 pi / n
+004a3a00	CAM_RayThroughSectors	partial	the camera's, the target's and the listed sectors' geometry; port: the level collision
+004a3920	CAM_RayPersos	partial	persos of a sector on the ray (drawn geometry); port: every drawn perso (camera_sight in tc_viewer.c)
+004a42c0	CAM_CheckPosition	known	can-see / can-go of a position by flags (0x2F in the searches)
+00484210	SPO_SegmentVsObject	partial	segment vs a SuperObject's visual geometry (GLIGLOU_004427d0), recursive; port: drawn persos only
+004a0bf0	CAM_TargetMoving	known	the target's averaged speed > 0.01
+004a0ee0	CAM_Within	known	|a - b| <= r
+004b3810	DNM_RequestType3	partial	the mover (linear branch); the angular branch (flags 2) not ported
+004b29fa	DNM_Type3Step	partial	linear: min(|d|, speed dt); the arc round the pivot (flags 2) not ported
+004b2e4b	DNM_Type3Limits	implemented	ease-in d / (P0 - d), speeding up <= last + speed dt / P[0xC]; flag 0x80 skips
+004b3034	DNM_Type3KeepAway	known	keeps the camera 1.5 from the pivot horizontally (FUN_004c1541 projects z out)
+004b2900	DNM_IntegrateType3	partial	the port has no camera body collision (the eye's boom instead)
+004b3d33	DNM_Type3CollideSlide	known	the camera body's collide-and-slide, up to 5 contacts; not ported
+004b533c	DNM_Type3Orient	partial	look-at from the camera; the turn / tilt / roll angles (params +0x50..+0x58) not ported
+004b514b	DNM_Type3LookLag	implemented	look-at point closes 1 / k per frame (k = params +0x7C, B0: 10)
+004b50ed	DNM_RateLimit	known	angle rate limit for the orientation angles
+0042b730	GAM_AveragePosition	implemented	time-weighted mean of the history (<= 8 samples, window DAT_00521344 = 0.4 s)
+0042b89b	GAM_AveragePositionPredict	known	the same plus a least-squares slope (flag 2 on +0x94); not used by the follow
+0042b5b0	GAM_AverageVelocity	partial	port: from the position history
+0042ade0	GAM_HistoryInit	partial	the history filled with the current position when empty
+0042af40	GAM_DynamHistPosition	partial	tc_cam keeps its own 8-sample history of Ed (not the dynamics')
+00495800	PROC_184_CameraFlag	known	word 0 = params +0x94, word 1 = +0x92; bit index -> mask tables (docs/CAMERA.md)

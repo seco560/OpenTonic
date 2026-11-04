@@ -412,3 +412,26 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   sectors (sct12v..15v, sct27v, sctfinish, sctfleche03: no portals lead in, no floors), and the listed-sector draw
   (FUN_004521b0) pushes no sector lights, so as read they never apply. The dark spots on the slope are more likely the
   missing ambient floor: the formula never goes below 2 x ambient (0.2 there), the port's clamp(R) / 128 goes to 0.
+
+## Particles (read 2026-11-04, the user's sud0 snow question; nothing ported)
+- **Per-perso particle source:** perso +0x3C (`GAM\Actions\MSPrtSrc.c`, `GAM_MSPrtSrc_0042db10` ...). Its +0 is the
+  live source, null at load; **PROC 214** sets it (another perso's too: the procs take a perso context), **212 / 213**
+  turn it on / off, 215..223 change it (`PROC_212Etc_0048b0f0`). Each frame `GAM_0042df50` (from the perso's frame,
+  docs/ENGINE.md) places the emitter (`GAM_0042e200`: a box or a disk round the perso, clipped by `GAM_0042e900`, an
+  environment test, -3 for the bubbles) and runs the generator `FUN_0047f260` (types 2, 3, 4; type 4 pre-warms 70
+  steps). The particle module is 0x47EF00..0x480FB0 (~1,500 decompiled lines), not read further.
+- **Source record** (Ed's REF37, fix 0x21e7b6): +0 system (+0 type 2, +4 0.05, ...), +4 generator (+0 50 particles,
+  +0x38 the sprite {visual material, ...}, +0x3C / +0x40 size 0.1 x 0.1), +8 shape (+0 type 0 = box, then min / max),
+  +0xC the environment test, +0x10..+0x24 the box (-6, -6, -2)..(6, 6, 8) round the perso. Its sprite is
+  **EFFECTS/BULLE_AD.TGA: Ed's underwater bubbles**, switched on by his swimming behaviours (B2 rule 9, B3, ...).
+- **A second, simpler effect in the same function:** the source's table of up to 6 states with a channel pair and an
+  offset each (Ed: channels 11 / 12, offset (1.32, 0.58, 0.17)): while the perso is in one of those states, every
+  60 ms, 4..8 particles per channel go into a global pool of 250 (`DAT_008ba5b0`, 0x14 each, life 1000 ms), drawn by
+  `GAM_00413fc0` (main loop, 0x428e61) as one sprite object (`DAT_008b99c0`, read from the level's .gpt) faded by the
+  life left, not moving. Most likely Ed's flight trail (the fix's effect sprites next to it: SFX_FLYBEHIND_ANU,
+  SFX_BULLE_ANU, TIRBULLE_ANU); the exact .gpt offset of `DAT_008b99c0` was not pinned down.
+- **sud0:** only Ed and the camera have a source (the camera's is empty; no script of sud0's 325 persos calls 212..223
+  but Ed's). No snowflake texture or sprite in sud0's geometry; BNE_Snow1..9A are trapdoor slabs (SUD_TRAP). So no
+  falling snow was found in the particle data. The user (2026-11-04): probably not particles but another kind of script; to look for later. Still unconfirmed: whether the 250-entry pool is the flight trail or footprints (which of Ed's six states it lists, and which sprite DAT_008b99c0 is, would settle it).
+- Unrelated table found on the way: `0x432f00` (not in the dump) pairs 22 sud0 sector lists ("-sctsud14-sctsud10-
+  sctneige-", ...) with (x, y) points: probably the map screen's marker per region.

@@ -833,6 +833,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free((void *)v->meshes);
     tc_free(v->mesh_water);
     tc_free(v->draws);
+    tc_free(v->mesh_sphere);
     tc_free(v->blended);
     for (i = 0; i < v->piece_count; i++) {
         tc_free(v->pieces[i].vertices);
@@ -1448,6 +1449,86 @@ static void step_ai(tc_viewer *v, float dt) {
     }
 }
 
+/* The camera's sight test against the persos drawn last frame (tc_cam_sight_fn): their parts, both faces, not sprites,
+ * water or blended ones (smoke, glass), nor Ed. The original's camera tests the persos of the sectors on its line by
+ * their drawn geometry (FUN_004a3920 -> FUN_00484210); here every drawn perso, culled by its parts' bounding spheres. */
+static float segment_tri_t(tc_vec3 o, tc_vec3 d, tc_vec3 a, tc_vec3 b, tc_vec3 c) {
+    tc_vec3 e1 = tc_v3_sub(b, a), e2 = tc_v3_sub(c, a), p = tc_v3_cross(d, e2), s, q;
+    float det = tc_v3_dot(e1, p), inv, u, w, t;
+    if (fabsf(det) < 1e-12f) return 2;
+    inv = 1 / det;
+    s = tc_v3_sub(o, a);
+    u = tc_v3_dot(s, p) * inv;
+    if (u < 0 || u > 1) return 2;
+    q = tc_v3_cross(s, e1);
+    w = tc_v3_dot(d, q) * inv;
+    if (w < 0 || u + w > 1) return 2;
+    t = tc_v3_dot(e2, q) * inv;
+    return t >= 0 && t <= 1 ? t : 2;
+}
+
+static tc_vec3 model_point(const tc_mat4 *m, const float *p) {
+    const float *a = m->m;
+    return tc_v3(a[0] * p[0] + a[4] * p[1] + a[8] * p[2] + a[12], a[1] * p[0] + a[5] * p[1] + a[9] * p[2] + a[13],
+                 a[2] * p[0] + a[6] * p[1] + a[10] * p[2] + a[14]);
+}
+
+static void mesh_spheres(tc_viewer *v) {
+    uint32_t i, k;
+    if (v->mesh_sphere || !(v->mesh_sphere = (float *)tc_alloc(sizeof(float) * 4 * (v->mesh_count ? v->mesh_count : 1))))
+        return;
+    for (i = 0; i < v->mesh_count; i++) {
+        const tc_mesh *m = v->meshes[i];
+        float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f}, r = 0, *s = v->mesh_sphere + 4 * i;
+        int j;
+        for (k = 0; m && k < m->vertex_count; k++)
+            for (j = 0; j < 3; j++) lo[j] = fminf(lo[j], m->vertices[k].position[j]), hi[j] = fmaxf(hi[j], m->vertices[k].position[j]);
+        for (j = 0; j < 3; j++) s[j] = m && m->vertex_count ? (lo[j] + hi[j]) / 2 : 0;
+        for (k = 0; m && k < m->vertex_count; k++) {
+            const float *q = m->vertices[k].position;
+            float dx = q[0] - s[0], dy = q[1] - s[1], dz = q[2] - s[2];
+            r = fmaxf(r, dx * dx + dy * dy + dz * dz);
+        }
+        s[3] = sqrtf(r);
+    }
+}
+
+static float camera_sight(void *user, tc_vec3 from, tc_vec3 to) {
+    tc_viewer *v = (tc_viewer *)user;
+    tc_vec3 d = tc_v3_sub(to, from);
+    float best = 1, len2 = tc_v3_dot(d, d);
+    uint32_t i, k;
+    if (len2 < 1e-10f || !v->draws) return 1;
+    mesh_spheres(v);
+    if (!v->mesh_sphere) return 1;
+    for (i = 0; i < v->draw_count; i++) {
+        const tc_view_draw *dr = &v->draws[i];
+        const tc_mesh *m;
+        const float *s;
+        tc_vec3 c, rel;
+        float scale, r, along;
+        if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue; /* persos only (not Ed, statics, pieces) */
+        if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
+        m = v->meshes[dr->mesh];
+        s = v->mesh_sphere + 4 * dr->mesh;
+        c = model_point(&dr->model, s);
+        scale = fmaxf(tc_v3_length(tc_v3(dr->model.m[0], dr->model.m[1], dr->model.m[2])),
+                      fmaxf(tc_v3_length(tc_v3(dr->model.m[4], dr->model.m[5], dr->model.m[6])),
+                            tc_v3_length(tc_v3(dr->model.m[8], dr->model.m[9], dr->model.m[10]))));
+        r = s[3] * scale;
+        rel = tc_v3_sub(c, from);
+        along = fmaxf(0, fminf(1, tc_v3_dot(rel, d) / len2));
+        if (tc_v3_length(tc_v3_sub(rel, tc_v3_scale(d, along))) > r) continue; /* the segment misses its sphere */
+        for (k = dr->first_index; k + 2 < dr->first_index + dr->index_count && k + 2 < m->index_count; k += 3) {
+            float t = segment_tri_t(from, d, model_point(&dr->model, m->vertices[m->indices[k]].position),
+                                    model_point(&dr->model, m->vertices[m->indices[k + 1]].position),
+                                    model_point(&dr->model, m->vertices[m->indices[k + 2]].position));
+            if (t < best) best = t;
+        }
+    }
+    return best;
+}
+
 static void update_play(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
@@ -1480,6 +1561,8 @@ static void update_play(tc_viewer *v, float dt) {
         t.manual = v->demo;
         t.situation = tc_viewer_camera_situation(v);
         t.world = &p->world;
+        t.sight = camera_sight; /* the persos as drawn last frame */
+        t.sight_user = v;
         p->world.solid = NULL;
         tc_cam_update(&v->cam, &v->camera, &t, dt);
         p->world.solid = solid;
@@ -1567,6 +1650,11 @@ void tc_viewer_recenter_camera(tc_viewer *v) {
     if (v->playing && !v->demo) tc_cam_recenter(&v->cam);
 }
 
+void tc_viewer_toggle_camera_model(tc_viewer *v) {
+    v->cam.faithful = !v->cam.faithful;
+    tc_cam_reset(&v->cam); /* placed afresh behind Ed in the other model */
+}
+
 void tc_viewer_toggle_closeup(tc_viewer *v) {
     if (v->playing && !v->demo) v->cam.closeup = !v->cam.closeup;
 }
@@ -1576,7 +1664,7 @@ void tc_viewer_toggle_first_person(tc_viewer *v) {
     v->cam.first_person = !v->cam.first_person;
     v->camera.yaw = TC_PI - v->play->player.heading; /* entering: looking the way he faces; leaving: behind him */
     v->camera.pitch = v->cam.first_person ? 0 : -TC_CAM_ELEVATION;
-    v->cam.reach = -1;
+    v->cam.placed = false;
 }
 
 int tc_viewer_camera_situation(const tc_viewer *v) {
@@ -1662,6 +1750,7 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
+    if (v->playing && v->cam.faithful) APPEND("%s", ", faithful camera");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
     if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
         APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,
@@ -1930,7 +2019,8 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         }
     }
 
-    if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person) { /* first person: not drawn */
+    /* first person, or the camera pushed into him by a wall (tc_cam.hide_target): not drawn */
+    if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target) {
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;
@@ -1955,11 +2045,13 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
 
     *opaque_count = dl.count;
     sort_blended(v, dl.blended_count);
+    v->draw_count = 0; /* set below, once the list is whole */
     if (dl.blended_count && reserve(&v->draws, &v->draw_cap, dl.count + dl.blended_count)) {
         memcpy(v->draws + dl.count, v->blended, dl.blended_count * sizeof(*v->draws));
         dl.count += dl.blended_count;
     }
     *count = dl.count;
+    v->draw_count = dl.count;
     return v->draws;
 }
 

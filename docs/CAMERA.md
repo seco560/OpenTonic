@@ -41,9 +41,9 @@ Confidence is marked: **read** = followed in the code; **inferred** = from usage
 | `+0x50` `+0x54` `+0x58` | 0 | three more angles, copied to the mechanics **inferred**: the view's own turn / tilt / roll | PROC 173 slots 2–4 |
 | `+0x5C` `+0x60` `+0x64` | 0.35 | three smoothing factors **inferred** | PROC 195 |
 | `+0x68` / `+0x6C` | 200 / 12 | linear speed max / min: the camera may move at 2 × the target's speed within these (`FUN_004a2a10`) **read** | PROC 165 |
-| `+0x70` / `+0x74` | 25 / 7 | **inferred**: angular speed max / min | PROC 166 |
-| `+0x78` | 3.14 | **inferred**: an angle limit (π) | PROC 167 |
-| `+0x7C` / `+0x80` | 10 / 5 | not identified | PROC 168 |
+| `+0x70` / `+0x74` | 25 / 7 | **read** (fifth pass): the mover's speeding-up divisor (a step <= the last + speed dt / +0x70) and its ease-in divisor (a step <= d / (+0x74 - d)); camera B0 sets 10 / 10 | PROC 166 |
+| `+0x78` | 3.14 | copied to the proposal's `bank_step` (+0x340), times dt in the request; use not traced | PROC 167 |
+| `+0x7C` / `+0x80` | 10 / 5 | **read**: +0x7C the look-at lag (the look-at point closes 1 / +0x7C of the way per frame, FUN_004b514b); +0x80 copied to the proposal (+0x378), use not traced. B0: 10 / 10 | PROC 168 |
 | `+0x84`, `+0x88` | 0.6, 0.04 | not identified | PROC 196, 169 |
 | `+0x8C` | 1.5 | **inferred**: the field of view (rad); PROC 178 / 179 animate it (flag 0x20 = zooming) | PROC 178 / 179 |
 | `+0x92`, `+0x94` | flags | two flag words (behaviour switches: slope tilt 0x800 on `+0x94`, axis lock 0x80 / 0x100, ...) **read** (bits only partly named) | PROC 184 |
@@ -215,9 +215,9 @@ frontends keep taking just the matrix, and the camera's sector already picks the
 flight, jumps, landings) get the original's presets, then E2 for shooting. A2 and D2 / D3 later.
 
 ## 5. Not read yet
-- The smoothing maths in `FUN_004b3d33` / `FUN_004b533c` (exact lag per axis; the 0.35 factors), and the sphere's
-  radius (the camera's collset).
-- `FUN_004a5400` (how the 13 / 7 candidate spots are chosen) and `FUN_004a4260` (visibility test details).
+- (Read in the fifth pass: the type 3 mover and look-at lag, the candidate search, the visibility rays.) Still open:
+  the 0.35 factors (+0x5C..+0x64), the orientation angles' use (`FUN_004b533c` with +0x50..+0x58), the candidates'
+  score `FUN_004a4660`.
 - The record fields marked "not identified", the `+0x92` / `+0x94` flag bits by name, modes 3 / 5 / 6 / 0x65+.
 - Ed's camera button (B29 and three other places) and the meaning of codes 14 and 17.
 - Whether `aicheck`'s skipped primitives (3_164 × 214, 4_290 × 87, ...) are camera calls.
@@ -331,3 +331,105 @@ Causes found (headless, `camcheck`'s new "no shaking" checks: Ed's AI walking as
   scripts (an ability given by something else: not traced). Aim and shooting from it: later.
 - **Keys:** 5 and 0 on the number row and the numpad (close-up, first person), across both frontends; the lighting
   variants moved to Alt / Option + 1-9 and Alt / Option + 0.
+
+### Fifth pass (2026-11-04): the original's motion model, clipping (the user: "a lot of jank is stemming from it")
+Read this time (exe and data; the decompiles of the camera module and the type 3 mechanics, the code at 0x4a1080 that
+the dump never decompiled, disassembled; the camera's sud0 scripts dumped with `ai.dump`):
+- **`GAMEDATA/Camera.cst` is a development leftover:** the retail exe never reads it (no strings). Its constants are
+  compiled in, set by `GAM_00425ee0` into 0x521320..0x52137a, and scripts can change them with **PROC 198**
+  (SetCameraConstant(index, value)). Retail values (Camera.cst's dev values in brackets): sphere 0.45 (0.35, unused),
+  can-go rays 0.35 / 0.35 x 3 (0.30, 2), can-see ray 0.1 / 0.1 x 1, base angles pi/4 and pi/8, target averaging
+  window **0.4 s** (0.75), speed window 0.4, angle parsing step pi/8 (pi/4), find-better / force-position ticks 60 / 60,
+  watch ticks 1 (camera B0 sets 8 with PROC_198(15, 8)), slope tilt 0.01 rad per frame.
+- **The target is averaged:** `FUN_004a1aa0` follows `GAM_0042b730`, a time-weighted mean of the target's last 8
+  positions (the dynamics' history, pushed by `GAM_DynamHistPosition_0042af40` each mechanics frame) within 0.4 s; at
+  30 Hz that is all 8 (0.27 s). Flag 2 on +0x94 switches to `GAM_0042b89b` (the same plus a least-squares slope).
+- **The speed** (`FUN_004a2a10`): 2 x the target's averaged speed (`GAM_0042b5b0`), within [+0x6C, +0x68] = [12, 200];
+  x1.5 when the hidden counter passes 1/3 and again 2/3 of 60 ticks.
+- **The mover** (`DNM_RequestType3_004b3810` -> `FUN_004b29fa`, `FUN_004b2e4b`): a step towards the wanted spot of at
+  most speed x dt; near it (d < speed dt (P0 - d)) at most d / (P0 - d) per frame (an ease-in, P0 = +0x74); and at most
+  the last frame's step + speed dt / +0x70 (gaining speed gradually). Flag 0x80 on +0x92 skips both; flag 2 moves on
+  an arc round the pivot instead (not ported); `FUN_004b3034` keeps it 1.5 from the pivot horizontally (not ported).
+- **The look-at point lags** (`FUN_004b514b`): 1 / +0x7C of the way per frame (B0: 10; riding a perso 2; first
+  person 1).
+- **The body** collides and slides along walls (`FUN_004b3d33`, up to 5 contacts); nothing pulls it in towards Ed.
+- **The watchdog** (`FUN_004a56e0`, every 8 ticks in B0) and the too-close check (`FUN_004a5600`): when Ed can't be
+  seen, or the camera is nearer than the second range's minimum, it builds candidates (`FUN_004a4f20`: the ideal offset
+  turned by the angle table of `FUN_004a3760`, k pi / 4 all round; variants when the camera is above the pivot; one
+  behind the target's velocity), sorts them (`FUN_004a4660`, not decoded), validates them (`FUN_004a4bb0`) and cuts
+  (`FUN_004a5c60`).
+- **What the camera sees is the drawn geometry:** its ray (`FUN_004a3a00` -> `FUN_00484210`) tests the visual objects
+  (`GLIGLOU_004427d0`) of the camera's and the target's sectors, and the persos in them (`FUN_004a3920`).
+- **CameraFlag (PROC 184)** masks: word 0 (+0x94) bits 1..7 = 1, 2, 4, 0x10, 0x200, 0x400, 0x800; word 1 (+0x92)
+  1..12 = 1, 2, 4, 0x10, 0x40, 0x100, 0x80, 0x20, 0x200, 0x8000, 0x400, 0x800. B0 sets +0x94 0x1 and 0x400, clears
+  0x2 / 0x4 / 0x10 / 0x200 / 0x800; on +0x92 resets 0x1 and 0x40 to the defaults and clears the rest (so: the mean
+  average, no slope tilt, the linear mover with its limits, the look-at lag on).
+
+Ported (core/src/tc_cam.c; `tc_cam.h` lists each number with its source):
+- **A 30 Hz camera tick** (`TC_CAM_TICK`), drawn between its last two ticks: target history and average, pivot, speed,
+  the wanted spot, the mover (ease-in and speeding-up with B0's 10 / 10), the look-at lag (10). Read from the exe.
+- **The lazy follow** from the camera's own position with B2's distance band (7 -+ 0.3, stretched in front of Ed), the
+  preset's elevation exactly (tolerance 0, as the exe), the horizontal window wide open (**port**: the exe's 0.15 rad
+  swings it behind Ed; the user's orbit choice stands). The rope of the fourth pass is gone: a camera that lags behind
+  Ed on its own position is what the rope imitated.
+- **The player's orbit** (mouse, stick, keys, recentre, close-up, first person) as before, applied to the camera's last
+  two ticks at once (**port**).
+- **Collision, the port's way:** the rig (the original's camera) is not pulled in; the **eye** is, on the line from Ed
+  to the rig, in at once and back out at the mover's pace, and checked again every frame from Ed as drawn. The view
+  looks the way the rig looks, Ed's pivot kept within 0.2 rad of the centre (`TC_CAM_LOOK_OFF_MAX`, **port**): a
+  pulled-in eye near Ed would otherwise swing with each of his 30 Hz steps. No more minimum distance: the old 0.5
+  floor put the eye inside walls (cavedoc's swim along a wall: 305 frames) and inside Ed. **Ed is hidden** when the eye
+  is nearer than 0.9 to his pivot (`TC_CAM_HIDE_DISTANCE`, **port**; the original's first person hides his channels).
+- **The line of sight against the drawn persos** (`camera_sight` in tc_viewer.c, from last frame's draw list; not
+  sprites, water or blended draws), as the exe's ray does; the level itself by its collision (its visual geometry is
+  not tested: **port**). This catches the moving platforms whose collision the exporter bakes at frame 0 (Land's slab,
+  cavedoc's cone, until moving collision comes: docs/ENGINE.md) and the characters with none.
+- **The watchdog swings instead of cutting** (`search`, every 8 ticks): only when a wall has the eye nearer than 2
+  (`TC_CAM_SWING_NEAR`, **port**: from the exe's 5.7 it turned Ed mid-run on every rock, his controls being
+  camera-relative), the most open of the 8 turns of the wanted offset, 0.6 s lag, handing back to the follow within
+  0.05 rad or once clear.
+- Not ported: the angle window and its parsing step, slope tilt, the hidden-counter speed-ups, the arc mover, the
+  keep-away, the body's slide, the candidates' score and validation, modes other than follow.
+
+Checks (camcheck; all suites pass: viewcheck, aicheck, mechcheck, crashcheck, skicheck, portalcheck, sectorcheck,
+castcheck):
+- The synthetic checks were rewritten for the new model (what changed on purpose: the look-at lags, so "looking
+  straight at Ed during a jump" became "Ed in view, within 0.4 rad"; recentre ends within 1e-3 rad; the distance
+  settles in the band, not on 7 exactly). New: Ed bobbing 0.3 at 5 Hz moves the camera < 0.1; Ed moving 3 at once
+  moves it < 0.5 per frame; the watchdog swings to an open side; a wall 0.3 behind Ed's head keeps the eye this side
+  and hides him.
+- **No shaking:** the follow's frames keep the old bound (0.03 rad per frame, <= 3 reversals). The watchdog's swing
+  is deliberate and has its own bound (0.1 rad per frame, no reversal of over 0.002 rad on both sides): **changed
+  in the test this pass**, said here so it isn't read as tuned to pass.
+- **Clipping, against what is drawn** (new, `level_clip`: every drawn triangle against the eye and the line from Ed's
+  head; a scripted walk with the follow camera, and the 60 s demo), before -> after:
+
+| | near plane in level geometry (walk) | persos between Ed and the eye | Ed hidden (eye in him) |
+|---|---|---|---|
+| cavedoc | 305 -> 0 | demo 13 -> 1 | walk 318 frames |
+| pyramide | 67 -> 0 | demo 92 -> 0 (a see-through beam: not a blocker) | walk 1121 (a small room he fell into) |
+| Land | 0 | walk 40 -> 0 | 0 |
+| bar | 0 | demo 6 -> 10 (an animated character, one frame late) | walk 471, demo 266 |
+| sud0, north | 1 -> 0, 0 | 0 | 140, 132 |
+
+  The old camera had the eye inside Ed in those frames instead (pyramide 505 frames touching his mesh).
+- Not seen in the app (never run here): the feel of the lag (the look-at point trails Ed by ~2.7 at a run, held to
+  0.2 rad), the swing, Ed vanishing in tight spots.
+
+### After the fifth pass's playtest (2026-11-04): the classic camera is back as the default
+The user: the faithful model "stays lazy way too long, while still being jerky, and is completely wrong on Totalski".
+The fourth pass's camera is restored as the default (`tc_cam_classic` in core/src/tc_cam.c, unchanged except: its line
+of sight also tests the drawn persos, and the 0.5 minimum distance is gone, so walls no longer put the eye inside them;
+Ed is hidden when the eye is nearer than 0.5 to his pivot instead of being drawn round it). **9** (number row or
+numpad, both apps) switches to the fifth pass's faithful model and back; the title shows ", faithful camera". Not
+looked into yet: why the faithful model is wrong on Totalski (the skier's averaged target and speed cap at ski speeds
+are the first suspects). In camcheck's harsh scripted walks (Ed pushed into walls, camera behind him) the classic eye
+is within 0.5 of him in many frames (bar 1,114, pyramide 1,160, cavedoc 770): there the old floor had it inside Ed or
+the wall; now he is hidden. If that vanishing reads badly in play, the floor can come back (TC_CAM_CLASSIC_MIN).
+
+### Next (user, 2026-11-04)
+1. **One camera:** merge the classic and the faithful models into a single good, functional camera, taking the best
+   of each (classic: the responsive rope and orbit; faithful: the averaged target against 30 Hz jitter, the drawn-perso
+   sight, the rig vs the pulled-in eye, no minimum distance, the watchdog's swing), then remove the 9 toggle.
+2. **The sliding stages** (Totalski, skymap): find how the camera differs there; the exe may load another camera setup
+   (the skier's camera perso or presets, level camera directors, another camera model): read it from the exe and data.

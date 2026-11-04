@@ -256,6 +256,8 @@ typedef struct tc_viewer {
     uint32_t mesh_count, perso_first, ed_first;
     tc_view_draw *draws, *blended;
     uint32_t draw_cap, blended_cap;
+    uint32_t draw_count;          /* the last tc_viewer_draws' count (the camera's sight test reads its persos) */
+    float *mesh_sphere;           /* per mesh: centre xyz and radius of its vertex bounds (mesh space); lazily made */
     /* Transparent statics drawn as pieces (TC_VIEW_PIECE_SIZE cells), so they sort back to front: the pieces follow
      * Ed's parts in the mesh table, piece_origin[k] = the static mesh piece k came from, split[i] = 1 when static
      * mesh i is drawn as its pieces. mesh_centre / mesh_extent: per transparent mesh, the centre and half size of its
@@ -350,6 +352,7 @@ void tc_viewer_wheel(tc_viewer *v, float notches);
  * the middle mouse button, the pad's L2). Close-up: the original's Numpad 5 preset, on / off. Nothing outside play mode. */
 void tc_viewer_recenter_camera(tc_viewer *v);
 void tc_viewer_toggle_closeup(tc_viewer *v);         /* 5 (number row or numpad) */
+void tc_viewer_toggle_camera_model(tc_viewer *v);    /* 9: the classic camera (default) / the faithful one (CAMERA.md 5th pass) */
 /* 0 (number row or numpad), the pad's L3: first person at Ed's head, looking with the mouse / stick; Ed stands (his
  * movement inputs are held back) and is not drawn. Again: back to the follow, behind him. */
 void tc_viewer_toggle_first_person(tc_viewer *v);
