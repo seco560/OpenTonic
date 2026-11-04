@@ -7,13 +7,17 @@
   python3 -m tools.ttre level-ai LEVEL OUT.txt   (Ed's AI behaviours as indented trees, plus primitive usage counts)
   python3 -m tools.ttre level-ttai LEVEL OUT.ttai   (Ed's AI for the core's interpreter; format: see tools/ttre/ai.py)
   python3 -m tools.ttre level-ttlv LEVEL OUT.ttlv [--no-persos]   (for Open Tonic; current format: see tools/ttre/ttlv.py)
+  python3 -m tools.ttre se-extract [DISC]   (the Special Edition disc image -> files/sources/se; tools/ttre/se.py)
+  python3 -m tools.ttre se-levels   (each Special Edition level and its output name, tab-separated)
+  python3 -m tools.ttre se-vignettes DIR [RETAIL_DIR]   (its loading screens under the level names; missing ones from retail)
+  python3 -m tools.ttre se-ttlv LEVEL OUT.ttlv   (a Special Edition level, played with the retail Ed: + OUT.ttai)
 Level commands read from GAMEDATA/WORLD/LEVELS textures from files/out/Textures (so, generate textures before the levels)
 """
 import os
 import struct
 import sys
 
-from . import cnt, gf
+from . import cnt, gf, se
 
 # Run generation commands from project root directory
 LEVELS = 'files/sources/GAMEDATA/WORLD/LEVELS'
@@ -103,7 +107,33 @@ def level_cmd(cmd, argv):
         print('warning:', w, file=sys.stderr)
 
 
+def se_cmd(cmd, argv):
+    if cmd == 'se-extract':
+        disc = argv[0] if argv else se.find_disc()
+        if not disc:
+            sys.exit(f'no Special Edition disc image (.bin / .iso) found under {se.SOURCES}')
+        print(f'extracted {se.extract(disc)} files from {disc} to {se.ROOT}')
+    elif cmd == 'se-levels':
+        for lv in se.levels():
+            print(f'{lv}\t{se.output_name(lv)}')
+    elif cmd == 'se-vignettes' and argv:
+        got = se.name_vignettes(argv[0], [se.output_name(lv) for lv in se.levels()], argv[1] if len(argv) > 1 else None)
+        print(f'loading screens for {len(got)} levels: ' + ', '.join(f'{k} ({v})' for k, v in sorted(got.items())))
+    elif cmd == 'se-ttlv' and len(argv) >= 2:
+        (nm, ntri, ntex, missing, npe, npa, ncol, ed), donor, ttai = se.export_level(argv[0], argv[1])
+        print(f'wrote {argv[1]}: {nm} static meshes, {ntri} triangles, {ntex} textures, {len(missing)} not found; '
+              f'{npe} animated persos, {npa} parts; {ncol} collision triangles; Ed from '
+              f'{donor + " (" + str(len(ed)) + " clips)" if donor else "nowhere (no retail level of that name converted)"}'
+              f'{"; wrote " + ttai if ttai else ""}')
+        for m in missing:
+            print('  missing texture:', m or '(empty name)', file=sys.stderr)
+    else:
+        sys.exit(__doc__)
+
+
 def main(argv):
+    if argv[:1] and argv[0].startswith('se-'):
+        return se_cmd(argv[0], argv[1:])
     if len(argv) < 2:
         sys.exit(__doc__)
     cmd, path = argv[0], argv[1]

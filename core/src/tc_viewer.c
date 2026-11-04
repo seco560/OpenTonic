@@ -1922,6 +1922,8 @@ static float water_plane(const tc_viewer *v, uint16_t s) {
     for (k = 0; k < sec->env_count; k++) {
         if (sec->envs[k].water != 1) continue;
         if (k == 0) return TC_VIEW_UNDERWATER_ALL;
+        /* env k lies below k surfaces; a sector listing fewer (a converter that missed them) has no plane */
+        if (k - 1 >= sec->surface_count || !sec->surfaces) return NAN;
         return sec->surfaces[k - 1] < v->sectors->surface_count ? v->sectors->surface_z[sec->surfaces[k - 1]] : NAN;
     }
     return NAN;

@@ -181,12 +181,20 @@ static void show_picker(app *a) {
     set_captured(a, false);
     close_level(a);
     if (!a->picker_open) {
-        /* Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level. */
+        /* Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level. The Special Edition's levels
+         * (tools/ttre/se.py): out/se/ttlv, their pictures out/se/Vignette/Level. */
         char *vignette = path_join(a->data_dir, "Vignette");
         char *thumbs = vignette ? path_join(vignette, "Level") : NULL;
-        picker_open(&a->picker, &a->g, a->level_folder, thumbs ? thumbs : "", SDL_GetWindowDisplayScale(a->window));
+        char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
+        char *se_vignette = se ? path_join(se, "Vignette") : NULL, *se_thumbs = se_vignette ? path_join(se_vignette, "Level") : NULL;
+        picker_open(&a->picker, &a->g, a->level_folder, thumbs ? thumbs : "", se_levels, se_thumbs,
+                    SDL_GetWindowDisplayScale(a->window));
         SDL_free(vignette);
         SDL_free(thumbs);
+        SDL_free(se);
+        SDL_free(se_levels);
+        SDL_free(se_vignette);
+        SDL_free(se_thumbs);
         a->picker_open = true;
         if (a->picker.count == 0) {
             char msg[1024];

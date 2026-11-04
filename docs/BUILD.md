@@ -15,6 +15,11 @@ Copy the PC version's `GAMEDATA` folder (installed copy) to `files/sources/GAMED
 `icon_ED.ICO` to `files/sources/icon_ED.ICO`. The tools expect `files/sources/GAMEDATA/WORLD/LEVELS`,
 `.../WORLD/SOUND`, `Textures.cnt` and `Vignette.cnt` there.
 
+Optional, **Tonic Trouble: Special Edition** (the 1998 OEM disc, build 8.5.2, with its own earlier levels): put its
+disc image (the raw `Tt.bin` with its `.cue`, or an `.iso`) anywhere under `files/sources`, up to two folders deep.
+The conversion reads it directly (that disc stores its files plain) and copies its GAMEDATA to `files/sources/se`.
+Its levels appear in the level select under "Special Edition", played with the retail Ed for now: docs/SE.md.
+
 ## Quick route
 After steps 1 and 2:
 ```sh

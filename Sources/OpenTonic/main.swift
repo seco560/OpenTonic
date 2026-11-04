@@ -407,9 +407,14 @@ final class GameView: MTKView {
         gameView?.isPaused = true
         gameView = nil
         renderer = nil
-        // Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level.
-        let thumbs = levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level")
-        let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs) { [weak self] url in self?.openLevel(url) }
+        // Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level. The Special Edition's levels
+        // (tools/ttre/se.py): out/se/ttlv, their pictures out/se/Vignette/Level.
+        let out = levelFolder.deletingLastPathComponent()
+        let thumbs = out.appendingPathComponent("Vignette/Level")
+        let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs, seFolder: out.appendingPathComponent("se/ttlv"),
+                                 seThumbnails: out.appendingPathComponent("se/Vignette/Level")) { [weak self] url in
+            self?.openLevel(url)
+        }
         picker.onIntro = { [weak self] in self?.playIntro() }
         picker.onDemo = { [weak self] in self?.startDemo() }
         if picker.isEmpty {
@@ -581,10 +586,11 @@ final class GameView: MTKView {
         let wasCaptured = gameView?.isCaptured ?? false
         gameView?.setCaptured(false)
         Sfx.shared.stopAll()
-        Sfx.shared.load(audioDir: url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("audio"))
-        // Level music from the user-edited table out/audio/music.tsv (next to out/ttlv).
-        Music.shared.play(level: url.deletingPathExtension().lastPathComponent,
-                          audioDir: url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("audio"))
+        // Sound effects and the user-edited music table out/audio/music.tsv live next to out/ttlv; the Special Edition's
+        // levels (out/se/ttlv) have none of their own and use those (their names are the retail levels').
+        let audio = levelFolder.deletingLastPathComponent().appendingPathComponent("audio")
+        Sfx.shared.load(audioDir: audio)
+        Music.shared.play(level: url.deletingPathExtension().lastPathComponent, audioDir: audio)
         let view = GameView(frame: window.contentLayoutRect, device: MTLCreateSystemDefaultDevice())
         do {
             let r = try Renderer(view: view)

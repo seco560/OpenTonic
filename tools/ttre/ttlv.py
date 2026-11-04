@@ -308,7 +308,10 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
         mesh['indices'] += [first, first + 1, first + 2, first + 2, first + 1, first + 3]
 
 
-def write(data, path, tex_root='files/out/Textures', persos=True):
+def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None, skip_decals=None, cast_body=None):
+    """ed_donor: a retail .ttlv whose player (EDPL, with its textures and LITE records) replaces this level's, placed at
+    this level's start: the Special Edition's levels (se.py). skip_decals: LevelData.collision's (default: when the
+    player is not the fix Ed, i.e. the skier). cast_body: the CAST chunk when the level has no cast of its own (se.py)."""
     idx = export.texture_index(tex_root)
     out_dir = os.path.dirname(os.path.abspath(path))
     tex_paths, tex_ids, missing = [], {}, set()
@@ -410,7 +413,9 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
 
     # Played as the skier (Totalski, skymap): the decals on the slope are not obstacles (LevelData.collision).
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
-    tris, floors, sect.collision_sectors = data.collision(floors=True, skip_decals=data.player() != fix_ed, sectors=True)
+    if skip_decals is None:
+        skip_decals = data.player() != fix_ed
+    tris, floors, sect.collision_sectors = data.collision(floors=True, skip_decals=skip_decals, sectors=True)
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     table = sorted({f for f in floors if f is not None})
     index = {f: i for i, f in enumerate(table)}
@@ -440,6 +445,30 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
                         + b''.join(struct.pack('<H', 0xFFFF if o is None or o not in p.objects else o) for pose in poses for o, _ in pose))
         edpl = (struct.pack('<12fiI', *start, ed_blob if ed_blob is not None else -1, len(parts)) + b''.join(parts)
                 + struct.pack('<2H', len(recs), 0) + b''.join(recs))
+    donor_lite, donor_anims = [], []
+    if ed_donor and edpl is None:
+        from . import se
+        got = se.read_donor(ed_donor)
+        if got is None:
+            data.warnings.append(f'{ed_donor}: no player to borrow')
+        else:
+            textures, _, parts, anims, donor_lite = got
+            ids = {}
+
+            def remap(t):
+                if not 0 <= t < len(textures):
+                    return -1
+                if t not in ids:
+                    ids[t] = len(tex_paths)
+                    tex_paths.append(os.path.relpath(textures[t], out_dir).replace(os.sep, '/'))
+                return ids[t]
+            start = data.fix_matrices.get(fix_ed, level.IDENTITY)  # this level's own start: its GPT perso-in-fix Ed
+            body = b''
+            for obj, (tex, flags, su, sv, frames), geo in parts:
+                body += struct.pack('<2H', obj, 0) + struct.pack('<iI2f2H', remap(tex), flags, su, sv, len(frames), 0) \
+                    + b''.join(struct.pack('<if', remap(t), d) for t, d in frames) + geo
+            edpl = struct.pack('<12fiI', *start, -1, len(parts)) + body + anims
+            donor_anims = [n.decode() for n in _anim_names(anims)]
 
     n_sets = max((len(getattr(so, 'color_sets', ())) for so in data.walk()), default=1)
     lais = []
@@ -448,7 +477,6 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
         if unresolved:
             data.warnings.append(f'light perso {a.perso[1]:#x}: unresolved script references {unresolved}')
         lais.append(struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4))
-    cast_body = None
     if cast_list:
         cast_body, listing = cast.chunk(data, cast_list, prso_index, family_cache)
         with open(os.path.splitext(path)[0] + '_cast.txt', 'w', encoding='utf-8') as f:
@@ -462,16 +490,18 @@ def write(data, path, tex_root='files/out/Textures', persos=True):
            ('TEXS', texs), ('MESH', mesh), ('PRSO', struct.pack('<I', len(blobs)) + b''.join(blobs)),
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
            ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
-           ('CAST', cast_body) if cast_body else None,
-           ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else [])))]
+           ('CAST', cast_body) if cast_body else None,  # this level's cast, else the one passed in
+           ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
+                         donor_lite))]
     chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),
-            len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else [])
+            len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else donor_anims)
 
 
-def lite(data, sectors, meshes):
+def lite(data, sectors, meshes, raw=()):
     """The LITE chunk (module docstring): the lights, each sector's lights and fogs, and per mesh (MESH, then every
-    PRSO part, then every EDPL part) its material's ambient and diffuse and its vertices' object centres as runs."""
+    PRSO part, then every EDPL part) its material's ambient and diffuse and its vertices' object centres as runs.
+    raw: records appended as they are (a donor's EDPL parts, se.read_donor)."""
     out = [struct.pack('<HH', len(data.lights), 0)]
     for l in data.lights:
         out.append(struct.pack('<4B2f3f3f4f', l.type, 1 if l.on else 0, l.paint, l.alpha_mode, l.near, l.far,
@@ -481,7 +511,7 @@ def lite(data, sectors, meshes):
         out.append(struct.pack(f'<2H{len(sec.lights)}H', len(sec.lights), len(sec.fogs), *sec.lights))
         out += [struct.pack('<I5f', 1, f[0], f[1], *f[2]) if f else struct.pack('<I5f', 0, 0, 0, 0, 0, 0)
                 for f in sec.fogs]
-    out.append(struct.pack('<I', len(meshes)))
+    out.append(struct.pack('<I', len(meshes) + len(raw)))
     for m in meshes:
         mat = m.get('material')
         ambient, diffuse = (mat.ambient[:3], mat.diffuse[:3]) if mat else ((0.5,) * 3, (0.0,) * 3)
@@ -493,7 +523,20 @@ def lite(data, sectors, meshes):
                 runs.append([i, 1, c])
         out.append(struct.pack('<6fI', *ambient, *diffuse, len(runs)))
         out += [struct.pack('<2I3f', first, count, *c) for first, count, c in runs]
-    return b''.join(out)
+    return b''.join(out) + b''.join(raw)
+
+
+def _anim_names(anims):
+    """The clip names of an EDPL animation block (u16 n, u16 0, then records as written in write())."""
+    n, = struct.unpack_from('<H', anims)
+    o, names = 4, []
+    for _ in range(n):
+        k, = struct.unpack_from('<H', anims, o)
+        names.append(anims[o + 2:o + 2 + k])
+        o += 2 + k
+        nc, ns = struct.unpack_from('<2H', anims, o)
+        o += 16 + ns * nc * 50  # '<2Hf2BHf', then matrices (48 bytes) and objects (2) per sample and channel
+    return names
 
 
 class Sections:

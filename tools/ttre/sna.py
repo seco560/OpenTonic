@@ -21,6 +21,11 @@ just engine data that the loader keeps outside any block. The fix ones are reloc
 pointer *value*; entries match the file's dwords in order (pointer k is the next dword equal
 to entry k). Level .gpt/.ptx have no relocation table: their pointers are plain addresses in
 the level's memory view (block bases from level.sna), resolved on demand (see Level.ptr).
+
+Special Edition (the 1998 OEM disc, build 8.5.2; files/sources/se, see docs/SE.md): the same formats with three
+differences: nothing is encrypted, the .sna has no header string, and a block has no unk_tt byte after its size.
+Level .gpt/.ptx do have relocation tables there (.rtp/.rtt, keyed (4, 1)), relocated like the fix ones. Detected by
+the GAMEDATA's text level script game.dsc (retail ships it compiled, game.dsb): is_se().
 """
 import os
 import struct
@@ -37,6 +42,18 @@ def decrypt(buf):
         out[i] = c ^ k[j]
         k[j] = (KEY[j] + c) & 0xFF
     return bytes(out)
+
+
+def is_se(levels_dir):
+    """True for a Special Edition GAMEDATA (levels_dir = GAMEDATA/WORLD/LEVELS): see the module docstring."""
+    gamedata = os.path.dirname(os.path.dirname(os.path.normpath(levels_dir)))
+    return os.path.exists(find_file(os.path.join(gamedata, 'game.dsc')))
+
+
+def read_file(path, se=False):
+    """A level file's bytes, decrypted unless it comes from the Special Edition (stored plain)."""
+    d = open(find_file(path), 'rb').read()
+    return d if se else decrypt(d)
 
 
 def find_file(path):
@@ -74,18 +91,19 @@ class Sna:
     blocks: list = field(default_factory=list)
 
     @classmethod
-    def load(cls, path):
-        d = decrypt(open(find_file(path), 'rb').read())
-        hl = d[0]
+    def load(cls, path, se=False):
+        d = read_file(path, se)
+        hl = 0 if se else d[0]
         s = cls(d, d[1:1 + hl])
-        o = 1 + hl
+        o = 0 if se else 1 + hl
         while o < len(d):
             mod, bid, base = struct.unpack_from('<BBi', d, o)
             o += 6
             b = Block(mod, bid, base)
             if base != -1:
-                u2, u3, maxpos, size, ut = struct.unpack_from('<IIIIB', d, o)
-                o += 17
+                u2, u3, maxpos, size = struct.unpack_from('<IIII', d, o)
+                ut = None if se else d[o + 16]
+                o += 16 if se else 17
                 b.size, b.data_pos, b.extra = size, o, (u2, u3, maxpos, ut)
                 o += size
             s.blocks.append(b)
@@ -94,9 +112,9 @@ class Sna:
         return s
 
     @classmethod
-    def pointer_file(cls, path):
+    def pointer_file(cls, path, se=False):
         """Load a .gpt/.ptx as a pseudo-snapshot with one block covering the whole file."""
-        d = decrypt(open(find_file(path), 'rb').read())
+        d = read_file(path, se)
         return cls(d, b'', [Block(-1, -1, 0, len(d), 0)])
 
     def block(self, module, bid):
@@ -104,8 +122,8 @@ class Sna:
         return found[-1] if found else None
 
 
-def load_relocations(path):
-    d = decrypt(open(find_file(path), 'rb').read())
+def load_relocations(path, se=False):
+    d = read_file(path, se)
     count = d[0]
     o = 1
     lists = {}
@@ -134,16 +152,17 @@ class Level:
 
     def __init__(self, levels_dir, name):
         self.name = name
-        self.fix = Sna.load(f'{levels_dir}/fix.sna')
-        self.lvl = Sna.load(f'{levels_dir}/{name}/{name}.sna')
-        self.fix_gpt = Sna.pointer_file(f'{levels_dir}/fix.gpt')
-        self.fix_ptx = Sna.pointer_file(f'{levels_dir}/fix.ptx')
-        self.gpt = Sna.pointer_file(f'{levels_dir}/{name}/{name}.gpt')
-        self.ptx = Sna.pointer_file(f'{levels_dir}/{name}/{name}.ptx')
-        self.unrelocated = (self.gpt, self.ptx)  # no .rtp/.rtt for levels in TT
+        self.se = se = is_se(levels_dir)
+        self.fix = Sna.load(f'{levels_dir}/fix.sna', se)
+        self.lvl = Sna.load(f'{levels_dir}/{name}/{name}.sna', se)
+        self.fix_gpt = Sna.pointer_file(f'{levels_dir}/fix.gpt', se)
+        self.fix_ptx = Sna.pointer_file(f'{levels_dir}/fix.ptx', se)
+        self.gpt = Sna.pointer_file(f'{levels_dir}/{name}/{name}.gpt', se)
+        self.ptx = Sna.pointer_file(f'{levels_dir}/{name}/{name}.ptx', se)
+        self.unrelocated = (self.gpt, self.ptx)  # retail: no .rtp/.rtt for levels (SE has them: relocated below too)
         self.relocs = {}
         for f in (f'{levels_dir}/fix.rtb', f'{levels_dir}/{name}/FixLvl.rtb', f'{levels_dir}/{name}/{name}.rtb'):
-            for k, v in load_relocations(f).items():
+            for k, v in load_relocations(f, se).items():
                 self.relocs.setdefault(k, []).extend(v)
         self.pointers = {}  # (sna, file offset of pointer) -> (sna, file offset of target)
         self.unresolved = []
@@ -162,8 +181,11 @@ class Level:
                     self.unresolved.append((m, i, addr, tm, ti))
                     continue
                 self.pointers[where] = dest
-        for pf, rt in ((self.fix_gpt, 'fix.rtp'), (self.fix_ptx, 'fix.rtt')):
-            self._relocate_pointer_file(pf, load_relocations(f'{levels_dir}/{rt}'))
+        pfs = [(self.fix_gpt, 'fix.rtp'), (self.fix_ptx, 'fix.rtt')]
+        if se:
+            pfs += [(self.gpt, f'{name}/{name}.rtp'), (self.ptx, f'{name}/{name}.rtt')]
+        for pf, rt in pfs:
+            self._relocate_pointer_file(pf, load_relocations(f'{levels_dir}/{rt}', se))
         # level-view address space: each level.sna block entry (data or placeholder) gives the base
         self.view = sorted((b.base, b.module, b.id) for b in self.lvl.blocks if b.base != -1)
 

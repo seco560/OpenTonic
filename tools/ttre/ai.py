@@ -1039,6 +1039,8 @@ def light_persos(d):
     RandomInt(1, 3) gives its max), then back to set 0 over 1 s). No other level has one."""
     def calls(ns):
         return any((n.type == 4 and n.param == 283) or calls(n.children) for n in ns)
+    if d.se:  # another primitive numbering in the Special Edition (docs/SE.md)
+        return []
     out = []
     for p in d.persos():
         if not d.lv.ptr(p.loc, 0xC):

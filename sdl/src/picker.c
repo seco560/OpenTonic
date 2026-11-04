@@ -2,7 +2,10 @@
 #include <tonic/tonic.h>
 #include "util.h"
 
-static const char *const section_titles[3] = {"Levels", "Cutscenes", "Imported"};
+static const char *const section_titles[PICKER_SECTIONS] = {"Retail Edition", "Special Edition", "Cutscenes",
+                                                             "Imported"};
+#define SECTION_SE 1
+#define SECTION_IMPORTED 3
 
 /* By section, then by name. */
 static int compare_entries(const void *a, const void *b) {
@@ -14,68 +17,83 @@ static int section_of(const char *name, const char *imported) {
     char *dir = imported ? path_join(imported, name) : NULL;
     bool is_imported = dir && path_is_dir(dir);
     SDL_free(dir);
-    return is_imported ? 2 : tc_level_is_cutscene(name) ? 1 : 0;
+    return is_imported ? SECTION_IMPORTED : tc_level_is_cutscene(name) ? 2 : 0;
 }
 
-void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, float scale) {
+/* The levels of one folder appended to p->entries (grown); se: all of them in the Special Edition's section. */
+static void add_folder(picker *p, const char *folder, bool se) {
+    int n = 0;
+    char **levels = folder ? SDL_GlobDirectory(folder, "*.ttlv", SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    picker_entry *grown = levels && n > 0 ? SDL_realloc(p->entries, (size_t)(p->count + n) * sizeof *p->entries) : NULL;
+    if (!grown) { SDL_free(levels); return; }
+    p->entries = grown;
+    /* Imported levels have out/Imported/<name>. */
+    char *out = path_dir(folder), *imported = out && !se ? path_join(out, "Imported") : NULL;
+    for (int i = 0; i < n; i++) {
+        picker_entry *e = &p->entries[p->count];
+        SDL_zerop(e);
+        e->path = path_join(folder, levels[i]);
+        e->name = path_stem(levels[i]);
+        if (!e->path || !e->name) { SDL_free(e->path); SDL_free(e->name); SDL_zerop(e); continue; }
+        e->section = se ? SECTION_SE : section_of(e->name, imported);
+        p->count++;
+    }
+    SDL_free(out);
+    SDL_free(imported);
+    SDL_free(levels);
+}
+
+/* The entry's thumbnail from `thumbnails` (<name>.png, any case), if any. */
+static void load_thumb(gpu *g, gpu_upload *u, picker_entry *e, const char *thumbnails, char **thumbs, int thumb_n) {
+    for (int t = 0; thumbs && t < thumb_n; t++) {
+        char *stem = path_stem(thumbs[t]);
+        bool match = stem && SDL_strcasecmp(stem, e->name) == 0;
+        SDL_free(stem);
+        if (!match) continue;
+        char *path = path_join(thumbnails, thumbs[t]);
+        e->thumb = gpu_upload_png(g, u, path, true, &e->thumb_w, &e->thumb_h);
+        if (!e->thumb) SDL_Log("thumbnail %s: %s", path, SDL_GetError());
+        SDL_free(path);
+        return;
+    }
+}
+
+void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, const char *se_folder,
+                 const char *se_thumbnails, float scale) {
     SDL_zerop(p);
     p->g = g;
     p->scale = scale > 0 ? scale : 1;
     p->hover = p->selected = -1;
-    int n = 0;
-    char **levels = SDL_GlobDirectory(folder, "*.ttlv", SDL_GLOB_CASEINSENSITIVE, &n);
-    if (!levels || n == 0) { SDL_free(levels); return; }
-    p->entries = SDL_calloc((size_t)n, sizeof *p->entries);
-    if (!p->entries) { SDL_free(levels); return; }
-    for (int i = 0; i < n; i++) {
-        p->entries[i].path = path_join(folder, levels[i]);
-        p->entries[i].name = path_stem(levels[i]);
-        if (p->entries[i].path && p->entries[i].name) p->count++;
-        else { SDL_free(p->entries[i].path); SDL_free(p->entries[i].name); SDL_zero(p->entries[i]); }
-    }
-    SDL_free(levels);
-    /* Compact out failed entries, then sort by section and name. Imported levels have out/Imported/<name>. */
-    char *out = path_dir(folder), *imported = out ? path_join(out, "Imported") : NULL;
-    int k = 0;
-    for (int i = 0; i < n; i++)
-        if (p->entries[i].path) {
-            p->entries[i].section = section_of(p->entries[i].name, imported);
-            p->entries[k++] = p->entries[i];
-        }
-    SDL_free(out);
-    SDL_free(imported);
+    add_folder(p, folder, false);
+    if (se_folder && path_is_dir(se_folder)) add_folder(p, se_folder, true);
+    if (p->count == 0) return;
     SDL_qsort(p->entries, (size_t)p->count, sizeof *p->entries, compare_entries);
-    for (int s = 0, i = 0; s < 4; s++) {
+    for (int s = 0, i = 0; s <= PICKER_SECTIONS; s++) {
         while (i < p->count && p->entries[i].section < s) i++;
-        p->first[s] = s == 3 ? p->count : i;
+        p->first[s] = s == PICKER_SECTIONS ? p->count : i;
     }
 
-    int thumb_n = 0;
+    int thumb_n = 0, se_thumb_n = 0;
     char **thumbs = SDL_GlobDirectory(thumbnails, "*.png", SDL_GLOB_CASEINSENSITIVE, &thumb_n);
+    char **se_thumbs = se_thumbnails ? SDL_GlobDirectory(se_thumbnails, "*.png", SDL_GLOB_CASEINSENSITIVE, &se_thumb_n) : NULL;
     gpu_upload u;
     bool uploading = gpu_upload_begin(g, &u);
     int text_scale = SDL_max(1, (int)SDL_roundf(2 * p->scale));
     for (int i = 0; i < p->count; i++) {
         picker_entry *e = &p->entries[i];
-        for (int t = 0; uploading && thumbs && t < thumb_n; t++) {
-            char *stem = path_stem(thumbs[t]);
-            bool match = stem && SDL_strcasecmp(stem, e->name) == 0;
-            SDL_free(stem);
-            if (!match) continue;
-            char *path = path_join(thumbnails, thumbs[t]);
-            e->thumb = gpu_upload_png(g, &u, path, true, &e->thumb_w, &e->thumb_h);
-            if (!e->thumb) SDL_Log("thumbnail %s: %s", path, SDL_GetError());
-            SDL_free(path);
-            break;
+        if (uploading) {
+            if (e->section == SECTION_SE) load_thumb(g, &u, e, se_thumbnails, se_thumbs, se_thumb_n);
+            else load_thumb(g, &u, e, thumbnails, thumbs, thumb_n);
         }
         e->caption = gpu_text(g, e->name, text_scale, &e->caption_w, &e->caption_h);
     }
     if (uploading) gpu_upload_end(g, &u);
     SDL_free(thumbs);
-    for (int s = 0; s < 3; s++)
+    SDL_free(se_thumbs);
+    for (int s = 0; s < PICKER_SECTIONS; s++)
         if (p->first[s] < p->first[s + 1])
             p->heading[s] = gpu_text(g, section_titles[s], text_scale, &p->heading_w[s], &p->heading_h[s]);
-    if (p->first[2] < p->count) p->unknown = gpu_text(g, "?", 1, &p->unknown_w, &p->unknown_h);
+    if (p->first[SECTION_IMPORTED] < p->count) p->unknown = gpu_text(g, "?", 1, &p->unknown_w, &p->unknown_h);
     p->intro_text = gpu_text(g, "Play Intro Video", text_scale + 1, &p->intro_w, &p->intro_h);
     p->demo_text = gpu_text(g, "Demo", text_scale + 1, &p->demo_w, &p->demo_h);
     p->controls_text = gpu_text(g, "Controls (F1)", text_scale, &p->controls_w, &p->controls_h);
@@ -89,7 +107,7 @@ void picker_close(picker *p) {
         SDL_free(e->name);
         SDL_free(e->path);
     }
-    for (int k = 0; k < 3; k++)
+    for (int k = 0; k < PICKER_SECTIONS; k++)
         if (p->heading[k]) SDL_ReleaseGPUTexture(p->g->device, p->heading[k]);
     if (p->unknown) SDL_ReleaseGPUTexture(p->g->device, p->unknown);
     if (p->intro_text) SDL_ReleaseGPUTexture(p->g->device, p->intro_text);
@@ -121,7 +139,8 @@ static layout layout_for(const picker *p, float width) {
 
 static int rows_of(int n, int cols) { return (n + cols - 1) / cols; }
 
-/* Top of section k's heading (content coordinates, before scrolling); k = 3: the end. Empty sections take no space. */
+/* Top of section k's heading (content coordinates, before scrolling); k = PICKER_SECTIONS: the end. Empty sections take
+ * no space. */
 static float heading_y(const picker *p, const layout *l, int k) {
     float y = l->pad + l->intro;
     for (int s = 0; s < k; s++)
@@ -139,7 +158,7 @@ static SDL_FRect tile_rect(const picker *p, const layout *l, int i) {
 }
 
 static float max_scroll(const picker *p, const layout *l) {
-    return SDL_max(0.0f, heading_y(p, l, 3) - p->height);
+    return SDL_max(0.0f, heading_y(p, l, PICKER_SECTIONS) - p->height);
 }
 
 /* The buttons, in target pixels: the intro and the demo side by side, centred at the top (they scroll with the grid),
@@ -222,7 +241,7 @@ void picker_move(picker *p, int dx, int dy) {
         int j = i - first + dx + dy * cols;  /* position within the section */
         if (j >= 0 && j < n) i = first + j;
         else if (dy > 0) {  /* down from the last row: the first row of the next section with levels */
-            for (int t = s + 1; t < 3; t++)
+            for (int t = s + 1; t < PICKER_SECTIONS; t++)
                 if (p->first[t + 1] > p->first[t]) { i = p->first[t] + SDL_min(col, p->first[t + 1] - p->first[t] - 1); break; }
         } else if (dy < 0) {  /* up from the first row: the last row of the previous one */
             for (int t = s - 1; t >= 0; t--)
@@ -255,7 +274,7 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
         draw_big_button(g, f, pass, dr, p->demo_text, p->demo_w, p->demo_h, p->hover == PICKER_DEMO, p->scale,
                         (SDL_FColor){0.2f, 0.55f, 0.85f, 1});
     }
-    for (int k = 0; k < 3; k++) {
+    for (int k = 0; k < PICKER_SECTIONS; k++) {
         if (!p->heading[k]) continue;
         float y = heading_y(p, &l, k) - p->scroll;
         SDL_FRect line = {l.left, SDL_roundf(y + l.heading - 8 * p->scale), (float)l.cols * l.cell_w - l.pad, SDL_max(1.0f, p->scale)};
@@ -283,7 +302,7 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
             gpu_quad(g, f, pass, e->thumb, fit, NULL, (SDL_FColor){1, 1, 1, 1});
         } else {
             gpu_quad(g, f, pass, NULL, img, NULL, (SDL_FColor){0.14f, 0.15f, 0.22f, 1});
-            if (e->section == 2 && p->unknown) {  /* imported: a big question mark (the 8x8 font, scaled up) */
+            if (e->section == SECTION_IMPORTED && p->unknown) {  /* imported: a big question mark (the 8x8 font, scaled up) */
                 float h = l.tile_h * 0.6f, w = h * (float)p->unknown_w / (float)SDL_max(1, p->unknown_h);
                 SDL_FRect q = {SDL_roundf(img.x + (l.tile_w - w) / 2), SDL_roundf(img.y + (l.tile_h - h) / 2), w, h};
                 gpu_quad_sampled(g, f, pass, p->unknown, g->nearest_sampler, q, NULL, (SDL_FColor){0.55f, 0.6f, 0.75f, 1});

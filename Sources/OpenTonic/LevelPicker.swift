@@ -1,15 +1,17 @@
 import AppKit
 import TonicCore
 
-/// Grid of converted levels (*.ttlv in one folder), each shown with its loading-screen image
-/// from out/Vignette/Level/<Name>.png when available (matched case-insensitively).
-/// Three sections under headings: "Levels", the game's cutscene-only levels (`tc_level_is_cutscene`), and
-/// "Imported": models brought in with tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a
-/// question mark as their picture.
+/// Grid of converted levels (*.ttlv in the levels folder, and in the Special Edition's out/se/ttlv), each shown with
+/// its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
+/// available (matched case-insensitively).
+/// Four sections under headings: "Retail Edition", "Special Edition" (the 1998 disc's levels, tools/ttre/se.py), the
+/// game's cutscene-only levels (`tc_level_is_cutscene`), and "Imported": models brought in with
+/// tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a question mark as their picture.
 final class LevelPicker: NSView {
     struct Entry { let name: String; let url: URL; let image: NSImage?; let section: Int }
 
-    private static let titles = ["Levels", "Cutscenes", "Imported"]
+    private static let titles = ["Retail Edition", "Special Edition", "Cutscenes", "Imported"]
+    private static let specialEdition = 1, imported = 3
     private let entries: [Entry]
     private let onPick: (URL) -> Void
     /// The two big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original) and
@@ -30,29 +32,38 @@ final class LevelPicker: NSView {
 
     override var isFlipped: Bool { true }
 
-    init(folder: URL, thumbnails: URL, onPick: @escaping (URL) -> Void) {
+    init(folder: URL, thumbnails: URL, seFolder: URL? = nil, seThumbnails: URL? = nil, onPick: @escaping (URL) -> Void) {
         self.onPick = onPick
         let fm = FileManager.default
         let imported = folder.deletingLastPathComponent().appendingPathComponent("Imported")
         func section(_ url: URL) -> Int {
             let name = url.deletingPathExtension().lastPathComponent
-            if fm.fileExists(atPath: imported.appendingPathComponent(name).path) { return 2 }
-            return tc_level_is_cutscene(name) != 0 ? 1 : 0
+            if fm.fileExists(atPath: imported.appendingPathComponent(name).path) { return LevelPicker.imported }
+            return tc_level_is_cutscene(name) != 0 ? 2 : 0
         }
-        let files: [URL] = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension.lowercased() == "ttlv" }
-        let tagged: [(URL, Int)] = files.map { ($0, section($0)) }
+        func levels(in dir: URL?) -> [URL] {
+            guard let dir else { return [] }
+            return ((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension.lowercased() == "ttlv" }
+        }
+        let tagged: [(URL, Int)] = levels(in: folder).map { ($0, section($0)) }
+            + levels(in: seFolder).map { ($0, LevelPicker.specialEdition) }
         let levels = tagged.sorted { (a: (URL, Int), b: (URL, Int)) -> Bool in  // by section, then by name
             if a.1 != b.1 { return a.1 < b.1 }
             return a.0.lastPathComponent.localizedCaseInsensitiveCompare(b.0.lastPathComponent) == .orderedAscending
         }
-        let thumbs = Dictionary(((try? fm.contentsOfDirectory(at: thumbnails, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension.lowercased() == "png" }
-            .map { ($0.deletingPathExtension().lastPathComponent.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+        func pictures(_ dir: URL?) -> [String: URL] {
+            guard let dir else { return [:] }
+            return Dictionary(((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension.lowercased() == "png" }
+                .map { ($0.deletingPathExtension().lastPathComponent.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+        }
+        let thumbs = pictures(thumbnails), seThumbs = pictures(seThumbnails)
         let unknown = LevelPicker.questionMark(size: tile)
         entries = levels.map { url, s in
             let name = url.deletingPathExtension().lastPathComponent
-            let image = thumbs[name.lowercased()].flatMap { NSImage(contentsOf: $0) } ?? (s == 2 ? unknown : nil)
+            let picture = (s == LevelPicker.specialEdition ? seThumbs : thumbs)[name.lowercased()]
+            let image = picture.flatMap { NSImage(contentsOf: $0) } ?? (s == LevelPicker.imported ? unknown : nil)
             return Entry(name: name, url: url, image: image, section: s)
         }
         super.init(frame: .zero)

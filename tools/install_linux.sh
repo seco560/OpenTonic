@@ -80,6 +80,8 @@ $SYNC "$OUT/Textures/" "$D/Textures/"
 [ -d "$OUT/Vignette/Level" ] && $SYNC "$OUT/Vignette/Level/" "$D/Vignette/Level/"
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$D/Imported/"; else rm -rf "$D/Imported"; fi
+# The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.
+if [ -d "$OUT/se/ttlv" ]; then $SYNC --exclude '*_ai.txt' --exclude levels.tsv "$OUT/se/" "$D/se/"; else rm -rf "$D/se"; fi
 # Music stays WAV (the SDL build streams WAV only) with its table; sound effects (tools/ttre/sfx.py) as they are.
 [ -d "$OUT/audio/music" ] && $SYNC "$OUT/audio/music/" "$D/audio/music/"
 [ -e "$OUT/audio/music.tsv" ] && cp "$OUT/audio/music.tsv" "$D/audio/"

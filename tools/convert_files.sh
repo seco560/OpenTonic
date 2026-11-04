@@ -117,6 +117,50 @@ done
 [ "$current" = 0 ] || echo "== levels: $current current (skip)"
 [ -z "$missing_tex" ] || echo "warning: textures not found in:$missing_tex (were the textures extracted first? letter case?)" >&2
 
+# ---- 4b. the Special Edition (optional; tools/ttre/se.py, docs/SE.md) ----
+# Its disc image (Tt.bin, or an .iso) anywhere under files/sources, two folders deep at most: GAMEDATA and its exe are
+# copied to files/sources/se once, then its textures, loading screens and levels go to files/out/se (ttlv, Textures,
+# Vignette). Its levels are played with the retail Ed, borrowed from the retail level of the same name (step 4).
+SE_SRC="$SRC/se"
+SE_OUT="$OUT/se"
+if [ ! -d "$SE_SRC/GAMEDATA" ] || [ "$FORCE" = 1 ]; then
+  disc=$(python3 -c 'from tools.ttre import se; print(se.find_disc() or "")')
+  if [ -n "$disc" ]; then
+    echo "== special edition: reading $disc"
+    python3 -m tools.ttre se-extract "$disc"
+  fi
+fi
+if [ ! -d "$SE_SRC/GAMEDATA" ]; then
+  echo "== special edition: no disc image under $SRC (optional, skip)"
+else
+  if outdated se-textures "$SE_OUT/Textures" cnt gf; then
+    echo "== special edition: textures"
+    extract "$(python3 -c 'import sys; from tools.ttre.sna import find_file; print(find_file(sys.argv[1]))' "$SE_SRC/GAMEDATA/Textures.cnt")" "$SE_OUT/Textures"
+    record se-textures
+  else echo "== special edition: textures current (skip)"; fi
+  if outdated se-vignettes "$SE_OUT/Vignette" cnt gf se; then
+    echo "== special edition: loading screens"
+    extract "$(python3 -c 'import sys; from tools.ttre.sna import find_file; print(find_file(sys.argv[1]))' "$SE_SRC/GAMEDATA/Vignette.cnt")" "$SE_OUT/Vignette"
+    record se-vignettes
+  else echo "== special edition: loading screens current (skip)"; fi
+  # Under the level names (ski -> Totalski, ...): every run, it is quick and a missed run would leave none.
+  # Outro has none on the disc: the retail picture of that name stands in (se.name_vignettes).
+  [ -d "$SE_OUT/Vignette/Level" ] && python3 -m tools.ttre se-vignettes "$SE_OUT/Vignette/Level" "$OUT/Vignette/Level" >/dev/null
+  mkdir -p "$SE_OUT/ttlv"
+  se_current=0
+  python3 -m tools.ttre se-levels > "$SE_OUT/levels.tsv"
+  while IFS="$(printf '\t')" read -r l name; do
+    t="$SE_OUT/ttlv/$name.ttlv" a="$SE_OUT/ttlv/$name.ttai"
+    if need "$t" || stale "$t" || { [ -e "$a" ] && stale "$a"; }; then
+      line=$(python3 -m tools.ttre se-ttlv "$l" "$t" 2>/dev/null | grep '^wrote' || true)
+      [ -n "$line" ] || { echo "special edition level $l: export failed (run: python3 -m tools.ttre se-ttlv $l $t)" >&2; exit 1; }
+      [ -e "$a" ] || echo "special edition level $l: no Ed (no retail $name.ttai to borrow him from)"
+      echo "== special edition level $name"
+    else se_current=$((se_current + 1)); fi
+  done < "$SE_OUT/levels.tsv"
+  [ "$se_current" = 0 ] || echo "== special edition levels: $se_current current (skip)"
+fi
+
 # ---- 5. music ----
 # files/out/audio/music.tsv is yours to edit (both apps read it). It is replaced by tools/music.tsv only when that
 # changed (comment lines aside) or with --force, the previous one kept as music.tsv.bak. Every track it names is

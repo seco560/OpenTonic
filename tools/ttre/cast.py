@@ -72,6 +72,8 @@ def _calls(a, procs):
 def select(d):
     """[(perso location, perso id, AI)] in level perso order, and {reason: count} of the persos left out."""
     lv = d.lv
+    if d.se:  # the Special Edition's AI uses another primitive numbering (docs/SE.md): its persos stay props
+        return [], {'special edition': len(d.persos())}
     player = d.player()
     fix = {x[0] for x in d.perso_in_fix if x and x[0]}
     skipped = {}

@@ -290,6 +290,65 @@ class Anim:
         return [(objs[i], g(i)) for i in range(len(local))]
 
 
+@dataclass(eq=False)
+class SeAnim:
+    """A Special Edition animation (docs/SE.md "Animations"), with Anim's interface (fps, n_frames, chans, objects,
+    parents, pose). No A3D: the AnimationReference holds ptr frames (+0), u8 n_frames (+4), u8 speed, u8 n_channels;
+    frame = 16 bytes {ptr channels, ptr f32 matrix, ptr f32 vector (both root motion, unread), ptr hierarchy (null, or
+    {u32 n, ptr n x {u16 child, u16 parent}}: channel indices, as retail TT)}; channels = ptr[n_channels] -> {ptr
+    compressed matrix, u32 info: object-list index = low byte (0xFF none), channel id = byte 1}. Compressed matrix: u16
+    flags, then if flags & 1 i16 position[3] / 512, & 2 i16 quaternion w, x, y, z / 32767, & 4 i16 uniform scale / 256,
+    & 8 i16 scale[3] / 256 (the high nibble repeats which parts are set). A channel's matrix is relative to its parent
+    in the frame's hierarchy, else to the perso. Samples between frames lerp position and scale and nlerp the
+    quaternion, looping to frame 0. frames[f][c] = (object or None, pos, quat (x, y, z, w), scale); hier[f] = pairs."""
+    fps: int
+    n_frames: int
+    frames: list
+    hier: list
+
+    @property
+    def chans(self):
+        return list(range(len(self.frames[0]))) if self.frames else []
+
+    @property
+    def objects(self):
+        return [[c[0] for c in fr] for fr in self.frames]
+
+    def parents(self, fi):
+        parent = [-1] * len(self.chans)
+        for c, par in self.hier[fi]:
+            if c < len(parent) and par < len(parent) and c != par:
+                parent[c] = par
+        return parent
+
+    def pose(self, f):
+        nf = self.n_frames
+        fi = int(f) % nf
+        a, nx = f - int(f), (fi + 1) % nf
+        out = []
+        for c0, c1 in zip(self.frames[fi], self.frames[nx]):
+            if not a:
+                c1 = c0
+
+            def lerp(p, q):
+                return [x + (y - x) * a for x, y in zip(p, q)]
+            q0, q1 = c0[2], c1[2]
+            if sum(x * y for x, y in zip(q0, q1)) < 0:
+                q1 = [-x for x in q1]
+            px, py, pz = lerp(c0[1], c1[1])
+            sx, sy, sz = lerp(c0[3], c1[3])
+            out.append((c0[0], mat_mul((1, 0, 0, px, 0, 1, 0, py, 0, 0, 1, pz),
+                                       mat_mul(quat_matrix(*lerp(q0, q1)), (sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0)))))
+        parent, glob = self.parents(fi), {}
+
+        def g(i, depth=0):
+            if i not in glob:
+                par = parent[i]
+                glob[i] = out[i][1] if par < 0 or depth > len(out) else mat_mul(g(par, depth + 1), out[i][1])
+            return glob[i]
+        return [(o, g(i)) for i, (o, _) in enumerate(out)]
+
+
 # Ed's family ("NewEd", fix) state indices (state-list order) used by the viewer's play mode.
 # TT has no state names; picked from filmstrips of every candidate (out/scratch/ed_fs*.png, see
 # NOTES "Play as Ed"): idle = the initial state; walk/run = looping strides with a short start
@@ -423,6 +482,7 @@ def mat_apply(m, v):
 class LevelData:
     def __init__(self, lv):
         self.lv = lv
+        self.se = getattr(lv, 'se', False)  # the Special Edition (sna.is_se): its own animation format (SeAnim)
         self.textures = {}   # loc -> Texture (cache, also filled by materials)
         self.materials = {}  # visual material loc -> Material
         self.geometrics = {}
@@ -622,6 +682,8 @@ class LevelData:
         ol = lv.ptr(p3d, 0xC) or lv.ptr(p3d, 0x10) or (lv.ptr(fam, 0x1C) if fam else None)
         state = lv.ptr(p3d, 0) or lv.ptr(p3d, 4)
         ar = lv.ptr(state, 0xC) if state else None
+        if self.se:
+            return self.read_se_perso(p, ol, state, ar)
         a3 = lv.ptr(ar, 0x28) if ar else None
         if not ol:
             p.note = 'no object list'
@@ -639,6 +701,64 @@ class LevelData:
         self.load_objects(p, ol, {o for t in p.anim.objects for o in t if o is not None})
         p.parts = p.posed(pose)
         return p
+
+    def read_se_perso(self, p, ol, state, ar):
+        """read_perso for the Special Edition: its animation is a SeAnim."""
+        if not ol:
+            p.note = 'no object list'
+            return p
+        try:
+            p.anim = self.read_se_anim(ar, self.un('B', state, 0x3B)[0]) if ar else None
+        except (IndexError, struct.error) as e:
+            self.warnings.append(f'se anim {ar[1]:#x}: {e}')
+            p.anim = None
+        if not p.anim:
+            p.note = 'no animation'
+            return p
+        self.load_objects(p, ol, {o for t in p.anim.objects for o in t if o is not None})
+        p.parts = p.posed(p.anim.pose(0))
+        return p
+
+    def read_se_anim(self, ar, state_speed=0):
+        """AnimationReference (Special Edition) -> SeAnim, or None without frames (format: SeAnim)."""
+        lv, un = self.lv, self.un
+        fr = lv.ptr(ar)
+        nf, speed, nc = un('3B', ar, 4)
+        if not fr or not nf or not nc:
+            return None
+        frames, hier = [], []
+        for f in range(nf):
+            h = lv.ptr(fr, 16 * f + 12)
+            pr = lv.ptr(h, 4) if h else None
+            hier.append([un('2H', pr, 4 * i) for i in range(min(un('I', h)[0], 256))] if pr else [])
+            chs = lv.ptr(fr, 16 * f)
+            row = []
+            for c in range(nc):
+                rec = lv.ptr(chs, 4 * c) if chs else None
+                m = lv.ptr(rec) if rec else None
+                if m is None:
+                    row.append((None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)))
+                    continue
+                obj = un('B', rec, 4)[0]
+                obj = None if obj == 0xFF else obj
+                t, = un('H', m)
+                o, pos, q, sc = 2, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+                if t & 1:
+                    pos = tuple(v / 512 for v in un('3h', m, o))
+                    o += 6
+                if t & 2:
+                    w, x, y, z = (v / 32767 for v in un('4h', m, o))
+                    q = (x, y, z, w)
+                    o += 8
+                if t & 4:
+                    k = un('h', m, o)[0] / 256
+                    sc = (k, k, k)
+                    o += 2
+                if t & 8:
+                    sc = tuple(v / 256 for v in un('3h', m, o))
+                row.append((obj, pos, q, sc))
+            frames.append(row)
+        return SeAnim(state_speed or speed or 30, nf, frames, hier)
 
     def load_objects(self, p, ol, used):
         """Fill p.objects / p.collides for the object-list entries in `used`."""
@@ -827,8 +947,8 @@ class LevelData:
         controls (the skier, ID card type 2 states); that one is the player there. Inferred from the data (the
         exe's switch is not found yet; the fix Ed's placement there is the stale fix matrix): see docs/NOTES.md
         "Skiing"."""
-        if not self.perso_in_fix or not self.perso_in_fix[0][0]:
-            return None
+        if self.se or not self.perso_in_fix or not self.perso_in_fix[0][0]:
+            return None  # the Special Edition's Ed comes from a retail donor level (ttlv.write ed_donor, docs/SE.md)
         if not hasattr(self, '_player'):
             from . import ai
             lv, fix_ed = self.lv, self.perso_in_fix[0][0]
@@ -996,10 +1116,11 @@ class LevelData:
         if hasattr(self, '_surfaces'):
             return self._surfaces
         lv, out, seen = self.lv, [], set()
+        sh = 4 if self.se else 0  # the SE sector's extra leading dword (sectors())
         for so in self.walk():
             data = lv.ptr(so.loc, 4) if so.kind == 'sector' else None
-            node = lv.ptr(data, 0x10) if data else None
-            n = self.un('I', data, 0x18)[0] if data else 0
+            node = lv.ptr(data, 0x10 + sh) if data else None
+            n = self.un('I', data, 0x18 + sh)[0] if data else 0
             for _ in range(min(n, 64)):
                 if node is None:
                     break
@@ -1063,6 +1184,8 @@ class LevelData:
                 list (GAM_00428490 -> GAM_00428400: std_game +0x19 := 1); only marked persos run their AI and
                 mechanics (GAM_00428550 / GAM_004287b0), and GAM_00428070 clears the mark again
           +0x88 u8 virtual (sky, foliage, gates: FUN_00451240 never picks it), +0x89 u8 its IPOs not looked up
+        Special Edition: a dword more at +0 (0 in every SE sector), so +0x00..+0x64 above sit 4 bytes later there
+        (portals +0x04 ... activity +0x68); +0x88 and the name +0x94 stay (sh below).
         Sector.floors: the faces FUN_00451240 casts straight down at to find a point's sector (on level load, teleports):
         the portal object's and its direct IPO children's LOD 0 visual faces, those whose stored face normal faces the
         ray (front faces only: FUN_00460350); the nearest hit below the point wins. Story-gated IPOs are left out, as
@@ -1074,6 +1197,7 @@ class LevelData:
         index = {s.loc: i for i, s in enumerate(secs)}
         surface_index = {loc: k for k, (loc, _, _) in enumerate(self.surfaces())}
         out = []
+        sh = 4 if self.se else 0  # the SE's extra leading dword (docstring)
         for so in secs:
             data = lv.ptr(so.loc, 4)
             sec = Sector(so, self.sector_name(so))
@@ -1082,21 +1206,21 @@ class LevelData:
                 continue
             raw = data[0].data
             sec.virtual, sec.no_child_lookup = raw[data[1] + 0x88], raw[data[1] + 0x89]
-            node = lv.ptr(data, 0x4C)
+            node = lv.ptr(data, 0x4C + sh)
             while node is not None and len(sec.visible) < 4096:
                 target = index.get(lv.ptr(node, 4))
                 if target is not None:
                     sec.visible.append((target, un('H', node)[0]))
                 node = lv.ptr(node, 8)
             for off, into in ((0x58, sec.collide), (0x64, sec.active)):
-                node, seen = lv.ptr(data, off), set()
+                node, seen = lv.ptr(data, off + sh), set()
                 while node is not None and node not in seen and len(seen) < 4096:
                     seen.add(node)
                     target = index.get(lv.ptr(node))
                     if target is not None:
                         into.append(target)
                     node = lv.ptr(node, 4)
-            node = lv.ptr(data, 4)
+            node = lv.ptr(data, 4 + sh)
             while node is not None and len(sec.envs) < 64:
                 entry = lv.ptr(node)
                 env = lv.ptr(entry) if entry else None
@@ -1111,20 +1235,20 @@ class LevelData:
             # the lights pushed when the frame is drawn from this sector (FUN_00452410): +0x34, then +0x28 (with the
             # draw flags' and the sector's 0x8000, set in normal play); {ptr light, ptr next} nodes
             for off in (0x34, 0x28):
-                node, seen = lv.ptr(data, off), set()
+                node, seen = lv.ptr(data, off + sh), set()
                 while node is not None and node not in seen and len(seen) < 100:
                     seen.add(node)
                     light = lv.ptr(node)
                     if light:
                         sec.lights.append(self.light(light))
                     node = lv.ptr(node, 4)
-            node = lv.ptr(data, 0x10)
+            node = lv.ptr(data, 0x10 + sh)
             while node is not None and len(sec.surfaces) < 64:
                 srf = lv.ptr(node)
                 if srf in surface_index:
                     sec.surfaces.append(surface_index[srf])
                 node = lv.ptr(node, 4)
-            portal = lv.ptr(data, 0)
+            portal = lv.ptr(data, sh)
             if portal:
                 for v0, v1, v2, n, target in self.faces(portal, IDENTITY, collide=True):
                     sec.portals.append((index.get(target, 0xFFFF), v0, v1, v2, n))

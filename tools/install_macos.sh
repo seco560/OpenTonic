@@ -88,6 +88,8 @@ $SYNC "$OUT/Textures/" "$R/Textures/"
 if [ -d "$OUT/Vignette/Level" ]; then $SYNC "$OUT/Vignette/Level/" "$R/Vignette/Level/"; else rm -rf "$R/Vignette/Level"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$R/Imported/"; else rm -rf "$R/Imported"; fi
+# The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.
+if [ -d "$OUT/se/ttlv" ]; then $SYNC --exclude '*_ai.txt' --exclude levels.tsv "$OUT/se/" "$R/se/"; else rm -rf "$R/se"; fi
 # Sound effects (tools/ttre/sfx.py): the global sound events' files and their table.
 if [ -d "$OUT/audio/sfx" ]; then $SYNC "$OUT/audio/sfx/" "$R/audio/sfx/"; else rm -rf "$R/audio/sfx"; fi
 [ -e "$ICON" ] && cp "$ICON" "$R/icon/OpenTonic.png"
