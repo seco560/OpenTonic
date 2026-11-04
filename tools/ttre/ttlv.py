@@ -64,6 +64,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
               u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
           u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
           u32 n_collision (= COLL's triangles), n x u16 sector (a static's sector, a perso's; 0xFFFF: always solid)
+  EDIT* u32 edition: 0 retail (also when absent), 1 the Special Edition (se.py). The viewer starts those in its
+        own lighting, not the game's (core TC_EDITION_SPECIAL).
   LITE  the original's lighting (docs/DECOMP.md "Rendering and lighting"; reader core/src/tc_level.c):
           u16 n_lights, u16 0, n_lights x { u8 type (1 parallel, 2 spherical, 3 hotspot, 4 ambient), u8 on,
               u8 paint (+0xa6: spherical without N.L), u8 alpha_mode (+0xa7: 0 colour and alpha, 1 alpha only,
@@ -491,6 +493,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
            ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
            ('CAST', cast_body) if cast_body else None,  # this level's cast, else the one passed in
+           ('EDIT', struct.pack('<I', 1)) if data.se else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
                          donor_lite))]
     chunks.write(path, 'TTLV', [c for c in out if c])

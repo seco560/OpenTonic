@@ -5,6 +5,10 @@ new worlds and games on it. For example: making the lake under the Vegetable HQ 
 Tonic Trouble 2. The user's warning: this could make or break the project, so be very careful. Nothing here is built
 yet. These are the considerations reached so far, to start from when the work begins.
 
+One use already planned (user, 2026-11-05): authoring a combined game from the Retail and Special Editions, with
+portals between the two versions of a level, likely edited in Godot through GDExtension hooks into the core.
+docs/DIRECTION.md, "Final goal: two editions, one game".
+
 ## Source -> cook -> runtime
 - **`.ttlv` / `.ttai` stay the engine's cooked runtime formats.** Reasons from the code and docs (the original
   deliberation was not written down):

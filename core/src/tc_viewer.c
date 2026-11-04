@@ -700,7 +700,9 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         memcpy(v->fog_color, l->fog_rgb, sizeof(v->fog_color));
     }
     v->light_set_count = l->light_set_count > 1 ? l->light_set_count : 1;
-    v->lighting = l->has_lighting ? TC_VL_GAME : TC_VL_PORT;
+    /* The Special Edition's levels start in the port's lighting: its original data shows issues under the game's
+     * formula, probably engine changes before release (docs/SE.md). The toggle still offers it. */
+    v->lighting = l->has_lighting && l->edition != TC_EDITION_SPECIAL ? TC_VL_GAME : TC_VL_PORT;
     if (l->light_count) {
         v->light_weight = (float *)tc_calloc(l->light_count, sizeof(float));
         v->light_wanted = (uint8_t *)tc_calloc(l->light_count, 1);

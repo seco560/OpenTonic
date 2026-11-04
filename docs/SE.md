@@ -136,6 +136,44 @@ tie, floating hands and feet).
 - **Not seen in the app:** everything here is headless. Lighting, fog, sky, the persos' looks and the pickers are
   unverified on screen (the Swift app builds; the SDL picker is syntax-checked only, no glslang here).
 
+## Sectors (workaround, 2026-11-05)
+
+Retail's sector record has the virtual flag at +0x88 (skies, foliage, gates: never a point's sector). In SE that
+byte is the count of an extra list ({head, tail, n} at +0x80; retail has zeros there), so SE has no virtual flag where
+retail keeps one. The dword at +0x90 looks like a **priority**: 3 = skies, Univers and backdrops (sud0's waterfalls
+too), 4 = most sectors, 5-6 = doors, "virt" sectors and other small ones. Read as a flag, the count made most of sud0's
+playable sectors virtual. Ed was then never found in them and fell back to Univers, which collides with nothing, so he
+fell through the world (your playtest).
+
+Port choice until SE's own lookup and collision code is read (`level.LevelData.sectors`):
+- No SE sector is virtual: any sector with floor faces can be a point's sector.
+- Every SE sector collides with every solid one. Solid = on some collide list, or not a backdrop (priority != 3). SE's
+  own lists leave out sectors Ed stands on (Totalski's sctdepartvirt*, Land's sctvsector*).
+- Measured, 150 random walkable floor points per level: the looked-up sector collides with that floor at 147-150 of
+  150 on all 11 levels (sud0 was 47, with 100 finding no sector at all).
+- A scratch probe walks Ed (his AI) from random floors for 4 s with random steering, and counts walks whose body
+  centre passes down through a floor face. Old export: sud0 58 %, Land 21 %. Now: 0-0.7 % on every SE level (retail
+  sud0 7.5 %, Land 4.7 %, cock01 1.3 %; not looked into). Walks ending far below with no floor (walking off an edge)
+  are high on SE carota, cock01 and north (36-53 %): those maps have big open drops (retail north 49 %).
+- Cost: SE skicheck went from 1.9 % to 2.4 % stopped (over the 2 % limit), mean speed 21.6 -> 19.3: more of the course
+  is solid now. The descent from the real start is unchanged, position for position.
+
+## Converting with one game or both (2026-11-05)
+
+`tools/convert_files.sh` detects each game in `files/sources`: retail (`GAMEDATA` complete; a partial copy is an
+error), the Special Edition (its disc image, or `files/sources/se` from an earlier run). It converts whichever it
+finds and fails only when there is neither. Special Edition alone: its levels have no Ed (no donor) and open in the
+Tonic Viewer only. Their file names use the retail spellings anyway (`se.RETAIL_SPELLING`), and there's no music,
+sound or intro. Checked in scratch sandboxes: SE-only converts in 88 s, and all 11 Ed-less levels load with valid draw
+lists in viewcheck. viewcheck's demo now skips a level without Ed: it crashed in the test, not the core.
+
+## Lighting
+
+SE levels start in the port's own ("Modern") lighting. Its original data shows many issues under the game's
+("Classic") formula, probably engine changes before release, like the animation format. The level carries an
+optional EDIT chunk (1 = Special Edition), and the core's default follows it (`tc_viewer.c`). The toggle still offers
+Classic. Retail levels are unchanged.
+
 ## Crash found in the first playtest (fixed 2026-11-04)
 
 The app crashed on loading SE levels: `water_plane` (tc_viewer.c) read a sector's water-surface list that was
@@ -147,6 +185,10 @@ the guard. viewcheck's other lines are scripted for specific retail levels (bar,
 of the same names. Its generic line, "every frame's draw list is valid", passes.
 
 ## Next
+
+The long-term goal these steps lead to (user): retail, SE, or both interwoven as alternate universes with portals
+between the two versions of a level. See docs/DIRECTION.md, "Final goal: two editions, one game".
+
 
 1. Playtest SE Totalski in the app (camera, speed, the slope's end: there is no finish trigger).
 2. SE AI: read the primitive name tables from `MAID3DVR.EXE`, map them by name and handler to the retail numbering

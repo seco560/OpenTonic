@@ -91,6 +91,9 @@ import math
 import struct
 from dataclasses import dataclass, field
 
+# The SE sector's +0x90: 3 skies / Univers / backdrops (sud0's waterfalls too), 4 most, 5-6 doors, "virt" sectors and
+# other small ones (a priority?). Used by LevelData.sectors' SE workaround.
+SE_BACKDROP = 3
 SO_TYPES = {0x0: 'world', 0x4: 'perso', 0x8: 'sector', 0xD: 'ipo', 0x15: 'ipo'}
 IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0)  # row-major 3x4
 SCROLL_RATE = 60.0  # engine time unit = 1/60 s (frame delta = timer ms * 0.06; see NOTES)
@@ -1206,6 +1209,9 @@ class LevelData:
                 continue
             raw = data[0].data
             sec.virtual, sec.no_child_lookup = raw[data[1] + 0x88], raw[data[1] + 0x89]
+            if self.se:  # no such flags in the SE (+0x88 is a list count there): none virtual (workaround below)
+                sec.virtual, sec.no_child_lookup = 0, 0
+                sec.se_priority = un('I', data, 0x90)[0]
             node = lv.ptr(data, 0x4C + sh)
             while node is not None and len(sec.visible) < 4096:
                 target = index.get(lv.ptr(node, 4))
@@ -1266,6 +1272,17 @@ class LevelData:
                 geo = lv.ptr(objs) if objs else None  # LOD 0 (GLIGLOU_004427d0(visual set, 0))
                 if geo:
                     sec.floors += [(v0, v1, v2, n) for v0, v1, v2, n, _ in self.faces(geo, ch.world) if n[2] > 0]
+        if self.se:
+            # Workaround (port choice, docs/SE.md "Sectors"): the SE's sector lookup and collision rules are not read
+            # yet. Its +0x88 is a list count, not the virtual flag, and its collide lists leave out sectors whose
+            # floors Ed stands on (Totalski's sctdepartvirt*, Land's sctvsector*). So every sector may be a point's
+            # sector, and each collides with every solid one: those on some collide list, or not a backdrop
+            # (SE_BACKDROP: skies, Univers, sud0's waterfalls stay passable). Measured: 147-150 of 150 random floor
+            # points per level find a sector that collides with them (was 47 on sud0: he fell through).
+            solid = {i for sec in out for i in sec.collide} | \
+                {i for i, sec in enumerate(out) if getattr(sec, 'se_priority', SE_BACKDROP) != SE_BACKDROP}
+            for i, sec in enumerate(out):
+                sec.collide = sorted(solid - {i})
         self._sectors = out
         return out
 

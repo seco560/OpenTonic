@@ -305,6 +305,12 @@ static void demo_level(const char *dir, const char *name, bool checked) {
     desc.level_name = name;
     if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "demo viewer"); free(ai); tc_level_free(&level); return; }
     free(ai);
+    if (!tc_viewer_player(&v)) { /* a level without Ed (the Special Edition's, without the retail game to lend him) */
+        printf("  (no Ed in %s: demo skipped)\n", name);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+        return;
+    }
     /* The demo is chaotic: anything that changes Ed's inputs (the camera's position feeds his AI) reshuffles the run. 12345
      * gave north 4 kinds of act after the play camera (2026-11-01) and 6 before; over seeds 1-8 the spread is the same
      * either side. Seed 2 has 5 jumps and 8 kinds on north with both cameras. */

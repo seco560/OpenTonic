@@ -45,14 +45,19 @@ fi
 
 OUT=files/out
 CONVERTED=0
-if [ "$CONVERT" = 1 ] && [ -d files/sources/GAMEDATA ]; then
+# Something to convert: the retail GAMEDATA, the Special Edition's disc image or its earlier extraction (convert_files.sh).
+HAS_SOURCES=0
+{ [ -d files/sources/GAMEDATA ] || [ -d files/sources/se/GAMEDATA ] ||
+  [ -n "$(python3 -c 'from tools.ttre import se; print(se.find_disc() or "")' 2>/dev/null)" ]; } && HAS_SOURCES=1
+if [ "$CONVERT" = 1 ] && [ "$HAS_SOURCES" = 1 ]; then
   echo "== convert (tools/convert_files.sh)"
   tools/convert_files.sh $FORCE
   CONVERTED=1
 elif [ "$CONVERT" = 1 ]; then
-  echo "== convert: no files/sources/GAMEDATA, bundling $OUT as it is"
+  echo "== convert: no game in files/sources, bundling $OUT as it is"
 fi
-[ -d "$OUT/ttlv" ] || { echo "no $OUT/ttlv: convert the game first (tools/convert_files.sh)" >&2; exit 1; }
+{ [ -d "$OUT/ttlv" ] || [ -d "$OUT/se/ttlv" ]; } || { echo "no $OUT/ttlv: convert the game first (tools/convert_files.sh)" >&2; exit 1; }
+mkdir -p "$OUT/ttlv"  # the apps' levels folder, also when only the Special Edition is converted
 # Levels from another converter version may not load ("re-run the conversion") or load outdated data: without a
 # conversion, say which.
 if [ "$CONVERTED" = 0 ]; then
@@ -84,7 +89,7 @@ cp .build/release/OpenTonic "$APP/Contents/MacOS/OpenTonic"
 cp Sources/OpenTonic/Shaders.metal "$APP/Contents/Resources/"
 # Data keeps the files/out/ layout, so the .ttlv files' relative texture paths (../Textures/...) still resolve.
 $SYNC --exclude '*_ai.txt' "$OUT/ttlv/" "$R/ttlv/"  # the AI listings level-ttai writes next to the .ttai: debugging only
-$SYNC "$OUT/Textures/" "$R/Textures/"
+if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$R/Textures/"; else rm -rf "$R/Textures"; fi
 if [ -d "$OUT/Vignette/Level" ]; then $SYNC "$OUT/Vignette/Level/" "$R/Vignette/Level/"; else rm -rf "$R/Vignette/Level"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$R/Imported/"; else rm -rf "$R/Imported"; fi

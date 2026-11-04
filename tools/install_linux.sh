@@ -56,13 +56,18 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 OUT=files/out
-if [ "$CONVERT" = 1 ] && [ -d files/sources/GAMEDATA ]; then
+# Something to convert: the retail GAMEDATA, the Special Edition's disc image or its earlier extraction (convert_files.sh).
+HAS_SOURCES=0
+{ [ -d files/sources/GAMEDATA ] || [ -d files/sources/se/GAMEDATA ] ||
+  [ -n "$(python3 -c 'from tools.ttre import se; print(se.find_disc() or "")' 2>/dev/null)" ]; } && HAS_SOURCES=1
+if [ "$CONVERT" = 1 ] && [ "$HAS_SOURCES" = 1 ]; then
   echo "== convert (tools/convert_files.sh)"
   tools/convert_files.sh $FORCE
 elif [ "$CONVERT" = 1 ]; then
-  echo "== convert: no files/sources/GAMEDATA, installing $OUT as it is"
+  echo "== convert: no game in files/sources, installing $OUT as it is"
 fi
-[ -d "$OUT/ttlv" ] || { echo "no $OUT/ttlv: convert the game first (tools/convert_files.sh)" >&2; exit 1; }
+{ [ -d "$OUT/ttlv" ] || [ -d "$OUT/se/ttlv" ]; } || { echo "no $OUT/ttlv: convert the game first (tools/convert_files.sh)" >&2; exit 1; }
+mkdir -p "$OUT/ttlv"  # the apps' levels folder, also when only the Special Edition is converted
 command -v rsync >/dev/null 2>&1 || { echo "missing: rsync (sudo apt install rsync)" >&2; exit 1; }
 # The icon: files/out/icon/OpenTonic.png (tools/make_icon.sh), or the one made before the rename.
 ICON="$OUT/icon/OpenTonic.png"; [ -e "$ICON" ] || ICON="$OUT/icon/TonicViewer.png"
@@ -76,7 +81,7 @@ mkdir -p "$D/Vignette" "$D/audio" "$D/icon"
 SYNC="rsync -a --delete"
 install -m 755 sdl/build/opentonic "$DEST/opentonic"
 $SYNC --exclude '*_ai.txt' "$OUT/ttlv/" "$D/ttlv/"  # the AI listings next to the .ttai: debugging only
-$SYNC "$OUT/Textures/" "$D/Textures/"
+if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$D/Textures/"; else rm -rf "$D/Textures"; fi
 [ -d "$OUT/Vignette/Level" ] && $SYNC "$OUT/Vignette/Level/" "$D/Vignette/Level/"
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$D/Imported/"; else rm -rf "$D/Imported"; fi

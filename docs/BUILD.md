@@ -15,10 +15,16 @@ Copy the PC version's `GAMEDATA` folder (installed copy) to `files/sources/GAMED
 `icon_ED.ICO` to `files/sources/icon_ED.ICO`. The tools expect `files/sources/GAMEDATA/WORLD/LEVELS`,
 `.../WORLD/SOUND`, `Textures.cnt` and `Vignette.cnt` there.
 
-Optional, **Tonic Trouble: Special Edition** (the 1998 OEM disc, build 8.5.2, with its own earlier levels): put its
-disc image (the raw `Tt.bin` with its `.cue`, or an `.iso`) anywhere under `files/sources`, up to two folders deep.
-The conversion reads it directly (that disc stores its files plain) and copies its GAMEDATA to `files/sources/se`.
-Its levels appear in the level select under "Special Edition", played with the retail Ed for now: docs/SE.md.
+**Tonic Trouble: Special Edition** (the 1998 OEM disc, build 8.5.2, with its own earlier levels): put its disc image
+(the raw `Tt.bin`, or an `.iso` / `.img`; any file name) anywhere under `files/sources`, up to two folders deep. The
+conversion reads it directly (that disc stores its files plain) and copies its GAMEDATA to `files/sources/se`. Its
+levels appear in the level select under "Special Edition", played with the retail Ed for now: docs/SE.md.
+
+Either game is enough, and both together work. `tools/convert_files.sh` says which it found and converts each:
+- **Retail only:** everything as before.
+- **Special Edition only:** its levels without Ed: they open in the Tonic Viewer, not as play. There is no music,
+  sound or intro: those come from the retail install.
+- **Both:** the Special Edition's levels borrow Ed (and the skier) from the retail levels of the same names.
 
 ## Quick route
 After steps 1 and 2:

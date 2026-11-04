@@ -137,11 +137,17 @@ def donor(level, retail_levels=RETAIL_LEVELS):
     return next((n for n in names if n.lower() == level.lower() and os.path.isdir(os.path.join(d, n))), None)
 
 
+# The retail levels' folder spellings, for the SE levels' file names when the retail game is not there to ask.
+RETAIL_SPELLING = {n.lower(): n for n in ('bar', 'BigBoss', 'carota', 'cavedoc', 'cock01', 'death', 'Land', 'LeCanyon',
+                                          'mammyon', 'marmite', 'north', 'outro', 'pharmmap', 'pyr_fou', 'pyramide',
+                                          'skymap', 'SpyCarota', 'spynorth', 'sud0', 'Totalski', 'Transit')}
+
+
 def output_name(level):
-    """The file name of an SE level's outputs: its donor's spelling (Totalski, LeCanyon, cock01...), else its own. The
-    core and the frontends key some things on the name (the ski start, Ed's level-name checks, the music table), which
-    then work as on the retail level."""
-    return donor(level) or level
+    """The file name of an SE level's outputs: its donor's spelling (Totalski, LeCanyon, cock01...), else the retail
+    spelling of that name (RETAIL_SPELLING), else its own in lower case. The core and the frontends key some things on
+    the name (the ski start, Ed's level-name checks, the music table), which then work as on the retail level."""
+    return donor(level) or RETAIL_SPELLING.get(level.lower(), level.lower())
 
 
 def name_vignettes(level_dir, names, fallback_dir=None):

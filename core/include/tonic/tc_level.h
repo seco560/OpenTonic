@@ -212,10 +212,14 @@ typedef struct tc_level {
     tc_ed ed;
     tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
     tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
+    uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
     int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
     uint32_t light_count;        /* centres (without it only the port's old lighting works) */
     tc_light *lights;
 } tc_level;
+
+#define TC_EDITION_RETAIL 0u
+#define TC_EDITION_SPECIAL 1u /* the 1998 Special Edition disc (build 8.5.2) */
 
 /* Parses `size` bytes at `data`. On failure *level is left empty (safe to tc_level_free). */
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size);

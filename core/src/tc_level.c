@@ -495,6 +495,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 
+    if (chunk_need(&cs, "EDIT", r)) { /* optional: the game version the level comes from (absent: retail) */
+        level->edition = rd_u32(r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
     if (chunk_need(&cs, "LITE", r)) {
         read_lite(level, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;

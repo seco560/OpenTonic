@@ -1,6 +1,11 @@
 #!/bin/sh
 # Converts your own copy of the game into everything Open Tonic needs in files/out/ (docs/BUILD.md steps 3-6):
 # textures and loading screens, levels (.ttlv + .ttai), music, sound effects, the intro movie and the app icon.
+# Either game, or both, whichever files/sources holds (docs/BUILD.md step 2):
+#   the Retail Edition: its installed GAMEDATA in files/sources/GAMEDATA -> everything above;
+#   the Special Edition: its disc image anywhere under files/sources (or files/sources/se from an earlier run) -> its
+#     levels in files/out/se (docs/SE.md). They borrow Ed from the retail levels: without retail they have no Ed
+#     (Tonic Viewer only), and there is no music, sound or intro (those come from the retail install).
 # macOS and Linux alike; only the intro's encoding differs:
 #   macOS:  video/intro.mp4 (HEVC, for the Swift app's AVFoundation)
 #   other:  video/intro.mpg (MPEG-1, for the SDL build's pl_mpeg)
@@ -32,14 +37,35 @@ PATH="$PATH:$(pwd)/tools/bin"
 if [ "$(uname)" = Darwin ]; then INTRO=mp4; VGM_HINT="brew install vgmstream"
 else INTRO=mpg; VGM_HINT="see docs/SDL3.md"; fi
 
-# ---- prerequisites ----
-fail=0
+# ---- prerequisites: which games are there ----
 [ -e tools/ttre/__main__.py ] || { echo "run this from the repository root" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "missing: python3 (see docs/BUILD.md, step 1)" >&2; fail=1; }
+command -v python3 >/dev/null 2>&1 || { echo "missing: python3 (see docs/BUILD.md, step 1)" >&2; exit 1; }
+# Retail: all four, or none (a part of them is a bad copy, said so).
+RETAIL=0 present=0 missing=""
 for f in "$LEVELS" "$SOUND" "$SRC/GAMEDATA/Textures.cnt" "$SRC/GAMEDATA/Vignette.cnt"; do
-  [ -e "$f" ] || { echo "missing: $f (copy the game's GAMEDATA folder to $SRC/GAMEDATA, see docs/BUILD.md step 2)" >&2; fail=1; }
+  if [ -e "$f" ]; then present=$((present + 1)); else missing="$missing $f"; fi
 done
-[ "$fail" = 0 ] || exit 1
+if [ "$present" = 4 ]; then RETAIL=1
+elif [ "$present" != 0 ]; then
+  echo "incomplete retail copy, missing:$missing (copy the game's whole GAMEDATA folder to $SRC/GAMEDATA, see docs/BUILD.md step 2)" >&2
+  exit 1
+fi
+# Special Edition: extracted before, or a disc image to read (tools/ttre/se.py).
+SE_SRC="$SRC/se"
+SE_OUT="$OUT/se"
+SE=0 SE_DISC=""
+if [ ! -d "$SE_SRC/GAMEDATA" ] || [ "$FORCE" = 1 ]; then
+  SE_DISC=$(python3 -c 'from tools.ttre import se; print(se.find_disc() or "")')
+fi
+{ [ -d "$SE_SRC/GAMEDATA" ] || [ -n "$SE_DISC" ]; } && SE=1
+if [ "$RETAIL" = 0 ] && [ "$SE" = 0 ]; then
+  echo "no game found in $SRC: copy the retail game's GAMEDATA folder to $SRC/GAMEDATA, and/or put the Special" >&2
+  echo "Edition's disc image (e.g. Tt.bin) anywhere under $SRC (docs/BUILD.md step 2)" >&2
+  exit 1
+fi
+echo "== found: $([ "$RETAIL" = 1 ] && echo "Retail Edition")$([ "$RETAIL$SE" = 11 ] && echo " + ")$([ "$SE" = 1 ] && echo "Special Edition")"
+# The apps look for files/out/ttlv (their levels folder) even when only the Special Edition is converted.
+mkdir -p "$OUT/ttlv"
 has() { command -v "$1" >/dev/null 2>&1; }
 
 need() { [ "$FORCE" = 1 ] || [ ! -e "$1" ]; }  # true when $1 has to be (re)made
@@ -68,6 +94,11 @@ extract() {
   mv "$2.partial" "$2"
 }
 
+# Levels (both editions) carry the converter's stamp: stale() when a file's differs from the current one.
+STAMP=$(python3 -m tools.ttre.chunks)
+stale() { [ "$(python3 -c 'import sys; from tools.ttre.chunks import file_stamp; print(file_stamp(sys.argv[1]))' "$1")" != "$STAMP" ]; }
+
+if [ "$RETAIL" = 0 ]; then echo "== retail edition: not in $SRC (skip textures, levels, music, sounds, intro)"; else
 # ---- 3. textures and loading screens ----
 if outdated textures "$OUT/Textures" cnt gf; then
   echo "== textures"
@@ -85,8 +116,6 @@ else echo "== loading screens: current (skip)"; fi
 # tools/ttre/chunks.py): an older file may not load in the app ("re-run the conversion") or load with outdated data.
 # A level the AI export fails for has no .ttai (an older one would not match the new .ttlv); that is recorded under
 # the stamp as .stamps/noai-<level>, so it isn't retried until the converter changes.
-STAMP=$(python3 -m tools.ttre.chunks)
-stale() { [ "$(python3 -c 'import sys; from tools.ttre.chunks import file_stamp; print(file_stamp(sys.argv[1]))' "$1")" != "$STAMP" ]; }
 ai_current() { { [ -e "$2" ] && ! stale "$2"; } || [ "$(cat "$STAMPS/noai-$1" 2>/dev/null)" = "$STAMP" ]; }
 mkdir -p "$OUT/ttlv"
 missing_tex=""
@@ -117,20 +146,17 @@ done
 [ "$current" = 0 ] || echo "== levels: $current current (skip)"
 [ -z "$missing_tex" ] || echo "warning: textures not found in:$missing_tex (were the textures extracted first? letter case?)" >&2
 
+fi  # retail
+
 # ---- 4b. the Special Edition (optional; tools/ttre/se.py, docs/SE.md) ----
 # Its disc image (Tt.bin, or an .iso) anywhere under files/sources, two folders deep at most: GAMEDATA and its exe are
 # copied to files/sources/se once, then its textures, loading screens and levels go to files/out/se (ttlv, Textures,
 # Vignette). Its levels are played with the retail Ed, borrowed from the retail level of the same name (step 4).
-SE_SRC="$SRC/se"
-SE_OUT="$OUT/se"
-if [ ! -d "$SE_SRC/GAMEDATA" ] || [ "$FORCE" = 1 ]; then
-  disc=$(python3 -c 'from tools.ttre import se; print(se.find_disc() or "")')
-  if [ -n "$disc" ]; then
-    echo "== special edition: reading $disc"
-    python3 -m tools.ttre se-extract "$disc"
-  fi
+if [ -n "$SE_DISC" ]; then
+  echo "== special edition: reading $SE_DISC"
+  python3 -m tools.ttre se-extract "$SE_DISC"
 fi
-if [ ! -d "$SE_SRC/GAMEDATA" ]; then
+if [ "$SE" = 0 ] || [ ! -d "$SE_SRC/GAMEDATA" ]; then
   echo "== special edition: no disc image under $SRC (optional, skip)"
 else
   if outdated se-textures "$SE_OUT/Textures" cnt gf; then
@@ -154,13 +180,14 @@ else
     if need "$t" || stale "$t" || { [ -e "$a" ] && stale "$a"; }; then
       line=$(python3 -m tools.ttre se-ttlv "$l" "$t" 2>/dev/null | grep '^wrote' || true)
       [ -n "$line" ] || { echo "special edition level $l: export failed (run: python3 -m tools.ttre se-ttlv $l $t)" >&2; exit 1; }
-      [ -e "$a" ] || echo "special edition level $l: no Ed (no retail $name.ttai to borrow him from)"
+      [ -e "$a" ] || echo "special edition level $name: no Ed (no retail $name to borrow him from: Tonic Viewer only)"
       echo "== special edition level $name"
     else se_current=$((se_current + 1)); fi
   done < "$SE_OUT/levels.tsv"
   [ "$se_current" = 0 ] || echo "== special edition levels: $se_current current (skip)"
 fi
 
+if [ "$RETAIL" = 1 ]; then  # music, sounds and the intro come from the retail install
 # ---- 5. music ----
 # files/out/audio/music.tsv is yours to edit (both apps read it). It is replaced by tools/music.tsv only when that
 # changed (comment lines aside) or with --force, the previous one kept as music.tsv.bak. Every track it names is
@@ -221,6 +248,8 @@ elif outdated "intro-$INTRO" "$OUT/video/intro.$INTRO" tools/make_intro.sh; then
   tools/make_intro.sh "$INTRO"
   record "intro-$INTRO"
 else echo "== intro movie: current (skip)"; fi
+
+fi  # retail
 
 # ---- 6. app icon ----
 if [ ! -e "$SRC/icon_ED.ICO" ]; then echo "== icon: $SRC/icon_ED.ICO not found (optional, skip)"

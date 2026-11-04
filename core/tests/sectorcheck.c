@@ -92,6 +92,8 @@ static void lighting_check(const char *file, const tc_level *l) {
         failures++;
         return;
     }
+    /* The Special Edition's levels start in the port's lighting (tc_level.edition); this checks the game's, so cycle to it. */
+    if (l->edition == TC_EDITION_SPECIAL && l->has_lighting) tc_viewer_cycle_lighting(&v);
     tc_viewer_update(&v, 1.0f / 60);
     f = (tc_view_frame *)malloc(sizeof *f);
     tc_viewer_frame(&v, 16.0f / 9, f);
