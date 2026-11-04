@@ -400,10 +400,6 @@ old look for comparing (title: "old lighting").
 - No public R2 or TT code decompilation exists.
 - **Avoid (clean room):** the 2022 Rayman 2 DS source leak.
 
-## Next session: start here
-**2026-11-02: the cast runs (see "The cast" above): pickups, levers, Super Ed. Next per the user: the walkable cutscene
-levels, then shooting.** The user must re-export (the converter stamp changed: the next build does it).
-
 **2026-11-01, later: the analysis is done, see docs/CAMERA.md** (steps 1-6 below; what is still unread is listed at
 its end). The user chose the suggested first set (recentring the only way out of free view): **implemented the same
 day; the user's first playtest: "decent", good in some places, bad in others (where: not said yet). Second pass the
@@ -539,7 +535,7 @@ headless tests, and ask before large explorations.
    - Display rules: render 3D at the drawable's pixel size; widescreen through a wider field of view (Hor+), never stretching; lay out 640×480 menus and HUD in a 4:3 safe area; frame-rate-independent presentation with the original game-logic timing preserved
    - Controls: the original hard-codes camera controls to the numpad (MacBooks have none) and they can't be rebound. Port defaults: **WASD = movement, arrow keys = camera**. Every action should be rebindable, with controller support too. Find the original input mapping in the exe (DirectInput layer; TonicTroubleFix's SDL3 input replacement shows where it lives)
    - Fixed-resolution content that needs special handling: 640×480 loading screens/menus (Vignette.cnt), and low-res textures (most are 16–64 px). An optional upscaled texture pack can come later.
-6. Redistributable asset pipeline: the port must ship no game data. The user supplies their own disc, and a converter builds everything from the **original CD install archives (tt1–tt4.cnt + GAMEDATA)**, not from an existing install.
+6. Redistributable asset pipeline: the port must ship no game data. The user supplies their own disc, and a converter builds everything from the install files of the original Windows game. It can't be a simple dump of the disc contents, it must be the GAMEDATA folder from the installed game. That's all you need to run it.
    - tt*.cnt is an installer format, not yet decoded. It has a different header and probably comes from InstalTT.exe. Reverse InstalTT.exe to read it.
    - Must tolerate damaged rips. The user's tt4.cnt lost its last ~43 MB: macOS Finder aborted the copy, Linux skipped the bad sectors. Map which entries are missing, fall back to an existing install for those, and report clearly what couldn't be recovered.
 6b. Extras: upscaled intro, disc demos (`Demos/` = cock01, lecanyon, pyramide, sud0, TotalSki, transit)
@@ -555,6 +551,8 @@ headless tests, and ask before large explorations.
 - **Portals** (swirls): orientation fixed (matrix decoding) and flipbook slowed 4× (TEXTURE_TIME_SCALE). The user needs to re-check both in the viewer.
 
 ## Play as Ed (2026-10-19, ttlv v5)
+This was the simple demo I thought of making that eventually spiraled into remaking the whole game. Seeing the levels, flying around them with basic rendering was pretty cool, but seeing Ed walk around them with walking and jumping animation, even if fully simplified, prompted me to pry at the exe and game files further until we can get a faithful rendition out of this. Most of this chaotic file is written by Claude entirely, and some of it even makes sense I'd like to claim. At this point it's mindless, mental, futile to try to fully grasp all the transformer thinking processes that gave shape to this project. Back to the Claude speak...
+
 - **Collision layout** (level.py docstring): PhysicalObject +4 → CollSet {u32 zdm, zdd, zde (0 in all statics), ptr zdr} → GeometricObjectCollide (TT: n_vertices, vertices, normals, ?, i32, n_elements @0x14, types @0x18, elements @0x1C, ...); element type 1 = {game_material, u16 n_tris, u16 n_mapping, ptr tris i16[3], ...}.
   - **Confirmed:** for every static IPO in bar and sud0 the collide object *shares* the visual LOD 0's vertex and triangle arrays (same pointers), and GameMaterial +0xC (collide material) is null. So TT world collision = the visual mesh, including foliage, the sky dome and lava surfaces (no "no collision"/water/death flags available this way). Previews: `out/collision/{bar,sud0}_top*.png` (visual left, collision right; `export.render_collision_compare`).
   - Perso collide meshes (13 persos in sud0, e.g. the 4 lava-pit platforms, fam 46) are added at frame 0 of their initial state (treated as static). Non-triangle collide elements (sud0: 4 × type 8 aligned boxes, 1 × type 7 spheres) are **ignored**. Ed's family has no zdr.
@@ -633,20 +631,6 @@ headless tests, and ask before large explorations.
 - The game core is now C11 in `port/core` (SwiftPM target `TonicCore`; layering rules, backend contract and a Vita sketch in `port/core/README.md`): `.ttlv` v1-v5 loader from a memory buffer, collision grid/raycast/closest point, Ed's controller (same tunables, animation-state choice, teleport), perso/Ed animation sampling. Only libc + `<math.h>`, allocations via `tc_set_allocator`, clean at `-std=c11 -Wall -Wextra -Wpedantic`; `make` in `port/core` builds it with plain `cc`.
 - Swift (`port/Sources/TonicViewer`) is only the platform layer: AppKit window/input/picker, Metal, AVFoundation music. `Core.swift` wraps the C structs. Removed: `TonicPlay`, `PlayCheck` (Swift), `LevelFile.swift`.
 - Parity: `CorePlayCheck` prints the same lines as the Swift PlayCheck did, byte for byte on all 21 levels (only the wall-clock "sim time" lines differ). One subtlety: Apple's `simd_cross` is compiled with FMA contraction, which decides whether a few near-degenerate sliver triangles are kept (Transit, north: one each), so `tc_v3_cross` uses `fmaf` explicitly; all other core math is compiled without contraction.
-
-
-## Earlier plan (2026-10-22, session 3; superseded by "Next session: start here")
-Uncommitted: default-to-play-mode change (Renderer.swift load() → togglePlay(); main.swift title/help; Input.swift; this file).
-1. **Ed's mechanical ID card** (MEC `hidcard.c`, 2 funcs in modmap; MEC ≈ 107 funcs total). Find hidcard.c funcs in the
-   Ghidra project (files/out/_decomp_artifacts/ghidra), recover the struct layout, locate Ed's IDCard (State +0x2C read
-   null for all 369 states → offset likely wrong), read real walk/run speed, jump, gravity, slope values, check in 2+
-   levels, feed them into core/src/tc_player.c; verify with `make -C core check`. One focused pass, no broad sweeps.
-2. **Sliding stages:** skislope and topsecret use different physics. The user's guessed values are already in
-   tc_player.c; look for a separate ID card / MEC mode for these levels and replace the guesses if found.
-3. **Shelved (user, 2026-10-22):** animation speed. Each animation has its own speed; they can't share one clock
-   (so a single ANIM_TIME_SCALE is wrong). Large change, later.
-4. Small items: optional `swiftLanguageModes: [.v5]` in Package.swift (Swift 6 warnings); fix old `port/...` paths in
-   these notes (now `core/`, `Sources/`).
 
 ## Ed's mechanics ID cards (2026-10-22, session 2)
 - **Where:** State **+0x30** is the MEC ID card pointer (TT; +0x2C is something else, which is why it read null). Ed's
