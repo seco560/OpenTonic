@@ -219,6 +219,22 @@ static void read_lite(tc_level *level, reader *r) {
     }
 }
 
+/* .ttlv CHLT (after LITE): per sector, the lights that reach only its characters and water. */
+static void read_chlt(tc_level *level, reader *r) {
+    uint32_t i, k;
+    uint16_t ns = rd_u16(r);
+    (void)rd_u16(r);
+    for (i = 0; i < ns && !r->error; i++) {
+        tc_sector *sec = i < level->sectors.count ? &level->sectors.sectors[i] : NULL;
+        uint16_t n = rd_u16(r);
+        if (sec) sec->char_lights = (uint16_t *)rd_array(r, n, sizeof(uint16_t), 2);
+        for (k = 0; k < n; k++) {
+            uint16_t l = rd_u16(r);
+            if (sec && sec->char_lights && l < level->light_count) sec->char_lights[sec->char_light_count++] = l;
+        }
+    }
+}
+
 /* n zones of a CAST record into e->zones. */
 static void read_zones(tc_cast_entry *e, reader *r) {
     uint32_t k, j;
@@ -850,6 +866,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         read_lite(level, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
         level->has_lighting = 1;
+    }
+
+    if (chunk_need(&cs, "CHLT", r)) { /* optional: lights for characters only (absent: none, as on retail) */
+        read_chlt(level, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
     return TC_OK;
 

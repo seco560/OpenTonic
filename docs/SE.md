@@ -73,7 +73,7 @@ GPT perso-in-fix, SuperObjects, IPOs, geometry, materials, radiosity, PTX, perso
 
 **SE animation** (`level.SeAnim`): AnimRef = {ptr frames, u8 n_frames, u8 speed, u8 n_channels, ...}. A frame is 16
 bytes {ptr channels, ptr f32 matrix, ptr f32 vector, ptr hierarchy}; the matrix and vector look like root motion and
-are not read. channels = ptr[n] -> {ptr compressed matrix, u32 info}, where the object-list index is the low byte
+are not read (see "Animation"). channels = ptr[n] -> {ptr compressed matrix, u32 info}, where the object-list index is the low byte
 (0xFF = none) and the channel id is byte 1. Compressed matrix: u16 flags; & 1: i16 pos[3] / 512; & 2: i16 quaternion
 w, x, y, z / 32767 (the engine's conjugate convention, as retail); & 4: i16 uniform scale / 256; & 8: i16 scale[3] /
 256. Hierarchy = {u32 n, ptr {u16 child, u16 parent}[n]}, channel indices as in retail TT (always valid as indices,
@@ -144,7 +144,7 @@ Port choice until SE's own lookup and collision code is read (`level.LevelData.s
   centre passes down through a floor face. Old export: sud0 58 %, Land 21 %. Now: 0-0.7 % on every SE level (retail
   sud0 7.5 %, Land 4.7 %, cock01 1.3 %; not looked into). Walks ending far below with no floor (walking off an edge)
   are high on SE carota, cock01 and north (36-53 %): those maps have big open drops (retail north 49 %).
-- Cost: SE skicheck went from 1.9 % to 2.4 % stopped (over the 2 % limit), mean speed 21.6 -> 19.3: more of the course
+- Cost (it has since reached 3.4 %, 20 of 596 rides, on 2026-11-05: over the 2 % limit, not looked into): SE skicheck went from 1.9 % to 2.4 % stopped (over the 2 % limit), mean speed 21.6 -> 19.3: more of the course
   is solid now. The descent from the real start is unchanged, position for position.
 
 ## Converting with one game or both (2026-11-05)
@@ -162,12 +162,105 @@ The demo (level select's Demo button) picks from both editions' main levels with
 Both editions use the same level names, so "not the level just shown" compares files (main.swift `demoCurrent`,
 sdl/src/main.c `demo_path`). Only built (Swift) and syntax-checked (SDL); not seen running.
 
-## Lighting
+## Lighting (read and ported 2026-11-05)
 
-SE levels start in the port's own ("Modern") lighting. Its original data shows many issues under the game's
-("Classic") formula, probably engine changes before release, like the animation format. The level carries an
-optional EDIT chunk (1 = Special Edition), and the core's default follows it (`tc_viewer.c`). The toggle still offers
-Classic. Retail levels are unchanged.
+SE levels now start in the game's ("Classic") lighting, as retail does. The two engines turned out closer than the first
+survey said: **the vertex formula is the same**, only which lights reach what differs. Nothing was wrong with the
+"Classic" formula on SE data. The exporter was dropping the SE's radiosity.
+
+Read from `MAID3DVR.EXE`, which keeps its function names (`GLI_*`, `ISI_*`, `SCT_*`). Full decompile:
+`files/out/_decomp_artifacts/se_all` (docs/EXE.md).
+
+**The same as retail:**
+- Per vertex: `byte = clamp(510 x (acc x diffuse + ambient + G x diffuse), 0, 255)` (FUN_00466530, FUN_00465380), with acc
+  the radiosity / 256 (signed) plus the lights, G the ambient lights. Retail has 512 where the SE has 510.
+- Material offsets (+4 ambient, +0x14 diffuse), the light's offsets up to +0xa0, the parallel and spherical terms, the fog.
+
+**Different, and what the converter does about each:**
+
+| | retail | SE | conversion |
+|---|---|---|---|
+| radiosity | IPO +8 -> ISI {A, B, C} -> {u32 n_lod, ptr lods}, 3 sets | IPO +4 -> ISI itself: {i16 n_lod, ptr lods}, lod {i16 n, ptr colours}, 1 set | `level.se_radiosity`, into the same vertex colours |
+| light record | 0x100 bytes, paint +0xa6, alpha mode +0xa7 | 0xa4 bytes, neither | both 0 (they were read from the next record) |
+| lights off (+0) | few | most: 129 of 144 on carota. They only served the radiosity tool | left out of the lists |
+| sector light lists | one frame-wide list | dynamic (+0x38) and static (+0x2C), below | `level.se_lights`: `lights` and `char_lights` |
+| per-object light test | spherical light culled by the object's centre | none (`GLI_vSendObjectToLights`: the call there is a stub returning 1) | no centre runs in LITE: each vertex is its own centre, which makes the test the per-vertex one |
+| first element's material | each element's own | an object's vertex colours are computed once, through its first element's material (FUN_0045c2a0) | `Geometric.lit`: that material's coefficients, a mesh split where they differ |
+
+**The SE's rule** (`SCT_fn_vSendSectorWhereIAmToViewport`, FUN_00499a70, FUN_00499db0):
+1. The frame pushes the dynamic lights of the sector it is drawn from and of every sector on its list, for all of the
+   frame. Carota's candles and Land's parallel lights are these. In the data as `tc_sector.lights`, the union written
+   out, so the core's frame code works on them as it does on retail's.
+2. Each drawn sector pushes its static lights only *after* its static geometry, for its water surfaces and characters.
+   Static geometry has them in its radiosity already. That is draw flag 0x8000: the display mask comes from each level's
+   .gpt (at +0x110 + 0x478, in the 0x2868-byte block FUN_004a5900 reads) and is 0xffffffff on all 11. Without an .RLI
+   section the game would clear 0x8000 and 0x1000 (no radiosity, static lights on the geometry), but that is
+   FUN_00420d60's text-script path: these levels load from the .sna.
+
+**One model for both.** A sector has `lights` (the whole frame) and `char_lights` (.ttlv CHLT: its characters and water).
+Retail has no CHLT, so its second list is empty. `tc_view_draw.light_first / light_extra` name a draw's own lights after
+the frame's, in the same 48; the shaders loop over both ranges (`DrawParams.water.zw`, spare until now). A sector's
+ambient lights are added to the draw's `ambient` on the CPU, since `ambient + G x diffuse` is one sum: this is what keeps
+COCK01's (2.0, 0.3, 0.2) off its static geometry. Port choices: a character's lights switch at once, as the original's
+(the frame's still fade); a light on two sectors' lists counts once (the exe would add it twice); the sectors with most
+claim to the 48 are Ed's, the camera's, then those with a perso. Measured over the demo: never over budget.
+
+**Not ported:** hotspots (marmite's 5 that are on), the zbuffer lights (`GLI_lCreateZBufferForLight`: the record's +0x8c,
+0 in every level), persos' own MS lights.
+
+**Water.** The same structure as retail's, other numbers (`GLI_vInitWaterplaneModule`; no level sets its own, visual
+environment +0 is null on all 11). `tc_view_frame.special_water` picks them in the shaders.
+
+| | retail | SE |
+|---|---|---|
+| tint | + (-0.6, -0.3, -0.4), full from 7 deep | x (0.3, 0.8, 0.2), full from 2 deep, after the lights (`GLI_vFogWaterPlaneEffect`) |
+| lift | 0.7 | 0.6 |
+| wobble | ramps to 1.4 by 5 deep, on a cosine | 2 from 1 deep at once, on half a sine (64 entries of 2 pi / 128) |
+
+**Measured, the formula on every static vertex (radiosity only):**
+
+| level | before: mean, black | after: mean, black | retail's level |
+|---|---|---|---|
+| carota | 0.00, 99.5 % | 0.21, 45.7 % | 0.46 |
+| cavedoc | 0.02, 93.2 % | 0.31, 0.5 % | 0.40 |
+| cock01 | 0.03, 95.1 % | 0.35, 24.2 % | 0.60 |
+| Land | 0.20, 0.1 % | 0.40, 0.2 % | 0.45 |
+| LeCanyon | 0.00, 99.9 % | 0.46, 13.8 % | 0.45 |
+| marmite | 0.00, 99.9 % | 0.45, 26.9 % | 0.39 |
+| north | 0.22, 2.1 % | 0.44, 2.1 % | 0.41 |
+| pyramide | 0.01, 98.4 % | 0.48, 0.8 % | 0.58 |
+| sud0 | 0.29, 0.3 % | 0.56, 1.6 % | 0.33 |
+| Totalski | 0.24, 14.6 % | 0.63, 0.0 % | 0.41 |
+
+The outro's stage stays black: ambient and diffuse 0 in the data. Carota's dark vertices are its `sctrepair*` sectors,
+candle-lit rooms with radiosity exactly 0, lit by the dynamic lights (with them, over the demo, 38.7 % of what is drawn is
+black). Marmite's have real low radiosity. Both read as intended, but **nothing here has been seen on screen**.
+
+**Retail unchanged, checked:** every chunk but the stamp of all 42 retail .ttlv / .ttai identical to the old exporter's
+(691 chunks; the 6 lightmaps too), and 30 s of the demo on all 21 levels hashes the same through the old and new core:
+frames, 4,066,970 draws, no draw with lights of its own. The shaders' retail path has `first = extra = 0`. Shaders.metal compiles
+on the Mac the way the app does it (`MTLDevice.makeLibrary(source:)`, from a small headless program; it rejects the name
+clash an earlier draft had). The GLSL was only type-checked as C++: the Linux install compiles it.
+
+## Animation (read 2026-11-05)
+
+The player is `GAM\\PlayAnim` (FUN_00423080 poses a frame, FUN_004239b0 and FUN_00423730 run the clock and the state
+changes; no exported names, found through `POS_fn_vDecompressPosition`). Against the port's decoder, which was already
+close:
+- **Fixed:** a compressed matrix pointer of 1 means identity. The port took it for "no channel" and lost the object: 139
+  channel-frames of real parts in the levels' initial animations. Scales are unsigned.
+- **Same as the port:** `frame = ms x state speed (+0x3B) / 1000 % frames`, stepped (the port blends between frames: its
+  choice); hierarchy pairs index channel slots; slots stay put within an animation (1501 of 1501). `rec` byte 7 = 0 an
+  object, 2 none, always with object 0xFF.
+- **No effect in the data:** the half-rate mode (AnimRef +0x68: odd frames interpolated at run time) and the AnimRef
+  origin (+0x10: a state change moves the perso by the difference) are unset on all 291 initial-state animations; +0x6C too.
+  Only initial states were scanned.
+- **Not ported:** frame +4 (a 3x3) and +8, accumulated by FUN_00424fd0 / FUN_00425720: root motion, by the look. Only
+  matters once SE persos walk by their own AI.
+- **Open: the speed of SE props.** ttlv.ANIM_TIME_SCALE (0.25) was matched by eye on retail props in Wine and is unexplained:
+  the exe's formula says 1. It is applied to SE props too. Retail and SE props carry the same speeds (15, 25, 30), so the
+  data doesn't say the SE differs, and nobody has compared SE props with the original. The state clips (Ed, the cast) run
+  at 1.
 
 ## Crash found in the first playtest (fixed 2026-11-04)
 
@@ -330,7 +423,7 @@ SE arches play those four as retail does (`se.arch_frames`, on every SE material
 ## The outro (2026-11-05)
 
 SE outro is the end credits: a 12-triangle box (75 x 85 x 48, untextured, ambient and diffuse 0: black under the
-game's lighting; the grey you saw is the port's "Modern" lighting, the SE default) as a stage, 20 "cine" characters,
+game's lighting; the grey you saw was the port's "Modern" lighting, then the SE default) as a stage, 20 "cine" characters,
 two directors and a credits keeper. Its scripts read cleanly in retail numbering (`ai.se_translate`), and they now run
 in the core's cast: the first SE level whose own persos run (`cast.SE_CAST_LEVELS`).
 

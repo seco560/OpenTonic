@@ -244,7 +244,7 @@ def level_data(level, levels_dir=LEVELS, skier=False):
 
 def read_donor(path):
     """(texture paths, absolute; start; EDPL parts [(object, surface fields, geometry bytes)]; the EDPL bytes after
-    the parts (animations); LITE records of the EDPL parts, raw) of a retail .ttlv, or None without a player."""
+    the parts (animations); LITE records of the EDPL parts) of a retail .ttlv, or None without a player."""
     from .import_gltf import read_ed
     ed = read_ed(path)
     if ed is None:
@@ -265,7 +265,7 @@ def read_donor(path):
     recs = []
     for _ in range(n):
         runs, = struct.unpack_from('<I', lite, o + 24)
-        recs.append(lite[o:o + 28 + 20 * runs])
+        recs.append(lite[o:o + 24] + struct.pack('<I', 0))  # no centres: the SE has no per-object light test (ttlv.lite)
         o += 28 + 20 * runs
     return textures, start, parts, anims, recs[len(recs) - len(parts):]
 

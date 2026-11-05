@@ -69,8 +69,10 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
               u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
           u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
           u32 n_collision (= COLL's triangles), n x u16 sector (a static's sector, a perso's; 0xFFFF: always solid)
-  EDIT* u32 edition: 0 retail (also when absent), 1 the Special Edition (se.py). The viewer starts those in its
-        own lighting, not the game's (core TC_EDITION_SPECIAL).
+  EDIT* u32 edition: 0 retail (also when absent), 1 the Special Edition (se.py): the core's TC_EDITION_SPECIAL.
+  CHLT* after LITE: u16 n_sectors, u16 0, n_sectors x { u16 n, n x u16 light }: per sector, lights that reach only its
+        characters and water surfaces, not the static geometry (the Special Edition's static lights: docs/SE.md
+        "Lighting"). Absent: none, as on every retail level.
   LITE  the original's lighting (docs/DECOMP.md "Rendering and lighting"; reader core/src/tc_level.c):
           u16 n_lights, u16 0, n_lights x { u8 type (1 parallel, 2 spherical, 3 hotspot, 4 ambient), u8 on,
               u8 paint (+0xa6: spherical without N.L), u8 alpha_mode (+0xa7: 0 colour and alpha, 1 alpha only,
@@ -259,6 +261,11 @@ class LightmapAtlas:
         return gf.to_png(a, a, bytes(img))
 
 
+def lit_coefs(mat):
+    """A material's lighting coefficients, as LITE stores them."""
+    return (*mat.ambient[:3], *mat.diffuse[:3])
+
+
 def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
     """Append geo transformed by m to meshes[material] (created by new_mesh(material)), with the
     key's baked radiosity as rgba8 (alpha 0 = none, SKY_ALPHA = a sky's) and, given an atlas, per-triangle lightmap
@@ -276,10 +283,14 @@ def add_geometry(meshes, key, geo, m, new_mesh, atlas=None, group=None):
     norms = [rotate(m, n) for n in geo.normals] if geo.normals else None  # fine for uniform scale
     flip = level.mat_det(m) < 0
     for el in geo.elements:
-        mesh = meshes.get(el.material)
+        # the Special Edition lights an object through one material (level.Geometric.lit), so one surface can need two
+        # meshes; a mesh keeps its own texture and blending either way
+        lit = geo.lit if geo.lit and el.material and lit_coefs(geo.lit) != lit_coefs(el.material) else None
+        key_m = (el.material, lit_coefs(lit)) if lit else el.material
+        mesh = meshes.get(key_m)
         if mesh is None:
-            mesh = meshes[el.material] = dict(new_mesh(el.material), verts=[], index={}, indices=[], groups=[],
-                                              centres=[])
+            mesh = meshes[key_m] = dict(new_mesh(el.material), verts=[], index={}, indices=[], groups=[],
+                                        centres=[], lit=lit)
         mesh['groups'] += [group] * len(el.triangles)
         for k, tri in enumerate(el.triangles):
             uvt = el.uv_tris[k] if el.uv_tris else (None,) * 3
@@ -506,7 +517,8 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
-                         donor_lite))]
+                         donor_lite)),
+           ('CHLT', chlt(sect.sectors)) if data.se else None]
     chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),
             len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else donor_anims)
@@ -597,10 +609,12 @@ def lite(data, sectors, meshes, raw=()):
                 for f in sec.fogs]
     out.append(struct.pack('<I', len(meshes) + len(raw)))
     for m in meshes:
-        mat = m.get('material')
+        mat = m.get('lit') or m.get('material')
         ambient, diffuse = (mat.ambient[:3], mat.diffuse[:3]) if mat else ((0.5,) * 3, (0.0,) * 3)
         runs = []
-        for i, c in enumerate(m['centres']):
+        # no runs: each vertex is its own centre. The Special Edition has no per-object test of its spherical lights
+        # (GLI_vSendObjectToLights), only the per-vertex one, and this makes the two the same test.
+        for i, c in enumerate(() if data.se else m['centres']):
             if runs and runs[-1][2] == c:
                 runs[-1][1] += 1
             else:
@@ -608,6 +622,12 @@ def lite(data, sectors, meshes, raw=()):
         out.append(struct.pack('<6fI', *ambient, *diffuse, len(runs)))
         out += [struct.pack('<2I3f', first, count, *c) for first, count, c in runs]
     return b''.join(out) + b''.join(raw)
+
+
+def chlt(sectors):
+    """The CHLT chunk (module docstring)."""
+    return struct.pack('<HH', len(sectors), 0) + b''.join(
+        struct.pack(f'<H{len(s.char_lights)}H', len(s.char_lights), *s.char_lights) for s in sectors)
 
 
 def _anim_names(anims):

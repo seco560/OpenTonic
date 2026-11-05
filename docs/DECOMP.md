@@ -230,6 +230,8 @@ Each item is marked in the code or in docs/NOTES.md.
    snapshot's own perso sectors (sectorcheck). Left: moving persos' sectors (per-sector fog and lights: ported 2026-10-30).
 
 ## Rendering and lighting
+The Special Edition's, against this: docs/SE.md "Lighting" (same formula, other rules about which lights reach what).
+
 **Ported 2026-10-30** (docs/NOTES.md "Lighting: the original's formula"): the vertex colour formula, the sector lights
 (spherical with the per-object cull, parallel, ambient), the sector / env fog, the material coefficients; not
 hotspots, MS lights, the surface waves; the water effect (tint, wobble, lift) ported the same day (docs/NOTES.md "The water effect").

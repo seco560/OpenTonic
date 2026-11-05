@@ -445,7 +445,7 @@ import TonicCore
                                 camRight: SIMD4(SIMD3(f.cam_right), 0), camUp: SIMD4(SIMD3(f.cam_up), 0),
                                 lightNext: f.light_next, lightBlend: f.light_blend, lighting: f.lighting,
                                 ambientLight: SIMD4(f.ambient_light.0, f.ambient_light.1, f.ambient_light.2, 0),
-                                skyLight: SIMD4(f.sky_light.0, f.sky_light.1, f.sky_light.2, 0))
+                                skyLight: SIMD4(f.sky_light.0, f.sky_light.1, f.sky_light.2, f.special_water != 0 ? 1 : 0))
         enc.setDepthStencilState(depthState)
         enc.setCullMode(.none)  // winding of OpenSpace elements not yet confirmed
         enc.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -477,7 +477,7 @@ import TonicCore
             var params = DrawParams(model: float4x4(d.model), scroll: m.scroll, billboard: d.flags & TC_FLAG_BILLBOARD != 0 ? 1 : 0,
                                     ambient: SIMD4(d.ambient.0, d.ambient.1, d.ambient.2, 0),
                                     diffuse: SIMD4(d.diffuse.0, d.diffuse.1, d.diffuse.2, 0),
-                                    water: SIMD4(d.water_z, d.underwater != 0 ? 1 : 0, 0, 0))
+                                    water: SIMD4(d.water_z, d.underwater != 0 ? 1 : 0, Float(d.light_first), Float(d.light_extra)))
             enc.setVertexBytes(&params, length: MemoryLayout<DrawParams>.stride, index: 2)
             enc.setVertexBuffer(m.vertices, offset: 0, index: 0)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: Int(d.index_count), indexType: .uint32, indexBuffer: m.indices,

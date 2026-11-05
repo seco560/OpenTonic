@@ -20,7 +20,8 @@ layout(std140, set = 1, binding = 1) uniform DrawParams {
     uint billboard;        // 1: sprite quad (TC_FLAG_BILLBOARD), expanded towards the camera
     vec4 ambient;          // rgb: the material's ambient
     vec4 diffuse;          // rgb: the material's diffuse
-    vec4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater)
+    vec4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater);
+                           // z, w: this draw's own lights, after the frame's (tc_view_draw.light_first, light_extra)
 } d;
 
 // The frame's lights (tc_view_light; struct gpu_lights in src/view.c): spherical and parallel, world space.
@@ -48,13 +49,18 @@ vec4 baked(uint s) {
 
 // The original's vertex light (game_light in Shaders.metal; docs/DECOMP.md "Vertex colour"): the baked radiosity (none
 // on persos) plus the frame's lights, through the material: min(1, (acc x diffuse + ambient + G x diffuse) x 512 / 255).
-// Under the water effect: + the default tint by depth (GLIGLOU_00442ce0; Shaders.metal game_light).
+// Under the water effect: + the default tint by depth (GLIGLOU_00442ce0; Shaders.metal game_light); the Special
+// Edition's (u.skyLight.w): x a tint instead (GLI_vFogWaterPlaneEffect), and 510 for 512.
 vec3 game_light(vec4 bakedColor, vec3 world, vec3 n, vec3 centre) {
     // stored (R + 256) / 2 per channel (tc_level.h TC_RADIOSITY): R / 256, signed, as the exe adds it
     vec3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (510.0 / 256.0) - 1.0 : vec3(0.0);
-    if (d.water.y > 0.5) acc += vec3(-0.6, -0.3, -0.4) * clamp((d.water.x - world.z) / 7.0, 0.0, 1.0);
-    for (uint i = 0u; i < min(lights.count, 48u); i++) {
-        Light l = lights.light[i];
+    bool special = u.skyLight.w > 0.5;
+    if (d.water.y > 0.5 && !special) acc += vec3(-0.6, -0.3, -0.4) * clamp((d.water.x - world.z) / 7.0, 0.0, 1.0);
+    uint own = lights.count, first = uint(d.water.z), total = own + uint(d.water.w);  // the frame's, then this draw's
+    for (uint i = 0u; i < min(total, 48u); i++) {
+        uint k = i < own ? i : i + first;
+        if (k >= 48u) break;
+        Light l = lights.light[k];
         if (l.position.w < 1.5) {  // parallel
             acc += l.color.rgb * max(0.0, -dot(n, l.direction.xyz));
             continue;
@@ -70,17 +76,22 @@ vec3 game_light(vec4 bakedColor, vec3 world, vec3 n, vec3 centre) {
         if (nl <= 0.0) continue;
         acc += l.color.rgb * (d2 < near2 ? nl : nl * (far2 - d2) / (far2 - near2));
     }
+    if (d.water.y > 0.5 && special) acc *= mix(vec3(1.0), vec3(0.3, 0.8, 0.2), clamp((d.water.x - world.z) / 2.0, 0.0, 1.0));
     vec3 add = d.ambient.rgb + u.ambientLight.rgb * d.diffuse.rgb;
-    return clamp((acc * d.diffuse.rgb + add) * (512.0 / 255.0), 0.0, 1.0);
+    return clamp((acc * d.diffuse.rgb + add) * ((special ? 510.0 : 512.0) / 255.0), 0.0, 1.0);
 }
 
-// The water effect's wobble (GLIGLOU_00442ae0; underwater_wobble in Shaders.metal), in 640 x 480 pixels.
+// The water effect's wobble (GLIGLOU_00442ae0; underwater_wobble in Shaders.metal), in 640 x 480 pixels. The Special
+// Edition's (GLI_v2DWaterPlaneEffect): 2 past 1 deep at once, on a table of half a sine.
 vec4 underwater_wobble(vec4 clip, float depth, float eyeDepth) {
-    float amp = eyeDepth < 0.0 ? (depth > 5.0 ? 1.4 : 0.0) : (depth >= 0.0 ? 0.0 : 1.4 * clamp(-depth / 5.0, 0.0, 1.0));
+    bool special = u.skyLight.w > 0.5;
+    float amp = special ? ((eyeDepth < 0.0 ? depth > 1.0 : depth < -1.0) ? 2.0 : 0.0)
+              : eyeDepth < 0.0 ? (depth > 5.0 ? 1.4 : 0.0) : (depth >= 0.0 ? 0.0 : 1.4 * clamp(-depth / 5.0, 0.0, 1.0));
     if (amp <= 0.0 || clip.w <= 0.25) return clip;
     vec2 px = (clip.xy / clip.w * vec2(0.5, -0.5) + 0.5) * vec2(640.0, 480.0);
     float frame = floor(u.time * 60.0), k = 6.28318531 / 64.0;
-    px += 2.0 * vec2(cos((floor(px.x + 0.5) + frame) * k), cos((floor(px.y + 0.5) + 16.0 + frame) * k)) * amp;
+    vec2 phase = vec2(floor(px.x + 0.5), floor(px.y + 0.5) + 16.0) + frame;
+    px += 2.0 * (special ? sin(mod(phase, 64.0) * (k * 0.5)) : cos(phase * k)) * amp;
     clip.xy = ((px / vec2(640.0, 480.0) - 0.5) / vec2(0.5, -0.5)) * clip.w;
     return clip;
 }
@@ -99,7 +110,7 @@ void main() {
     vec3 real = world.xyz;
     bool water = d.water.y > 0.5 && d.billboard == 0u;
     float eyeDepth = u.eye.z - d.water.x;
-    if (water && eyeDepth >= 0.0) world.z += 0.7 * max(0.0, d.water.x - world.z);
+    if (water && eyeDepth >= 0.0) world.z += (u.skyLight.w > 0.5 ? 0.6 : 0.7) * max(0.0, d.water.x - world.z);
     gl_Position = u.viewProjection * world;
     vWorld = world.xyz;
     vUV2 = inUV2;

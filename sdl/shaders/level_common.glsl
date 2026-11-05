@@ -18,5 +18,5 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform Uniforms {
     float lightBlend;      // 0..1
     uint lighting;         // 0: the original's formula (tc_view_lighting TC_VL_GAME), 1: the port's earlier look
     vec4 ambientLight;     // rgb: the ambient lights' sum (G)
-    vec4 skyLight;         // rgb: the sky's light (day / night), for the water's sheen
+    vec4 skyLight;         // rgb: the sky's light (day / night), for the water's sheen; w: 1 the Special Edition's water
 } u;

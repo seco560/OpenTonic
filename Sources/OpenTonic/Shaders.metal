@@ -29,7 +29,7 @@ struct Uniforms {
     float lightBlend;        // 0..1
     uint lighting;           // 0: the original's formula (tc_view_lighting TC_VL_GAME), 1: the port's earlier look
     float4 ambientLight;     // rgb: the ambient lights' sum (G)
-    float4 skyLight;         // rgb: the sky's light (day / night), for the water's sheen
+    float4 skyLight;         // rgb: the sky's light (day / night), for the water's sheen; w: 1 the Special Edition's water
 };
 
 struct DrawParams {
@@ -38,7 +38,8 @@ struct DrawParams {
     uint billboard;          // 1: sprite quad (TC_FLAG_BILLBOARD), expanded towards the camera
     float4 ambient;          // rgb: the material's ambient
     float4 diffuse;          // rgb: the material's diffuse
-    float4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater)
+    float4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater);
+                             // z, w: this draw's own lights, after the frame's (tc_view_draw.light_first, light_extra)
 };
 
 // The frame's lights (tc_view_light): spherical and parallel, world space.
@@ -78,13 +79,19 @@ static float4 baked(VertexIn in, uint s) {
 // -N.direction where positive.
 // Under the water effect (GLIGLOU_00442ce0), before the material: + the engine's default tint (-0.6, -0.3, -0.4) x the
 // depth below the plane / 7, full from 7 deep (no level sets its own: visual environment +0 is null in all of them).
+// The Special Edition's (u.skyLight.w; docs/SE.md "Water"): after the lights, x a tint: (0.3, 0.8, 0.2) from 2 deep
+// (GLI_vFogWaterPlaneEffect, GLI_vInitWaterplaneModule; none of its levels sets its own either); and 510 for 512.
 static float3 game_light(float4 bakedColor, float3 world, float3 n, float3 centre, constant DrawParams &d,
                          constant Uniforms &u, constant Lights &lights) {
     // stored (R + 256) / 2 per channel (tc_level.h TC_RADIOSITY): R / 256, signed, as the exe adds it
     float3 acc = bakedColor.a > 0.25 ? bakedColor.rgb * (510.0 / 256.0) - 1.0 : float3(0.0);
-    if (d.water.y > 0.5) acc += float3(-0.6, -0.3, -0.4) * saturate((d.water.x - world.z) / 7.0);
-    for (uint i = 0; i < min(lights.count, 48u); i++) {
-        Light l = lights.light[i];
+    bool special = u.skyLight.w > 0.5;
+    if (d.water.y > 0.5 && !special) acc += float3(-0.6, -0.3, -0.4) * saturate((d.water.x - world.z) / 7.0);
+    uint own = lights.count, first = uint(d.water.z), total = own + uint(d.water.w);  // the frame's, then this draw's
+    for (uint i = 0; i < min(total, 48u); i++) {
+        uint k = i < own ? i : i + first;
+        if (k >= 48u) break;
+        Light l = lights.light[k];
         if (l.position.w < 1.5) {  // parallel
             acc += l.color.rgb * max(0.0, -dot(n, l.direction.xyz));
             continue;
@@ -100,21 +107,26 @@ static float3 game_light(float4 bakedColor, float3 world, float3 n, float3 centr
         if (nl <= 0.0) continue;
         acc += l.color.rgb * (d2 < near2 ? nl : nl * (far2 - d2) / (far2 - near2));
     }
+    if (d.water.y > 0.5 && special) acc *= mix(float3(1.0), float3(0.3, 0.8, 0.2), saturate((d.water.x - world.z) / 2.0));
     float3 add = d.ambient.rgb + u.ambientLight.rgb * d.diffuse.rgb;
-    return saturate((acc * d.diffuse.rgb + add) * (512.0 / 255.0));
+    return saturate((acc * d.diffuse.rgb + add) * ((special ? 510.0 : 512.0) / 255.0));
 }
 
 // The water effect's wobble (GLIGLOU_00442ae0), on the projected vertex in the original's 640 x 480 pixels: x and y
 // each move by 2 cos((pixel + frame) x 2 pi / 64) (y a quarter turn on) x an amplitude; the frame is the rendering
 // counter (DAT_004ec8ac; here 60 per second of the animation clock). The camera above the water: what is below it
 // wobbles, 1.4 from 5 deep, ramping from 0 at the surface; the camera below it (flag 8): only what is more than 5
-// above the water. Only in front of the camera.
+// above the water. Only in front of the camera. The Special Edition's (GLI_v2DWaterPlaneEffect): 2 past 1 deep at
+// once (no ramp), on a table of half a sine (its 64 entries step 2 pi / 128).
 static float4 underwater_wobble(float4 clip, float depth, float eyeDepth, constant Uniforms &u) {
-    float amp = eyeDepth < 0.0 ? (depth > 5.0 ? 1.4 : 0.0) : (depth >= 0.0 ? 0.0 : 1.4 * saturate(-depth / 5.0));
+    bool special = u.skyLight.w > 0.5;
+    float amp = special ? ((eyeDepth < 0.0 ? depth > 1.0 : depth < -1.0) ? 2.0 : 0.0)
+              : eyeDepth < 0.0 ? (depth > 5.0 ? 1.4 : 0.0) : (depth >= 0.0 ? 0.0 : 1.4 * saturate(-depth / 5.0));
     if (amp <= 0.0 || clip.w <= 0.25) return clip;
     float2 px = (clip.xy / clip.w * float2(0.5, -0.5) + 0.5) * float2(640.0, 480.0);
     float frame = floor(u.time * 60.0), k = 2.0 * M_PI_F / 64.0;
-    px += 2.0 * float2(cos((floor(px.x + 0.5) + frame) * k), cos((floor(px.y + 0.5) + 16.0 + frame) * k)) * amp;
+    float2 phase = float2(floor(px.x + 0.5), floor(px.y + 0.5) + 16.0) + frame;
+    px += 2.0 * (special ? sin(fmod(phase, float2(64.0)) * (k * 0.5)) : cos(phase * k)) * amp;
     clip.xy = ((px / float2(640.0, 480.0) - 0.5) / float2(0.5, -0.5)) * clip.w;
     return clip;
 }
@@ -137,7 +149,7 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
     float3 real = world.xyz;
     bool water = d.water.y > 0.5 && d.billboard == 0;
     float eyeDepth = u.eye.z - d.water.x;
-    if (water && eyeDepth >= 0.0) world.z += 0.7 * max(0.0, d.water.x - world.z);
+    if (water && eyeDepth >= 0.0) world.z += (u.skyLight.w > 0.5 ? 0.6 : 0.7) * max(0.0, d.water.x - world.z);
     out.position = u.viewProjection * world;
     out.world = world.xyz;
     out.uv2 = in.uv2;

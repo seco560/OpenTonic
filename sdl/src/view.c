@@ -21,7 +21,7 @@ typedef struct gpu_uniforms {
     uint32_t lighting;   /* tc_view_lighting: 0 the original's formula, 1 the port's earlier look */
     float pad;
     float ambient_light[4]; /* the ambient lights' sum (G) */
-    float sky_light[4];  /* the sky's light (day / night), for the water's sheen */
+    float sky_light[4];  /* the sky's light (day / night), for the water's sheen; w: tc_view_frame.special_water */
 } gpu_uniforms;
 _Static_assert(offsetof(gpu_uniforms, light_direction) == 64, "std140: vec3 at 64");
 _Static_assert(offsetof(gpu_uniforms, ambient) == 76, "std140: float packs after the vec3");
@@ -38,7 +38,7 @@ typedef struct gpu_draw_params {
     uint32_t pad;
     float ambient[4];    /* the material's (tc_view_draw) */
     float diffuse[4];
-    float water[4];      /* x: the water plane, y: 1 under the water effect (tc_view_draw.underwater) */
+    float water[4];      /* x: the water plane, y: 1 under the water effect (tc_view_draw.underwater); z, w: light_first, light_extra */
 } gpu_draw_params;
 _Static_assert(offsetof(gpu_draw_params, ambient) == 80, "std140: vec4 at 80");
 _Static_assert(sizeof(gpu_draw_params) == 128, "gpu_draw_params must match shaders/level.vert");
@@ -231,7 +231,7 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     params.pad = 0;
     vec4(params.ambient, tc_v3(d->ambient[0], d->ambient[1], d->ambient[2]), 0);
     vec4(params.diffuse, tc_v3(d->diffuse[0], d->diffuse[1], d->diffuse[2]), 0);
-    vec4(params.water, tc_v3(d->water_z, d->underwater ? 1.0f : 0.0f, 0), 0);
+    vec4(params.water, tc_v3(d->water_z, d->underwater ? 1.0f : 0.0f, (float)d->light_first), (float)d->light_extra);
     SDL_PushGPUVertexUniformData(c->cmd, 1, &params, sizeof params);
     SDL_DrawGPUIndexedPrimitives(c->pass, d->index_count, 1, m->first_index + d->first_index, m->vertex_offset, 0);
 }
@@ -267,7 +267,7 @@ void view_draw_frame(view *v, gpu_frame *f) {
     vec4(u.cam_up, fr.cam_up, 0);
     u.lighting = fr.lighting;
     vec4(u.ambient_light, tc_v3(fr.ambient_light[0], fr.ambient_light[1], fr.ambient_light[2]), 0);
-    vec4(u.sky_light, tc_v3(fr.sky_light[0], fr.sky_light[1], fr.sky_light[2]), 0);
+    vec4(u.sky_light, tc_v3(fr.sky_light[0], fr.sky_light[1], fr.sky_light[2]), fr.special_water ? 1.0f : 0.0f);
     static gpu_lights lights; /* 2.3 KB: off the stack */
     SDL_zero(lights);
     lights.count = fr.light_count;

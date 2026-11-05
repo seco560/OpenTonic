@@ -27,6 +27,30 @@
 
 4. **START WITH THIS** My headless scenarios are fragile. I had to fix castcheck several times today: teleports dropped Ed into holes, Super Ed timing, the level exit at the end of Transit's flig were the test, not the engine. Your playtests arethe real oracle, and right now they leave nothing reusable behind. If the frontends could record your input per tick, and the core could replay a recording headless, every playtest would become a regression test that follows real routes. I think that's the single best investment for "not having bugs forever
 
+   **Update 2026-11-05: agreed as the next piece of work, ahead of shooting.** Why it comes first, what the Special Edition lighting session added, and what the design has to respect.
+
+   *What it's for (user):* regression tests from real playthroughs; playing the user's own runs back in demo mode, in place of or next to the scripted wanderer; and material to learn from: how a person actually moves through a level, which the random demo can't show.
+
+   *Why now, measured:*
+   - Proving "retail unchanged" took hand-built probes that were thrown away afterwards. Recordings would make that check permanent and run on real routes, not the demo's wandering.
+   - The method worked and should become the replay check. Freeze the old code, then compare: every .ttlv / .ttai chunk but STMP (the stamp changes with any tools/ttre edit; TEXS and TRAN hold paths relative to the output folder), and a hash of everything the core hands a frontend, per frame. That was the frame fields, the lights, and each draw's mesh, texture, flags, range, model, material and water. All 21 retail levels, 30 s each, 4,066,970 draws: identical.
+   - Scripted checks still encode assumptions that go stale. sectorcheck "failed" 22 times on SE after the lighting change, and neither cause was a bug: a leftover toggle for the old default, and a retail-only rule. skicheck on SE was already at 3.4 % while the docs said 2.4 %. A check only says something if the same check is also run on the old build, so keep building the frozen binaries.
+
+   *What the core gives us (read 2026-11-05):*
+   - **It replays exactly when fed the same inputs.** Same level, seed and dt gave the same hash on repeated runs. Only sud0 was repeated, 300 frames, on one machine.
+   - **Inputs come through few doors:** tc_viewer_set_action, tc_viewer_mouse_look, tc_viewer_set_move_stick, tc_viewer_set_look_stick, then the toggles (closeup, first person, pause, Tab, AI, lighting, sectors...). Recording belongs in the core at those calls, so both frontends get it for free and it replays headless.
+   - **Record per update, not per tick.** The frontends pass a variable dt to tc_viewer_update; step_ai turns it into 30 Hz ticks with an accumulator and drops the backlog after 8 ticks. The camera runs on the frame, and it feeds Ed's AI (viewcheck's demo notes: anything that changes his inputs reshuffles the run). So a recording needs each frame's dt with its inputs. Recording only per tick would lose the camera's path.
+   - **Randomness:** the viewer's stream is seeded (tc_viewer_desc.seed, v->rng), so the seed goes in the recording's header.
+
+   *Open, to settle in the design:*
+   - A level change builds a new viewer (tc_viewer_carry), so a run is a chain of segments: level, edition, seed, carry, then frames.
+   - Tying a recording to its data: the converter stamp changes with any exporter edit, even when the level comes out the same. A replay that drifts after a real engine change should report where and how far (Ed's position per tick), not just fail, because some drift will be an intended fix.
+   - Mac against Linux: -ffp-contract=off keeps the arithmetic the same, but sinf and friends come from each system's libm, and the Mac is ARM. Whether a Mac recording replays exactly on the Linux box is unmeasured.
+   - For demo playback, a run has to be able to stop cleanly when the player takes over, and to survive a level the player hasn't got (one game's data only).
+   - Where recordings live: they follow the user's copies of the game, so like the game data they stay out of the repo unless they hold nothing of it (input only should be fine).
+
+   *Agreed order after this:* SE's 2,593 exported names mapped onto retail by code, then one game state (hit points, damage, inventory, story values across levels; shooting refinements fit here), then a Definitive Edition slice (sud0 and Totalski in both editions, with a cross-edition portal). The slice and that order are my proposal: the user has only confirmed recording so far.
+
 5. The docs need splitting. NOTES.md is about 1,750 lines of dated entries, and the README already warns it contradicts itself.
 For a formal engine design I'd keep NOTES as the lo subsystem: AI value model, cast, mechanics, sectors, rendering, camera. Each would say what was read from the exe, what's ported, which choices are the port's own, and what's open, and would be rewritten rather than appended to. Your new DIRECTION.md looks like the right top layer for that.
 

@@ -63,6 +63,9 @@ typedef struct tc_sector {
     tc_vec3 *floors;              /* 4 per face: v0, v1, v2, the stored face normal; faces up only */
     uint16_t light_count;
     uint16_t *lights;             /* into tc_level.lights (.ttlv LITE): lit with these when the frame is drawn from it */
+    uint16_t char_light_count;
+    uint16_t *char_lights;        /* .ttlv CHLT: these reach only its characters and water, not the static geometry,
+                                     which has them in its radiosity (the Special Edition's rule; none on retail) */
 } tc_sector;
 
 typedef struct tc_sector_group {

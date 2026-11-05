@@ -137,6 +137,7 @@ class Geometric:
     elements: list = field(default_factory=list)
     skipped: dict = field(default_factory=dict)  # element type -> count not handled
     sprites: list = field(default_factory=list)  # (vertex index of the centre, half width, half height, Material)
+    lit: 'Material' = None  # Special Edition: the material all its vertices are lit through (docs/SE.md "Lighting")
 
 
 @dataclass(eq=False)
@@ -171,6 +172,7 @@ class Sector:
     envs: list = field(default_factory=list)
     fogs: list = field(default_factory=list)  # per env: (near, far, (r, g, b)) of its visual environment, or None: off
     lights: list = field(default_factory=list)  # indices into LevelData.lights, in the order the exe pushes them
+    char_lights: list = field(default_factory=list)  # the same, reaching only its characters and water (the SE: se_lights)
     surfaces: list = field(default_factory=list)
     portals: list = field(default_factory=list)
     floors: list = field(default_factory=list)
@@ -300,7 +302,9 @@ class SeAnim:
     parents, pose). No A3D: the AnimationReference holds ptr frames (+0), u8 n_frames (+4), u8 speed, u8 n_channels;
     frame = 16 bytes {ptr channels, ptr f32 matrix, ptr f32 vector (both root motion, unread), ptr hierarchy (null, or
     {u32 n, ptr n x {u16 child, u16 parent}}: channel indices, as retail TT)}; channels = ptr[n_channels] -> {ptr
-    compressed matrix, u32 info: object-list index = low byte (0xFF none), channel id = byte 1}. Compressed matrix: u16
+    compressed matrix (the value 1: identity), u32 info: object-list index = low byte (0xFF none), channel id = byte 1,
+    kind = byte 3 (0 an object, 2 none: always with object 0xFF; the 4 the player knows: none seen)}. Read from GAM\\PlayAnim (FUN_00423080). A
+    channel keeps its slot through an animation (the 1501 of the initial states). Compressed matrix: u16
     flags, then if flags & 1 i16 position[3] / 512, & 2 i16 quaternion w, x, y, z / 32767, & 4 i16 uniform scale / 256,
     & 8 i16 scale[3] / 256 (the high nibble repeats which parts are set). A channel's matrix is relative to its parent
     in the frame's hierarchy, else to the perso. Samples between frames lerp position and scale and nlerp the
@@ -581,6 +585,10 @@ class LevelData:
                 t = self.texture(lv.ptr(e)) if e else None
                 lms.append(t if t and 'LIGHTMAP' in t.name.upper() else None)
             geo.elements.append(Element(self.material(lv.ptr(el, 0)), tris, uvt, uvs, lms if any(lms) else []))
+        if self.se:
+            # FUN_0045c2a0 computes the object's vertex colours once, on the first element, through that element's
+            # material (FUN_00466530, then FUN_004656d0); the triangle drawers never touch them
+            geo.lit = next((el.material for el in geo.elements if el.material), None)
         return geo
 
     def read_sprites(self, geo, el):
@@ -628,6 +636,9 @@ class LevelData:
             # Extra baked sets (day/night variants) exist only where ISI+4 is set (Land, sud0).
             so.color_sets = [so.colors] + ([self.radiosity(isi, so.lods, i) for i in (1, 2)]
                                            if isi and lv.ptr(isi, 4) else [])
+            if self.se and data:  # its one baked set sits elsewhere, in another record (se_radiosity)
+                so.colors = self.se_radiosity(lv.ptr(data, 4), so.lods)
+                so.color_sets = [so.colors]
         elif so.kind == 'perso' and data:
             so.perso = self.read_perso(data, so.world)
         c = lv.ptr(loc, 8)
@@ -671,6 +682,24 @@ class LevelData:
             ok = cp is not None and nc > 0
             out.append([self.un('3h', cp, 8 * k) for k in range(min(nc, nv))] + [(0, 0, 0)] * max(0, nv - nc)
                        if ok else None)
+        return out
+
+    def se_radiosity(self, isi, lods):
+        """Special Edition: IPO +4 -> baked per-vertex colours per LOD, as radiosity(). The SE's IPO holds the ISI at +4
+        and has nothing at +8, and the ISI is the radiosity itself: {i16 n_lod, ptr lods}, lod = {i16 n, ptr colors}
+        (ISI_fn_dGetVertexRLILOD, ISI_fn_xGetNbVertexRLILOD), one set, colours i16 r, g, b, a / 256 (ISI_ColISIToGEO; a
+        is 0 in all 11 levels). Retail grew the three sets behind IPO +8 from this. As many as the object has vertices
+        (FUN_0045afe0 copies the geometric's count, as retail): 8 IPOs have other counts."""
+        if isi is None:
+            return []
+        n_lod, = self.un('h', isi)
+        lp, out = self.lv.ptr(isi, 4), []
+        for i, geo in enumerate(lods[:n_lod] if lp else ()):
+            nc, = self.un('h', lp, 8 * i)
+            cp = self.lv.ptr(lp, 8 * i + 4)
+            nv = len(geo.vertices)
+            out.append([self.un('3h', cp, 8 * k) for k in range(min(nc, nv))] + [(0, 0, 0)] * max(0, nv - nc)
+                       if cp is not None and nc > 0 else None)
         return out
 
     def read_perso(self, loc, world):
@@ -740,11 +769,12 @@ class LevelData:
             for c in range(nc):
                 rec = lv.ptr(chs, 4 * c) if chs else None
                 m = lv.ptr(rec) if rec else None
-                if m is None:
-                    row.append((None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)))
-                    continue
-                obj = un('B', rec, 4)[0]
+                obj = un('B', rec, 4)[0] if rec else 0xFF
                 obj = None if obj == 0xFF else obj
+                if m is None:  # the value 1 instead of a pointer: identity (POS_fn_vDecompressPosition), object kept
+                    row.append((obj if rec and un('I', rec)[0] == 1 else None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0),
+                                (1.0, 1.0, 1.0)))
+                    continue
                 t, = un('H', m)
                 o, pos, q, sc = 2, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
                 if t & 1:
@@ -754,12 +784,12 @@ class LevelData:
                     w, x, y, z = (v / 32767 for v in un('4h', m, o))
                     q = (x, y, z, w)
                     o += 8
-                if t & 4:
-                    k = un('h', m, o)[0] / 256
+                if t & 4:  # scales unsigned (POS_fn_vDecompressPosition: & 0xffff)
+                    k = un('H', m, o)[0] / 256
                     sc = (k, k, k)
                     o += 2
                 if t & 8:
-                    sc = tuple(v / 256 for v in un('3h', m, o))
+                    sc = tuple(v / 256 for v in un('3H', m, o))
                 row.append((obj, pos, q, sc))
             frames.append(row)
         return SeAnim(state_speed or speed or 30, nf, frames, hier)
@@ -1355,13 +1385,14 @@ class LevelData:
                 node = lv.ptr(node, 4)
             # the lights pushed when the frame is drawn from this sector (FUN_00452410): +0x34, then +0x28 (with the
             # draw flags' and the sector's 0x8000, set in normal play); {ptr light, ptr next} nodes
-            for off in (0x34, 0x28):
+            # Special Edition: the same two lists under other rules (docs/SE.md "Lighting"): se_lights() below
+            for off, into in ((0x34, sec.lights), (0x28, sec.char_lights if self.se else sec.lights)):
                 node, seen = lv.ptr(data, off + sh), set()
                 while node is not None and node not in seen and len(seen) < 100:
                     seen.add(node)
                     light = lv.ptr(node)
-                    if light:
-                        sec.lights.append(self.light(light))
+                    if light and (not self.se or un('I', light)[0]):  # the SE's off ones only served the radiosity tool
+                        into.append(self.light(light))
                     node = lv.ptr(node, 4)
             node = lv.ptr(data, 0x10 + sh)
             while node is not None and len(sec.surfaces) < 64:
@@ -1398,8 +1429,23 @@ class LevelData:
                 {i for i, sec in enumerate(out) if getattr(sec, 'se_priority', SE_BACKDROP) != SE_BACKDROP}
             for i, sec in enumerate(out):
                 sec.collide = sorted(solid - {i})
+            self.se_lights(out)
         self._sectors = out
         return out
+
+    @staticmethod
+    def se_lights(sectors):
+        """Special Edition: its lighting rule (SCT_fn_vSendSectorWhereIAmToViewport) in the terms of retail's, which is
+        "these lights, for the whole frame" per sector. A frame drawn from sector s first pushes the dynamic lights (data
+        +0x38) of s and of every sector on its list, for all of the frame (FUN_0049a500): that is sec.lights, the union
+        written out. Each drawn sector then pushes its own static lights (+0x2C) only *after* its static geometry
+        (FUN_00499a70, FUN_00499db0: draw flag 0x8000, set in every level's .gpt), for its water surfaces and characters:
+        sec.char_lights. Static geometry has them in its radiosity already. The exe caps the frame at 50 lights and
+        would count a light two sectors list twice; here each once."""
+        own = [list(sec.lights) for sec in sectors]
+        for i, sec in enumerate(sectors):
+            union = own[i] + [l for t, _ in sec.visible for l in own[t]]
+            sec.lights = list(dict.fromkeys(union))[:50]
 
     def light(self, loc):
         """The index in self.lights of the light record at loc (read once)."""
@@ -1408,7 +1454,9 @@ class LevelData:
             raw = loc[0].data[loc[1]:loc[1] + 0x100]
             m = un('12f', loc, 0x28)  # position, then the 3x3 rows
             self._light_index[loc] = len(self.lights)
-            self.lights.append(Light(un('I', loc, 8)[0], un('I', loc)[0], raw[0xa6], raw[0xa7], un('f', loc, 0x10)[0],
+            # the SE's record ends at +0xa4 (GLI_xCreateLight): no paint or alpha modes
+            self.lights.append(Light(un('I', loc, 8)[0], un('I', loc)[0], 0 if self.se else raw[0xa6],
+                                     0 if self.se else raw[0xa7], un('f', loc, 0x10)[0],
                                      un('f', loc, 0xc)[0], m[0:3], (m[5], m[8], m[11]), un('4f', loc, 0x94)))
         return self._light_index[loc]
 

@@ -657,6 +657,12 @@ static bool mesh_ranges(tc_viewer *v, const uint32_t *piece_ranges) {
 
 /* ---- lighting (TC_VL_GAME) ---- */
 
+/* What a sector's characters get on top of the frame's lights (tc_sector.char_lights). */
+struct tc_viewer_char_lit {
+    uint32_t first, count;  /* in tc_viewer.char_lights */
+    float ambient[3];       /* its ambient lights' sum */
+};
+
 /* The original's vertex light for a stored baked colour channel (TC_RADIOSITY) without lights. */
 static float formula_light(uint32_t byte, float ambient, float diffuse) {
     return fminf(1, fmaxf(0, (TC_RADIOSITY(byte) / 256 * diffuse + ambient) * (512.0f / 255)));
@@ -694,6 +700,67 @@ static uint16_t camera_sector(const tc_viewer *v) {
     uint16_t s = tc_viewer_ed_sector(v);
     if (s == TC_SECTOR_NONE || !v->play) return s;
     return tc_sectors_cross(v->sectors, s, tc_v3_add(v->play->player.position, tc_v3(0, 0, 1.1f)), v->camera.position);
+}
+
+static void view_light(tc_view_light *o, const tc_light *L, float w) {
+    uint32_t k;
+    o->position[0] = L->position.x, o->position[1] = L->position.y, o->position[2] = L->position.z;
+    o->position[3] = (float)L->type;
+    o->direction[0] = L->direction.x, o->direction[1] = L->direction.y, o->direction[2] = L->direction.z;
+    o->direction[3] = L->near_range;
+    for (k = 0; k < 3; k++) o->color[k] = L->color[k] * w;
+    o->color[3] = L->far_range;
+}
+
+/* Sector s's characters' lights into the frame's share, while there is room (the frame's own lights come first). */
+static void gather_char_lights(tc_viewer *v, uint16_t s) {
+    const tc_sector *sec = &v->sectors->sectors[s];
+    struct tc_viewer_char_lit *lit = &v->sector_lit[s];
+    uint32_t k, c;
+    if (lit->count || lit->ambient[0] || lit->ambient[1] || lit->ambient[2]) return; /* done */
+    lit->first = v->char_light_count;
+    for (k = 0; k < sec->char_light_count; k++) {
+        const tc_light *L = &v->level->lights[sec->char_lights[k]];
+        if (!L->on) continue;
+        if (L->type == TC_LIGHT_AMBIENT) {
+            for (c = 0; c < 3; c++) lit->ambient[c] += L->color[c];
+        } else if ((L->type == TC_LIGHT_SPHERICAL || L->type == TC_LIGHT_PARALLEL) &&
+                   v->char_light_count < TC_VIEW_MAX_LIGHTS) { /* hotspots: not read yet, as in tc_viewer_frame */
+            view_light(&v->char_lights[v->char_light_count++], L, 1);
+            lit->count++;
+        }
+    }
+}
+
+/* The sector a perso's lights come from: where it is now, for those that move. */
+static uint16_t perso_light_sector(const tc_viewer *v, uint32_t i) {
+    const tc_cast_actor *a = v->playing && v->play && v->play->has_cast && v->play->use_ai
+                                 ? tc_cast_actor_of(&v->play->cast, i) : NULL;
+    if (a && a->sector.sector < v->sectors->count) return a->sector.sector;
+    return v->sectors->perso_count == v->level->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
+}
+
+static const uint8_t *shown_sectors(tc_viewer *v);
+
+/* Each frame, the shown sectors' characters' lights: Ed's and the camera's sector first, then those of the sectors with
+ * a perso in them (the exe's limit is 50 lights at once; a sector past TC_VIEW_MAX_LIGHTS keeps its ambient only). */
+static void update_char_lights(tc_viewer *v) {
+    const tc_sectors *s = v->sectors;
+    const uint8_t *shown;
+    uint16_t ed, k;
+    uint32_t i;
+    v->char_light_count = 0;
+    if (!v->sector_lit) return;
+    memset(v->sector_lit, 0, s->count * sizeof *v->sector_lit);
+    if (v->lighting != TC_VL_GAME) return;
+    shown = shown_sectors(v);
+    ed = tc_viewer_ed_sector(v);
+    if (ed < s->count) gather_char_lights(v, ed);
+    if (v->light_sector < s->count) gather_char_lights(v, v->light_sector);
+    for (i = 0; i < v->level->perso_count; i++) {
+        k = perso_light_sector(v, i);
+        if (k < s->count && (!shown || (shown[k] & TC_SHOWN_SECTOR))) gather_char_lights(v, k);
+    }
 }
 
 static void update_lighting(tc_viewer *v, float dt) {
@@ -736,6 +803,7 @@ static void update_lighting(tc_viewer *v, float dt) {
     v->sector_fog_strength += env ? step : -step;
     v->sector_fog_strength = v->sector_fog_strength < 0 ? 0 : v->sector_fog_strength > 1 ? 1 : v->sector_fog_strength;
     v->lights_started = true;
+    update_char_lights(v);
 }
 
 tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
@@ -766,9 +834,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         memcpy(v->fog_color, l->fog_rgb, sizeof(v->fog_color));
     }
     v->light_set_count = l->light_set_count > 1 ? l->light_set_count : 1;
-    /* The Special Edition's levels start in the port's lighting: its original data shows issues under the game's
-     * formula, probably engine changes before release (docs/SE.md). The toggle still offers it. */
-    v->lighting = l->has_lighting && l->edition != TC_EDITION_SPECIAL ? TC_VL_GAME : TC_VL_PORT;
+    v->lighting = l->has_lighting ? TC_VL_GAME : TC_VL_PORT;
     if (l->light_count) {
         v->light_weight = (float *)tc_calloc(l->light_count, sizeof(float));
         v->light_wanted = (uint8_t *)tc_calloc(l->light_count, 1);
@@ -799,6 +865,14 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
             tc_viewer_free(v);
             return TC_ERR_OUT_OF_MEMORY;
         }
+        for (i = 0; i < v->sectors->count && !v->sector_lit; i++)
+            if (v->sectors->sectors[i].char_light_count) {
+                v->sector_lit = (struct tc_viewer_char_lit *)tc_calloc(v->sectors->count, sizeof *v->sector_lit);
+                if (!v->sector_lit) {
+                    tc_viewer_free(v);
+                    return TC_ERR_OUT_OF_MEMORY;
+                }
+            }
     }
     if (!split_transparent(v, &piece_ranges)) {
         tc_free(piece_ranges);
@@ -931,6 +1005,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->mesh_ranges);
     tc_free(v->ranges);
     tc_free(v->light_weight);
+    tc_free(v->sector_lit);
     tc_free(v->light_wanted);
     tc_free(v->light_instant);
     memset(v, 0, sizeof(*v));
@@ -2073,7 +2148,9 @@ static void sort_blended(tc_viewer *v, uint32_t n) {
 static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *model, uint32_t first, uint32_t count,
                      float water) {
     const tc_mesh *m = v->meshes[mesh];
+    const struct tc_viewer_char_lit *lit;
     tc_view_draw *d;
+    uint32_t k;
     if (!drawable(m) || count == 0) return;
     if (m->surface.flags & TC_FLAG_TRANSPARENT) {
         if (!reserve(&v->blended, &v->blended_cap, dl->blended_count + 1)) return;
@@ -2092,6 +2169,15 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     memcpy(d->diffuse, m->surface.diffuse, sizeof(d->diffuse));
     d->underwater = !isnan(water);
     d->water_z = d->underwater ? water : 0;
+    d->light_first = d->light_extra = 0;
+    /* its sector's characters' lights; a water surface: the frame's sector's, drawn in that sector's pass */
+    lit = v->sector_lit && !v->draw_lit && is_water(v, mesh) && v->light_sector < v->sectors->count
+              ? &v->sector_lit[v->light_sector] : v->draw_lit;
+    if (lit) {
+        d->light_first = lit->first;
+        d->light_extra = lit->count;
+        for (k = 0; k < 3; k++) d->ambient[k] += lit->ambient[k] * d->diffuse[k];
+    }
 }
 
 /* A mesh whole, or with `shown` (NULL: all) the runs of its ranges whose group is shown, each run of consecutive shown
@@ -2208,6 +2294,10 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
          * rate and playback speed. Visibility follows the earlier sample. */
         world = tc_mat4_from34(&p->world);
         sec = v->sectors && v->sectors->perso_count == l->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
+        if (v->sector_lit) {
+            uint16_t ls = perso_light_sector(v, i);
+            v->draw_lit = ls < v->sectors->count ? &v->sector_lit[ls] : NULL;
+        }
         z = water && sec < v->sectors->count ? v->sector_water[sec] : NAN; /* drawn in its sector's pass */
         actor = v->playing && v->play && v->play->has_cast && v->play->use_ai ? tc_cast_actor_of(&v->play->cast, i) : NULL;
         if (!actor && v->spawn_prso && v->spawn_prso[i]) continue;
@@ -2259,6 +2349,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
                                                                : tc_player_model_matrix(&v->play->player);
         sec = tc_viewer_ed_sector(v);
         z = water && sec != TC_SECTOR_NONE && sec < v->sectors->count ? v->sector_water[sec] : NAN;
+        v->draw_lit = v->sector_lit && sec < v->sectors->count ? &v->sector_lit[sec] : NULL;
         for (ch = 0; ch < nch; ch++) {
             uint16_t obj = a->shown[s.s0 * nch + ch];
             tc_mat4 m, world;
@@ -2273,6 +2364,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         }
     }
 
+    v->draw_lit = NULL;
     *opaque_count = dl.count;
     sort_blended(v, dl.blended_count);
     v->draw_count = 0; /* set below, once the list is whole */
@@ -2339,13 +2431,12 @@ void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
         if ((L->type != TC_LIGHT_SPHERICAL && L->type != TC_LIGHT_PARALLEL) || out->light_count >= TC_VIEW_MAX_LIGHTS)
             continue; /* hotspots: not read yet (docs/DECOMP.md) */
         o = &out->lights[out->light_count++];
-        o->position[0] = L->position.x, o->position[1] = L->position.y, o->position[2] = L->position.z;
-        o->position[3] = (float)L->type;
-        o->direction[0] = L->direction.x, o->direction[1] = L->direction.y, o->direction[2] = L->direction.z;
-        o->direction[3] = L->near_range;
-        for (k = 0; k < 3; k++) o->color[k] = L->color[k] * w;
-        o->color[3] = L->far_range;
+        view_light(o, L, w);
     }
+    /* the draws' own (tc_view_draw.light_first) */
+    for (i = 0; game && i < v->char_light_count && out->light_count + i < TC_VIEW_MAX_LIGHTS; i++)
+        out->lights[out->light_count + i] = v->char_lights[i];
+    out->special_water = l->edition == TC_EDITION_SPECIAL;
 }
 
 bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {

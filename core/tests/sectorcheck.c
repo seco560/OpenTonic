@@ -41,7 +41,7 @@ static float formula(float radiosity, float ambient, float diffuse) {
 
 static void lighting_check(const char *file, const tc_level *l) {
     const tc_sectors *s = &l->sectors;
-    uint32_t i, k, most = 0, fogs = 0, envs = 0, uncentred = 0, verts = 0, baked = 0, spheres = 0, persos = 0, flat = 0;
+    uint32_t i, k, most = 0, fogs = 0, envs = 0, uncentred = 0, unbaked = 0, verts = 0, baked = 0, spheres = 0, persos = 0, flat = 0;
     double old_sum = 0, new_sum = 0;
     tc_viewer v;
     tc_viewer_desc desc;
@@ -63,6 +63,7 @@ static void lighting_check(const char *file, const tc_level *l) {
             const tc_vertex *x = &m->vertices[k];
             uint32_t a = x->color[0] >> 24, r = x->color[0] & 0xFF;
             verts++;
+            unbaked += a < 64;
             uncentred += x->centre[0] == x->position[0] && x->centre[1] == x->position[1] && x->centre[2] == x->position[2];
             if (a != 255 || x->uv2[0] >= 0) continue; /* skies, unbaked, lightmapped */
             baked++;
@@ -80,8 +81,16 @@ static void lighting_check(const char *file, const tc_level *l) {
            "at their own position; red of the baked ones, old %.2f -> formula %.2f; perso parts flat %u of %u\n",
            l->light_count, spheres, most, fogs, envs, uncentred, verts, baked ? old_sum / baked : 0,
            baked ? new_sum / baked : 0, flat, persos);
-    if (most > TC_VIEW_MAX_LIGHTS || uncentred * 100 > verts) {
+    /* Retail tests a spherical light against the object's centre; the Special Edition has no such test, so there every
+     * vertex is its own centre (ttlv.lite). */
+    if (most > TC_VIEW_MAX_LIGHTS ||
+        (l->edition == TC_EDITION_SPECIAL ? uncentred != verts : uncentred * 100 > verts)) {
         printf("  FAIL: too many lights in a sector, or vertices without their object's centre\n");
+        failures++;
+    }
+    /* The Special Edition's radiosity sits elsewhere than retail's (level.se_radiosity): without it, its levels are black. */
+    if (l->edition == TC_EDITION_SPECIAL && unbaked * 20 > verts) {
+        printf("  FAIL: %u of %u static vertices have no radiosity\n", unbaked, verts);
         failures++;
     }
     memset(&desc, 0, sizeof desc);
@@ -92,8 +101,6 @@ static void lighting_check(const char *file, const tc_level *l) {
         failures++;
         return;
     }
-    /* The Special Edition's levels start in the port's lighting (tc_level.edition); this checks the game's, so cycle to it. */
-    if (l->edition == TC_EDITION_SPECIAL && l->has_lighting) tc_viewer_cycle_lighting(&v);
     tc_viewer_update(&v, 1.0f / 60);
     f = (tc_view_frame *)malloc(sizeof *f);
     tc_viewer_frame(&v, 16.0f / 9, f);

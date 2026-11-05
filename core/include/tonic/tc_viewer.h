@@ -42,6 +42,10 @@ typedef struct tc_view_draw {
      * below the plane z = water_z; 0: not. See TC_VIEW_UNDERWATER_ALL. */
     uint32_t underwater;
     float water_z;
+    /* TC_VL_GAME: lights of this draw alone, after the frame's: tc_view_frame.lights[light_count + light_first ..],
+     * light_extra of them (a sector's characters' lights, tc_sector.char_lights; 0 on retail levels). Its sector's
+     * ambient lights are in `ambient` already (ambient + G x diffuse is one sum). */
+    uint32_t light_first, light_extra;
 } tc_view_draw;
 
 /* The water plane of a sector whose first environment is already water (FUN_00451e80: z 9000, everything below it). */
@@ -64,7 +68,9 @@ typedef enum tc_view_lighting { TC_VL_GAME, TC_VL_PORT, TC_VL_COUNT } tc_view_li
  *   spherical: when the object's centre (tc_vertex.centre) is within far and the vertex nearer than far, facing it:
  *              colour x N.L, x (far^2 - d^2) / (far^2 - near^2) beyond near;
  *   parallel:  colour x -N.direction where positive;
- *   light = min(1, (radiosity x 255 / 256 + the lights) x diffuse + ambient + ambient_light x diffuse) x 512 / 255). */
+ *   light = min(1, (radiosity x 255 / 256 + the lights) x diffuse + ambient + ambient_light x diffuse) x 512 / 255).
+ * A draw can have lights of its own after these (tc_view_draw.light_first): the Special Edition's static lights, which
+ * reach characters and water only (tc_sector.char_lights; docs/SE.md "Lighting"). Its vertices are their own centres. */
 #define TC_VIEW_MAX_LIGHTS 48
 #define TC_VIEW_LIGHT_FADE 0.5f
 /* The sector the frame's lights and fog come from is the camera's, as the original's frame routine picks it: walked
@@ -99,7 +105,8 @@ typedef struct tc_view_frame {
     float ambient_light[3];   /* TC_VL_GAME: the ambient lights' sum (G) */
     float sky_light[3];       /* TC_VL_GAME: the sky's light under the formula, for the water's sheen (day / night);
                                  TC_VL_PORT: 1 */
-    uint32_t light_count;
+    uint32_t special_water;   /* the Special Edition's water effect, not retail's (the shaders; docs/SE.md "Water") */
+    uint32_t light_count;     /* lights[0 .. light_count): every draw's; those after: some draws' (tc_view_draw) */
     tc_view_light lights[TC_VIEW_MAX_LIGHTS];
 } tc_view_frame;
 
@@ -185,6 +192,12 @@ typedef struct tc_viewer {
     uint8_t *light_wanted;
     uint8_t *light_instant;   /* per light: an effect light (a channel < 0 or > 1), switched at once, never faded */
     uint16_t light_sector;    /* the sector the lights and fog come from: the camera's (the original's choice) */
+    /* The characters' lights this frame (tc_sector.char_lights): per sector its share of char_lights and its ambient
+     * lights' sum, NULL on levels without any. draw_lit: what add_draw gives the draws being added (NULL: nothing). */
+    struct tc_viewer_char_lit *sector_lit;
+    const struct tc_viewer_char_lit *draw_lit;
+    tc_view_light char_lights[TC_VIEW_MAX_LIGHTS];
+    uint32_t char_light_count;
     bool lights_started;      /* the first update sets the weights and the fog at once */
     float sector_fog_near, sector_fog_far, sector_fog_color[3], sector_fog_strength;
     bool has_sector_fog;      /* a sector has fog in sight (near < 10000; the engine's default is 20000) */

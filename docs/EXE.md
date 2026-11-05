@@ -25,6 +25,15 @@ The SE disc's game exe (`MAID3DVR.EXE`, 1998, build 8.5.2; files/sources/se, doc
 numbering (`tools/exe/se_names.py`, `tools/exe/se_ai_map.tsv`). The engine functions are not mapped yet: matching SE
 functions to this exe's by code would name much of it.
 
+Full dump, as retail's below (2026-11-05, 5,085 functions, with its export names; not typed):
+```
+$GHIDRA_INSTALL_DIR/support/analyzeHeadless files/out/_decomp_artifacts/se_ghidra SE -import files/sources/se/MAID3DVR.EXE \
+  -overwrite -scriptPath tools/ghidra -postScript DumpAll.java files/out/_decomp_artifacts/se_all
+```
+`tools.exe.xref` reads retail's only: grep `se_all/c`, or `se_all/index.json` (callees by address). Beware identical
+functions folded under one export name: `_SND_fn_bCanSetOptions_0` called from the light code is a stub returning 1, and
+`COL_fn_vCollideDynamicElementAlignedBoxesWithStaticElements` in the GLI driver table is an empty one.
+
 ## Copy protection
 - **Layer 1, packer:** decrypts the image at startup. Not present in the dump.
 - **Layer 2, CD module** (`CD_fn_*` in `tools/exe/names.tsv`, 0x48ED40–0x48F4B0):
