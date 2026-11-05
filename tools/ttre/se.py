@@ -441,6 +441,21 @@ def heading_deg(m):
     return int(round(math.degrees(math.atan2(m[4], m[0]) + math.pi / 2))) % 360
 
 
+# Port choice (user, 2026-11-05: "make him stop a bit in front, like he does with the Retail portals"): the SE arches'
+# own zone (every arch: the gen_arche box, x +-1.25 across the opening, y +-1.2 through it) catches Ed already in the
+# opening, so the retail walk-in (B68: to 4.5 in front of the arch, ChangeStateByDirection(dsg99, (0, -4.5, 0))) walked
+# him back out first. Retail's hub arches capture within radius 4 (PORT, no zone) instead. The SE box keeps its width
+# and height and reaches SE_ARCH_REACH along the arch's y on both sides: Ed is caught about that far out, walks on to
+# 4.5 in front, stops and steps in.
+SE_ARCH_REACH = 5.0
+
+
+def arch_capture(prims, reach=SE_ARCH_REACH):
+    """An SE arch's zone primitives (in its axes) deepened along y to +-reach: boxes (kind 8) only."""
+    return [(k, (a[0], min(a[1], -reach), a[2]), (b[0], max(b[1], reach), b[2])) if k == 8 else (k, a, b)
+            for k, a, b in prims]
+
+
 def se_portals(data, levels_dir=LEVELS):
     """The SE level's portals as retail-style records: [(position, rows, perso id, zone prims, inverse, capture ops,
     fire ops, instance)], names in `names` (level and place names the ops index). An SE portal is a level perso that,
@@ -518,6 +533,7 @@ def se_portals(data, levels_dir=LEVELS):
         prims = dict(cast.zones(data, p.loc, a)).get(zone_k) if zone_k else None
         if not prims or len({x[0].lower() for x in actions}) != 1:
             continue  # not a portal, or its destination is not decided by its own dsgvars
+        prims = arch_capture(prims)
         dest, place, cam = actions[0]
         if dest.lower() == lv.name.lower():
             continue  # a reload of this level (sud0's Doc barge), not a way out

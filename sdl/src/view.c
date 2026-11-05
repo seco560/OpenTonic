@@ -309,7 +309,7 @@ void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_
     switch (o->kind) {
     case TC_VO_MASK: mode = 0; break;
     case TC_VO_LOGO: mode = 1; break;
-    case TC_VO_BLACK: case TC_VO_LOADING: mode = 2; break;
+    case TC_VO_BLACK: case TC_VO_LOADING: case TC_VO_PICTURE: mode = 2; break;
     default: return;
     }
     SDL_GPUTexture *tex = v->effects && o->texture >= 0 && (uint32_t)o->texture < v->effect_count ? v->effects[o->texture] : NULL;

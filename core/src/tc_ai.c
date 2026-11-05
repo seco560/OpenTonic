@@ -475,6 +475,24 @@ tc_result tc_ai_model_load_scripts(tc_ai_model *m, const uint8_t *data, size_t s
     return e;
 }
 
+tc_result tc_ai_model_load_tables(tc_ai_model *m, const uint8_t *data, size_t size) {
+    reader r;
+    uint32_t i;
+    r.data = data;
+    r.size = size;
+    r.offset = 0;
+    r.error = TC_OK;
+    m->string_count = rd_u16(&r);
+    m->strings = (char **)rd_array(&r, m->string_count, sizeof(char *), 2);
+    if (!m->strings) m->string_count = 0;
+    for (i = 0; i < m->string_count; i++) m->strings[i] = rd_string(&r);
+    m->vector_count = rd_u16(&r);
+    m->vectors = (tc_vec3 *)rd_array(&r, m->vector_count, sizeof(tc_vec3), 12);
+    if (!m->vectors) m->vector_count = 0;
+    for (i = 0; i < m->vector_count; i++) m->vectors[i] = rd_vec3(&r);
+    return r.error;
+}
+
 tc_result tc_ai_model_load_dsg(tc_ai_model *m, const uint8_t *data, size_t size) {
     reader r;
     tc_result e;
@@ -1593,6 +1611,42 @@ static uint32_t procedure(run *r, uint32_t i) {
             p->motion.teleport_set = true;
             p->motion.teleport = argv3(r, i, 1);
         }
+        return 0;
+    }
+    case 177: case 178: case 180: { /* the camera's mode (record +0x98), its focal (+0x8C; (cam, 0, angle): the second
+                                     * argument not read) and its target (cine +0x10, GAM_004311f0): tc_ai_globals */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        int16_t mode = g->cam_mode;
+        int32_t cam_perso = g->cam_perso, target = g->cam_target;
+        float focal = g->cam_focal;
+        if (c == 177) {
+            value cam = arg(r, i, 0);
+            mode = (int16_t)as_int(arg(r, i, 1));
+            cam_perso = cam.type != V_PERSO ? 0 : cam.i == 0 ? p->self_id : cam.i;
+        }
+        else if (c == 178) focal = argf(r, i, 2);
+        else {
+            value who = arg(r, i, 1);
+            target = who.type != V_PERSO ? 0 : who.i == 0 ? p->self_id : who.i;
+        }
+        /* a change counts (the outro's POC_GenVisee repeats its focal every frame: the same direction, not a new one) */
+        if (mode != g->cam_mode || cam_perso != g->cam_perso || target != g->cam_target || focal != g->cam_focal) {
+            g->cam_mode = mode, g->cam_perso = cam_perso, g->cam_target = target, g->cam_focal = focal;
+            g->cam_serial++;
+        }
+        return 0;
+    }
+    case 210: { /* DisplayVignetteDuring(picture, ms): queued for the host (tc_ai_globals.vignette) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        uint32_t s = arg_param(r, i, 0);
+        const char *name = s < p->model->string_count ? p->model->strings[s] : NULL;
+        int32_t ms = as_int(arg(r, i, 1));
+        size_t k;
+        if (!name) return 0;
+        for (k = 0; name[k] && k + 1 < sizeof(g->vignette); k++) g->vignette[k] = name[k];
+        g->vignette[k] = 0;
+        g->vignette_ms = ms > 0 ? (uint32_t)ms : 0;
+        g->vignette_serial++;
         return 0;
     }
     case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */

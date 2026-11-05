@@ -74,12 +74,13 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->main_actor = c->main_id;
     p->self_id = e->id;
     p->globals = &c->globals;
+    p->level_name = c->main ? c->main->level_name : NULL; /* LevelIs (COND 62): the level, as for the main actor */
     p->active = e->active != 0;
     p->dead = e->dead != 0;
     p->reinit = e->reinit != 0;
     p->keep_off_main = !(e->flags & TC_CAST_MAY_FORCE_MAIN);
     p->zones_of = e;
-    p->removal_guard = true;
+    p->removal_guard = !(e->flags & TC_CAST_SCENE); /* a scene's actors take themselves out wherever Ed is */
     p->run_mechanics = e->mechanics;
     p->run_animation = e->animation;
     p->radius2 = e->radius2;
@@ -139,6 +140,11 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
         r = tc_ai_model_load_scripts(&a->model, e->scripts, e->size);
         if (r == TC_ERR_OUT_OF_MEMORY) goto oom;
         if (r != TC_OK) continue; /* unreadable scripts: left out */
+        if (e->tables_size && (r = tc_ai_model_load_tables(&a->model, e->tables, e->tables_size)) != TC_OK) {
+            tc_ai_model_free(&a->model);
+            if (r == TC_ERR_OUT_OF_MEMORY) goto oom;
+            continue;
+        }
         a->model.states = c->states[e->family];
         a->model.state_count = f->state_count;
         a->model.initial_state = e->initial_state < f->state_count ? e->initial_state : 0;
@@ -310,6 +316,26 @@ void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_secto
         for (i = 0; i < c->count; i++)
             if (((c->actors[i].entry->flags & TC_CAST_RUN_FIRST) != 0) == (pass == 0))
                 step_actor(c, &c->actors[i], dt, s, main_sector, main_pos);
+}
+
+bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
+    tc_ai_perso *q = c && c->by_id ? cast_find((void *)c, id) : (c && id == c->main_id ? c->main : NULL);
+    if (!q) return false;
+    *out = q->position;
+    return true;
+}
+
+bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
+    uint32_t i;
+    for (i = 0; c && i < c->level->cast.ghost_count; i++)
+        if (c->level->cast.ghosts[i].id == id) { *out = c->level->cast.ghosts[i].position; return true; }
+    for (i = 0; c && i < c->level->cast.count; i++)
+        if (c->level->cast.entries[i].id == id) {
+            const tc_mat34 *w = &c->level->cast.entries[i].world;
+            *out = tc_v3(w->m[3], w->m[7], w->m[11]);
+            return true;
+        }
+    return false;
 }
 
 const tc_cast_actor *tc_cast_actor_of(const tc_cast *c, uint32_t prso) {

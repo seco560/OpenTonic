@@ -148,7 +148,7 @@ typedef struct tc_cast_entry {
     uint16_t prso;               /* its entry in tc_level.persos (drawn with its parts, keyed by object), 0xFFFF none */
     uint16_t family, sector, initial_state;
     uint8_t hit_points, hit_points_max, active, dead, mechanics, animation, reinit; /* std game +0x14 ... +0x2B */
-    uint8_t flags;               /* TC_CAST_MAY_FORCE_MAIN, _SAVE_POINT, _ALWAYS_AWAKE, _RUN_FIRST */
+    uint8_t flags;               /* TC_CAST_MAY_FORCE_MAIN, _SAVE_POINT, _ALWAYS_AWAKE, _RUN_FIRST, _SCENE */
     float radius2;               /* std game +0x2C: -1 always, else the squared activation radius */
     tc_mat34 world;
     uint16_t zone_count;
@@ -156,6 +156,8 @@ typedef struct tc_cast_entry {
     tc_cast_zone *zones;         /* index = k of COND_13(Me, k, ..) */
     uint32_t size;
     uint8_t *scripts;            /* for tc_ai_model_load_scripts */
+    uint32_t tables_size;        /* TC_CAST_TABLES: the strings and constant vectors they index (tc_ai_model_load_tables) */
+    uint8_t *tables;
 } tc_cast_entry;
 #define TC_CAST_MAY_FORCE_MAIN 1u /* its PROC 237 / 238 may set the main actor's behaviours (tools/ttre/cast.py) */
 #define TC_CAST_SAVE_POINT 2u     /* a save point: when it takes itself out, the main actor's checkpoint is where he is */
@@ -163,6 +165,9 @@ typedef struct tc_cast_entry {
                                      character is in (World, HEG_Inventaire, the bee counters) */
 #define TC_CAST_RUN_FIRST 8u      /* on the engine's run-first list (gpt -> 0x8c1738): stepped before the others (the
                                      platforms, lifts, crates: what others stand on or push) */
+#define TC_CAST_SCENE 16u         /* port: a scene's actor (the Special Edition's outro, cast.py SE_CAST_LEVELS): its
+                                     removals and deactivations take wherever the main actor is (no removal guard) */
+#define TC_CAST_TABLES 32u        /* the entry carries its scripts' strings and constant vectors (tables_size, tables) */
 typedef struct tc_cast_data {
     uint16_t main_actor;         /* the player's perso id */
     uint16_t main_alias;         /* the fix Ed where another perso is the player (the skier): the same as him, 0 none */

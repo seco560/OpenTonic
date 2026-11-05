@@ -107,7 +107,9 @@ typedef struct tc_view_frame {
 /* How long the loading screen shows its bar filling (it is not tied to real loading: the frontends also show it
  * after the intro, before Totalski). */
 #define TC_VIEWER_LOADING_SECONDS 3
-typedef enum tc_view_overlay_kind { TC_VO_NONE, TC_VO_MASK, TC_VO_LOGO, TC_VO_BLACK, TC_VO_LOADING } tc_view_overlay_kind;
+/* PICTURE: a picture the level's scripts show (PROC 210 DisplayVignetteDuring: the SE outro's credits), the game held
+ * meanwhile, over black; laid out as the loading screen's vignette (4:3, centred), without the bar. */
+typedef enum tc_view_overlay_kind { TC_VO_NONE, TC_VO_MASK, TC_VO_LOGO, TC_VO_BLACK, TC_VO_LOADING, TC_VO_PICTURE } tc_view_overlay_kind;
 typedef struct tc_view_overlay {
     tc_view_overlay_kind kind;
     int32_t texture;          /* MASK / LOGO: tc_viewer_effect_texture index */
@@ -116,6 +118,8 @@ typedef struct tc_view_overlay {
     float uv[4][2];           /*       1 3 2, black tinted by the texture's alpha, over the frame */
     float progress;           /* LOADING: the bar, 0..1 */
     const char *level;        /* LOADING: the level coming ("bar"); its vignette is Vignette/Level/<level>.png */
+    const char *picture;      /* PICTURE: Vignette/<picture>.png, next to the level's folder ("Credits/Credit06": the
+                                 script's name with '/' and no extension; match the case loosely) */
 } tc_view_overlay;
 
 /* A level change through a portal: what the next level's viewer needs (tc_viewer_desc.carry). Ed lives in the fix,
@@ -239,6 +243,21 @@ typedef struct tc_viewer {
     uint16_t sounds[TC_AI_MAX_SOUNDS]; /* sound events started by the last update */
     uint32_t ed_draw_count;   /* Ed's parts in the last tc_viewer_draws (0: hidden, e.g. stepped into a portal) */
     uint32_t sound_count;
+
+    /* The level's scripted pictures and shots (the cast's tc_ai_globals; docs/SE.md "The outro"). A picture holds the
+     * game (Ed, the cast, the clock) for its time, as the original's main loop waits on it; port: a fresh Jump, Action
+     * or Shoot skips it. The director's shot: camera mode 6 on a target (the outro's POC_Actor1): the eye stays put
+     * (at the camera perso's place in the level data when it has one), turned to the target, the scripts' focal as the
+     * field of view; Ed's inputs are held back while it lasts (the SE parks its Ed: B21). Port: a fresh Jump, Action or
+     * Shoot ends it (the follow camera again, the player's field of view), until the scripts set the mode again. */
+    char picture[64];
+    float picture_left;       /* seconds; 0: none */
+    uint32_t picture_serial, director_serial;
+    uint32_t skip_held;       /* last frame's Jump / Action / Shoot, for the fresh presses above */
+    bool director;            /* the shot is on */
+    bool director_released;   /* the player ended it (until the next camera write) */
+    tc_vec3 director_eye;
+    float director_saved_fov; /* the player's vertical field of view, back when the shot ends */
 
     /* Sectors (tc_sector.h; none: the level has no SECT and everything is drawn). Ed's sector is his AI's (it looks his
      * water up there), else tracked here for the simple controller. */
@@ -382,6 +401,8 @@ void tc_viewer_toggle_ai(tc_viewer *v);
 void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed); /* seed: its randomness (0: keep the viewer's) */
 bool tc_viewer_demo(const tc_viewer *v);
 
+/* The director's shot (tc_viewer.director) is on: the camera is the level's, Ed waits. */
+bool tc_viewer_directed(const tc_viewer *v);
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */
 bool tc_viewer_has_ai(const tc_viewer *v);     /* ... with Ed's AI */
 bool tc_viewer_ai_active(const tc_viewer *v);  /* playing with the AI: its status changes every frame */
@@ -400,7 +421,7 @@ const struct tc_cast *tc_viewer_cast(const tc_viewer *v);
 
 /* The adjustable settings both title bars show (UTF-8):
  * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]
- * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person]" (look / invert: when not the
+ * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person][, scripted camera]" (look / invert: when not the
  * default; light: the set shown, or the change running; held = a number key's pick in a level with light persos;
  * sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with his AI, the
  * camera's normal distance). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".

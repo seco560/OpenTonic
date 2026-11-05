@@ -32,11 +32,12 @@ CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes),
     u16 perso id, u16 PRSO index (0xFFFF: not drawn), u16 family, u16 sector (0xFFFF none),
     u16 initial state, u8 hit points, u8 max, u8 active, u8 dead, u8 mechanics, u8 animation, u8 re-init,
     u8 flags (1: may force the main actor's behaviours, MAY_FORCE_MAIN; 2: a save point, SAVE_POINTS; 4: on the engine's
-      always-awake list, 8: on its run-first list: LevelData.engine_lists),
+      always-awake list, 8: on its run-first list: LevelData.engine_lists; 16: a scene's actor, SCENE; 32: TABLES),
     u16 0, f32 radius2 (raw +0x2C), f32 world[12] (row-major 3x4),
     u16 n_zones, u16 0, [n_zones > 0: f32 inverse world[12]], n_zones x { u16 k (1-based ZDD zone of COND_13(Me, k, ..)),
       u16 n_prims, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3] } },
-    u32 size, size bytes = a .ttai SCPT body (ai.py; buttons index the main actor's), padded to 4 }
+    u32 size, size bytes = a .ttai SCPT body (ai.py; buttons index the main actor's), padded to 4,
+    [flags & 32: u32 size, size bytes = the STRS body then the VECS body its scripts index, padded to 4] }
 A cast perso's PRSO entry carries a part for every object its family's animations show: those its initial animation
 does not use come after the others, with channel 0xFFFF (the baked loop never draws them).
 """
@@ -61,6 +62,16 @@ MAY_NOT_FORCE_MAIN = {'JET_SwAimant'}
 # choice, Ed comes back where he stood when the last one fired, after dying (core tc_ed_ai; flag 2).
 SAVE_POINTS = {'DFM_Save'}
 HANDLED_PROCS = {6, 7, 8, 29, 283}
+# The Special Edition levels whose persos run their own scripts (translated to retail numbering, ai.se_translate),
+# read one by one (docs/SE.md "The outro"). Elsewhere the SE persos stay props. On these: no SE perso may force or
+# write the retail Ed (its behaviour references are SE Ed's numbering), PROC 6 is a plain DeactivatePerso (no skier
+# start there), and the cast is a scene: its removals and deactivations take wherever Ed is (TC_CAST_SCENE, no removal
+# guard: the outro's relay of characters, each taking itself out after its turn).
+SE_CAST_LEVELS = {'outro'}
+SE_HANDLED_PROCS = {7, 8, 29, 283}
+SCENE = 16  # entry flag: core tc_level.h TC_CAST_SCENE
+TABLES = 32  # entry flag (TC_CAST_TABLES): its scripts' strings and constant vectors follow them (the STRS and VECS
+             # bodies of a .ttai), which the cast had none of before 2026-11-05 (every string and vector read as nothing)
 
 
 def _calls(a, procs):
@@ -72,8 +83,9 @@ def _calls(a, procs):
 def select(d):
     """[(perso location, perso id, AI)] in level perso order, and {reason: count} of the persos left out."""
     lv = d.lv
-    if d.se:  # the Special Edition's AI uses another primitive numbering (docs/SE.md): its persos stay props
+    if d.se and d.lv.name.lower() not in SE_CAST_LEVELS:  # not read yet (docs/SE.md): the SE persos stay props
         return [], {'special edition': len(d.persos())}
+    handled = SE_HANDLED_PROCS if d.se else HANDLED_PROCS
     player = d.player()
     fix = {x[0] for x in d.perso_in_fix if x and x[0]}
     skipped = {}
@@ -103,7 +115,7 @@ def select(d):
             reason = 'trigger (TRIG)'
         elif a is not None and k + 1 in gates:
             reason = 'portal (PORT)'
-        elif a is not None and _calls(a, HANDLED_PROCS):
+        elif a is not None and _calls(a, handled):
             reason = 'portal / level / light (PORT, LAIS)'
         if reason:
             skipped[reason] = skipped.get(reason, 0) + 1
@@ -124,9 +136,11 @@ def family_anims(d, states):
     out = {}
     for k in sorted(set(keys) - {-1}):
         try:
-            out[k] = d.read_a3d(d.lv.ptr(d.lv.ptr(states[k], 0xC), 0x28))
+            a = d.read_se_anim(d.lv.ptr(states[k], 0xC)) if d.se else d.read_a3d(d.lv.ptr(d.lv.ptr(states[k], 0xC), 0x28))
+            if a:
+                out[k] = a
         except (IndexError, struct.error) as e:
-            d.warnings.append(f'cast a3d of state {k}: {e}')
+            d.warnings.append(f'cast anim of state {k}: {e}')
     return keys, out
 
 
@@ -143,8 +157,8 @@ def _states_block(d, a, keys, anim_index, snd_table):
     for i, s in enumerate(a.states):
         nxt = lv.ptr(s, 0x28)
         ar = lv.ptr(s, 0xC)
-        n_frames = d.un('H', ar, 4)[0] if ar else 0
-        speed = d.un('B', s, 0x3B)[0] or (d.un('B', ar, 6)[0] if ar else 0)
+        n_frames, ar_speed = d.anim_ref_frames(ar) if ar else (0, 0)
+        speed = d.un('B', s, 0x3B)[0] or ar_speed
         flags, repeats = d.un('B', s, 0x3C)[0], d.un('B', s, 0x3A)[0]
         trans, prohib = [], []
         e = lv.ptr(s, 0x10)
@@ -160,7 +174,7 @@ def _states_block(d, a, keys, anim_index, snd_table):
                 prohib.append(a.state_index[tgt])
             e = lv.ptr(e)
         sounds = []
-        ev = lv.ptr(ar, 8) if ar else None
+        ev = lv.ptr(ar, 8) if ar and not d.se else None  # the SE's animation events: not read (no A3D layout)
         n_ev = d.un('I', ar, 0xC)[0] if ev else 0
         for k in range(n_ev if n_ev < 256 else 0):  # as ai.export's SNDS
             typ, value, frame = d.un('3I', ev, 20 * k)
@@ -246,10 +260,13 @@ def chunk(d, cast, prso_index, family_cache):
         for ref, name in o.beh_names.items():
             behaviours.setdefault(ref, int(name[1:]) | (0x10000 if name[0] == 'R' else 0))
     from .sfx import level_snd, sound_at
-    sounds = level_snd(d.lv.name)
+    sounds = {} if d.se else level_snd(d.lv.name)  # the SE's own sound tables: not read
     persos = d.persos()
     idx_of = {p.loc: k + 1 for k, p in enumerate(persos)}
-    main = next((k + 1 for k, p in enumerate(persos) if p.loc == player), 0)
+    # the SE: the retail donor Ed stands in SE Ed's place (the fix Ed's perso number; se.py), none of whose behaviours
+    # resolve (they are SE Ed's: no SE perso forces him)
+    main_loc = d.perso_in_fix[0][0] if d.se and d.perso_in_fix else player
+    main = next((k + 1 for k, p in enumerate(persos) if p.loc == main_loc), 0)
     main_buttons = ai.button_order(ai.AI(d, player)) if player else {}
     families, fam_blocks, entries, listing = {}, [], [], []
     always, first, _ = d.engine_lists()
@@ -265,25 +282,30 @@ def chunk(d, cast, prso_index, family_cache):
             families[fam] = len(families)
         frozen = freeze_story_removals(a)
         for n in a.nodes():  # the level's own sounds (sfx.level_snd): resolved here, by the node's address
-            if n.type == 34 and n.loc:
+            if n.type == 34 and n.loc and not d.se:
                 n.event = sound_at(sounds, n.loc, n.param)
-        body, unresolved = ai.export(a, None, behaviours, main_buttons)
+        body, unresolved, tables = ai.export(a, None, behaviours, main_buttons, tables=True)
         sg = lv.ptr(loc, 4)
         hp, hp_max, _, dead, active = d.un('5B', sg, 0x14) if sg else (0, 0, 0, 0, 1)
         reinit = d.un('I', sg, 0x20)[0] == 1 if sg else False
         mech, anim, radius2 = d.un('2Bf', sg, 0x2A) if sg else (0, 1, -1.0)
+        if d.se:  # the SE's std game ends before +0x2A (+0x28 = 6, then pointers): no activation radius nor these flags
+            mech, anim, radius2 = 0, 1, -1.0  # (retail added them with SetActivity, PROC 17-22: docs/SE.md)
         # the state the baked loop shows (level.read_perso): Perso3dData +0, else +4 (the playing one)
         init_state = a.state_index.get(lv.ptr(p3d, 0) or lv.ptr(p3d, 4), 0) if p3d else 0
         sector = d.perso_sector(loc)
         world = persos[pid - 1].world
         names = d.perso_names(loc)
         flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
+        if d.se:
+            flags = SCENE  # SE_CAST_LEVELS
         if names[0] in SAVE_POINTS:
             flags |= 2
         if loc in always:
             flags |= 4  # the engine's always-awake list (LevelData.engine_lists)
         if loc in first:
             flags |= 8  # its run-first list
+        flags |= TABLES
         zs = zones(d, loc, a)
         zone_block = struct.pack('<HH', len(zs), 0)
         if zs:
@@ -293,7 +315,8 @@ def chunk(d, cast, prso_index, family_cache):
         entries.append(struct.pack('<5H6B2BHf12f', pid, prso_index.get(loc, 0xFFFF), families[fam],
                                    0xFFFF if sector is None else sector, init_state, hp, hp_max, active, dead, mech,
                                    anim, int(reinit), flags, 0, radius2, *world)
-                       + zone_block + struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4))
+                       + zone_block + struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4)
+                       + struct.pack('<I', len(tables)) + tables + b'\0' * (-len(tables) % 4))
         listing.append(f'{pid:5d} {names[0]:24s} {names[2]:32s} family {families[fam]:3d} states {len(a.states):3d} '
                        f'prso {prso_index.get(loc, -1):4d} sector {sector} active {active} mech {mech} anim {anim} '
                        f'r2 {radius2:g}' + (' always' if flags & 4 else '') + (' first' if flags & 8 else '')
@@ -309,7 +332,7 @@ def chunk(d, cast, prso_index, family_cache):
     # where another perso is the player (the skier), the fix Ed stands for him: Counter34(fix Ed) is the main
     # character's hit points (FUNC_Counter34Etc_0049ad30, the global table): an alias of the main actor, not a ghost
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
-    alias = idx_of.get(fix_ed, 0) if fix_ed and fix_ed != player else 0
+    alias = idx_of.get(fix_ed, 0) if fix_ed and fix_ed != player and not d.se else 0
     running = {pid for _, pid, _ in cast} | {main, alias}
     named = set()
     for _, _, a in cast:

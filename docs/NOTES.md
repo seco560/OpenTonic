@@ -69,6 +69,11 @@ pointer reads as none, not Me. Unknown functions return NaN (every comparison fa
 sud0 slab (dalfou) took `OP_24(Ed, FUNC_54) == Me` for true and grabbed Ed at the start. FUNC 95 and 164 keep their
 old 0. KW_5 is the main actor's id. A scripts-only perso reads the main actor's buttons (cast.py maps its button nodes).
 
+**2026-11-05:** cast entries carry their scripts' strings and constant vectors (CAST flag 32, `TC_CAST_TABLES`); before,
+every string a cast script read was nothing, so LevelIs (COND 62: HEG_Inventaire, sud0's HEG_RichMine) was always
+false; cast actors also get the level's name now. Scene casts (flag 16, the SE outro) have no removal guard. The cast's
+camera procedures (177 / 178 / 180) and pictures (210) are recorded for the viewer: docs/SE.md "The outro".
+
 **Port choices, not the exe:**
 - Left out of the cast: the camera and its directors (Camera, GenD_Cam), gen_cheatCode, World (lives / death /
   respawn), the portals and level changers (ai.portals, PROC 7 / 8 / 29: .ttai PORT), the skier's start (PROC 6 on the

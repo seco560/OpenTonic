@@ -114,6 +114,7 @@ void tc_level_free(tc_level *level) {
     tc_free(level->cast.families);
     for (i = 0; level->cast.entries && i < level->cast.count; i++) {
         tc_free(level->cast.entries[i].scripts);
+        tc_free(level->cast.entries[i].tables);
         tc_free(level->cast.entries[i].zones);
     }
     tc_free(level->cast.entries);
@@ -330,7 +331,17 @@ static void read_cast(tc_cast_data *c, reader *r) {
         memcpy(e->scripts, r->data + r->offset, size);
         e->size = size;
         r->offset += size + (4 - size % 4) % 4;
-        if (r->offset > r->size) r->error = TC_ERR_TRUNCATED;
+        if (r->offset > r->size) { r->error = TC_ERR_TRUNCATED; break; }
+        if (e->flags & TC_CAST_TABLES) {
+            size = rd_u32(r);
+            if (!have(r, size)) break;
+            e->tables = (uint8_t *)tc_alloc(size ? size : 1);
+            if (!e->tables) { r->error = TC_ERR_OUT_OF_MEMORY; break; }
+            memcpy(e->tables, r->data + r->offset, size);
+            e->tables_size = size;
+            r->offset += size + (4 - size % 4) % 4;
+            if (r->offset > r->size) r->error = TC_ERR_TRUNCATED;
+        }
         if (e->family >= c->family_count) e->size = 0; /* not run */
     }
 }

@@ -110,7 +110,7 @@ tie, floating hands and feet).
 - **Minimal CAST** on Totalski (no cast persos): main actor and main alias in the donor's numbering, so the ski
   camera and the fix-Ed alias work as on retail.
 - **SE persos** are props: posed and looping their initial animation (PRSO). None runs its AI (`cast.select` and
-  `ai.light_persos` return nothing for SE).
+  `ai.light_persos` return nothing for SE), except on the outro since 2026-11-05 ("The outro" below).
 - **Loading screens:** the disc's are named cock, ski, sud...; the converter copies them under the level names. The
   disc has none for outro (the exe picks them by level name, not the scripts), so retail's Outro.png stands in.
 - **Not there:** level changes (no portals), SE sounds and music of its own (the retail audio folder is used, by
@@ -311,6 +311,15 @@ Totalski's exit). SE portals carry a two-sided flag (PORT's flags byte, `TC_AI_P
 arch's axes turn half round about Z when Ed is on its +Y side. Checked: both sides of Totalski's exit reach sud0 in
 10.6 s; the old export was stuck from +Y.
 
+**Stopping in front (2026-11-05, your report: "Ed walks up close to them, then walks away"):** every SE arch's zone
+is the same gen_arche box, 2.5 across the opening and only +-1.2 through it, so Ed was caught already in the opening.
+The retail walk-in (B68: to 4.5 in front, `ChangeStateByDirection(dsg99, (0, -4.5, 0))`) then walked him about 3
+units back out before he stepped in. Retail's hub arches capture within radius 4 instead (PORT, no zone). Port choice
+(`se.arch_capture`, `SE_ARCH_REACH`): the SE box keeps its width and height and reaches +-5 along the arch's axis, so
+Ed is caught about 5 out, on either side. Headless, Ed running at each of sud0's 8 arches from both sides (a scratch
+probe): before, caught at 0.9-1.2, walked back 2.9-3.3, level change at 6.5-7.2 s; now, caught at 4.4-4.8, no step
+back, he stops there and steps in, change at 4.9-5.0 s. Retail portals are unchanged (their own records).
+
 **Loading screens:** a level change from an SE level shows the SE's picture of the destination (the purple swirl
 ones, `out/se/Vignette/Level`). Both frontends take the vignettes next to the shown level's own folder.
 
@@ -322,15 +331,84 @@ them to his scripts as Shoot (`tc_ed_ai_step`).
 ttlv.TEXTURE_TIME_SCALE). SE's shows `gen_arch01` still, though its Textures.cnt holds `gen_arch01..04`. Port choice:
 SE arches play those four as retail does (`se.arch_frames`, on every SE material showing `gen_arche\gen_arch01.tga`).
 
+## The outro (2026-11-05)
+
+SE outro is the end credits: a 12-triangle box (75 x 85 x 48, untextured, ambient and diffuse 0: black under the
+game's lighting; the grey you saw is the port's "Modern" lighting, the SE default) as a stage, 20 "cine" characters,
+two directors and a credits keeper. Its scripts read cleanly in retail numbering (`ai.se_translate`), and they now run
+in the core's cast: the first SE level whose own persos run (`cast.SE_CAST_LEVELS`).
+
+**What the scripts do (read from the data):**
+- Every character starts in a behaviour that does `DeactivatePerso(Me)` and changes to its "turn": ChangeStateAndWait
+  through its states (its performance: they walk in, act, walk out), `ActivatePerso(next)`, `RemovePerso(Me)`. A
+  relay: DS3_CoCo (the chicken) -> MIC_TomyBoy -> POC_Hg07Cine (states 1-6) -> MIC_Babar (the mammoth) -> CarCine ->
+  Navet_Cine -> POC_C2Cine -> POC_RaisinCineAct -> POC_PirexPerso -> MIC_LaSuzy -> MIC_LeMalade -> MIC_LeCoq -> MIC_Hary
+  -> MIC_Hary2 -> MIC_Spring2 -> MIC_Fiyaa -> MIC_Spring -> MIC_Waterloo (Napoleon, the last). MIC_gd02 (a second
+  gd007) is never activated by anyone: it never appears (cut, probably).
+- **POC_Actor1** (the director): `SetCameraTarget(camera, POC_GenVisee)`, `SetCameraMode(camera, 6)`, then takes
+  itself out. **POC_GenVisee** ("aim") is the point the camera looks at, and its schedule keeps
+  `ChangeFocal(camera, 0, 1.35)`: a 1.35 rad (77 degree) horizontal field of view.
+- **DS3_CoCo** parks Ed (`ForceBehaviour(Ed, B21)`: SE Ed's B21 = stand in state 0, release the modules; no
+  reflex), hides the HUD (`Proc_SetDisplayFixFlag(0)`), then `Proc9(1); Proc_DisplayVignetteDuring(
+  'Credits\\Credit0N.bmp', 5000)` for 06, 04, 03, 02, 05, then `Proc_StartMenuWithoutPauseGame('StartCredits')`,
+  then its own turn (state 0) and wakes TomyBoy.
+
+**What the SE exe does (read, MAID3DVR.EXE):**
+- `Proc_DisplayVignetteDuring` (PROC table SE 175, handler 0x4d5550 -> 0x40f9e0) only queues: a flag (0x5bf3e0), the
+  name, the time. The main loop's 0x40fa20 then loads the picture, shows it and **busy-waits** for the time: the game
+  is held. One queue slot, so `Proc9(1)` before each call (SE `Proc_SetActionReturn`: 0x4c3a50 / 0x4c3a70 set the
+  action-return globals, as retail PROC 9) stops the schedule after it: one picture per frame, 25 s in all.
+- `Proc_ActivateObject` (0x4d1ff7 -> 0x41b140): if not dead, 0x41b0a0 puts it back in its sector by its position and
+  sets it active; it also clears a hidden bit (0x200000 at SO +0x194). `Proc_DesactivateObject` (0x41b160): inactive,
+  out of the world. No re-init: the perso goes on in the behaviour it was in, which is how the relay works.
+- Camera mode 6, in the retail exe (`FUN_004a3130` case 6): the camera's displacement and four more fields zeroed,
+  request flags 0x514. It stays where it is and turns to its target (docs/CAMERA.md).
+- The SE std game (perso +4) ends before retail's +0x2A: no mechanics / animation flags and **no activation radius**
+  (retail added those with SetActivity, PROC 17-22). Port: SE cast persos are always awake, animation on.
+
+**The port:**
+- Exporter: `cast.select` runs the SE outro's persos (22: the 20 characters, the two directors, World; the camera is a
+  ghost). SE animations go into the cast families (`level.state_anim`, `anim_ref_frames`); SE sounds are not read; no
+  SE perso may force or write the retail Ed (their behaviour references are SE Ed's); the SE .gpt's engine lists are
+  not read (another layout). Entries carry flag `TC_CAST_SCENE`: their removals take wherever Ed is (no removal guard).
+- **Cast entries now carry their strings and constant vectors** (`TC_CAST_TABLES`; .ttai STRS and VECS bodies). The
+  cast never had them: every string read as nothing. That's why the vignette names were missing at first. It also
+  fixes **LevelIs (COND 62) in the retail casts** (HEG_Inventaire and sud0's HEG_RichMine use it: always false
+  before; cast actors now get the level's name too). Fun data bug: HEG_Inventaire tests `'totalki'`, so its Totalski
+  branch never fires, in the game either. No retail cast uses constant vectors.
+- Core: PROC 177 / 178 / 180 (`SetCameraMode`, `ChangeFocal`, `SetCameraTarget`) and 210 (`DisplayVignetteDuring`)
+  write to the cast's shared `tc_ai_globals`. A camera write counts when it changes something (GenVisee repeats its
+  focal every frame).
+- Viewer: **the director's shot.** Mode 6 with a target: the eye at the camera perso's place in the level data
+  ((-4.0, -40.7, 3.1); port choice, inferred: the shot is set on the first frame, before the camera moves), turned to
+  the target, the scripts' focal as the field of view. Ed's inputs are held back meanwhile (as SE's B21 parks him).
+  **Pictures:** a request holds the game for its time (Ed, the cast, the clock), over black, laid out as the loading
+  screen's vignette (`TC_VO_PICTURE`; both frontends: `PictureScreen` in main.swift, `picture_prepare` /
+  `draw_picture` in sdl/src/main.c). Port choices: a fresh Jump / Action / Shoot skips a picture, and ends the shot
+  (the follow camera and your field of view come back; the level stays explorable). The status line shows "scripted
+  camera" while the shot is on.
+- Not ported: the `StartCredits` menu (the SE's scrolling credits, by the look of TEXTS/CDTSTD.TXT and CDTNME.TXT: its
+  layout is in the exe's menu code), `Proc_SetDisplayFixFlag`, SE sounds and music.
+
+**Checked headless** (a scratch probe through the viewer, 200 s; castcheck): the pictures come in the scripts' order
+(Credit06, 04, 03, 02, 05, 5 s each), then CoCo's turn, then the whole relay to Waterloo at 176-182 s, each turn
+handing on as above. Per turn the share of the character's parts inside the shot (4:3) goes from low to 100 % and back
+(they walk in and out of frame: the framing reads as intended). Ed is out of shot (about 75 degrees off its axis).
+castcheck on SE outro: ok, with "14 scene actors took themselves out" and "5 Jump taps to get past" the pictures and
+the shot, then Ed runs. Retail: castcheck on fresh sud0 / north / Land / cavedoc exports prints the same as before
+(timing aside), and every core check passes on the existing exports. **Not seen in the app:** the shot, the
+pictures, the characters' looks.
+
 ## Next
 
 The long-term goal these steps lead to (user): retail, SE, or both interwoven as alternate universes with portals
 between the two versions of a level. See docs/DIRECTION.md, "Final goal: two editions, one game".
 
 
-1. Playtest SE Totalski in the app (camera, speed, the slope's end: there is no finish trigger).
-2. SE AI: read the primitive name tables from `MAID3DVR.EXE`, map them by name and handler to the retail numbering
-   (tools/exe/ai_names.tsv). Then SE persos can run their own scripts (the cast), and later SE Ed himself.
+1. Playtest SE Totalski in the app (camera, speed, the slope's end: there is no finish trigger), and the SE outro
+   (the shot, the credits pictures, the relay), and an SE arch (Ed stops in front).
+2. SE AI: ~~read the primitive name tables~~ (done, se_ai_map.tsv). SE persos run their own scripts on the outro;
+   the other levels one by one (cast.SE_CAST_LEVELS), then later SE Ed himself. The outro's StartCredits menu.
 3. SE mechanics (ID cards) and Ed's SE model and animations: SE Ed has 6 channels (head, body, hands, feet).
 4. The 12 unresolved relocations: all fix -> block (5, 2) (the level's own block, empty in the fix); the SUD0 material
    with an empty texture name; outro has no loading screen on the disc.

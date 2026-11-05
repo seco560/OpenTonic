@@ -115,6 +115,46 @@ final class LoadingScreen: NSView {
     }
 }
 
+/// A picture the level's scripts show (TC_VO_PICTURE, PROC 210: the Special Edition outro's credits), laid out as the
+/// loading screen's vignette, over the black the renderer draws. `vignettes` is the Vignette folder.
+final class PictureScreen: NSView {
+    private let image = NSImageView()
+    private var name = ""
+    let vignettes: URL
+
+    init(frame: NSRect, vignettes: URL) {
+        self.vignettes = vignettes
+        super.init(frame: frame)
+        image.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(image)
+        autoresizingMask = [.width, .height]
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// name: "Credits/Credit06" (folders under Vignette, no extension); matched case-insensitively, as a .png.
+    func show(_ name: String) {
+        guard name != self.name else { return }
+        self.name = name
+        var dir = vignettes
+        let parts = name.split(separator: "/").map(String.init)
+        for (i, part) in parts.enumerated() {
+            let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+            let want = i == parts.count - 1 ? part.lowercased() + ".png" : part.lowercased()
+            guard let next = files.first(where: { $0.lastPathComponent.lowercased() == want }) else { image.image = nil; return }
+            dir = next
+        }
+        image.image = NSImage(contentsOf: dir)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let b = bounds, w = min(b.width, b.height * 4 / 3), h = w * 3 / 4
+        image.frame = NSRect(x: (b.width - w) / 2, y: (b.height - h) / 2, width: w, height: h)
+    }
+}
+
 extension NSCursor {
     /// A transparent cursor: the pointer is hidden over the intro, its loading screen and the demo (cursor rects, so it
     /// shows again over the title bar, the menu bar and other windows).
@@ -143,6 +183,24 @@ final class GameView: MTKView {
     /// In the demo: a key (but M), a click or a pad button ends it.
     var onDemoInput: (() -> Void)?
     private var inDemo: Bool { viewer.map { tc_viewer_demo($0) } ?? false }
+
+    private var pictureScreen: PictureScreen?
+
+    /// The renderer's scripted picture, every frame (nil: none). Pictures live in the Vignette folder next to the one
+    /// the loading screens come from (vignettes = .../Vignette/Level).
+    func showPicture(_ name: String?) {
+        guard let name, let vignettes else {
+            pictureScreen?.removeFromSuperview()
+            pictureScreen = nil
+            return
+        }
+        if pictureScreen == nil {
+            let p = PictureScreen(frame: bounds, vignettes: vignettes.deletingLastPathComponent())
+            addSubview(p)
+            pictureScreen = p
+        }
+        pictureScreen?.show(name)
+    }
 
     /// The renderer's loading screen state, every frame.
     func showLoading(_ state: (String, Float)?) {
@@ -610,6 +668,7 @@ final class GameView: MTKView {
             LookSettings.apply(loaded.raw)
             r.load(loaded)
             r.onLoading = { [weak view] in view?.showLoading($0) }
+            r.onPicture = { [weak view] in view?.showPicture($0) }
             r.onPendingLevel = { [weak self] in self?.openPortalLevel($0) }
             r.onGamepad = { [weak self, weak view] command in
                 switch command {

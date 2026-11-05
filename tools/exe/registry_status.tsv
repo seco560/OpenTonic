@@ -14,7 +14,7 @@
 00492d30	PROC_156_UpdateCamera	partial	tc_cam_update stands in for it; the camera's own scripts don't run
 004a0f90	CAM_BuildContext	known	the context: +0 dyn+0xB0, +8 cine record, +0xC working params (0x521380), +0x10 current params, +0x14 SO, +0x18 camera pos
 004a1080	CAM_ContextToProposal	known	unanalysed code (not in the dump; disassembled): writes the type 3 proposal (dyn+0x314..+0x388)
-004a3130	CAM_Modes	partial	mode 0 (follow) only; modes 1-6, 0x65, 0x68, 0x69 not ported
+004a3130	CAM_Modes	partial	mode 0 (follow); mode 6 (stay, turn to the target) for the cast's scripts (tc_viewer director's shot); modes 1-5, 0x65, 0x68, 0x69 not ported
 004a1aa0	CAM_TargetPoint	implemented	averaged target (GAM_0042b730) + offset +0x24 (the aim height); channel targets not ported
 004a1e10	CAM_PivotPoint	partial	pivot offset +0x0C is 0 in the follow presets: pivot = target point
 004a1c60	CAM_LookAtPoint	partial	look offset +0x18 (0, -0.05, 0 by default) ignored

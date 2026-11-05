@@ -73,7 +73,12 @@ Confidence is marked: **read** = followed in the code; **inferred** = from usage
 - **2, locked position, turning to the target:** used by first person (attached to a bone, below) and by fixed shots.
 - **3:** a fixed offset from the target (set from where the camera is when flag 0x40 is on). **inferred**
 - **5:** a path (the cine `+0x14` / `+0x18` counters). **inferred**
-- **6, 0x65, 0x68, 0x69:** special or cinematic modes, not read.
+- **6: stay and watch** **read** (2026-11-05, `FUN_004a3130` case 6): the proposed displacement (context +0x48..+0x50)
+  and +0x90..+0x9C zeroed, request flags 0x514 (mode 3 without flag 0x40 does the same with 0x14): the camera stays
+  where it is and turns to its target (the bits of 0x514 not named one by one). The SE outro's director uses it
+  (POC_Actor1: target POC_GenVisee, mode 6, focal 1.35); the pits' "watch him fall" probably does (NOTES, not traced). Ported for the cast's scripts:
+  tc_viewer's director's shot (docs/SE.md "The outro"); the pits' camera writes go to the camera ghost, still not shot.
+- **0x65, 0x68, 0x69:** special or cinematic modes, not read.
 
 ### The camera's scripts: presets around one follow loop
 - **B0** is the main loop: it reads Ed's state, applies the per-situation settings, calls UpdateCamera.

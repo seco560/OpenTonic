@@ -86,6 +86,9 @@ typedef struct app {
     char loading_level[64];
     SDL_GPUTexture *loading_vignette;
     int vignette_w, vignette_h;
+    char picture_name[64];       /* the level scripts' picture shown (TC_VO_PICTURE), "" none */
+    SDL_GPUTexture *picture;
+    int picture_w, picture_h;
     Uint64 loading_start_ns;     /* when the level last changed: the bar's animation clock */
     SDL_GPUTexture *loading_bar; /* the bar's rainbow pool (Textures/Sud0/o_zarbi_auntxy.png), loaded once */
     bool loading_bar_tried;
@@ -157,6 +160,9 @@ static void loading_free(app *a) {
     if (a->loading_vignette) SDL_ReleaseGPUTexture(a->g.device, a->loading_vignette);
     a->loading_vignette = NULL;
     a->loading_level[0] = 0;
+    if (a->picture) SDL_ReleaseGPUTexture(a->g.device, a->picture);
+    a->picture = NULL;
+    a->picture_name[0] = 0;
 }
 
 static void close_level(app *a) {
@@ -814,6 +820,54 @@ static void loading_prepare(app *a, const char *level) {
     SDL_free(vignette);
 }
 
+/* The level scripts' picture (TC_VO_PICTURE: "Credits/Credit06" = Vignette/Credits/Credit06.png next to the shown
+ * level's folder, else the retail one; each part matched case-insensitively), made when it changes (before the frame). */
+static void picture_prepare(app *a, const char *name) {
+    if (!name || SDL_strcmp(name, a->picture_name) == 0) return;
+    if (a->picture) SDL_ReleaseGPUTexture(a->g.device, a->picture);
+    a->picture = NULL;
+    SDL_strlcpy(a->picture_name, name, sizeof a->picture_name);
+    char *base = a->current_folder ? path_dir(a->current_folder) : NULL;
+    char *dir = base ? path_join(base, "Vignette") : NULL;
+    SDL_free(base);
+    if (!dir || !path_is_dir(dir)) {
+        SDL_free(dir);
+        dir = path_join(a->data_dir, "Vignette");
+    }
+    char part[64];
+    const char *p = name;
+    while (dir && *p) {
+        const char *slash = SDL_strchr(p, '/');
+        size_t n = slash ? (size_t)(slash - p) : SDL_strlen(p);
+        SDL_snprintf(part, sizeof part, "%.*s%s", (int)n, p, slash ? "" : ".png");
+        int count = 0;
+        char **found = SDL_GlobDirectory(dir, part, SDL_GLOB_CASEINSENSITIVE, &count);
+        char *next = found && count > 0 ? path_join(dir, found[0]) : NULL;
+        SDL_free(found);
+        SDL_free(dir);
+        dir = next;
+        p = slash ? slash + 1 : p + n;
+    }
+    gpu_upload u;
+    if (dir && path_is_file(dir) && gpu_upload_begin(&a->g, &u)) {
+        a->picture = gpu_upload_png(&a->g, &u, dir, true, &a->picture_w, &a->picture_h);
+        if (!a->picture) SDL_Log("picture %s: %s", dir, SDL_GetError());
+        gpu_upload_end(&a->g, &u);
+    } else {
+        SDL_Log("picture %s: not found", name);
+    }
+    SDL_free(dir);
+}
+
+/* Over the overlay's black, as main.swift's PictureScreen: the picture in the largest 4:3 box, centred. */
+static void draw_picture(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
+    float W = (float)f->width, H = (float)f->height, w = SDL_min(W, H * 4 / 3), h = w * 3 / 4;
+    if (!a->picture || a->picture_w <= 0 || a->picture_h <= 0 || w <= 0) return;
+    float s = SDL_min(w / (float)a->picture_w, h / (float)a->picture_h);
+    float iw = (float)a->picture_w * s, ih = (float)a->picture_h * s;
+    gpu_quad(&a->g, f, pass, a->picture, (SDL_FRect){(W - iw) / 2, (H - ih) / 2, iw, ih}, NULL, (SDL_FColor){1, 1, 1, 1});
+}
+
 /* Over the overlay's black, laid out as main.swift's LoadingScreen: the vignette (4:3, 80 % wide at most), then the
  * rainbow progress bar under it. */
 static void draw_loading(app *a, gpu_frame *f, SDL_GPURenderPass *pass, float progress) {
@@ -838,6 +892,7 @@ static void draw(app *a) {
     if (a->view) {
         tc_viewer_overlay(&a->view->viewer, &o);
         if (o.kind == TC_VO_LOADING) loading_prepare(a, o.level);
+        if (o.kind == TC_VO_PICTURE) picture_prepare(a, o.picture);
     } else if (a->next_level) {
         loading_prepare(a, a->next_name);
     }
@@ -860,6 +915,7 @@ static void draw(app *a) {
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
                 if (o.kind == TC_VO_LOADING) draw_loading(a, &f, pass, o.progress);
+                if (o.kind == TC_VO_PICTURE) draw_picture(a, &f, pass);
                 if (a->help) draw_help(a, &f, pass);
                 SDL_EndGPURenderPass(pass);
             }

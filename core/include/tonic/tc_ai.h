@@ -260,6 +260,9 @@ tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size)
 /* A model of scripts only (no states, buttons or other persos): the body of a SCPT chunk, as the .ttlv's LAIS holds
  * for the level persos that set the light (tc_level.light_persos). */
 tc_result tc_ai_model_load_scripts(tc_ai_model *model, const uint8_t *data, size_t size);
+/* Adds the strings and constant vectors (a .ttai's STRS body, then its VECS body) to a model of scripts: a cast
+ * entry's tables (TC_CAST_TABLES). */
+tc_result tc_ai_model_load_tables(tc_ai_model *model, const uint8_t *data, size_t size);
 /* A model of dsgvars only (a .ttai dsg block: ai.perso_dsg_block): a perso that does not run, whose dsgvars others
  * read and write (tc_cast's ghosts). */
 tc_result tc_ai_model_load_dsg(tc_ai_model *model, const uint8_t *data, size_t size);
@@ -316,6 +319,22 @@ typedef struct tc_ai_globals {
     bool has_checkpoint;
     tc_vec3 checkpoint;
     float checkpoint_heading;
+    /* The camera's direction from the level's scripts (the cast; the main actor's own camera writes go to his camera
+     * perso's dsgvars instead): PROC 177 SetCameraMode (record +0x98; 0, the follow, until set), 180 SetCameraTarget (cine +0x10: a
+     * perso id, 0 none), 178 ChangeFocal (record +0x8C: the horizontal field of view, radians; 0 none). The host shoots
+     * mode 6 (FUN_004a3130 case 6: no displacement, request flags 0x514: it stays and turns to the target); the
+     * others are only recorded. cam_serial counts the writes that change something. */
+    int16_t cam_mode;
+    int32_t cam_perso;           /* the camera perso PROC 177 named (its first argument), 0 none */
+    int32_t cam_target;
+    float cam_focal;
+    uint32_t cam_serial;
+    /* PROC 210 DisplayVignetteDuring(picture, ms) (SE Proc_DisplayVignetteDuring, its 0x40f9e0: a flag, the name and
+     * the time; the main loop then shows the picture and waits, the game held, 0x40fa20): the latest request, as the
+     * script gave it ("Credits\\Credit06.bmp"); vignette_serial counts the requests. */
+    char vignette[64];
+    uint32_t vignette_ms;
+    uint32_t vignette_serial;
 } tc_ai_globals;
 
 typedef struct tc_ai_perso tc_ai_perso;

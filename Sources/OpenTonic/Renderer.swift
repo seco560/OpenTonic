@@ -111,6 +111,8 @@ import TonicCore
     private var effects: [MTLTexture?] = []    // tc_viewer_effect_texture order
     /// Called from draw: the loading screen to show (level, progress 0...1), or nil.
     var onLoading: ((String, Float)?) -> Void = { _ in }
+    /// The level scripts' picture (TC_VO_PICTURE: Vignette/<name>.png), or nil, every frame.
+    var onPicture: (String?) -> Void = { _ in }
     /// Called once when a red portal's loading screen is done: open that level with this carry.
     var onPendingLevel: (tc_viewer_carry) -> Void = { _ in }
     /// Gamepad buttons for the app (level select, controls, play / free-fly), after the frame that read them.
@@ -543,6 +545,7 @@ import TonicCore
         } else {
             onLoading(nil)
         }
+        onPicture(o.kind == TC_VO_PICTURE ? o.picture.map { String(cString: $0) } : nil)
         let full = [OverlayVertex(position: [0, 0], uv: [0, 0]), OverlayVertex(position: [1, 0], uv: [1, 0]),
                     OverlayVertex(position: [0, 1], uv: [0, 1]), OverlayVertex(position: [1, 0], uv: [1, 0]),
                     OverlayVertex(position: [1, 1], uv: [1, 1]), OverlayVertex(position: [0, 1], uv: [0, 1])]
@@ -557,7 +560,7 @@ import TonicCore
             let t = withUnsafeBytes(of: o.uv) { Array($0.bindMemory(to: Float.self)) }
             verts = [0, 1, 2, 1, 3, 2].map { OverlayVertex(position: [c[2 * $0], c[2 * $0 + 1]], uv: [t[2 * $0], t[2 * $0 + 1]]) }
             params = OverlayParams(mode: 1, threshold: 0)
-        case TC_VO_BLACK, TC_VO_LOADING:
+        case TC_VO_BLACK, TC_VO_LOADING, TC_VO_PICTURE:
             verts = full
             params = OverlayParams(mode: 2, threshold: 0)
         default:

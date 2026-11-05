@@ -205,7 +205,7 @@ static void level(const char *dir, const char *name) {
        * mixer, cavedoc's HEG_Inventaire did 1600 in 10 s), and who stops being drawn though Ed was never near */
         static uint32_t raw[2048];
         static int drawn_at_start[2048];
-        uint32_t worst = 0, worst_id = 0, vanished = 0;
+        uint32_t worst = 0, worst_id = 0, vanished = 0, scene_out = 0;
         clock_t t0;
         for (i = 0; i < c->count && i < 2048; i++) {
             tc_mat34 w; const tc_cast_anim *an; tc_sample sm;
@@ -225,12 +225,14 @@ static void level(const char *dir, const char *name) {
             tc_mat34 w; const tc_cast_anim *an; tc_sample sm;
             if (raw[i] > worst) worst = raw[i], worst_id = c->actors[i].entry->id;
             if (drawn_at_start[i] && !tc_cast_pose(c, &c->actors[i], 0, &w, &an, &sm) && !c->actors[i].ai.near_main_ms) {
+                if (c->actors[i].entry->flags & TC_CAST_SCENE) { scene_out++; continue; } /* the scene's own removals */
                 vanished++;
                 printf("    vanished: perso %u\n", (unsigned)c->actors[i].entry->id);
             }
         }
         printf("  10 s standing: most sounds from one perso %u (perso %u); %u drawn persos vanished far from Ed; "
                "%.2f ms per frame (core, headless)\n", worst, worst_id, vanished, frame_ms);
+        if (scene_out) printf("  scene actors (TC_CAST_SCENE) that took themselves out: %u\n", scene_out);
         check(worst <= 40, "no perso replays sounds (at most 40 in 10 s standing, before the throttle)");
         check(vanished == 0, "no drawn perso leaves the world while Ed is far (story checks keep them as props)");
         check(frame_ms < 4, "the core's frame stays under 4 ms headless");
@@ -245,6 +247,18 @@ static void level(const char *dir, const char *name) {
     skipped(c);
     printf("  Ed: behaviour %u, reflex %u, state %u, last forced by perso %d\n", (unsigned)c->main->normal.behaviour,
            (unsigned)c->main->reflex.behaviour, (unsigned)c->main->state, (int)c->main->forced_by);
+    { /* a scripted picture or the director's shot holds Ed (tc_viewer.picture_left / director): the player taps Jump to
+       * get past them (port choice), as many times as it takes, at most 20 */
+        int taps = 0;
+        while ((v.picture_left > 0 || tc_viewer_directed(&v)) && taps < 20) {
+            run(&v, 0.1f, 1u << TC_VA_JUMP);
+            run(&v, 0.1f, 0);
+            taps++;
+        }
+        if (taps) printf("  scripted pictures / camera: %d Jump taps to get past them%s\n", taps,
+                         v.picture_left > 0 || tc_viewer_directed(&v) ? " (still held)" : "");
+        for (k = 0; taps && k < 120; k++) frame(&v); /* landed again */
+    }
     start = tc_viewer_player(&v)->position;
     run(&v, 2, 1u << TC_VA_FORWARD);
     end = tc_viewer_player(&v)->position;

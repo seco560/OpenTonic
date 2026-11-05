@@ -940,9 +940,28 @@ class LevelData:
         first, keys = {}, []
         for i, st in enumerate(states):
             ar = self.lv.ptr(st, 0xC)
-            a3 = self.lv.ptr(ar, 0x28) if ar else None
+            a3 = ar if self.se else self.lv.ptr(ar, 0x28) if ar else None  # the SE has no A3D: the AnimRef is the key
             keys.append(first.setdefault(a3, i) if a3 else -1)
         return keys
+
+    def state_anim(self, state):
+        """A state's animation, Anim (retail A3D) or SeAnim (the Special Edition), at the state's own speed; None
+        without one."""
+        ar = self.lv.ptr(state, 0xC)
+        if not ar:
+            return None
+        speed = self.un('B', state, 0x3B)[0]
+        if self.se:
+            return self.read_se_anim(ar, speed)
+        a3 = self.lv.ptr(ar, 0x28)
+        return self.read_a3d(a3, speed) if a3 else None
+
+    def anim_ref_frames(self, ar):
+        """(frame count, speed) of an AnimationReference: retail u16 frames at +4, u8 speed at +6; the SE's u8 frames
+        at +4, u8 speed at +5 (SeAnim)."""
+        if self.se:
+            return self.un('2B', ar, 4)
+        return self.un('H', ar, 4)[0], self.un('B', ar, 6)[0]
 
     def player(self):
         """Location of the perso the player controls. Normally Ed = the first GPT perso-in-fix (family "NewEd").
@@ -1150,6 +1169,9 @@ class LevelData:
         (gpt + 0x4db4 - 0x24 with 3 of them: all 21 levels). Returns (always [perso loc], first [perso loc], world
         perso loc or None); empty when a list's walk does not give its count (a layout this reader does not know)."""
         lv, g = self.lv, self.lv.gpt
+        if self.se:  # the SE's .gpt is laid out otherwise (outro: 10732 bytes, the block would lie past its end): not read
+            self.warnings.append('engine lists: the Special Edition .gpt layout is not read')
+            return [], [], None
         base = 4 + 0x60 * len(self.perso_in_fix) + 0x4c90 - 0x24
         out = []
         for k in (1, 2):

@@ -77,6 +77,10 @@ void tc_cast_free(tc_cast *c);
 /* One tick (TC_ED_AI_TICK), after the main actor's: the clock is his (main->time_ms). s / main_sector: the level's
  * sectors and his sector (NULL / TC_SECTOR_NONE: everything is awake). */
 void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
+/* Where perso `id` is now (an actor, a ghost, the main actor), or where the level data places it (a ghost or an
+ * actor's CAST record: the camera's snapshot position); false when the cast does not know it. */
+bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out);
+bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out);
 /* The actor that draws level perso `prso` (tc_level.persos index), or NULL. */
 const tc_cast_actor *tc_cast_actor_of(const tc_cast *c, uint32_t prso);
 /* How to draw an actor, t (0..1) into the time since the last tick: its world matrix and its state animation with the

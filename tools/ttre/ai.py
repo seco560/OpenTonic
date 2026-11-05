@@ -1149,7 +1149,7 @@ def button_order(ai):
     return order
 
 
-def export(ai, path, behaviours=None, main_buttons=None):
+def export(ai, path, behaviours=None, main_buttons=None, tables=False):
     """Write the perso's AI as .ttai (format above). Returns a summary dict. path None: returns (the SCPT chunk's
     body, unresolved references by node type) without writing anything (a perso that runs only its scripts).
     behaviours: {behaviour location: index | 0x10000 for reflexes} of other persos' models, for references into them
@@ -1264,6 +1264,10 @@ def export(ai, path, behaviours=None, main_buttons=None):
     out += own_dsg
     cut('SCPT')
     if path is None:  # only the scripts (a level perso for the .ttlv's LAIS: ttlv.py)
+        if tables:  # ... and the bodies of the STRS and VECS they index (cast.py: a cast entry's tables)
+            t = struct.pack('<H', len(strings)) + b''.join(struct.pack('<H', len(x)) + x for x in map(cstr, strings))
+            t += struct.pack('<H', len(vectors)) + b''.join(struct.pack('<3f', *d.un('3f', ref)) for ref in vectors)
+            return parts[0][1], dict(unresolved), t
         return parts[0][1], dict(unresolved)
 
     # states (family list order = state index)

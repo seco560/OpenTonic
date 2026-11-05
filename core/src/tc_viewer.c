@@ -359,6 +359,11 @@ void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out) {
     const tc_transition *t = &v->transition;
     memset(out, 0, sizeof(*out));
     out->texture = -1;
+    if (v->picture_left > 0 && v->phase == TC_VP_PLAY) {
+        out->kind = TC_VO_PICTURE;
+        out->picture = v->picture;
+        return;
+    }
     switch (v->phase) {
     case TC_VP_BLACK: out->kind = TC_VO_BLACK; return;
     case TC_VP_LOADING: case TC_VP_PENDING:
@@ -1460,6 +1465,24 @@ static void play_mode_zones(tc_viewer *v) {
 
 /* Ed's AI and mechanics in ticks of TC_ED_AI_TICK (the game's 30 per second), then this frame's pose between the
  * last two ticks. The scripts see last frame's camera eye (it makes the direction keys camera-relative). */
+/* A picture the cast's scripts asked for since the last look (tc_ai_globals.vignette): taken as tc_viewer.picture
+ * ("Credits\\Credit06.bmp" -> "Credits/Credit06"), shown for its time. */
+static bool take_picture(tc_viewer *v) {
+    const tc_ai_globals *g = &v->play->cast.globals;
+    char *dot, *slash;
+    size_t k;
+    if (g->vignette_serial == v->picture_serial) return false;
+    v->picture_serial = g->vignette_serial;
+    if (!g->vignette[0] || !g->vignette_ms) return false;
+    for (k = 0; g->vignette[k] && k + 1 < sizeof(v->picture); k++) v->picture[k] = g->vignette[k] == '\\' ? '/' : g->vignette[k];
+    v->picture[k] = 0;
+    dot = strrchr(v->picture, '.');
+    slash = strrchr(v->picture, '/');
+    if (dot && (!slash || dot > slash)) *dot = 0;
+    v->picture_left = (float)g->vignette_ms / 1000;
+    return true;
+}
+
 static void step_ai(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     float t;
@@ -1472,11 +1495,11 @@ static void step_ai(tc_viewer *v, float dt) {
         p->tick_time -= TC_ED_AI_TICK;
         if (++ticks > 8) { p->tick_time = 0; break; } /* a long stall: drop the backlog */
         p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
-        bool still = v->cam.first_person;
+        bool still = v->cam.first_person || v->director; /* the director's shot: Ed waits, as the SE parks its Ed */
         play_mode_zones(v);
         if (!p->has_driver) break;
-        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, ai_inputs(v), still ? 0 : v->move_x, still ? 0 : v->move_y,
-                      v->camera.position);
+        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, v->director ? 0 : ai_inputs(v), still ? 0 : v->move_x,
+                      still ? 0 : v->move_y, v->camera.position);
         if (p->driver.events.restarted) {
             p->driver.events.restarted = false;
             if (p->has_cast) tc_cast_respawn(&p->cast);
@@ -1490,6 +1513,10 @@ static void step_ai(tc_viewer *v, float dt) {
                 v->sounds[v->sound_count++] = p->cast.sounds_out[n];
         }
         capture_pose(v);
+        if (p->has_cast && take_picture(v)) { /* the game holds while it shows (0x40fa20 waits in the main loop) */
+            p->tick_time = 0;
+            break;
+        }
     }
     t = p->tick_time / TC_ED_AI_TICK;
     p->pose_draw = pose_lerp(&p->pose_prev, &p->pose_cur, t);
@@ -1590,7 +1617,49 @@ static float camera_sight(void *user, tc_vec3 from, tc_vec3 to) {
     return best;
 }
 
-static void update_play(tc_viewer *v, float dt) {
+/* The director's shot (tc_viewer.director): camera mode 6 on a target, from the cast's scripts (tc_ai_globals). fresh:
+ * Jump, Action or Shoot pressed this frame (ends it: port choice). Returns whether the shot is on. */
+static bool update_director(tc_viewer *v, bool fresh) {
+    tc_viewer_play *p = v->play;
+    const tc_ai_globals *g;
+    tc_vec3 target, d;
+    bool want;
+    if (!p->has_cast) return v->director = false;
+    g = &p->cast.globals;
+    if (g->cam_serial != v->director_serial) { /* a new camera write: the scripts direct again */
+        v->director_serial = g->cam_serial;
+        v->director_released = false;
+    }
+    want = g->cam_mode == 6 && g->cam_target != 0 && !v->director_released && !v->demo &&
+           tc_cast_position(&p->cast, g->cam_target, &target);
+    if (want && v->director && fresh) {
+        want = false;
+        v->director_released = true;
+    }
+    if (want && !v->director) { /* mode 6 stays where the camera is: in the level data, before it has moved */
+        v->director = true;
+        v->director_saved_fov = v->camera.vertical_fov;
+        if (!g->cam_perso || !tc_cast_placed_position(&p->cast, g->cam_perso, &v->director_eye))
+            v->director_eye = v->camera.position;
+    } else if (!want && v->director) {
+        v->director = false;
+        v->camera.vertical_fov = v->director_saved_fov;
+        v->cam.placed = false; /* the follow, placed afresh behind Ed */
+    }
+    if (!v->director) return false;
+    if (g->cam_focal > 0) v->camera.vertical_fov = tc_camera_vfov_from_hfov_43(g->cam_focal);
+    v->camera.position = v->director_eye;
+    d = tc_v3_sub(target, v->director_eye);
+    if (tc_v3_length(d) > 1e-4f) {
+        v->camera.yaw = atan2f(d.x, d.y);
+        v->camera.pitch = atan2f(d.z, sqrtf(d.x * d.x + d.y * d.y));
+    }
+    return true;
+}
+
+bool tc_viewer_directed(const tc_viewer *v) { return v->director; }
+
+static void update_play(tc_viewer *v, float dt, bool fresh) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
     const tc_ed_anim *a;
@@ -1634,7 +1703,7 @@ static void update_play(tc_viewer *v, float dt) {
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;
         p->world.solid = NULL;
-        tc_cam_update(&v->cam, &v->camera, &t, dt);
+        if (!update_director(v, fresh)) tc_cam_update(&v->cam, &v->camera, &t, dt);
         p->world.solid = solid;
     }
 
@@ -1688,11 +1757,18 @@ uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
 
 
 void tc_viewer_update(tc_viewer *v, float dt) {
+    const uint32_t skip_mask = (1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT);
+    bool fresh = (v->held & skip_mask & ~v->skip_held) != 0;
+    v->skip_held = v->held & skip_mask;
     v->sound_count = 0;
+    if (v->picture_left > 0) { /* a scripted picture: the game holds (port: a fresh press skips it) */
+        v->picture_left = fresh ? 0 : fmaxf(0, v->picture_left - dt);
+        return;
+    }
     if (v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) look(v, 0); /* the level is about to change: Ed waits */
     else if (v->playing) {
         if (v->demo) demo_step(v, dt);
-        update_play(v, dt);
+        update_play(v, dt, fresh);
     }
     else fly(v, dt);
     update_sectors(v);
@@ -1829,6 +1905,7 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
+    if (v->playing && v->director) APPEND("%s", ", scripted camera");
     if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
         APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,
                (unsigned)v->play->cast.globals.lives, (int)v->play->driver.ai.hit_points);
