@@ -202,11 +202,34 @@ RETAIL_SNOW = (0.0, 0.8)  # (grip, rebound), level.LevelData.floor_material
 MIN_GRIP = 0.001
 
 
+# The arches' portal surface: retail cycles GEN_ARCH01R..04R (5.4 ticks each, ttlv.TEXTURE_TIME_SCALE slows the
+# flipbook); the SE shows gen_arch01 still, though its Textures.cnt holds gen_arch01..04. Port choice: the SE arches play
+# them as retail does.
+ARCH_SURFACE = 'gen_arche\\gen_arch01.tga'
+ARCH_FRAMES = ('gen_arch01', 'gen_arch02', 'gen_arch03', 'gen_arch04')
+ARCH_FRAME_TICKS = 5.4
+
+
+def arch_frames(m):
+    """Give an SE material showing the arches' still surface the retail flipbook (ARCH_SURFACE)."""
+    from . import level as lvl
+    t = m.texture if m else None
+    if not t or m.frames or t.name.lower() != ARCH_SURFACE:
+        return
+    m.frames = [(lvl.Texture(t.name[:-len('gen_arch01.tga')] + f + '.tga', t.flags, t.width, t.height, t.flags_byte),
+                 ARCH_FRAME_TICKS) for f in ARCH_FRAMES]
+
+
 def level_data(level, levels_dir=LEVELS, skier=False):
     """LevelData for an SE level with its floors adjusted for the retail Ed (SNOW_GRIP, MIN_GRIP)."""
     from . import level as lvl, sna
 
     class SeLevelData(lvl.LevelData):
+        def material(self, game_mat):
+            m = super().material(game_mat)
+            arch_frames(m)
+            return m
+
         def floor_material(self, gm):
             f = super().floor_material(gm)
             if f is None:
@@ -253,9 +276,11 @@ EMPTY = {'TRIG': struct.pack('<HH', 0, 0), 'PORT': struct.pack('<HHH', 0, 0, 0),
          'ZONE': struct.pack('<HH', 0, 0)}
 
 
-def write_ttai(src, dst):
-    """The donor's .ttai for an SE level: level-bound chunks emptied (EMPTY), the transition textures' paths re-rooted
-    from the donor's folder to dst's. Chunk order kept."""
+def write_ttai(src, dst, extra=(), replace=()):
+    """The donor's .ttai for an SE level: level-bound chunks emptied (EMPTY) or replaced (`replace` [(tag, bytes)]: the
+    SE level's own, portal_chunks), the transition textures' paths re-rooted from the donor's folder to dst's, `extra`
+    [(tag, bytes)] appended. Chunk order kept."""
+    replace = dict(replace)
     raw = open(src, 'rb').read()
     order, o = [], 8
     while o + 8 <= len(raw):
@@ -266,12 +291,14 @@ def write_ttai(src, dst):
     for tag, body in order:
         if tag == 'STMP':
             continue
-        if tag in EMPTY:
+        if tag in replace:
+            body = replace[tag]
+        elif tag in EMPTY:
             body = EMPTY[tag]
         elif tag == 'TRAN':
             body = retarget_tran(body, os.path.dirname(os.path.abspath(src)), os.path.dirname(os.path.abspath(dst)))
         out.append((tag, body))
-    chunks.write(dst, 'TTAI', out)
+    chunks.write(dst, 'TTAI', out + list(extra))
 
 
 def retarget_tran(body, src_dir, dst_dir):
@@ -292,6 +319,242 @@ def retarget_tran(body, src_dir, dst_dir):
     return bytes(out + body[o:])
 
 
+# ---- the SE's walk / ski switching (docs/SE.md "Sliding in the Special Edition") ----
+
+SE_SKI = 52                     # SE Ed's ski behaviour (with reflex R24); his walking ones: SE_WALK
+SE_WALK = (0, 3)
+SE_MODE_DSG = 7                 # SE Ed's mode dsgvar: 11 skiing, < 3 walking (the triggers' guards)
+WALK_DONOR = 'Land'             # the retail level whose Ed walks an SE level that switches (its .ttai: his AI)
+MODE_WALK, MODE_SKI = 0, 1
+TELEPORT_NONE, TELEPORT_TO, TELEPORT_BY = 0, 1, 2
+
+
+def mode_zones(data):
+    """The SE level's walk / ski switches: [dict(mode, require, once, teleport, vector, inverse, prims, name)]. A level
+    perso that, with SE Ed in its ZDD zone k (InZone(Me, k, Ed)), forces SE Ed's ski behaviour (SE_SKI) or a walking
+    one (SE_WALK) becomes a zone that switches the port's player between retail walking Ed and the retail skier:
+    require = the mode its guard on Ed's dsgvar 7 asks for (Less 3: walking, Equal 11: skiing, none: any); once = its
+    behaviour then moves on (ChangeBehaviour: the SE triggers that fire a single time); teleport = an
+    ActivateObjectOnPosition of Ed in the same branch, to another perso's position (TELEPORT_TO) or by a vector from
+    his own (TELEPORT_BY)."""
+    from . import ai, cast
+    lv = data.lv
+    ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
+    if not ed:
+        return []
+    ed_ai = ai.AI(data, ed)
+    ski = {loc for loc, nm in ed_ai.beh_names.items() if nm == f'B{SE_SKI}'}
+    walk = {loc for loc, nm in ed_ai.beh_names.items() if nm in {f'B{k}' for k in SE_WALK}}
+    persos = {p.loc: p for p in data.persos()}
+    out = []
+    for p in data.persos():
+        if p.loc == ed or not lv.ptr(p.loc, 0xC):
+            continue
+        try:
+            a = ai.AI(data, p.loc)
+        except Exception:
+            continue
+        found = []
+
+        def visit(nodes, guards):
+            skip = set()
+            for i, n in enumerate(nodes):
+                if i in skip:
+                    continue
+                if n.type == 0 and n.param == 0 and i + 1 < len(nodes) and nodes[i + 1].type == 0 and nodes[i + 1].param == 1:
+                    visit(nodes[i + 1].children, guards + n.children[:1])  # If cond / Then body (Else: not followed)
+                    skip.add(i + 1)
+                    continue
+                if n.type == 4 and n.param == 237 and len(n.children) >= 2 and n.children[0].ref == ed:
+                    target = n.children[1].ref
+                    mode = MODE_SKI if target in ski else MODE_WALK if target in walk else None
+                    if mode is not None:
+                        found.append((mode, guards, nodes))
+                visit(n.children, guards)
+        for b in a.behaviours:
+            for sc in b.scripts + ([b.schedule] if b.schedule else []):
+                visit(sc, [])
+        for mode, guards, branch in found:
+            zone, require = None, 0
+            for g in guards:
+                c = g.children
+                if g.type == 1 and g.param == 13 and len(c) == 3 and c[1].type == 12 and c[2].ref == ed:
+                    zone = c[1].param
+                if g.type == 1 and g.param in (3, 5) and len(c) == 2 and c[0].type == 2 and c[0].param == 12:
+                    dot = c[0].children
+                    if len(dot) == 2 and dot[0].ref == ed and dot[1].type == 11 and dot[1].param == SE_MODE_DSG:
+                        require = MODE_WALK + 1 if g.param == 5 else MODE_SKI + 1
+            prims = dict(cast.zones(data, p.loc, a)).get(zone) if zone else None
+            if not prims:
+                continue
+            teleport, vector = TELEPORT_NONE, (0.0, 0.0, 0.0)
+            for n in branch:
+                c = n.children
+                if n.type == 4 and n.param == 27 and len(c) == 2 and c[0].ref == ed:  # Proc_ActivateObjectOnPosition
+                    v = c[1]
+                    if v.type == 2 and v.param == 24 and len(v.children) == 2 and v.children[0].ref in persos:
+                        w = persos[v.children[0].ref].world  # InPersoContext(P, GetPosition): P's position
+                        teleport, vector = TELEPORT_TO, (w[3], w[7], w[11])
+                    elif v.type == 2 and v.param == 16 and v.children and v.children[0].type == 16:  # VecAdd(VECTOR, ..)
+                        comps = [struct.unpack('<f', struct.pack('<I', c.param & 0xFFFFFFFF))[0]
+                                 for c in v.children[0].children if c.type == 13]  # its components: REAL nodes
+                        if len(comps) == 3:
+                            teleport, vector = TELEPORT_BY, tuple(comps)
+            once = any(n.type == 4 and n.param == 239 for n in branch)  # ChangeBehaviour: the trigger moves on
+            out.append(dict(mode=mode, require=require, once=once, teleport=teleport, vector=vector,
+                            inverse=ai.mat_inverse(p.world), prims=prims, name=data.perso_names(p.loc)[2]))
+    return out
+
+
+def modz_chunk(zones):
+    """MODZ (.ttai, core tc_ai.h tc_ai_mode_zone): u16 n, u16 0, n x { u8 mode (0 walk: the main model, 1 ski: ALTM),
+    u8 require (0 any, 1 walking, 2 skiing), u8 once, u8 teleport (0 none, 1 to vector, 2 by vector), f32 vector[3],
+    f32 inverse[12] (world -> the zone's axes, row-major 3x4), u16 n_prims, u16 0, n_prims x { u32 kind (7 sphere: a
+    centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3] } }."""
+    out = struct.pack('<HH', len(zones), 0)
+    for z in zones:
+        out += struct.pack('<4B3f12fHH', z['mode'], z['require'], int(z['once']), z['teleport'], *z['vector'],
+                           *z['inverse'], len(z['prims']), 0)
+        out += b''.join(struct.pack('<I3f3f', k, *a, *b) for k, a, b in z['prims'])
+    return out
+
+
+# ---- portals: the SE's, played the retail way (docs/SE.md "Portals") ----
+
+def start_heading_deg(level, levels_dir=LEVELS):
+    """The SE level's start facing as PROC_242 takes it (its perso rotation about Z = deg x pi / 180 - pi / 2): from
+    its GPT perso-in-fix Ed matrix, without walking the level."""
+    from . import sna
+    lv = sna.Level(levels_dir, level)
+    g = lv.gpt
+    n, = struct.unpack_from('<I', g.data, 0)
+    if not n:
+        return 0
+    f = struct.unpack_from('<I21f', g.data, 8)  # the Matrix (as LevelData.matrix: the second 3x3, stored as columns)
+    s3 = f[13:22]
+    return heading_deg((s3[0], s3[3], s3[6], 0, s3[1], s3[4], s3[7], 0, s3[2], s3[5], s3[8], 0))
+
+
+def heading_deg(m):
+    """A 3x4 world matrix's rotation about Z as PROC_242's degrees (0..360)."""
+    import math
+    return int(round(math.degrees(math.atan2(m[4], m[0]) + math.pi / 2))) % 360
+
+
+def se_portals(data, levels_dir=LEVELS):
+    """The SE level's portals as retail-style records: [(position, rows, perso id, zone prims, inverse, capture ops,
+    fire ops, instance)], names in `names` (level and place names the ops index). An SE portal is a level perso that,
+    with SE Ed in its ZDD zone (InZone(Me, k, Ed)), changes level: ChangeLevel(name) (retail PROC 7; sud0's hub arches
+    pick it by their own dsg0) or ChangeMapAtPosition(name, place, camera place) (SE Proc_ChangeMapAtPosition, retail
+    PROC 29). The SE does that at once. Port choice: they capture Ed the retail arches' way instead (ai.portals:
+    dsg134 == 0, dsg99 = the arch, dsg100 = 0, dsg136 = the arrival heading, his walk-in B66 + R4: he walks up, steps
+    in (state 228), the cover runs), then fire on Ed.dsg103 == 1 with the SE's destination. The first-time story
+    branch of sud0's arches (World's dsg4) is left out."""
+    from . import ai, cast
+    lv = data.lv
+    ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
+    names, out, heading_cache = {}, [], {}
+
+    def sid(x):
+        return names.setdefault(x.lower(), len(names))
+
+    def cstr(ref):
+        return ref[0].data[ref[1]:ref[1] + 256].split(b'\0')[0].decode('latin-1')
+
+    def arrival_heading(dest, place):
+        key = (dest.lower(), (place or '').lower())
+        if key not in heading_cache:
+            level_dir = next((e for e in levels(levels_dir) if e.lower() == dest.lower()), None)
+            h = 0
+            if level_dir and place:
+                d2 = level_data(level_dir, levels_dir)
+                q = next((x for x in d2.persos() if d2.perso_names(x.loc)[2].lower() == place.lower()), None)
+                h = heading_deg(q.world) if q else start_heading_deg(level_dir, levels_dir)
+            elif level_dir:
+                h = start_heading_deg(level_dir, levels_dir)
+            heading_cache[key] = h
+        return heading_cache[key]
+
+    for k, p in enumerate(data.persos()):
+        if p.loc == ed or not lv.ptr(p.loc, 0xC):
+            continue
+        try:
+            a = ai.AI(data, p.loc)
+        except Exception:
+            continue
+        zone_k, actions = None, []
+
+        def own_true(cond):
+            """Equal(dsgN, v) on its own dsgvars: True / False; anything else: None."""
+            c = cond.children
+            if cond.type == 1 and cond.param == 3 and len(c) == 2 and c[0].type in (10, 11) and c[1].type == 12:
+                v = ai.perso_dsg_value(data, p.loc, c[0].param)
+                return v is not None and int(v) == struct.unpack('<i', struct.pack('<I', c[1].param))[0]
+            return None
+
+        def visit(nodes, ok):
+            nonlocal zone_k
+            skip = set()
+            for i, n in enumerate(nodes):
+                if i in skip:
+                    continue
+                c = n.children
+                if n.type == 1 and n.param == 13 and len(c) == 3 and c[1].type == 12 and c[2].ref == ed:
+                    zone_k = zone_k or c[1].param
+                if n.type == 0 and n.param == 0 and i + 1 < len(nodes) and nodes[i + 1].type == 0 and nodes[i + 1].param == 1:
+                    visit(c, ok)
+                    t = own_true(c[0]) if c else None
+                    visit(nodes[i + 1].children, ok and t is not False)
+                    skip.add(i + 1)
+                    continue
+                if ok and n.type == 4 and n.param == 7 and c and c[0].type == 20 and c[0].ref:
+                    actions.append((cstr(c[0].ref), None, None))
+                elif ok and n.type == 4 and n.param == 29 and len(c) >= 3 and all(x.type == 20 and x.ref for x in c[:3]):
+                    actions.append((cstr(c[0].ref), cstr(c[1].ref), cstr(c[2].ref)))
+                visit(c, ok)
+        for b in a.behaviours:
+            for sc in b.scripts + ([b.schedule] if b.schedule else []):
+                visit(sc, True)
+        prims = dict(cast.zones(data, p.loc, a)).get(zone_k) if zone_k else None
+        if not prims or len({x[0].lower() for x in actions}) != 1:
+            continue  # not a portal, or its destination is not decided by its own dsgvars
+        dest, place, cam = actions[0]
+        if dest.lower() == lv.name.lower():
+            continue  # a reload of this level (sud0's Doc barge), not a way out
+        heading = arrival_heading(dest, place)
+        cap = [(ai.POP_GUARD, 0, 134, 0, 0, (0, 0, 0)), (ai.POP_SET, 2, 99, 0, 0, (0, 0, 0)),
+               (ai.POP_SET, 0, 100, 0, 0, (0, 0, 0)), (ai.POP_SET, 0, 136, heading, 0, (0, 0, 0)),
+               (ai.POP_FORCE, 0, 66, 0, 0, (0, 0, 0)), (ai.POP_FORCE_REFLEX, 0, 4, 0, 0, (0, 0, 0))]
+        fire = [(ai.POP_SET, 0, 103, 0, 0, (0, 0, 0))]
+        if place:
+            fire.append((ai.POP_LEVEL, 0, sid(cam), sid(dest), sid(place), (0, 0, 0)))
+        else:
+            fire.append((ai.POP_LEVEL, 0, 0xFFFF, sid(dest), 0xFFFFFFFF, (0, 0, 0)))
+        w = p.world
+        out.append(((w[3], w[7], w[11]), (w[0:3], w[4:7], w[8:11]), 0x8000 + k, prims, ai.mat_inverse(w), cap, fire,
+                    data.perso_names(p.loc)[2], data.perso_sector(p.loc)))
+    return out, names
+
+
+def portal_chunks(data, portals, names):
+    """PORT, ZONE and PLAC (ai.py's layouts) for se_portals' records and the SE level's own places."""
+    from . import ai
+    port = struct.pack('<HH', len(portals), 0)
+    zone = struct.pack('<HH', len(portals), 0)
+    for pos, rows, perso, prims, inv, cap, fire, _, sector in portals:
+        port += struct.pack('<4f9fHBBHHiHH', *pos, 4.0, *[x for r in rows for x in r], perso, 0, 1, 103, 0, 1,
+                            0xFFFF if sector is None else sector, 0)
+        port += struct.pack('<HH', len(cap), len(fire))
+        for op, kind, a, b, c, v in cap + fire:
+            port += struct.pack('<BBHII3f', op, kind, a, b & 0xFFFFFFFF, c & 0xFFFFFFFF, *v)
+        zone += struct.pack('<HH12f', len(prims), 0, *inv) + b''.join(struct.pack('<I3f3f', k, *x, *y) for k, x, y in prims)
+    port += struct.pack('<H', len(names)) + b''.join(struct.pack('<H', len(n.encode())) + n.encode() for n in names)
+    rows = ai.places(data)
+    plac = struct.pack('<HH', len(rows), 0) + b''.join(
+        struct.pack('<H', len(n.encode('latin-1'))) + n.encode('latin-1') + struct.pack('<4f', *pos, h) for n, pos, h in rows)
+    return [('PORT', port), ('ZONE', zone), ('PLAC', plac)]
+
+
 def export_level(level, out_ttlv, tex_root=OUT + '/Textures', levels_dir=LEVELS, retail_ttlv=RETAIL_TTLV):
     """Write OUT.ttlv (the SE level, the donor's Ed) and OUT.ttai (the donor's, emptied of level-bound chunks).
     Returns (ttlv.write's summary, donor name or None, the .ttai written or None)."""
@@ -305,9 +568,21 @@ def export_level(level, out_ttlv, tex_root=OUT + '/Textures', levels_dir=LEVELS,
     r = ttlv.write(data, out_ttlv, tex_root=tex_root, ed_donor=src, skip_decals=skier, cast_body=cast)
     ai_out, ttai_path = None, os.path.splitext(out_ttlv)[0] + '.ttai'
     ttai = os.path.splitext(src)[0] + '.ttai' if src else None
-    if ttai and os.path.exists(ttai):
+    walk_src = find_file(os.path.join(retail_ttlv, f'{WALK_DONOR}.ttai'))
+    zones = mode_zones(data) if skier else []
+    gates, gate_names = se_portals(data, levels_dir)
+    level_chunks = portal_chunks(data, gates, gate_names)
+    if ttai and os.path.exists(ttai) and zones and os.path.exists(walk_src):
+        # The SE switches between walking and skiing within the level: the main model walks (retail Ed), the skier
+        # rides along as ALTM (a whole .ttai container), MODZ says where each takes over.
         ai_out = ttai_path
-        write_ttai(ttai, ai_out)
+        write_ttai(ttai, ai_out + '.ski')
+        alt = open(ai_out + '.ski', 'rb').read()
+        os.remove(ai_out + '.ski')
+        write_ttai(walk_src, ai_out, [('MODZ', modz_chunk(zones)), ('ALTM', alt)], level_chunks)
+    elif ttai and os.path.exists(ttai):
+        ai_out = ttai_path
+        write_ttai(ttai, ai_out, (), level_chunks)
     elif os.path.exists(ttai_path):
         os.remove(ttai_path)  # an older one would not match this .ttlv
     return r, name if src else None, ai_out

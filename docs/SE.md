@@ -167,6 +167,12 @@ Tonic Viewer only. Their file names use the retail spellings anyway (`se.RETAIL_
 sound or intro. Checked in scratch sandboxes: SE-only converts in 88 s, and all 11 Ed-less levels load with valid draw
 lists in viewcheck. viewcheck's demo now skips a level without Ed: it crashed in the test, not the core.
 
+## Demo
+
+The demo (level select's Demo button) picks from both editions' main levels with Ed (the SE's with a borrowed Ed).
+Both editions use the same level names, so "not the level just shown" compares files (main.swift `demoCurrent`,
+sdl/src/main.c `demo_path`). Only built (Swift) and syntax-checked (SDL); not seen running.
+
 ## Lighting
 
 SE levels start in the port's own ("Modern") lighting. Its original data shows many issues under the game's
@@ -183,6 +189,138 @@ read at the shifted offset (16 surfaces, every water env paired), and the core t
 plane" instead of reading past the list. Reproduced headless: viewcheck on SE cavedoc segfaulted (exit 139) without
 the guard. viewcheck's other lines are scripted for specific retail levels (bar, sud0, north), so they fail on SE maps
 of the same names. Its generic line, "every frame's draw list is valid", passes.
+
+## AI primitive names (2026-11-05)
+
+The SE exe (`MAID3DVR.EXE`) keeps what retail stripped: its AI primitive tables with their script names (e.g.
+`Cond_PressedBut`, `Proc_ChangeComport`, `Action_GoToWP`), and an export table of **2593 named engine functions**
+(`fn_eGetNbCond`, `szFindConditionScriptNameFromId`, `GLI_*`, `GEO_*`, `COL_*`, `DNM_*`, `SECT_*`...).
+`tools/exe/se_names.py` maps the primitives onto retail's numbering (method and table layouts in its docstring) and
+writes `tools/exe/se_ai_map.tsv`.
+
+| kind | SE | retail | matched by code (>= 0.85 / >= 0.5) | by order or position | retail-only |
+|---|---|---|---|---|---|
+| keywords | 9 | 10 | 9 / 0 | 0 | 1 |
+| operators | 28 | 28 | 12 / 12 | 4 | 0 |
+| fields | 15 | 15 | 9 / 5 | 1 | 0 |
+| conditions | 98 | 111 | 88 / 10 | 0 | 13 |
+| functions | 121 | 165 | 52 / 47 | 22 | 44 |
+| procedures | 230 | 294 | 142 / 72 | 16 | 64 |
+| meta-actions | 42 | 43 | 20 / 10 | 12 | 1 |
+
+Every SE primitive has a retail counterpart. Where this project had already named a retail primitive by reading its
+code, the two agree, e.g. ButtonHeld = `Cond_PressedBut`, InZone = `Cond_CollidePersoZDDWithPerso`, ForceBehaviour =
+`Proc_ChangeComport`, ChangeState = `Proc_ChangeAction`, TurnBy = `Proc_Turn`, SetHeading =
+`Proc_TurnAbsoluteDirection`, RemovePerso = `Proc_KillPerso`. Several guesses get their real names: Overhang? =
+`Cond_CollideWithAttic`, Counter34? = `Func_GetHitPoints`, TimeSince? = `Func_ElapsedTime`, StandingOnPerso =
+`Func_GetFather`, the swim conditions 70-74 (`Cond_CanSwim`, `Cond_IsNotOutOfDepth`...). The AI listings now use these
+names for retail primitives this project hadn't named (`ai.load_names`): 595 of retail's 666 primitives have a name; the
+71 without are retail additions with no SE counterpart.
+
+To check: retail conditions 44-47, named GroundMaterialIs... here, are SE's `Cond_ZDMCollideWithGround`... (0.97 code
+similarity). The pairs marked `order` (e.g. procedure 244, JumpBallistic in the port, is `Proc_Accelerate` at 0.62)
+are the least certain.
+
+**What retail added after the SE** (retail-only, with this project's names where it has them):
+- Conditions: MainActorWithin, LevelIs, two game-state tests, IsValid, and 8 others.
+- Functions: an angle function (2), Lives and two neighbours (40-42), SaveValue (93), the vector set (VecNormalize,
+  GlobalToLocal..., 99-103), and a block of 32 at the end (133-164).
+- Procedures: the SetActivity family and the activity radius (17-22), perso flags, StopMotion, lives (SetLives /
+  AddLife / TakeLife), save values (IncSaveValue / SetSaveValue), a second global sound, SetLightSet (283, the day /
+  night cycle), and other blocks (224-233, 277-293).
+- One meta-action (29), one keyword (9).
+
+Next with these: translating SE scripts into retail numbering (SE index -> retail index from this map), so the SE
+levels' own characters and triggers can run in the core's interpreter. That is also the way to find and read the SE
+level scripts that switch Ed into sliding mid-level (the SE has `Proc_SkiTurnLeft` / `Proc_SkiTurnRight`, retail
+255 / 256), which the SE uses where retail has skymap.
+
+## Sliding in the Special Edition (read 2026-11-05)
+
+With the scripts translated into retail numbering (`ai.se_translate`: primitives through se_ai_map.tsv, the SE's
+channel reference node type 18 -> retail's 33), the SE levels' scripts read as real logic. The SE has no separate
+skier character and no skymap. **Skiing is a mode of Ed himself**: his behaviour **B52** with reflex **R24**. B52
+sets the camera for skiing, among other things; Ed's own scripts never enter it. Level trigger characters force it on
+him (`ForceBehaviour` / `ForceReflex` = `Proc_ChangeComport` / `Proc_ChangeComportReflex`) when he is in one of their
+zones (`InZone` = `Cond_CollidePersoZDDWithPerso`). Only SE Totalski does this, and it mixes walking and sliding
+within the level:
+
+| perso (model, instance) | at | forces on Ed | when |
+|---|---|---|---|
+| LOL_Actor_Model1, STH_Actor8 | (-416, 17, 525), below the start | B52 + R24: ski | Ed in its zone |
+| STH_genski_petitepiste, STH_finpiste | (213, 607, -1148), the big run's end | B3 + R2: walk | in its zone |
+| STH_remonte_pentes / _pente2, STH_cabine1 / 2 | (170, 539, -1149), (430, 608, -1065) | B82 / B84: ride the ski lift | a button, a power (`Cond_TestPower`), in its zone |
+| STH_genski_meca_glisse, STH_genski_glisse1 | (395, 658, -1082) | B52 + R24: ski again (a small run) | in its zone |
+| STH_glisse_marche, STH_meca_vers_saut | (458, 526, -1047) | B0 + R0: walk | in its zone |
+| STH_genreinit, STH_reinitski | (107, 534, -1149) | B52 + R24 | in its zone (a restart point) |
+
+So SE Totalski is a hub: Ed walks from the start, skis the long run, walks at the bottom, rides ski lifts up to
+shorter runs, and leaves through an arch to Sud0 (STH_vers_Sud0). Its bottom area also has ice targets
+(STH_skicible), beehives, silver and life pickups. The other ten SE levels force B52 nowhere.
+
+**Retail can't do this with one AI:** retail Ed's own AI never enters a ski state (no reference to states 115-125,
+217, 220, 278 in the fix Ed's scripts). Only the separate skier character skis.
+
+**Built (2026-11-05): the switching, with the two retail AIs.**
+- Exporter (`se.mode_zones`, `se.export_level`): each SE trigger above becomes a mode zone. It has the trigger's ZDD
+  box, the mode it sets, the mode its guard on SE Ed's dsg7 requires, whether it fires once, and a teleport (to
+  another perso's position, or by a vector).
+- SE Totalski's `.ttai` = walking Ed (retail Land's, `WALK_DONOR`) + `MODZ` (5 zones) + `ALTM` (the whole retail
+  Totalski skier `.ttai`). Both share the NewEd family, so one EDPL serves both (retail Land's and Totalski's are
+  byte-identical).
+- Core: `tc_ai_model` reads `MODZ` / `ALTM`; `tc_viewer` loads the skier as a second model and, each tick before Ed's
+  step, swaps the driver when he enters a zone (`play_mode_zones`), keeping his position and speed.
+  `tc_viewer_play_mode` tells which model drives him. Fire-once zones re-arm after a death, as the SE reloads the
+  level.
+- Walking on SE snow: the walk mechanics treat a zero-grip floor as grip 1 while walking (`tc_mec_walk.firm_floors`,
+  port choice). The skier keeps the slide.
+- Checked headless (scratch probe through the viewer):
+  - start: walking, then the start zone hands Ed to the skier on the first tick; auto-start pushes off, 30 u/s.
+  - `STH_finpiste`: walking; he runs on the snow at 9 u/s (top 12).
+  - `STH_genski_glisse1`: skiing again, 0.6 lift.
+  - `STH_meca_vers_saut`: walking.
+  - `STH_reinitski`: skiing, teleported to the start.
+  - skicheck uses the skier from ALTM (unchanged 2.4 %).
+- Not modelled yet: the ski lifts (`STH_cabine1 / 2`, B82 / B84 with a power and a button).
+
+## Portals (2026-11-05)
+
+SE arches are different from retail's: an arch fires as soon as SE Ed is in its small ZDD box in the opening, at
+once. sud0's eight hub arches `ChangeLevel` by their own dsg0 (totalski, cavedoc, carota, north, lecanyon, cock01,
+pyramide, marmite; the first time, a story behaviour runs first). Every world's entrance and exit arch does
+`ChangeMapAtPosition('sud0', 'zor_ed<world>', 'zor_kamera<world>')`.
+
+**Port: SE arches play out the retail way.** `se.se_portals` finds them (a ZDD zone on Ed and one destination decided
+by the arch's own dsgvars; reloads of the same level, like Doc's barge in sud0, are left out). It writes retail-format
+`PORT` records: capture in the SE zone with the retail arches' ops (dsg134 == 0, dsg99 = the arch, dsg100 = 0, dsg136
+= the arrival heading, Ed's walk-in B66 + R4), fire on Ed.dsg103 == 1 with the SE destination. The arrival heading is
+the destination SE level's start facing, or its named place's. The SE level's own places go in `PLAC`, for arrivals at
+`zor_ed...`. Portal level changes stay in the current level's folder (both frontends), so SE arches lead to SE levels.
+
+Checked headless:
+
+| run | result |
+|---|---|
+| sud0's Totalski arch | Ed walks to 4.5 in front, plays state 228 (stepping in), cover at 5.9 s, `totalski` requested at 10.5 s |
+| the same, with Jump | cover at 0.35 s, change at 5.0 s |
+| carota's exit | `sud0` at `zor_edcarota`; arriving, Ed stands at that place |
+
+**Both sides:** SE arches are walked into from either side, while retail's walk-in takes Ed 4.5 in front of the
+arch's local -Y. Entering from +Y, that point lies through the arch, and he walked at it for good (seen on SE
+Totalski's exit). SE portals carry a two-sided flag (PORT's flags byte, `TC_AI_PORTAL_TWO_SIDED`): at capture the
+arch's axes turn half round about Z when Ed is on its +Y side. Checked: both sides of Totalski's exit reach sud0 in
+10.6 s; the old export was stuck from +Y.
+
+**Loading screens:** a level change from an SE level shows the SE's picture of the destination (the purple swirl
+ones, `out/se/Vignette/Level`). Both frontends take the vignettes next to the shown level's own folder.
+
+**Skipping the walk-in** (both editions): the game's own rule is in Ed's B68: Shoot held or just released skips to the
+cover. Port choice: Action and Jump do it too. While a portal has captured Ed and not yet fired, the core presents
+them to his scripts as Shoot (`tc_ed_ai_step`).
+
+**The arches' surface:** retail's cycles a flipbook (GEN_ARCH01R..04R, 5.4 ticks a frame, slowed by
+ttlv.TEXTURE_TIME_SCALE). SE's shows `gen_arch01` still, though its Textures.cnt holds `gen_arch01..04`. Port choice:
+SE arches play those four as retail does (`se.arch_frames`, on every SE material showing `gen_arche\gen_arch01.tga`).
 
 ## Next
 

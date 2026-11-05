@@ -389,6 +389,11 @@ bool tc_viewer_ai_active(const tc_viewer *v);  /* playing with the AI: its statu
 bool tc_viewer_status_live(const tc_viewer *v);
 /* Ed's physics state, NULL without a play session. */
 const tc_player *tc_viewer_player(const tc_viewer *v);
+/* A Special Edition level that switches walking / skiing (tc_ai_mode_zone): TC_AI_MODE_SKI while the skier's model
+ * drives Ed, TC_AI_MODE_WALK otherwise (and on every other level). */
+unsigned tc_viewer_play_mode(const tc_viewer *v);
+/* Ed's AI driver in play (its behaviour, state, portal progress), for headless checks; NULL without one. */
+const struct tc_ed_ai *tc_viewer_driver(const tc_viewer *v);
 /* The level persos running their own AI while playing (tc_cast.h), or NULL (no CAST chunk, no Ed AI). */
 struct tc_cast;
 const struct tc_cast *tc_viewer_cast(const tc_viewer *v);

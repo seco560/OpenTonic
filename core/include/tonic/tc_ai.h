@@ -124,7 +124,29 @@ enum {
 typedef struct tc_ai_portal_op { uint8_t op, kind; uint16_t a; uint32_t b, c; tc_vec3 v; } tc_ai_portal_op;
 /* ZONE: a zone primitive in the zone perso's axes (ZDD; COND_13): kind 7 sphere (a centre, b.x radius), 8 box (a min, b max). */
 typedef struct tc_ai_zone_prim { uint32_t kind; tc_vec3 a, b; } tc_ai_zone_prim;
+/* Whether p (world) is inside a zone given as a world -> zone inverse (row-major 3x4) and its primitives (7 sphere: a
+ * centre, b.x radius; 8 box: a min, b max). */
+bool tc_ai_zone_contains(const float inverse[12], const tc_ai_zone_prim *prims, uint32_t count, tc_vec3 p);
 #define TC_AI_MAX_ZONE_PRIMS 8
+/* .ttai MODZ (tools/ttre/se.py mode_zones): where a Special Edition level switches the player between walking (the
+ * main model) and skiing (the model in ALTM), as the SE's own trigger characters force Ed's ski or walk behaviour when
+ * he is in their zone (docs/SE.md "Sliding in the Special Edition"). */
+typedef struct tc_ai_mode_zone {
+    uint8_t mode;                /* TC_AI_MODE_WALK / TC_AI_MODE_SKI: the model it hands the player to */
+    uint8_t require;             /* 0 any, 1 only while walking, 2 only while skiing */
+    uint8_t once;                /* fires a single time per level load */
+    uint8_t teleport;            /* 0 none, 1 to `vector`, 2 by `vector` (from where he is) */
+    tc_vec3 vector;
+    float inverse[12];           /* row-major 3x4: world -> the zone's axes */
+    uint8_t prim_count;
+    struct tc_ai_zone_prim prim[4];
+} tc_ai_mode_zone;
+#define TC_AI_MODE_WALK 0u
+#define TC_AI_MODE_SKI 1u
+
+/* A portal entered from either side (the Special Edition's arches, tools/ttre/se.py): at capture its axes turn so that
+ * local -Y (where Ed's walk-in B68 takes him, 4.5 in front) is on the side he is on. Retail's arches face one way. */
+#define TC_AI_PORTAL_TWO_SIDED 1u
 typedef struct tc_ai_portal {
     tc_vec3 position;
     float radius;                /* the capture distance, unless the portal has a zone */
@@ -135,6 +157,7 @@ typedef struct tc_ai_portal {
     uint16_t perso;              /* as perso nodes (level perso k + 1) */
     uint16_t sector;             /* the perso's (.ttlv SECT); it sleeps unless active there (tc_sectors_active) */
     uint8_t fire;
+    uint8_t flags;               /* TC_AI_PORTAL_TWO_SIDED */
     uint16_t fire_dsg;
     int32_t fire_value;
     uint16_t capture_count, fire_count;
@@ -225,6 +248,12 @@ typedef struct tc_ai_model {
     uint8_t *floor_sounds;
     /* The level collision floor_sounds indexes (LINK: triangle count, CRC-32 of the .ttlv's COLL chunk). */
     uint32_t link_triangles, link_crc;
+    /* Optional (Special Edition levels that switch walking / skiing): MODZ, and ALTM = a whole second .ttai (the
+     * skier), a copy of its bytes for tc_ai_model_load. */
+    uint16_t mode_zone_count;
+    tc_ai_mode_zone *mode_zones;
+    uint8_t *alt_data;
+    uint32_t alt_size;
 } tc_ai_model;
 
 tc_result tc_ai_model_load(tc_ai_model *model, const uint8_t *data, size_t size);

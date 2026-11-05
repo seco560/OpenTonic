@@ -452,17 +452,22 @@ final class GameView: MTKView {
         window.title = "Open Tonic"
     }
 
-    /// The levels the demo picks from: the game's main ones (no cutscenes, no imported models), with Ed's AI (.ttai).
+    /// The levels the demo picks from: the game's main ones (no cutscenes, no imported models), with Ed's AI (.ttai),
+    /// from both editions (the Special Edition's in out/se/ttlv: those with a borrowed Ed).
     private func demoLevels() -> [URL] {
         let fm = FileManager.default
         let imported = levelFolder.deletingLastPathComponent().appendingPathComponent("Imported")
-        return ((try? fm.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []).filter { url in
-            let name = url.deletingPathExtension().lastPathComponent
-            return url.pathExtension.lowercased() == "ttlv" && tc_level_is_cutscene(name) == 0
-                && !fm.fileExists(atPath: imported.appendingPathComponent(name).path)
-                && fm.fileExists(atPath: url.deletingPathExtension().appendingPathExtension("ttai").path)
-        }
+        let se = levelFolder.deletingLastPathComponent().appendingPathComponent("se/ttlv")
+        return [levelFolder, se].flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
+            .filter { url in
+                let name = url.deletingPathExtension().lastPathComponent
+                return url.pathExtension.lowercased() == "ttlv" && tc_level_is_cutscene(name) == 0
+                    && !fm.fileExists(atPath: imported.appendingPathComponent(name).path)
+                    && fm.fileExists(atPath: url.deletingPathExtension().appendingPathExtension("ttai").path)
+            }
     }
+    /// The demo's level now (both editions use the same names, so it is told apart by its file).
+    private var demoCurrent: URL?
 
     @MainActor func startDemo() {
         demo = true
@@ -472,12 +477,13 @@ final class GameView: MTKView {
     /// Another random main level (not the one shown), in the demo.
     private func nextDemoLevel() {
         guard demo else { return }
-        let all = demoLevels(), current = renderer?.viewer?.level.name.lowercased()
-        guard let url = all.filter({ $0.deletingPathExtension().lastPathComponent.lowercased() != current }).randomElement()
+        let all = demoLevels()
+        guard let url = all.filter({ $0.standardizedFileURL != demoCurrent?.standardizedFileURL }).randomElement()
                 ?? all.first else {
             showPicker()
             return
         }
+        demoCurrent = url
         openLevel(url)
         guard renderer != nil else { showPicker(); return }  // it didn't load (openLevel showed why)
         demoTimer?.invalidate()
@@ -564,15 +570,20 @@ final class GameView: MTKView {
         alert.runModal()
     }
 
-    /// A red portal's level change: the .ttlv of that name (any case) in the levels folder, entered with the carry.
+    /// The folder of the level shown (the retail levels', or the Special Edition's out/se/ttlv): a portal's level
+    /// change stays in it, so the Special Edition's arches lead to its own levels.
+    private var currentLevelFolder: URL?
+
+    /// A red portal's level change: the .ttlv of that name (any case) in the shown level's folder, entered with the carry.
     func openPortalLevel(_ carry: tc_viewer_carry) {
         let name = cString(carry.level)
-        let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
+        let folder = currentLevelFolder ?? levelFolder
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         guard let url = files.first(where: { $0.pathExtension.lowercased() == "ttlv"
                                              && $0.deletingPathExtension().lastPathComponent.lowercased() == name }) else {
             let alert = NSAlert()
             alert.messageText = "No level \(name)"
-            alert.informativeText = "The portal leads to \(name), which is not in \(levelFolder.path)."
+            alert.informativeText = "The portal leads to \(name), which is not in \(folder.path)."
             alert.runModal()
             showPicker()
             return
@@ -581,6 +592,7 @@ final class GameView: MTKView {
     }
 
     func openLevel(_ url: URL, carry: tc_viewer_carry? = nil) {
+        currentLevelFolder = url.deletingLastPathComponent()
         // The old view may hold the mouse (cursor hidden and detached): release it, and capture again in the new view so
         // a portal's level change keeps playing (and Esc still releases it).
         let wasCaptured = gameView?.isCaptured ?? false
@@ -632,7 +644,11 @@ final class GameView: MTKView {
         }
         view.renderer = renderer
         view.delegate = renderer
-        view.vignettes = levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level")
+        // Its portals' loading screens: next to its own folder (the Special Edition's out/se/Vignette/Level for its
+        // levels), else the retail ones.
+        let own = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Vignette/Level")
+        view.vignettes = FileManager.default.fileExists(atPath: own.path) ? own
+            : levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level")
         gameView = view
         window.contentView = view
         window.makeFirstResponder(view)

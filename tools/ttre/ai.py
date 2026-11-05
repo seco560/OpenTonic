@@ -51,13 +51,24 @@ class Behaviour:
     schedule: list = None    # roots of the schedule script, or None
 
 
-def load_names(path='tools/exe/ai_names.tsv'):
-    names = {}
+def load_names(path='tools/exe/ai_names.tsv', se_path='tools/exe/se_ai_map.tsv'):
+    """(kind, retail index) -> name: this project's (ai_names.tsv), else the Special Edition exe's own script name for
+    that primitive (se_ai_map.tsv, tools/exe/se_names.py; e.g. Proc_SkiTurnLeft). A project name marked as a guess
+    ("Overhang?") gives way to an SE name matched by code (confidence code / code+order: Cond_CollideWithAttic)."""
+    names, sure = {}, set()
+    if os.path.exists(se_path):
+        for line in open(se_path, encoding='utf-8'):
+            f = line.rstrip('\n').split('\t')
+            if len(f) >= 7 and not line.startswith('#') and f[1].isdigit() and f[3]:
+                names[(f[0], int(f[1]))] = f[3]
+                if f[6] in ('code', 'code+order'):
+                    sure.add((f[0], int(f[1])))
     if os.path.exists(path):
         for line in open(path, encoding='utf-8'):
             if line.strip() and not line.startswith('#'):
                 kind, idx, name = line.rstrip('\n').split('\t')[:3]
-                names[(kind, int(idx))] = name
+                if not (name.endswith('?') and (kind, int(idx)) in sure):
+                    names[(kind, int(idx))] = name
     return names
 
 
@@ -106,6 +117,8 @@ class AI:
             param, _, _, depth, typ = self.d.un('IBBBB', loc, o)
             if depth == 0:
                 break
+            if self.d.se:  # the Special Edition's numbering -> retail's (se_translate)
+                typ, param = se_translate(typ, param)
             n = Node(typ, param, depth, self.lv.ptr(loc, o), loc=(loc[0], loc[1] + o))
             while stack and stack[-1].depth >= depth:
                 stack.pop()
@@ -123,6 +136,28 @@ class AI:
         for b in self.behaviours:
             for s in b.scripts + ([b.schedule] if b.schedule else []):
                 yield from walk(s)
+
+
+SE_MAP_PATH = 'tools/exe/se_ai_map.tsv'
+SE_NODE_TYPES = {18: 33}  # the SE's channel (module) reference is node type 18; retail's 33
+_se_map = None
+
+
+def se_translate(typ, param):
+    """A Special Edition script node -> retail numbering: primitive indices through tools/exe/se_ai_map.tsv (the SE
+    exe's tables matched to retail's by code, tools/exe/se_names.py), node types through SE_NODE_TYPES. Every SE
+    primitive has a retail counterpart there; an index outside the map is kept (and resolves to nothing useful)."""
+    global _se_map
+    if _se_map is None:
+        _se_map = {}
+        for line in open(SE_MAP_PATH, encoding='utf-8'):
+            f = line.rstrip('\n').split('\t')
+            if len(f) >= 3 and not line.startswith('#') and f[1].isdigit() and f[2].isdigit():
+                _se_map[(f[0], int(f[2]))] = int(f[1])
+    kind = KINDS.get(typ)
+    if kind:
+        return typ, _se_map.get((kind, param), param)
+    return SE_NODE_TYPES.get(typ, typ), param
 
 
 def label(ai, n, names):
@@ -228,7 +263,8 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           (ai.proximity_triggers)
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
           as stored), u16 perso (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the
-          screen is covered, 2: never, capture only: the player's scripts do the rest), u8 0, u16 fire_dsg, u16 0,
+          screen is covered, 2: never, capture only: the player's scripts do the rest), u8 flags (1: two-sided, the
+          SE's arches: se.py), u16 fire_dsg, u16 0,
           i32 fire_value, u16 sector (the perso's, as in the .ttlv's SECT; 0xFFFF unknown: always awake), u16 0,
           u16 n_capture, u16 n_fire, (n_capture + n_fire) x op { u8 op, u8 kind, u16 a, u32 b, u32 c, f32 v[3] } }
           (ops: ai.POP_*, see portals());

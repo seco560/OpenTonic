@@ -178,6 +178,15 @@ static void run_portals(tc_ed_ai *e) {
                 if (g->ops[k].op == TC_AI_POP_GUARD && (int32_t)tc_ai_dsgvar_float(&e->ai, g->ops[k].a) != (int32_t)g->ops[k].b)
                     ok = false;
             if (!ok) continue;
+            if (g->flags & TC_AI_PORTAL_TWO_SIDED) {
+                /* Ed on the portal's +Y side: turn its axes half round about Z, so the walk-in stays on his side. The
+                 * model is the driver's own (the viewer loads one per level), so the turn is kept in it. */
+                float *R = ((tc_ai_portal *)g)->rows;
+                tc_vec3 d = tc_v3_sub(e->player->position, g->position);
+                if (R[1] * d.x + R[4] * d.y + R[7] * d.z > 0)
+                    for (k = 0; k < 9; k++)
+                        if (k % 3 != 2) R[k] = -R[k];
+            }
             for (k = 0; k < g->capture_count; k++) (void)portal_op(e, g, &g->ops[k]);
             e->portal_armed[i] = 0;
             if (g->fire == 2) break; /* capture only: the player's own scripts take it from there */
@@ -747,6 +756,11 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
  * cave) are not solid. Only while he moves: the camera and the other users of the world see everything. */
 void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float stick_y, tc_vec3 camera) {
     tc_collision *w = e->player->world;
+    /* Skipping a portal's walk-in: Ed's own B68 (the walk up to the arch and state 228, stepping in) skips to the cover
+     * while Shoot is held or just released. Port choice: Action and Jump do it too, presented to his scripts as Shoot
+     * while a portal has captured him and not yet fired. */
+    if (e->portal >= 0 && !e->portal_firing && (inputs & ((1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_JUMP))))
+        inputs |= 1u << TC_AI_IN_SHOOT;
     e->stepping = true;
     set_solid(e);
     step(e, dt, inputs, stick_x, stick_y, camera);

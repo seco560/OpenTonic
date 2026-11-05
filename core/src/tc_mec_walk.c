@@ -538,6 +538,7 @@ void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc
         if (!wanted_in_air) wanted = tc_v3(0, 0, 0);
     } else {
         float grip = clamp01(w->ground_grip);
+        if (w->firm_floors && grip <= 0.01f) grip = 1; /* tc_mec_walk.firm_floors: the SE's snow, walked */
         wanted = tangent(wanted, w->ground_normal); /* FUN_004c1541: along the ground (mode 12 does this) */
         if (grip >= 1) {
             force = tc_v3(0, 0, 0);

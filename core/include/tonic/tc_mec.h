@@ -151,6 +151,9 @@ typedef struct tc_mec_walk {
     tc_vec3 wall_normal;         /* contact record +0x148 (wall, overhang, ceiling) */
     float ground_grip;           /* the ground contact's floor material mat[2] (1 = none) */
     float wall_grip;             /* the wall contact's (record +0x148: obstacle x own grip) */
+    /* Port choice (Special Edition levels that switch walking / skiing, tc_ai_mode_zone): walking, a floor without grip
+     * (the ski snow) walks as grip 1, so Ed can steer on the snow between the runs; the skier keeps the slide. */
+    bool firm_floors;
     uint32_t ground_tri, wall_tri; /* the contacts' triangles (tc_tri.source; UINT32_MAX none): their materials */
     uint16_t ground_own, wall_own; /* the collide flags of the body part that made them (tc_ai_sphere.flags) */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */

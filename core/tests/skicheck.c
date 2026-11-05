@@ -51,6 +51,12 @@ int main(int argc, char **argv) {
     snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
     if (!(data = read_file(path, &size)) || tc_ai_model_load(&model, data, size) != TC_OK) { fprintf(stderr, "%s?\n", path); return 1; }
     free(data);
+    if (model.alt_data) { /* a Special Edition level that switches walking / skiing: the skier is the second model (ALTM) */
+        tc_ai_model ski;
+        if (tc_ai_model_load(&ski, model.alt_data, model.alt_size) != TC_OK) { fprintf(stderr, "%s: ALTM?\n", path); return 1; }
+        tc_ai_model_free(&model);
+        model = ski;
+    }
     tc_ai_model_link(&model, &level);
     if (tc_collision_init(&world, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) return 1;
     tc_collision_set_sectors(&world, level.sectors.collision_sector, level.sectors.collision_count, level.sectors.count);

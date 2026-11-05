@@ -98,6 +98,8 @@ typedef struct app {
      * button ends it. */
     bool demo;
     float demo_time;             /* seconds on this level */
+    char *demo_path;             /* the demo's level now (its .ttlv path; both editions share level names) */
+    char *current_folder;        /* the shown level's folder (retail out/ttlv or out/se/ttlv): portals stay in it */
     char title_base[512];
     char title[1024];
     Uint64 last_title_ns;
@@ -227,6 +229,8 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     close_level(a);
     close_picker(a);
     a->view = v;
+    SDL_free(a->current_folder);
+    a->current_folder = path_dir(path);
     a->pad_fast = false;  /* the new viewer holds nothing */
     tc_viewer_set_look(&v->viewer, a->look_sensitivity, a->invert_x, a->invert_y);
     /* Level music from the user-edited table out/audio/music.tsv (next to out/ttlv); sound effects from out/audio/sfx. */
@@ -255,14 +259,17 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
 static void open_portal_level(app *a, const tc_viewer_carry *pending) {
     tc_viewer_carry carry = *pending;  /* freed with the current viewer */
     char pattern[80];
+    /* The shown level's folder: the Special Edition's arches lead to its own levels (out/se/ttlv). */
+    char *folder = SDL_strdup(a->current_folder ? a->current_folder : a->level_folder);
     SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", carry.level);
     int n = 0;
-    char **levels = SDL_GlobDirectory(a->level_folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n);
-    char *path = levels && n > 0 ? path_join(a->level_folder, levels[0]) : NULL;
+    char **levels = folder ? SDL_GlobDirectory(folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    char *path = levels && n > 0 ? path_join(folder, levels[0]) : NULL;
     SDL_free(levels);
     if (!path) {
         char msg[1024];
-        SDL_snprintf(msg, sizeof msg, "The portal leads to %s, which is not in %s.", carry.level, a->level_folder);
+        SDL_snprintf(msg, sizeof msg, "The portal leads to %s, which is not in %s.", carry.level, folder ? folder : "?");
+        SDL_free(folder);
         SDL_Log("%s", msg);
         set_captured(a, false);
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "No level", msg, a->window);
@@ -271,18 +278,19 @@ static void open_portal_level(app *a, const tc_viewer_carry *pending) {
     }
     if (!open_level(a, path, &carry)) show_picker(a);
     SDL_free(path);
+    SDL_free(folder);
 }
 
 #define DEMO_SECONDS 60.0f
 
-/* The levels the demo picks from: the game's main ones (no cutscenes, no imported models), with Ed's AI (.ttai). */
-static bool demo_level(const app *a, const char *file) {
+/* Whether `file` in `folder` is a demo level: a main one (no cutscene, no imported model) with Ed's AI (.ttai). */
+static bool demo_level(const app *a, const char *folder, const char *file) {
     char *name = path_stem(file), *out = path_dir(a->level_folder);
     char *imported = out ? path_join(out, "Imported") : NULL, *dir = imported && name ? path_join(imported, name) : NULL;
-    char ai[600];
+    char ai[700];
     bool ok = name && !tc_level_is_cutscene(name) && !(dir && path_is_dir(dir));
     if (ok) {
-        SDL_snprintf(ai, sizeof ai, "%s/%s.ttai", a->level_folder, name);
+        SDL_snprintf(ai, sizeof ai, "%s/%s.ttai", folder, name);
         ok = path_is_file(ai);
     }
     SDL_free(dir);
@@ -292,28 +300,37 @@ static bool demo_level(const app *a, const char *file) {
     return ok;
 }
 
-/* Another random main level (not the one shown), in the demo; the level select when there is none or it won't load. */
+/* Another random main level (not the one shown), in the demo, from both editions (the Special Edition's in
+ * out/se/ttlv: those with a borrowed Ed); the level select when there is none or it won't load. Both editions use the
+ * same level names, so the one shown is told apart by its path. */
 static void next_demo_level(app *a) {
-    int n = 0, count = 0, pick;
-    char **files = SDL_GlobDirectory(a->level_folder, "*.ttlv", SDL_GLOB_CASEINSENSITIVE, &n);
-    char *path = NULL;
-    const char *current = a->view ? a->view->level.name : "";
-    for (int round = 0; round < 2 && !path; round++) {  /* the second round only when the current one is all there is */
-        count = 0;
-        for (int i = 0; files && i < n; i++) {
-            char *stem = path_stem(files[i]);
-            bool same = stem && SDL_strcasecmp(stem, current) == 0;
-            SDL_free(stem);
-            if (demo_level(a, files[i]) && (round || !same)) files[count++] = files[i];
-        }
-        if (count == 0) continue;
-        pick = (int)SDL_rand(count);
-        path = path_join(a->level_folder, files[pick]);
+    char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
+    const char *folders[2] = {a->level_folder, se_levels};
+    char *paths[256], *path = NULL;
+    int count = 0;
+    for (int k = 0; k < 2; k++) {
+        int n = 0;
+        char **files = folders[k] ? SDL_GlobDirectory(folders[k], "*.ttlv", SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+        for (int i = 0; files && i < n && count < 256; i++)
+            if (demo_level(a, folders[k], files[i])) paths[count++] = path_join(folders[k], files[i]);
+        SDL_free(files);
     }
-    SDL_free(files);
+    for (int round = 0; round < 2 && !path && count; round++) {  /* the second round only when the current one is all there is */
+        int pick, m = 0, choices[256];
+        for (int i = 0; i < count; i++)
+            if (paths[i] && (round || !a->demo_path || SDL_strcmp(paths[i], a->demo_path) != 0)) choices[m++] = i;
+        if (m == 0) continue;
+        pick = choices[(int)SDL_rand(m)];
+        path = paths[pick];
+        paths[pick] = NULL;
+    }
+    for (int i = 0; i < count; i++) SDL_free(paths[i]);
+    SDL_free(se);
+    SDL_free(se_levels);
     a->demo_time = 0;
+    SDL_free(a->demo_path);
+    a->demo_path = path;
     if (!path || !open_level(a, path, NULL)) show_picker(a);
-    SDL_free(path);
 }
 
 static void start_demo(app *a) {
@@ -756,9 +773,18 @@ static void loading_prepare(app *a, const char *level) {
     loading_free(a);
     SDL_strlcpy(a->loading_level, level, sizeof a->loading_level);
     a->loading_start_ns = SDL_GetTicksNS();
-    /* Vignette names differ in case from the level names (Cock01.png / cock01). */
-    char *vignette = path_join(a->data_dir, "Vignette");
+    /* Vignette names differ in case from the level names (Cock01.png / cock01). Next to the shown level's folder (the
+     * Special Edition's: out/se/Vignette/Level, for its arches' level changes), else the retail ones. */
+    char *base = a->current_folder ? path_dir(a->current_folder) : NULL;
+    char *vignette = base ? path_join(base, "Vignette") : NULL;
     char *dir = vignette ? path_join(vignette, "Level") : NULL;
+    if (!dir || !path_is_dir(dir)) {
+        SDL_free(dir);
+        SDL_free(vignette);
+        vignette = path_join(a->data_dir, "Vignette");
+        dir = vignette ? path_join(vignette, "Level") : NULL;
+    }
+    SDL_free(base);
     char pattern[80];
     SDL_snprintf(pattern, sizeof pattern, "%s.png", level);
     int n = 0;
@@ -992,6 +1018,8 @@ int main(int argc, char **argv) {
     SDL_DestroyWindow(a.window);
     SDL_free(a.level_folder);
     SDL_free(a.data_dir);
+    SDL_free(a.demo_path);
+    SDL_free(a.current_folder);
     SDL_Quit();
     return 0;
 }

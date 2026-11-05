@@ -15,7 +15,7 @@ and forces Ed's normal behaviour **B66** and reflex **R4** (`PROC_237` / `PROC_2
 | Ed | does |
 |---|---|
 | B66 | a lead-in by his current state (ChangeStateAndWait 29 / 182 / 38 / 127, then state 0), then B68 |
-| B68 | `dsg134 = 2` (= "step out of a portal" on arrival); on the ground `ChangeStateByDirection(dsg99, (0, -4.5, 0), walk-start 9, backward 2)`: walk to 4.5 in front of the arch; `TurnTowardOverFrames(dsg99, 1)`; `dsg0 = 20`; **`ChangeStateAndWait(228)` = stepping into the portal**; **`GameAction2`** (start the cover transition); B106. Holding / releasing Shoot skips the walk. |
+| B68 | `dsg134 = 2` (= "step out of a portal" on arrival); on the ground `ChangeStateByDirection(dsg99, (0, -4.5, 0), walk-start 9, backward 2)`: walk to 4.5 in front of the arch; `TurnTowardOverFrames(dsg99, 1)`; `dsg0 = 20`; **`ChangeStateAndWait(228)` = stepping into the portal**; **`GameAction2`** (start the cover transition); B106. Holding / releasing Shoot skips the walk. Port choice (2026-11-05): Action and Jump skip it too (presented as Shoot while a portal has captured Ed, `tc_ed_ai_step`). |
 | B106 | `If GameState63` (cover finished, screen black): `dsg103 = 1`, B102 (wait) |
 
 The arch watches `Ed.dsg103 == 1` and then moves him. While Ed walks in, the arch points the camera at its

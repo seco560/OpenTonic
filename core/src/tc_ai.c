@@ -59,7 +59,7 @@ static void rd_portals(reader *r, tc_ai_model *m) {
         for (k = 0; k < 9; k++) p->rows[k] = rd_f32(r);
         p->perso = rd_u16(r);
         p->fire = rd_u8(r);
-        (void)rd_u8(r);
+        p->flags = rd_u8(r);
         p->fire_dsg = rd_u16(r);
         (void)rd_u16(r);
         p->fire_value = rd_i32(r);
@@ -407,6 +407,42 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     m->link_crc = rd_u32(r);
     CHUNK_END(r);
 
+    if (chunk_need(&cs, "MODZ", r)) { /* optional: a Special Edition level's walk / ski switches (tc_ai_mode_zone) */
+        m->mode_zone_count = rd_u16(r);
+        (void)rd_u16(r);
+        m->mode_zones = (tc_ai_mode_zone *)rd_array(r, m->mode_zone_count, sizeof(tc_ai_mode_zone), 72);
+        if (!m->mode_zones) m->mode_zone_count = 0;
+        for (i = 0; i < m->mode_zone_count && !r->error; i++) {
+            tc_ai_mode_zone *z = &m->mode_zones[i];
+            uint16_t prims;
+            z->mode = rd_u8(r);
+            z->require = rd_u8(r);
+            z->once = rd_u8(r);
+            z->teleport = rd_u8(r);
+            z->vector = rd_vec3(r);
+            for (k = 0; k < 12; k++) z->inverse[k] = rd_f32(r);
+            prims = rd_u16(r);
+            (void)rd_u16(r);
+            z->prim_count = 0;
+            for (k = 0; k < prims && !r->error; k++) {
+                tc_ai_zone_prim q;
+                q.kind = rd_u32(r);
+                q.a = rd_vec3(r);
+                q.b = rd_vec3(r);
+                if (z->prim_count < 4) z->prim[z->prim_count++] = q;
+            }
+        }
+        CHUNK_END(r);
+    }
+    if (chunk_need(&cs, "ALTM", r)) { /* optional: the second model (a whole .ttai), loaded by the host when needed */
+        m->alt_size = (uint32_t)r->size;
+        m->alt_data = (uint8_t *)tc_alloc(r->size ? r->size : 1);
+        if (!m->alt_data) { e = TC_ERR_OUT_OF_MEMORY; goto fail; }
+        memcpy(m->alt_data, r->data, r->size);
+        r->offset = r->size;
+        CHUNK_END(r);
+    }
+
     for (i = 0; m->states && i < m->state_count; i++) {
         if ((m->states[i].card != TC_AI_NONE16 && m->states[i].card >= m->card_count) ||
             (m->states[i].spheres != TC_AI_NONE16 && m->states[i].spheres >= m->sphere_set_count)) {
@@ -459,8 +495,24 @@ void tc_ai_model_link(tc_ai_model *m, const tc_level *level) {
     m->floor_sound_count = 0;
 }
 
+bool tc_ai_zone_contains(const float inverse[12], const tc_ai_zone_prim *prims, uint32_t count, tc_vec3 p) {
+    const float *m = inverse;
+    tc_vec3 q = tc_v3(m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3], m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+                      m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]);
+    uint32_t k;
+    for (k = 0; k < count; k++) {
+        const tc_ai_zone_prim *z = &prims[k];
+        if (z->kind == 7 && tc_v3_distance(q, z->a) <= z->b.x) return true;
+        if (z->kind == 8 && q.x >= z->a.x && q.y >= z->a.y && q.z >= z->a.z && q.x <= z->b.x && q.y <= z->b.y &&
+            q.z <= z->b.z) return true;
+    }
+    return false;
+}
+
 void tc_ai_model_free(tc_ai_model *m) {
     uint32_t i;
+    tc_free(m->mode_zones);
+    tc_free(m->alt_data);
     for (i = 0; m->states && i < m->state_count; i++) {
         tc_free(m->states[i].transitions);
         tc_free(m->states[i].prohibited);

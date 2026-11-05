@@ -16,6 +16,12 @@ struct tc_viewer_play {
     tc_player player;
     tc_ai_model model;
     bool has_model;
+    /* A Special Edition level that switches walking / skiing (.ttai MODZ + ALTM): the skier's model, which one drives
+     * Ed now (TC_AI_MODE_*), and which single-shot zones have fired (play_mode_zones). */
+    tc_ai_model alt;
+    bool has_alt;
+    uint8_t mode;
+    uint8_t zone_fired[64];
     tc_ed_ai driver;
     bool has_driver;
     tc_cast cast;                /* the level persos that run their own AI (.ttlv CAST), with Ed as the main actor */
@@ -77,11 +83,16 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         p->has_model = v->ai_result == TC_OK;
         if (p->has_model) tc_ai_model_link(&p->model, l);
     }
+    if (p->has_model && p->model.alt_data && p->model.mode_zone_count) {
+        p->has_alt = tc_ai_model_load(&p->alt, p->model.alt_data, p->model.alt_size) == TC_OK;
+        if (p->has_alt) tc_ai_model_link(&p->alt, l);
+    }
     if (p->has_model) {
         tc_result r = tc_ed_ai_init(&p->driver, &p->model, &p->player, p->level_name);
         p->has_driver = r == TC_OK;
         if (r != TC_OK) v->ai_result = r;
         if (p->has_driver) tc_ed_ai_set_sectors(&p->driver, l->sectors.count ? &l->sectors : NULL);
+        if (p->has_driver && p->has_alt) p->driver.walk.firm_floors = true;
     }
     if (p->has_driver && l->cast.count) {
         tc_result r = tc_cast_init(&p->cast, l, &p->driver.ai);
@@ -97,6 +108,7 @@ static void play_destroy(tc_viewer_play *p) {
     if (p->has_cast) tc_cast_free(&p->cast);
     if (p->has_driver) tc_ed_ai_free(&p->driver);
     if (p->has_model) tc_ai_model_free(&p->model);
+    if (p->has_alt) tc_ai_model_free(&p->alt);
     tc_collision_free(&p->world);
     tc_free(p);
 }
@@ -1406,6 +1418,46 @@ static void capture_pose(tc_viewer *v) {
     }
 }
 
+/* A Special Edition level's walk / ski switches (tc_ai_mode_zone, docs/SE.md "Sliding in the Special Edition"): with
+ * Ed's origin in a zone whose requirement holds, the player goes to the other model (walking Ed: the level's .ttai,
+ * the skier: its ALTM). Its position, heading and speed stay (the zone may move him first, as the SE trigger does);
+ * the new driver starts in its model's start behaviour (the skier's waits for Jump, which tc_ed_ai's auto start
+ * presses on Totalski). Port choice: the SE's own triggers force SE Ed's ski behaviour; retail Ed has none, so the
+ * retail skier takes over. One zone per tick. */
+unsigned tc_viewer_play_mode(const tc_viewer *v) { return v->play ? v->play->mode : TC_AI_MODE_WALK; }
+const tc_ed_ai *tc_viewer_driver(const tc_viewer *v) { return v->play && v->play->has_driver ? &v->play->driver : NULL; }
+
+static void play_mode_zones(tc_viewer *v) {
+    tc_viewer_play *p = v->play;
+    const tc_level *l = v->level;
+    uint32_t i;
+    if (!p->has_alt || !p->has_driver || p->has_cast) return;
+    for (i = 0; i < p->model.mode_zone_count; i++) {
+        const tc_ai_mode_zone *z = &p->model.mode_zones[i];
+        tc_ai_model *next = z->mode == TC_AI_MODE_SKI ? &p->alt : &p->model;
+        if (z->mode == p->mode || (i < 64 && z->once && p->zone_fired[i])) continue;
+        if (z->require && z->require != p->mode + 1) continue;
+        if (!tc_ai_zone_contains(z->inverse, z->prim, z->prim_count, p->player.position)) continue;
+        if (z->teleport == 1) {
+            p->player.position = z->vector;
+            p->player.velocity = tc_v3(0, 0, 0);
+            p->player.placed++;
+        } else if (z->teleport == 2) {
+            p->player.position = tc_v3_add(p->player.position, z->vector);
+            p->player.placed++;
+        }
+        tc_ed_ai_free(&p->driver);
+        p->has_driver = tc_ed_ai_init(&p->driver, next, &p->player, p->level_name) == TC_OK;
+        if (!p->has_driver) { p->use_ai = false; return; }
+        tc_ed_ai_set_sectors(&p->driver, l->sectors.count ? &l->sectors : NULL);
+        p->mode = z->mode;
+        p->driver.walk.firm_floors = p->mode == TC_AI_MODE_WALK;
+        if (p->mode == TC_AI_MODE_WALK) p->ski_shot = false;
+        if (i < 64) p->zone_fired[i] = 1;
+        return;
+    }
+}
+
 /* Ed's AI and mechanics in ticks of TC_ED_AI_TICK (the game's 30 per second), then this frame's pose between the
  * last two ticks. The scripts see last frame's camera eye (it makes the direction keys camera-relative). */
 static void step_ai(tc_viewer *v, float dt) {
@@ -1421,11 +1473,14 @@ static void step_ai(tc_viewer *v, float dt) {
         if (++ticks > 8) { p->tick_time = 0; break; } /* a long stall: drop the backlog */
         p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
         bool still = v->cam.first_person;
+        play_mode_zones(v);
+        if (!p->has_driver) break;
         tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, ai_inputs(v), still ? 0 : v->move_x, still ? 0 : v->move_y,
                       v->camera.position);
         if (p->driver.events.restarted) {
             p->driver.events.restarted = false;
             if (p->has_cast) tc_cast_respawn(&p->cast);
+            memset(p->zone_fired, 0, sizeof(p->zone_fired)); /* the SE reloads the level: its triggers fire again */
         }
         for (n = 0; n < p->driver.ai.sound_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
             v->sounds[v->sound_count++] = p->driver.ai.sounds[n];

@@ -18,6 +18,13 @@
 - Provenance unknown, probably from the earlier no-CD attempt. Treat any code we depend on as **to be verified**: later, emulate the original's unpacker and diff the result against this dump.
 - Internal name from the export table: `MaiD3DFr.exe`. It exports 103 `SND_*` functions (sound API used by the sound DLLs).
 
+## The Special Edition exe: names
+The SE disc's game exe (`MAID3DVR.EXE`, 1998, build 8.5.2; files/sources/se, docs/SE.md) is not packed and exports
+**2593 engine functions by name** (`objdump -p`: `BIN_*`, `GLI_*`, `GEO_*`, `COL_*`, `WP_*`, `DNM_*`, `SND_*`, `SECT_*`,
+`fn_*`...). It also still has its AI primitive tables with script names. The primitives are mapped onto this exe's
+numbering (`tools/exe/se_names.py`, `tools/exe/se_ai_map.tsv`). The engine functions are not mapped yet: matching SE
+functions to this exe's by code would name much of it.
+
 ## Copy protection
 - **Layer 1, packer:** decrypts the image at startup. Not present in the dump.
 - **Layer 2, CD module** (`CD_fn_*` in `tools/exe/names.tsv`, 0x48ED40–0x48F4B0):
