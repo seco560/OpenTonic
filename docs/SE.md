@@ -31,18 +31,7 @@ SE Totalski exports with your current Ed: the retail skier and his AI, on SE's o
 
 Getting there needed workarounds: SE snow mapped to retail values, and a minimal cast entry so the ski camera engages. Of the other levels, only Land has been run through the full SE export and playcheck so far; it passes (Ed lands at the start). None of the remaining nine has gone through the core's checks yet.
 
-### Still to do (updated 2026-11-04, end of the session)
-- ~~Wire the SE steps into convert_files.sh.~~ Done: step 4b (disc image found under files/sources, extracted to
-  files/sources/se, outputs in files/out/se).
-- ~~Add the Retail Edition / Special Edition sections to both pickers.~~ Done in LevelPicker.swift and sdl/src/picker.c
-  (Retail Edition, Special Edition, Cutscenes, Imported). Built (Swift) and syntax-checked (SDL); not seen running.
-- ~~Sort out dying in SE levels.~~ Not needed: no "death" level is loaded. The core catches ChangeLevel('death') and
-  restarts Ed at his start or last save point (tc_ed_ai.c), whatever the folder.
-- ~~Re-check the other levels after the sector fix.~~ Done: all 11 through playcheck and sectorcheck, see "Checks".
-- **Playtest SE Totalski in the app** (and the two pickers): nothing has been seen on screen yet.
-- ~~Write docs/SE.md.~~ This file.
-
-A first playthrough of an earlier Tonic Trouble is a lovely thing to aim for.
+// A first playthrough of an earlier Tonic Trouble is a lovely thing to aim for.
 
 ---
 
@@ -456,17 +445,8 @@ only PROC 72 no longer listed as skipped). Not ported: the inventory itself (`Pr
 just leaves), the SE's sounds, `Proc_DisplayChrono` (SE Totalski's World, every frame: a race timer?). **Not seen in
 the app.**
 
-## Next
+## Ultimate Goal
 
 The long-term goal these steps lead to (user, 2026-11-05): Open Tonic as one merged Definitive Edition, Ed moving
 between both editions' levels and collecting from both. See docs/DIRECTION.md, "Future direction: Open Tonic, the
 Definitive Edition".
-
-
-1. Playtest SE Totalski in the app (camera, speed, the slope's end: there is no finish trigger), and the SE outro
-   (the shot, the credits pictures, the relay), and an SE arch (Ed stops in front).
-2. SE AI: ~~read the primitive name tables~~ (done, se_ai_map.tsv). SE persos run their own scripts on the outro;
-   the other levels one by one (cast.SE_CAST_LEVELS), then later SE Ed himself. The outro's StartCredits menu.
-3. SE mechanics (ID cards) and Ed's SE model and animations: SE Ed has 6 channels (head, body, hands, feet).
-4. The 12 unresolved relocations: all fix -> block (5, 2) (the level's own block, empty in the fix); the SUD0 material
-   with an empty texture name; outro has no loading screen on the disc.
