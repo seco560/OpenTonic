@@ -32,6 +32,11 @@ float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset) {
     return f;
 }
 
+uint32_t tc_ai_card_u32(const tc_ai_card *c, uint32_t offset) {
+    if (!c || offset < 4 || offset % 4 || offset / 4 - 1 >= c->word_count) return 0;
+    return c->words[offset / 4 - 1];
+}
+
 static void free_dsg_def(tc_ai_dsg_def *d) { tc_free(d->vars); tc_free(d->initial); }
 
 static tc_vec3 rd_vec3(reader *r) {
@@ -469,7 +474,7 @@ tc_result tc_ai_model_load_scripts(tc_ai_model *m, const uint8_t *data, size_t s
     r.error = TC_OK;
     rd_scpt(&r, m);
     if ((e = chunk_end(&r)) == TC_OK && (!m->node_count || m->nodes[m->node_count - 1].type != TC_AI_END ||
-                                         !m->normal_count))
+                                         !(m->normal_count + m->reflex_count)))  /* reflexes only: the SE's icons */
         e = TC_ERR_TRUNCATED;
     if (e != TC_OK) tc_ai_model_free(m);
     return e;
@@ -952,12 +957,14 @@ static value field_get(run *r, int32_t perso, uint32_t f) {
         tc_ai_perso *q = live(p, perso);
         if (q && f == 1) return v_vec(tc_v3(sinf(q->heading), -cosf(q->heading), 0));
         if (q && f == 2) return v_vec(q->velocity);
+        if (q && f == 3) return v_float(tc_v3_length(q->velocity)); /* FIELD_3Get_004a6870: NormSpeed = |Velocity| */
         return f == 0 ? v_vec(perso_position(p, perso)) : v_int(0);
     }
     switch (f) {
     case 0: return v_vec(p->position);
     case 1: return v_vec(tc_v3(sinf(p->heading), -cosf(p->heading), 0));
     case 2: return v_vec(p->velocity);
+    case 3: return v_float(tc_v3_length(p->velocity));
     case 4: case 5: case 6: return v_vec(p->motion.axes[f - 4]);
     case 13: return v_float(p->float13);
     case 14: return v_float(p->float14);
@@ -1179,7 +1186,8 @@ static bool condition(run *r, uint32_t i) {
             return !(p->wall_material & mask);
         return true;
     }
-    case 30: case 37: case 38: case 59: case 64:
+    case 37: return (p->report_high & 0x10000) != 0; /* COND_OnGroundEtc_00498370: report_seen & 0x10000, a perso contact */
+    case 30: case 38: case 59: case 64:
         return false;    /* collision probes, zones, materials, touched objects, game state: not modelled yet */
     default: unknown(r, i); return false;
     }
@@ -1250,8 +1258,15 @@ static value function(run *r, uint32_t i) {
         default: return v_float(tc_v3_length(d));
         }
     }
-    case 54: { value v = v_int(-1); v.type = V_PERSO; return v; } /* FUNC_54_0049b240: the perso this one stands on
-        * (dynamics report 0x30000, the std game +0x1C chain): the port's persos are static collision, so none */
+    case 54: { /* FUNC_54_0049b240 (Func_GetFather): with report_seen & 0x30000, the first perso up the parent chain: the
+        * perso it rides (tc_mec_walk.carrier; docs/ENGINE.md "Moving collision, read"); asked as another perso
+        * (InPersoContext), the asker itself reads as Me */
+        const tc_ai_perso *q = r->ctx == 0 ? p : live(p, r->ctx);
+        value v = v_int(-1);
+        v.type = V_PERSO;
+        if (q && q->standing_on > 0) v.i = q->standing_on == p->self_id ? 0 : q->standing_on;
+        return v;
+    }
     case 93: { /* FUNC_93Etc_0049b740 case 0x5d: a save value (GAM_004195f0: -1 out of range) */
         tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
         int32_t n = as_int(arg(r, i, 0));
@@ -1267,11 +1282,13 @@ static value function(run *r, uint32_t i) {
     }
     case 43: return v_int((int32_t)p->time_ms);
     case 49: return v_float(button_analog(p, arg_param(r, i, 0)));
-    case 88: return v_float(tc_v3_length(p->velocity));
+    /* 88, 100, 101: as OP 24's perso when there is one (the exe runs the child as that perso: the cavedoc crate reads
+     * InPersoContext(Ed, LocalToGlobalVec((0, -1, 0))), Ed's front) */
+    case 88: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_float(q ? tc_v3_length(q->velocity) : 0); }
     case 98: return v_float(tc_v3_length(argv3(r, i, 0)));
     case 99: { tc_vec3 v = argv3(r, i, 0); float l = tc_v3_length(v); return v_vec(l > 0 ? tc_v3_div(v, l) : v); }
-    case 100: return v_vec(local_to_global(p, argv3(r, i, 0)));
-    case 101: return v_vec(global_to_local(p, argv3(r, i, 0)));
+    case 100: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(local_to_global(q ? q : p, argv3(r, i, 0))); }
+    case 101: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(global_to_local(q ? q : p, argv3(r, i, 0))); }
     /* FUNC_VecLengthEtc_0049ab10 cases 0x66 / 0x67: a point through the perso's world matrix (FUN_0047b2f0) or its
      * inverse. Ed's underwater reflex R8 leaves the water when FUNC_102((0, 1, -1)) rises 0.55 above the surface. */
     case 13: return v_float(tc_v3_length(argv3(r, i, 0))); /* used as a length (B82's climb test, B29's aim) */
@@ -1361,6 +1378,10 @@ static value eval(run *r, uint32_t i) {
     case TC_AI_KEYWORD:
         if (n->param == 4) { v.type = V_PERSO; v.i = 0; } /* Me */
         else if (n->param == 5) { v.type = V_PERSO; v.i = r->p->main_actor; } /* the main actor (the player) */
+        else if (n->param == 6 && r->p->world_id) { /* World: the world perso (the engine's 0x8c1744) */
+            v.type = V_PERSO;
+            v.i = r->p->world_id == r->p->self_id ? 0 : r->p->world_id;
+        }
         else unknown(r, i);
         return v;
     case TC_AI_COND: return v_int(condition(r, i));
@@ -1486,6 +1507,25 @@ static uint32_t procedure(run *r, uint32_t i) {
         if (c == 66) q->hit_points = n;
         else if (c == 68) q->hit_points = q->hit_points_max;
         else q->hit_points = q->hit_points + n <= q->hit_points_max ? q->hit_points + n : q->hit_points_max;
+        return 0;
+    }
+    case 72: case 73: case 74: case 75: case 76: { /* PROC_72Etc_004897f0: the max hit points (std game +0x15): 72 := n
+        * (FUN_004ced30), 73 := its start value (GAM_00423c20), 74 := the ceiling +0x16 (FUN_004ced50), 75 += n up to
+        * the ceiling then the hit points := the max (AI_00489910), 76 -= n not below 0, the hit points clamped to it
+        * (FUN_004cedf0). The SE's collect-N rewards (World B3: AddHitPointsMax(Ed, 1)) and retail's Worlds use them. */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        int32_t n = (c == 73 || c == 74) ? 0 : as_int(arg(r, i, 1)) & 0xFF; /* a byte, as the exe's */
+        if (!q) return 0;
+        if (c == 72) q->hit_points_max = n;
+        else if (c == 73) q->hit_points_max = q->hit_points_max_init;
+        else if (c == 74) q->hit_points_max = q->hit_points_ceiling;
+        else if (c == 75) {
+            q->hit_points_max = q->hit_points_max + n <= q->hit_points_ceiling ? q->hit_points_max + n : q->hit_points_ceiling;
+            q->hit_points = q->hit_points_max;
+        } else {
+            q->hit_points_max = q->hit_points_max > n ? q->hit_points_max - n : 0;
+            if (q->hit_points > q->hit_points_max) q->hit_points = q->hit_points_max;
+        }
         return 0;
     }
     case 143: case 144: { /* PROC_142Etc_0048ac30: a save value + 1 / := v (GAM_00419620) */
@@ -1676,6 +1716,14 @@ static uint32_t meta_action(run *r, uint32_t i) {
         case 12: slot->a = 0; slot->b = 0; break; /* ChangeStateByDirection: a = walking, b = frames */
         case 19: break;
         case 29: slot->a = (int32_t)(p->time_ms + (uint32_t)as_int(arg(r, i, 0))); break; /* Wait(ms): FUN_004a0b00 */
+        case 28: { /* Action_MoveLift(from, to, time): its arguments, once (META_28_004a0990); the first frame resets */
+            tc_vec3 a = argv3(r, i, 0), b = argv3(r, i, 1);
+            slot->v[0] = a.x, slot->v[1] = a.y, slot->v[2] = a.z;
+            slot->v[3] = b.x, slot->v[4] = b.y, slot->v[5] = b.z;
+            slot->v[6] = argf(r, i, 2);
+            slot->a = 1;
+            break;
+        }
         case 11: case 21: case 40: slot->a = 0; break; /* not modelled: finish at once */
         default: unknown(r, i); slot->a = 0; break;
         }
@@ -1687,6 +1735,22 @@ static uint32_t meta_action(run *r, uint32_t i) {
     case 29: /* FUN_004a0b30: running until the clock passes start + ms (the ski props' sleep, the spring's jump) */
         if ((int32_t)(p->time_ms - (uint32_t)slot->a) < 0) return F_STOP;
         break;
+    case 28: { /* META_28Cont_004a09c0: ProposalVecA = from, ProposalVecD = to, [0] = time, then the card type 6 request
+        * mode 14 (to the start) on the first frame, mode 15 (on along the way) after, until its mechanics stop
+        * (velocity_snap 0); docs/ENGINE.md "Moving collision, read" */
+        float *pr = p->motion.proposal;
+        uint32_t k;
+        for (k = 0; k < 6; k++) pr[1 + k] = slot->v[k];
+        pr[0] = slot->v[6];
+        if (slot->a == 1) {
+            slot->a = 0;
+            queue_mech_request(p, 14);
+            return F_STOP;
+        }
+        if (!p->mech_moving) break;
+        queue_mech_request(p, 15);
+        return F_STOP;
+    }
     case 12: { /* ChangeStateByDirection(perso, offset, forward state, backward state): walk to the point at offset in
                 * the perso's axes (B68: 4.5 in front of an arch) in the forward state, facing it. Not decoded: always
                 * forwards, done within 0.4 or after 10 s. */
@@ -1848,14 +1912,16 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
         if (d->initial) memcpy(p->other_dsg[i], d->initial, d->size);
     }
     for (i = 0; i < m->button_count; i++) p->button_counter[i] = -2;
-    set_behaviour(p, &p->normal, m->initial_normal < m->normal_count ? m->initial_normal : 0);
+    if (m->normal_count) set_behaviour(p, &p->normal, m->initial_normal < m->normal_count ? m->initial_normal : 0);
+    else p->normal.behaviour = 0xFFFF; /* none (a model of reflexes only: the SE's silver icons) */
     if (m->initial_reflex < m->reflex_count) set_behaviour(p, &p->reflex, (uint32_t)m->normal_count + m->initial_reflex);
     else p->reflex.behaviour = 0xFFFF;
     p->time_ms = 60000;
     p->rng = 0x1234567u;
     p->global_flags = 0xFFFFFFFFu;
     p->hit_points = 4;
-    p->hit_points_max = 4;
+    p->hit_points_max = p->hit_points_max_init = 4;
+    p->hit_points_ceiling = 255;
     p->active = true;
     p->run_mechanics = p->run_animation = 1;
     p->radius2 = -1;
@@ -1931,7 +1997,7 @@ static void think(tc_ai_perso *p) {
     p->running_reflex = true;
     if (p->reflex.behaviour == 0xFFFF || !run_intel(p, &p->reflex)) {
         p->running_reflex = false;
-        run_intel(p, &p->normal);
+        if (p->normal.behaviour != 0xFFFF) run_intel(p, &p->normal);
     }
     p->running_reflex = false;
 }

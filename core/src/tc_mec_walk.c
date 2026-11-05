@@ -1,6 +1,7 @@
 #include "tc_internal.h"
 #include <string.h>
 #include "tonic/tc_mec.h"
+#include "tonic/tc_obstacle.h"
 
 /* Card types 0 and 4 (docs/NOTES.md "MEC collisions"). Card fields used (Ed's ground card / air cards):
  * +4 mass 120, +8 step height 1 / 0, +0x1C..+0x28 the contact classes by normal . up (cos 50 / 70 / 120 / 170 deg:
@@ -21,6 +22,8 @@ void tc_mec_walk_reset(tc_mec_walk *w) {
     w->wall_normal = tc_v3(1, 0, 0);
     w->ground_grip = w->wall_grip = 1;
     w->ground_tri = w->wall_tri = UINT32_MAX;
+    w->carrier = w->other = -1;
+    w->ground_sound = 0xFF;
 }
 
 uint32_t tc_mec_walk_contacts(const tc_mec_walk *w) { return w->report | w->report_prev; }
@@ -217,6 +220,7 @@ typedef struct sweep_ctx {
     float rebound, grip;
     tc_mec_hit best;
     bool found;
+    const tc_pcol_prim *prims;   /* the obstacles' primitives (tc_pcol.prims) */
 } sweep_ctx;
 
 /* FUN_00464c80: keep the contact when it is earlier than the best so far (the first of equal ones stays). */
@@ -239,8 +243,99 @@ static void sweep_tri(const tc_tri *tri, void *user) {
     h.own_grip = x->grip;
     h.own_point = x->point;
     h.tri = tri;
+    h.obstacle = -1;
+    h.obstacle_object = 0;
+    h.floor = tri->floor;
+    h.collide_id = 0;
+    h.sound = 0xFF;
     x->best = h;
     x->found = true;
+}
+
+/* A perso obstacle's parts (tc_obstacle.h), each tested in its own axes as the exe does (FUN_00464240: the mover's start
+ * and end into the obstacle's axes, radii divided by its scale; the contact back through its matrix). Primitives:
+ * triangles as the static world's (FUN_00465b60 / FUN_0046ff70), spheres FUN_0046d600 / FUN_004704c0 (the centre against
+ * the sphere's centre at R + r), boxes FUN_0046d8a0 / FUN_00470610 (the box grown by r). The earliest contact wins over
+ * everything so far (DAT_0050e140). */
+static void sweep_obstacle(sweep_ctx *x, const tc_obstacle *ob) {
+    uint16_t k;
+    uint32_t j;
+    for (k = 0; k < ob->part_count; k++) {
+        const tc_obstacle_part *q = &ob->parts[k];
+        const tc_pcol_object *o = q->object;
+        tc_vec3 p0, d, e = tc_v3_sub(q->centre, x->c0);
+        float r, dd = tc_v3_dot(x->d, x->d), s = dd > 0 ? tc_v3_dot(e, x->d) / dd : 0, reach = q->radius + x->r + 1e-3f;
+        s = s < 0 ? 0 : s > 1 ? 1 : s;
+        if (tc_v3_length_sq(tc_v3_sub(e, tc_v3_scale(x->d, s))) > reach * reach) continue; /* the port's pretest */
+        p0 = tc_m34_point(&q->inv, x->c0);
+        d = tc_m34_vector(&q->inv, x->d);
+        r = x->r / q->scale;
+        for (j = 0; j < o->count; j++) {
+            const tc_pcol_prim *pr = &x->prims[o->first + j];
+            tc_mec_hit h;
+            tc_vec3 cen, nrm;
+            if (pr->kind == TC_PCOL_TRIANGLE) {
+                if (x->point) {
+                    if (!tc_mec_point_tri(p0, d, pr->n, pr->a, pr->b, pr->c, &h.t, &h.point)) continue;
+                    h.kind = TC_MEC_FACE;
+                    h.normal = pr->n;
+                } else if (!tc_mec_sphere_tri(p0, d, r, pr->n, pr->a, pr->b, pr->c, &h.kind, &h.t, &h.normal, &h.point)) {
+                    continue;
+                }
+            } else if (pr->kind == TC_PCOL_SPHERE) {
+                float R = pr->r + r;
+                if (!tc_mec_point_sphere(p0, d, pr->a, R, &h.t, &cen, &nrm)) continue;
+                h.point = tc_v3_add(cen, tc_v3_scale(tc_v3_sub(pr->a, cen), r / R));
+                h.normal = nrm;
+                h.kind = TC_MEC_SPHERE;
+            } else if (pr->kind == TC_PCOL_BOX) {
+                if (!tc_mec_sphere_box(p0, tc_v3_add(p0, d), d, pr->a, pr->b, r, &h.t, &cen, &nrm)) continue;
+                h.point = tc_v3_sub(cen, tc_v3_scale(nrm, r));
+                h.normal = nrm;
+                h.kind = TC_MEC_BOX;
+            } else {
+                continue;
+            }
+            if (x->found ? !(h.t < x->best.t) : !(h.t < 2)) continue;
+            h.point = tc_m34_point(&q->m, h.point);
+            h.normal = tc_v3_scale(tc_m34_vector(&q->m, h.normal), 1 / q->scale);
+            h.zone_type = zone_type(x->flags);
+            h.own_flags = x->flags;
+            h.own_rebound = x->rebound;
+            h.own_grip = x->grip;
+            h.own_point = x->point;
+            h.tri = NULL;
+            h.obstacle = ob->id;
+            h.obstacle_object = o->object;
+            h.floor = pr->floor;
+            h.collide_id = pr->collide_id;
+            h.sound = pr->sound;
+            x->best = h;
+            x->found = true;
+        }
+    }
+}
+
+/* The obstacles this mover meets (FUN_0043c640): live, not itself, in a sector it collides with, with no collide set
+ * or one that meets persos (+0x35), and of a priority (+0x34) up to its own; the mover's own +0x35 must be set. */
+static void sweep_obstacles(tc_collision *world, sweep_ctx *x) {
+    const tc_obstacles *os = world->obstacles;
+    tc_vec3 lo, hi, c1 = tc_v3_add(x->c0, x->d);
+    uint32_t i;
+    if (!os || !world->self_meets) return;
+    lo = tc_v3_adds(tc_v3_min(x->c0, c1), -x->r - 1e-3f);
+    hi = tc_v3_adds(tc_v3_max(x->c0, c1), x->r + 1e-3f);
+    x->prims = os->data->prims;
+    for (i = 0; i < os->count; i++) {
+        const tc_obstacle *ob = &os->items[i];
+        if (!ob->live || ob->id == world->self || ob->id == world->ignore || !ob->part_count) continue;
+        if (world->solid && ob->sector < world->solid_count && !world->solid[ob->sector]) continue;
+        if ((ob->flags & TC_PCOL_HAS_SET) && !(ob->flags & TC_PCOL_MEETS_PERSOS)) continue;
+        if (ob->priority > world->self_priority) continue;
+        if (ob->lo.x > hi.x || ob->lo.y > hi.y || ob->lo.z > hi.z || ob->hi.x < lo.x || ob->hi.y < lo.y || ob->hi.z < lo.z)
+            continue;
+        sweep_obstacle(x, ob);
+    }
 }
 
 /* FUN_0043bf70: the zone type of a sphere's collide flags. */
@@ -270,6 +365,7 @@ static bool sweep_spheres(tc_collision *world, const tc_ai_sphere_set *body, flo
         x.rebound = s->rebound;
         x.grip = s->grip;
         c1 = tc_v3_add(x.c0, x.d);
+        sweep_obstacles(world, &x); /* the persos first, then the static trees (MEC_SweepPass_0043c830) */
         tc_collision_query(world, tc_v3_adds(tc_v3_min(x.c0, c1), -x.r - 1e-3f),
                            tc_v3_adds(tc_v3_max(x.c0, c1), x.r + 1e-3f), sweep_tri, &x);
     }
@@ -284,6 +380,10 @@ bool tc_mec_sweep(tc_collision *world, const tc_ai_sphere_set *body, float headi
     bool a, b;
     if (!world || !body || (d.x == 0 && d.y == 0 && d.z == 0)) return false;
     a = sweep_spheres(world, body, heading, from, d, true, &floor_hit);
+    if (a && floor_hit.obstacle >= 0) { /* the hand point lands on a perso only if its collide set allows it (+0x37) */
+        const tc_obstacle *ob = tc_obstacles_find(world->obstacles, floor_hit.obstacle);
+        if (ob && (ob->flags & TC_PCOL_HAS_SET) && !(ob->flags & TC_PCOL_FLOOR_OK)) a = false;
+    }
     b = sweep_spheres(world, body, heading, from, d, false, &hit_b);
     /* FUN_0043bff0: the floor spheres' contact wins when it is a floor and not later than the others' */
     if (a && floor_hit.normal.z >= FLOOR_ONLY_Z && (!b || floor_hit.t <= hit_b.t)) {
@@ -304,6 +404,8 @@ typedef struct collide_ctx {
     tc_vec3 start, target, velocity;
     uint32_t report_prev;
     tc_mec_walk *w;
+    bool carry;                  /* the carried move (DNM_FollowCarrier_004a83d2: collide-and-move with flags 0) */
+    int pass;
 } collide_ctx;
 
 static float card_f(const tc_ai_card *c, uint32_t offset, float fallback) {
@@ -322,8 +424,8 @@ static tc_vec3 impact(const collide_ctx *x, float t) {
 
 /* A contact's rebound and grip: the obstacle's mechanics material times the touching part's own (record +0x34 x +0x50,
  * +0x38 x +0x54; no material: 1). Ed's body spheres have rebound 0.85 and grip 0, his feet none. */
-static float hit_rebound(const tc_mec_hit *h) { return (h->tri ? h->tri->floor.rebound : 1) * h->own_rebound; }
-static float hit_grip(const tc_mec_hit *h) { return (h->tri ? h->tri->floor.grip : 1) * h->own_grip; }
+static float hit_rebound(const tc_mec_hit *h) { return h->floor.rebound * h->own_rebound; }
+static float hit_grip(const tc_mec_hit *h) { return h->floor.grip * h->own_grip; }
 
 /* v -= n x (2 - r)(v . n): r = 1 slides along, r = 0 bounces back fully (MEC_004bb66b). */
 static tc_vec3 rebound(tc_vec3 v, tc_vec3 n, float r) { return tc_v3_sub(v, tc_v3_scale(n, (2 - r) * tc_v3_dot(v, n))); }
@@ -390,6 +492,7 @@ static bool step_up(collide_ctx *x, const tc_mec_hit *h) {
     x->w->ground_normal = s.normal;
     x->w->ground_grip = hit_grip(&s);
     x->w->ground_tri = s.tri ? s.tri->source : UINT32_MAX;
+    x->w->ground_sound = s.tri ? 0xFF : s.sound;
     x->w->ground_own = s.own_flags;
     return true;
 }
@@ -422,7 +525,7 @@ static uint32_t respond_wall(collide_ctx *x, const tc_mec_hit *h, float up_dot) 
 }
 
 /* MEC_004bc477: classify by normal . up with the card's cosines, respond, push the target out by 0.01. */
-static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
+static uint32_t classify(collide_ctx *x, const tc_mec_hit *h) {
     float c = fminf(fmaxf(tc_v3_dot(h->normal, UP), -1), 1);
     uint32_t bits;
     if (c >= card_f(x->card, 0x1C, 0.70710677f)) {
@@ -442,6 +545,7 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
             x->w->ground_normal = h->normal;
             x->w->ground_grip = hit_grip(h);
             x->w->ground_tri = h->tri ? h->tri->source : UINT32_MAX;
+            x->w->ground_sound = h->tri ? 0xFF : h->sound;
             x->w->ground_own = h->own_flags;
         }
     } else {
@@ -454,17 +558,66 @@ static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
     return bits;
 }
 
+static void keep_other(collide_ctx *x, const tc_mec_hit *h) {
+    x->w->other = h->obstacle;
+    x->w->other_object = h->obstacle_object;
+}
+
+/* MEC_004bd689: a contact with a perso. The carrier itself: as any contact, and 0x30000 (still on it); on the carried
+ * move's first pass it ends the move with no contact at all (0: the carried move is taken whole). Another perso: with
+ * the card's ride byte (+0x3C), a carrier (std game +0x31), the normal within the steep slope's cosine and a part of
+ * zone type 1 or 2 (the feet), the ground response and 0x30001 (ground) / 0x30002 (steep), else the usual
+ * classification (a step-up onto a carrier adds 0x30000). The exe hands MEC_RespondGround_004bb904 the steep flag the
+ * other way round from MEC_Classify_004bc477 here (on a perso's ground the steep slope's softening applies, on its
+ * steep slope not): kept as read. */
+static uint32_t respond_perso(collide_ctx *x, const tc_mec_hit *h) {
+    const tc_obstacle *ob = tc_obstacles_find(x->world->obstacles, h->obstacle);
+    float c = fminf(fmaxf(tc_v3_dot(h->normal, UP), -1), 1), ground = card_f(x->card, 0x1C, 0.70710677f);
+    bool ride = x->card && (tc_ai_card_u32(x->card, 0x3C) & 0xFF) && ob && (ob->flags & TC_PCOL_CARRIES);
+    uint32_t bits;
+    if (h->obstacle == x->w->carrier) {
+        if (x->carry && x->pass == 0) return 0;
+        keep_other(x, h);
+        return classify(x, h) | TC_MEC_ON_PERSO;
+    }
+    if (ride && c >= card_f(x->card, 0x20, 0.5f) && (h->zone_type == 1 || h->zone_type == 2)) {
+        respond_ground(x, h, c >= ground && x->card != NULL);
+        bits = TC_MEC_ON_PERSO | (c < ground ? TC_AI_CONTACT_SLOPE : TC_AI_CONTACT_GROUND);
+        keep_other(x, h);
+        x->w->ground_normal = h->normal;
+        x->w->ground_grip = hit_grip(h);
+        x->w->ground_tri = UINT32_MAX;
+        x->w->ground_sound = h->sound;
+        x->w->ground_own = h->own_flags;
+        x->target = tc_v3_add(x->target, tc_v3_scale(h->normal, PUSH_OUT));
+        return bits;
+    }
+    bits = classify(x, h);
+    if ((bits & TC_MEC_STEPPED) && ride) {
+        keep_other(x, h);
+        bits |= TC_MEC_ON_PERSO;
+    }
+    return bits;
+}
+
+static uint32_t respond(collide_ctx *x, const tc_mec_hit *h) {
+    return h->obstacle >= 0 ? respond_perso(x, h) : classify(x, h);
+}
+
 /* MEC_004be1bd: sweep start -> target and respond, up to 6 times; a clear sweep ends it. Still blocked after the
- * sixth response: back to the start with no velocity (and last frame's contacts). */
+ * sixth response: back to the start with no velocity (and last frame's contacts). A response of 0 (the carrier on the
+ * carried move's first pass) ends it at once with no contact. */
 static uint32_t collide(collide_ctx *x) {
     tc_vec3 start = x->start;
-    uint32_t bits = 0;
+    uint32_t bits = 0, got;
     int pass;
     for (pass = 0; pass < PASSES; pass++) {
         tc_mec_hit h;
         x->w->passes = (uint32_t)pass;
+        x->pass = pass;
         if (!tc_mec_sweep(x->world, x->body, x->heading, x->start, x->target, &h)) return bits;
-        bits |= respond(x, &h);
+        if (!(got = respond(x, &h))) return 0;
+        bits |= got;
     }
     x->w->passes = PASSES;
     x->w->blocked++;
@@ -488,6 +641,7 @@ static bool resnap(collide_ctx *x, tc_vec3 *position, float distance, float min_
     x->w->ground_normal = h.normal;
     x->w->ground_grip = hit_grip(&h);
     x->w->ground_tri = h.tri ? h.tri->source : UINT32_MAX;
+    x->w->ground_sound = h.tri ? 0xFF : h.sound;
     x->w->ground_own = h.own_flags;
     return true;
 }
@@ -519,6 +673,96 @@ static void depenetrate(collide_ctx *x, tc_vec3 *position) {
         if (tc_v3_length_sq(total) < 1e-8f) break;
         *position = tc_v3_add(*position, tc_v3_add(total, tc_v3_scale(tc_v3_normalize(total), 1e-3f)));
     }
+}
+
+static void setup(collide_ctx *x, tc_mec_walk *w, const tc_ai_card *card, tc_collision *world,
+                  const tc_ai_sphere_set *body, float heading, float dt);
+
+/* ---- Riding (DNM_IntegrateWalk_004aa6af, DNM_FollowCarrier_004a83d2, DNM_LeftCarrier_004a8388) ---- */
+
+static const tc_obstacle_part *carrier_part(const tc_collision *world, int32_t id, uint16_t object) {
+    const tc_obstacle *ob = tc_obstacles_find(world->obstacles, id);
+    uint16_t k;
+    if (!ob || !ob->live) return NULL;
+    for (k = 0; k < ob->part_count; k++)
+        if (ob->parts[k].object->object == object) return &ob->parts[k];
+    return NULL;
+}
+
+static tc_vec3 front_of(float heading) { return tc_v3(sinf(heading), -cosf(heading), 0); }
+
+/* Where the rider is in the carrier object's axes (the exe's local matrix: carrier world^-1 x world). */
+static void ride_local(tc_mec_walk *w, const tc_obstacle_part *q, float heading, tc_vec3 position) {
+    w->carrier_local = tc_m34_point(&q->inv, position);
+    w->carrier_front = tc_m34_vector(&q->inv, front_of(heading));
+}
+
+/* FUN_004c2ba0(position, 0.2): the body swept 0.2 down still meets the carrier (its same object). */
+static bool still_on(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 position) {
+    tc_mec_hit h;
+    if (!tc_mec_sweep(world, body, heading, position, tc_v3_sub(position, tc_v3_scale(UP, 0.2f)), &h)) return false;
+    return h.obstacle == w->carrier && h.obstacle_object == w->carrier_object;
+}
+
+/* After the integrator's collide-and-move: on a perso this frame (report 0x30000) and not on the carrier yet: ride it
+ * (SPO_SetParent_00483430). Neither this frame nor the last and no longer touching it 0.2 below: let go, keeping 2/3
+ * of the carried velocity (FUN_004c2ac1, DAT_004d3034 = 0.666666; the exe skips that when the carrier's std game +0x26
+ * is 3, not exported: port). Then where the rider is in the carrier's axes. */
+static void ride(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float heading, uint32_t bits,
+                 tc_vec3 position, tc_vec3 *velocity) {
+    const tc_obstacle_part *q;
+    if ((bits & TC_MEC_ON_PERSO) == TC_MEC_ON_PERSO) {
+        if (w->other >= 0 && (w->other != w->carrier || w->other_object != w->carrier_object) &&
+            carrier_part(world, w->other, w->other_object)) {
+            w->carrier = w->other;
+            w->carrier_object = w->other_object;
+            w->carried = tc_v3(0, 0, 0);
+        }
+    } else if ((w->report_prev & TC_MEC_ON_PERSO) != TC_MEC_ON_PERSO && w->carrier >= 0 &&
+               !still_on(w, world, body, heading, position)) {
+        *velocity = tc_v3_add(*velocity, tc_v3_scale(w->carried, 0.666666f));
+        w->carrier = -1;
+    }
+    if (w->carrier >= 0 && (q = carrier_part(world, w->carrier, w->carrier_object))) ride_local(w, q, heading, position);
+}
+
+void tc_mec_walk_carry(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float *heading, float dt,
+                       tc_vec3 *position) {
+    const tc_obstacle_part *q;
+    tc_vec3 to, f, v;
+    uint32_t report = w->report, report_prev = w->report_prev, bits;
+    collide_ctx x;
+    w->carried = tc_v3(0, 0, 0);
+    if (w->carrier < 0) return;
+    if (!(q = carrier_part(world, w->carrier, w->carrier_object))) { /* gone: back to the world (no momentum) */
+        w->carrier = -1;
+        return;
+    }
+    to = tc_m34_point(&q->m, w->carrier_local);
+    f = tc_m34_vector(&q->m, w->carrier_front);
+    if (f.x * f.x + f.y * f.y > 1e-12f) *heading = atan2f(f.x, -f.y); /* front (sin h, -cos h): only the turn about up */
+    if (!(dt > 0)) return;
+    v = tc_v3_scale(tc_v3_sub(to, *position), 1 / dt);
+    setup(&x, w, NULL, world, body, *heading, dt);
+    x.carry = true;
+    x.start = *position;
+    x.target = to;
+    x.velocity = v;
+    bits = collide(&x);
+    if (w->passes == PASSES) { /* blocked (0x20): it stays and carries nothing */
+        w->report = report;
+        w->report_prev = report_prev;
+        return;
+    }
+    if (!bits) {
+        w->report = report;
+        w->report_prev = report_prev;
+    } else {
+        w->report_prev = report;
+        w->report = bits;
+    }
+    w->carried = tc_v3_scale(tc_v3_sub(x.target, *position), 1 / dt);
+    *position = x.target;
 }
 
 void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc_collision *world,
@@ -553,6 +797,10 @@ void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc
             force = tc_v3_add(force, tc_v3_scale(v_old, -mass * g4 / dt));
             wanted = tc_v3_scale(wanted, g4);
         }
+        /* The ground press (FUN_004c41c5, DAT_004d3084 = -0.04): grounded by the step before but not by the last, the
+         * wanted motion goes 0.04 into the ground (along its normal) this step, so a grounded perso touches its ground
+         * every other step, standing still too (below): his report_seen keeps the ground, and on a perso its bits */
+        if (!(w->report & 3) && dt > 0) wanted = tc_v3_add(wanted, tc_v3_scale(w->ground_normal, -0.04f / dt));
     }
     v = tc_v3_add(tc_v3_add(v_old, tc_v3_scale(force, dt / mass)), wanted);
 
@@ -561,15 +809,25 @@ void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc
     if (energy < 0.025f) v = tc_v3(0, 0, 0);
     else if (tc_v3_length_sq(v) > 10000) v = tc_v3_scale(v, 100 / tc_v3_length(v));
     *velocity = v;
-    if (v.x == 0 && v.y == 0 && v.z == 0) return; /* standing: no move, the contacts stay (dynamics +0x38C) */
+    w->moved = false;
+    if (v.x == 0 && v.y == 0 && v.z == 0) {
+        /* Standing: no move. Dynamics +0x38C (keep_reports) is 0 in the data for Ed (cavedoc, Land, sud0), so the
+         * report shifts (report_prev := report, report := 0); the next step's press puts him back on the ground. */
+        w->report_prev = w->report;
+        w->report = 0;
+        return;
+    }
 
     bits = tc_mec_collide_move(w, card, world, body, heading, dt, position, velocity);
+    w->moved = true;
 
     /* Ground lost this frame and the last, not the one before: re-snap within card +0x34 (scaled by frames of 1/30 s) */
     if (!(bits & 3) && !(w->report_prev & 3) && (before & 3)) {
         float distance = card_f(card, 0x34, 0) * (dt > 1.0f / 30 ? dt * 30 : 1);
         tc_mec_resnap(w, world, body, heading, distance, card_f(card, 0x20, 0.5f), position);
+        bits |= w->report;
     }
+    ride(w, world, body, heading, bits, *position, velocity);
 }
 
 static void setup(collide_ctx *x, tc_mec_walk *w, const tc_ai_card *card, tc_collision *world,

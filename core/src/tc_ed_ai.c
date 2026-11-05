@@ -326,6 +326,8 @@ static void walk(tc_ed_ai *e, const tc_ai_card *card, const tc_ai_sphere_set *bo
     tc_vec3 wanted = tc_v3(0, 0, 0), jump = tc_v3(0, 0, 0);
     const tc_vec3 *impulse = NULL;
     uint32_t k;
+    /* riding: first where the carrier took him (DNM_FollowCarrier_004a83d2), then his own move from there */
+    tc_mec_walk_carry(&e->walk, p->world, body, &p->heading, dt, &p->position);
     if (air) tc_mec_walk_air(&e->walk);
     if (m->turning) p->heading += m->turn_speed * dt;
     if (m->velocity_set) p->velocity = m->velocity;
@@ -425,7 +427,9 @@ static void footsteps(tc_ed_ai *e) {
         if (a->sounds[k] != TC_AI_FOOTSTEP_EVENT || !m->floor_sound_count) continue;
         if (v < 0) {
             v = 0xFF;
-            if (tc_collision_raycast(e->player->world, tc_v3_add(e->player->position, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1),
+            if ((tc_mec_walk_contacts(&e->walk) & 3) && e->walk.ground_tri == UINT32_MAX && e->walk.ground_sound != 0xFF)
+                v = e->walk.ground_sound; /* on a perso (its own collision is not in the static world's raycast) */
+            else if (tc_collision_raycast(e->player->world, tc_v3_add(e->player->position, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1),
                                      1.5f, &hit) && hit.tri->source < m->floor_sound_count)
                 v = m->floor_sounds[hit.tri->source];
         }
@@ -533,6 +537,9 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     a->velocity = p->velocity;
     a->heading = p->heading;
     a->contacts = e->contacts;
+    /* report_seen's perso bits (COND 37) and the perso he rides (FUNC 54: with both bits, his carrier) */
+    a->report_high = (e->walk.report | e->walk.report_prev) & TC_MEC_ON_PERSO;
+    a->standing_on = a->report_high == TC_MEC_ON_PERSO && e->walk.carrier > 0 ? e->walk.carrier : 0;
     a->world = p->world;
     /* The material conditions read the collide flags of Ed's own part that made the contact (ContactRecord +0x70):
      * the walk's, which flight and swimming do not update */
@@ -601,6 +608,9 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     type = card ? card->type : TC_AI_NONE16;
     if (type != e->card_type && e->card_type == 5)
         p->velocity = tc_v3(0, 0, 0); /* leaving flight (GAM_0042ab20): stop, keep the heading */
+    /* Port: riding is the walk / air integrator's (types 0 / 4; the exe's 11 and 12 ride too, not ported): any other card
+     * lets go of the carrier, so coming back does not snap him to where the carrier has gone meanwhile */
+    if (type != 0 && type != 4) e->walk.carrier = -1;
     /* The mechanical environment at the feet (the integrators' lookup at the step's start, in Ed's sector: placed again
      * if a portal or SetPositionFrom moved him this step, as the exe sets the sector with the position) */
     track_sector(e);
@@ -764,6 +774,10 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     e->stepping = true;
     set_solid(e);
     step(e, dt, inputs, stick_x, stick_y, camera);
+    /* report_seen as the exe has it right after the integrator (GAM_MecIntegrate_0042b0e0): what the persos that run
+     * before him next tick (the run-first platforms) read of him through FUNC 54 / COND 37 */
+    e->ai.report_high = (e->walk.report | e->walk.report_prev) & TC_MEC_ON_PERSO;
+    e->ai.standing_on = e->ai.report_high == TC_MEC_ON_PERSO && e->walk.carrier > 0 ? e->walk.carrier : 0;
     e->placed_seen = e->player->placed; /* its own teleports reset as they go */
     if (w) w->solid = NULL;
     e->stepping = false;

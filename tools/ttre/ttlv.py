@@ -20,8 +20,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
                                          applied) }
           n_samples x n_channels x f32[12] channel -> perso transform (row-major 3x4)
           n_samples x n_channels x u16 object shown by the channel (0xFFFF = none) }
-  COLL  u32 n_triangles, n_triangles x f32[9]: collision, world space (LevelData.collision: static collide sets + perso
-        collide meshes at frame 0). The .ttai's per-triangle tables follow this order; its LINK chunk holds this
+  COLL  u32 n_triangles, n_triangles x f32[9]: collision, world space (LevelData.collision: the static collide sets;
+        the persos' are in PCOL). The .ttai's per-triangle tables follow this order; its LINK chunk holds this
         chunk's CRC-32.
   FLOR  u16 n_floors, u16 0, n_floors x { f32 grip, f32 rebound } (the mechanics material of the triangle's
         GameMaterial: grip = mat[2], rebound = mat[1]; NOTES "Floor mechanical material"),
@@ -40,6 +40,9 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         the state animations for the AI: one per distinct A3D, named "s<k>" (k = the first state using it; .ttai states
         point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
         ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
+  CMEC* the cast's mechanics: its families' states' ID cards (cast.mech_chunk has the layout)
+  PCOL* the persos' own collision, in their objects' axes (perso_collision has the layout); COLL no longer holds it
+        (2026-11-05): the core poses it where each perso is, every tick (docs/ENGINE.md "Moving collision, read").
   CAST* the level persos whose own AI the core runs, their families' states and state animations (cast.py has the
         layout). Their PRSO entries hold a part for every object those animations show (channel 0xFFFF: not in the
         initial animation).
@@ -417,7 +420,8 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
     if skip_decals is None:
         skip_decals = data.player() != fix_ed
-    tris, floors, sect.collision_sectors = data.collision(floors=True, skip_decals=skip_decals, sectors=True)
+    tris, floors, sect.collision_sectors = data.collision(floors=True, skip_decals=skip_decals, sectors=True, persos=False)
+    pcol = perso_collision(data, cast_locs, prso_index, skip_decals) if persos else None
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     table = sorted({f for f in floors if f is not None})
     index = {f: i for i, f in enumerate(table)}
@@ -473,14 +477,15 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
             donor_anims = [n.decode() for n in _anim_names(anims)]
 
     n_sets = max((len(getattr(so, 'color_sets', ())) for so in data.walk()), default=1)
-    lais = []
+    lais, cmec = [], None
     for a in ai.light_persos(data) if n_sets > 1 else ():
         body, unresolved = ai.export(a, None)
         if unresolved:
             data.warnings.append(f'light perso {a.perso[1]:#x}: unresolved script references {unresolved}')
         lais.append(struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4))
     if cast_list:
-        cast_body, listing = cast.chunk(data, cast_list, prso_index, family_cache)
+        cast_body, listing, cmec = cast.chunk(data, cast_list, prso_index, family_cache,
+                                              donor_head=cast_body[:8] if cast_body else None)  # se.donor_cast's ids
         with open(os.path.splitext(path)[0] + '_cast.txt', 'w', encoding='utf-8') as f:
             f.write(f'{len(cast_list)} persos run their AI; left out: {cast_skipped}\n' + '\n'.join(listing) + '\n')
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
@@ -493,12 +498,84 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
            ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
            ('CAST', cast_body) if cast_body else None,  # this level's cast, else the one passed in
+           ('CMEC', cmec) if cmec else None,
+           ('PCOL', pcol) if pcol else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
                          donor_lite))]
     chunks.write(path, 'TTLV', [c for c in out if c])
     return (len(meshes), sum(len(m['indices']) // 3 for m in meshes.values()), len(tex_paths), sorted(missing),
             len(blobs), n_parts, len(tris), [a[0] for a in ed[2]] if ed else donor_anims)
+
+
+def _decal(prims, m):
+    """LevelData.collision's skip_decals rule for one object's primitives at its frame-0 pose m: two triangles, both
+    facing up (normal z > 0.5): a speed arrow or spring star lying on the ski slope."""
+    if len(prims) != 2 or any(q[0] != 1 for q in prims):
+        return False
+    for q in prims:
+        a, b, c = (level.mat_apply(m, q[5 + 3 * k:8 + 3 * k]) for k in range(3))
+        u = [b[k] - a[k] for k in range(3)]
+        v = [c[k] - a[k] for k in range(3)]
+        n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+        if abs(n[2]) <= 0.5 * math.sqrt(sum(x * x for x in n)):
+            return False
+    return True
+
+
+def perso_collision(data, cast_locs, prso_index, skip_decals=False):
+    """The PCOL chunk: every perso's own collision (docs/ENGINE.md "Moving collision, read"), in its objects' axes, for
+    the core to pose where the perso is (core tc_obstacle.c). None when no perso has any. Layout:
+      u16 n_persos, u8 main priority, u8 main flags (the player's collide set, as below)
+      n_persos x { u16 perso id (as CAST's: level perso k + 1; the Special Edition's from cast.SE_ID_BASE),
+                   u16 PRSO index (0xFFFF none), u16 sector (0xFFFF none), u8 priority (collide set +0x34; 0 without one),
+                   u8 flags (LevelData.collide_set_flags: 1 meets persos (+0x35), 2 floor_ok (+0x37), 4 carries (std game
+                     +0x31), 8 has a collide set, 16 active, 32 dead; 64 in the cast: posed by its actor),
+                   f32 world[12] (row-major 3x4),
+                   u16 n_objects, u16 n_pose,
+                   n_objects x { u16 object (object-list index), u16 n_prims, n_prims x { u8 kind (1 triangle, 7 sphere,
+                     8 box), u8 sound (GameMaterial +8, 0xFF none), u16 collide id, f32 grip, f32 rebound, f32 v[9]
+                     (triangle a, b, c; sphere centre, radius; box min, max) } } (object axes, object-list scale applied)
+                   n_pose x { u16 object, u16 0, f32 m[12] (object -> perso at frame 0 of the initial animation: how a
+                     perso that does not run stands) } }"""
+    rows, base = [], cast.SE_ID_BASE if data.se else 0
+    player = data.player()
+    fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
+    for k, p in enumerate(data.persos()):
+        if not p.collides or not p.anim or p.loc == player or (p.loc == fix_ed and player != fix_ed):
+            continue
+        pose0 = {o: m for o, m in p.anim.pose(0) if o is not None}
+        objs = []
+        for o in sorted(p.collides):
+            po = p.physical.get(o)
+            prims = data.perso_prims(po, p.objects[o][1]) if po else []
+            if not prims:
+                continue
+            if skip_decals and o in pose0 and _decal(prims, level.mat_mul(p.world, pose0[o])):
+                continue
+            objs.append((o, prims))
+        if not objs:
+            continue
+        prio, flags = data.collide_set_flags(p.loc)
+        if data.se:  # port: the SE's collide set and std game layouts past +0x2A are not read (docs/SE.md): met by all, as
+            prio, flags = 0, (flags & (16 | 32)) | 1 | 2 | 4 | 8  # when COLL baked them (priority 0, floor_ok, carries)
+        if p.loc in cast_locs:
+            flags |= 64
+        sector = data.perso_sector(p.loc)
+        kept = {o for o, _ in objs}
+        pose = [(o, m) for o, m in pose0.items() if o in kept]
+        body = struct.pack('<3H2B12f2H', base + k + 1, prso_index.get(p.loc, 0xFFFF), 0xFFFF if sector is None else sector,
+                           prio, flags, *p.world, len(objs), len(pose))
+        for o, prims in objs:
+            body += struct.pack('<2H', o, len(prims)) + b''.join(struct.pack('<2BH2f9f', *q) for q in prims)
+        body += b''.join(struct.pack('<2H12f', o, 0, *m) for o, m in pose)
+        rows.append(body)
+    if not rows:
+        return None
+    mp, mf = data.collide_set_flags(player) if player else (0, 0)
+    if data.se:  # the SE plays the borrowed retail Ed: his collide set (priority 127, meets persos, floor_ok)
+        mp, mf = 127, 1 | 2 | 8
+    return struct.pack('<H2B', len(rows), mp, mf) + b''.join(rows)
 
 
 def lite(data, sectors, meshes, raw=()):

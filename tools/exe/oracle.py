@@ -19,6 +19,8 @@ Tests:
   sphere_tri   FUN_00465b60 (tc_mec_sphere_tri): a moving sphere against a triangle: face / edge / corner, t,
                normal, point
   point_tri    FUN_0046ff70 (tc_mec_point_tri): a moving point (Ed's hand point) against a triangle: face only
+  point_sphere FUN_00469500 (tc_mec_point_sphere): a moving centre against a point at distance R (perso spheres)
+  sphere_box   FUN_004679d0 (tc_mec_sphere_box): a moving sphere (or point) against an axis-aligned box (perso boxes)
 """
 import ctypes
 import hashlib
@@ -253,8 +255,103 @@ def point_tri_port(lib, case):
             (point.x, point.y, point.z) if ret else (0, 0, 0))
 
 
+# ---- point_sphere: FUN_00469500 (a centre moving against a point at distance R: the perso spheres, R = R + r,
+# FUN_0046d600, and a point against a sphere, FUN_004704c0; tc_mec_point_sphere) ----
+
+def fbits(x):
+    return struct.unpack('<I', struct.pack('<f', x))[0]
+
+
+def point_sphere_case(rng):
+    c = [rng.uniform(-3, 3) for _ in range(3)]
+    R = rng.uniform(0.05, 2.5)
+    p0 = [c[k] + rng.uniform(-4, 4) for k in range(3)]
+    if rng.random() < 0.6:  # aimed at it, a bit off
+        aim = [c[k] + rng.uniform(-R, R) * 1.2 for k in range(3)]
+        d = [(aim[k] - p0[k]) * rng.uniform(0.3, 1.6) for k in range(3)]
+    else:
+        d = [rng.uniform(-4, 4) for _ in range(3)]
+    if rng.random() < 0.1:  # a start already within R
+        p0 = [c[k] + rng.uniform(-R, R) * 0.5 for k in range(3)]
+    return [[f32(x) for x in v] for v in (p0, d, c)] + [f32(R)]
+
+
+def point_sphere_exe(exe, case):
+    p0, d, c, R = case
+    P0, D, C = exe.put(0x000, '<3f', *p0), exe.put(0x010, '<3f', *d), exe.put(0x020, '<3f', *c)
+    T, CEN, NOR = exe.put(0x030, '<f', -1), exe.put(0x040, '<3f', 0, 0, 0), exe.put(0x050, '<3f', 0, 0, 0)
+    ret = exe.call(0x00469500, [P0, D, C, fbits(R), T, CEN, NOR]) & 0xFF
+    return (ret, 3, exe.get(0x030, '<f')[0] if ret else 0.0, exe.get(0x050, '<3f') if ret else (0, 0, 0),
+            exe.get(0x040, '<3f') if ret else (0, 0, 0))
+
+
+def point_sphere_port(lib, case):
+    p0, d, c, R = case
+    t, cen, nor = ctypes.c_float(-1), Vec3(), Vec3()
+    ret = lib.tc_mec_point_sphere(v3(p0), v3(d), v3(c), ctypes.c_float(R), ctypes.byref(t), ctypes.byref(cen),
+                                  ctypes.byref(nor))
+    return (ret, 3, t.value if ret else 0.0, (nor.x, nor.y, nor.z) if ret else (0, 0, 0),
+            (cen.x, cen.y, cen.z) if ret else (0, 0, 0))
+
+
+# ---- sphere_box: FUN_004679d0 (a sphere against an axis-aligned box grown by r: the perso boxes, FUN_0046d8a0;
+# tc_mec_sphere_box) ----
+
+def sphere_box_case(rng):
+    lo = [rng.uniform(-3, 1) for _ in range(3)]
+    hi = [lo[k] + rng.uniform(0.05, 4) for k in range(3)]
+    r = 0.0 if rng.random() < 0.2 else rng.uniform(0.05, 1.5)
+    p0 = [rng.uniform(lo[k] - 4, hi[k] + 4) for k in range(3)]
+    if rng.random() < 0.6:
+        aim = [rng.uniform(lo[k] - r, hi[k] + r) for k in range(3)]
+        d = [(aim[k] - p0[k]) * rng.uniform(0.3, 1.8) for k in range(3)]
+    else:
+        d = [rng.uniform(-5, 5) for _ in range(3)]
+    if rng.random() < 0.1:  # moving exactly along a face's plane
+        k = rng.randrange(3)
+        p0[k] = (lo[k] - r) if rng.random() < 0.5 else (hi[k] + r)
+        d[k] = 0.0
+    p0, d = [f32(x) for x in p0], [f32(x) for x in d]
+    p1 = [f32(p0[k] + d[k]) for k in range(3)]
+    return [p0, p1, d, [f32(x) for x in lo], [f32(x) for x in hi], f32(r)]
+
+
+def sphere_box_exe(exe, case):
+    p0, p1, d, lo, hi, r = case
+    P0, P1, D = exe.put(0x000, '<3f', *p0), exe.put(0x010, '<3f', *p1), exe.put(0x020, '<3f', *d)
+    LO, HI = exe.put(0x030, '<3f', *lo), exe.put(0x040, '<3f', *hi)
+    T, CEN, NOR = exe.put(0x050, '<f', -1), exe.put(0x060, '<3f', 0, 0, 0), exe.put(0x070, '<3f', 0, 0, 0)
+    ret = exe.call(0x004679D0, [P0, P1, D, LO, HI, fbits(r), T, CEN, NOR]) & 0xFF
+    return (ret, 4, exe.get(0x050, '<f')[0] if ret else 0.0, exe.get(0x070, '<3f') if ret else (0, 0, 0),
+            exe.get(0x060, '<3f') if ret else (0, 0, 0))
+
+
+def sphere_box_port(lib, case):
+    p0, p1, d, lo, hi, r = case
+    t, cen, nor = ctypes.c_float(-1), Vec3(), Vec3()
+    ret = lib.tc_mec_sphere_box(v3(p0), v3(p1), v3(d), v3(lo), v3(hi), ctypes.c_float(r), ctypes.byref(t),
+                                ctypes.byref(cen), ctypes.byref(nor))
+    return (ret, 4, t.value if ret else 0.0, (nor.x, nor.y, nor.z) if ret else (0, 0, 0),
+            (cen.x, cen.y, cen.z) if ret else (0, 0, 0))
+
+
+def shape_compare(case, want, got):
+    """'ok', 'edge' (the hit's t at 0 or 1, or within rounding of the other's: a touching or grazing case) or 'bad'."""
+    (wr, _, wt, wn, wp), (gr, _, gt, gn, gp) = want, got
+    if not wr and not gr:
+        return 'ok'
+    if wr and gr and close((wt,), (gt,), 1e-4) and close(wn, gn, 1e-3) and close(wp, gp, 1e-3):
+        return 'ok'
+    t = wt if wr else gt
+    if abs(t) < 1e-4 or abs(t - 1) < 1e-4:
+        return 'edge'
+    return 'bad'
+
+
 TESTS = {'sphere_tri': (sphere_tri_case, sphere_tri_exe, sphere_tri_port, sphere_tri_compare),
-         'point_tri': (point_tri_case, point_tri_exe, point_tri_port, sphere_tri_compare)}
+         'point_tri': (point_tri_case, point_tri_exe, point_tri_port, sphere_tri_compare),
+         'point_sphere': (point_sphere_case, point_sphere_exe, point_sphere_port, shape_compare),
+         'sphere_box': (sphere_box_case, sphere_box_exe, sphere_box_port, shape_compare)}
 
 
 def main(argv):

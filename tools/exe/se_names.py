@@ -22,6 +22,7 @@ Instructions are compared as objdump text with addresses masked (difflib ratio).
   code+order  0.5 .. 0.85
   order       below 0.5, kept by the alignment between better pairs
   position    a run of SE-only entries paired with an equally long run of retail-only ones between the same anchors
+  read        set by hand from the handlers' code (READ_PAIRS), where the traces can't tell
 Rows with no partner: retail-only (added after the SE) or SE-only (removed). Checked against the names this project
 gave retail primitives by reading their code (tools/exe/ai_names.tsv): they agree wherever both exist (ButtonHeld =
 Cond_PressedBut, InZone = Cond_CollidePersoZDDWithPerso, ForceBehaviour = Proc_ChangeComport, ChangeState =
@@ -241,7 +242,32 @@ def align(fs, fr):
     return fixed
 
 
+# Pairs read from the code where the traces can't tell (calls are skipped, so wrappers that differ only in the function
+# they call trace alike): kind -> {SE index: retail index}; confidence 'read'.
+#   PROC: SE 50 Proc_SetHitPointsMax = retail 72 (PROC_72Etc_004897f0 case 0x48 -> FUN_004ced30: std game +0x15), not 71
+#   (PROC_SetCounter66Etc_00489590 case 0x47 -> GAM_00423ac0: +0x14, retail-only). Read 2026-11-05.
+READ_PAIRS = {'PROC': {50: 72}}
+
+
+def apply_read_pairs(kind, pairs):
+    """pairs [(se, retail, sim)] with READ_PAIRS[kind] applied: each SE index moves to its retail index, the retail
+    index it left becomes retail-only, the row that held the new partner (retail-only) is dropped."""
+    for a_se, b_rt in READ_PAIRS.get(kind, {}).items():
+        old = next((i for i, (a, b, _) in enumerate(pairs) if a == a_se), None)
+        if old is None:
+            continue
+        left = pairs[old][1]
+        pairs = [(a, b, s) for a, b, s in pairs if not (a is None and b == b_rt)]
+        old = next(i for i, (a, b, _) in enumerate(pairs) if a == a_se)
+        pairs[old] = (a_se, b_rt, 'read')
+        if left is not None and left != b_rt:
+            pairs.insert(old, (None, left, None))
+    return pairs
+
+
 def confidence(sim):
+    if sim == 'read':
+        return 'read'
     if sim == 'position':
         return 'position'
     return 'code' if sim >= 0.85 else 'code+order' if sim >= 0.5 else 'order'
@@ -270,15 +296,15 @@ def main(argv):
     for kind in KINDS:
         se_rows, rt_handlers = se_entries(se_img, kind), retail_entries(rt_img, kind)
         nargs = SE_TABLES[kind][6]
-        pairs = align(fingerprints(se_tr, se_dis, [r[1] for r in se_rows], nargs),
-                      fingerprints(rt_tr, rt_dis, rt_handlers, nargs))
+        pairs = apply_read_pairs(kind, align(fingerprints(se_tr, se_dis, [r[1] for r in se_rows], nargs),
+                                             fingerprints(rt_tr, rt_dis, rt_handlers, nargs)))
         counts = {}
         for a, b, sim in pairs:
             conf = 'se-only' if b is None else 'retail-only' if a is None else confidence(sim)
             counts[conf] = counts.get(conf, 0) + 1
             name, types = (se_rows[a][0], se_rows[a][2]) if a is not None else ('', '')
             rows.append((kind, '' if b is None else str(b), '' if a is None else str(a), name, types,
-                         f'{sim:.2f}' if isinstance(sim, float) else '', conf,
+                         f'{sim:.2f}' if isinstance(sim, float) else '1.00' if sim == 'read' else '', conf,
                          known.get((kind, b), '') if b is not None else ''))
         summary.append(f'{kind}: SE {len(se_rows)}, retail {len(rt_handlers)}: ' +
                        ', '.join(f'{v} {k}' for k, v in sorted(counts.items())))

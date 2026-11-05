@@ -3,6 +3,7 @@
 #include "tonic/tc_cast.h"
 #include "tonic/tc_alloc.h"
 #include "tonic/tc_player.h"
+#include "tonic/tc_obstacle.h"
 
 static tc_ai_perso *cast_find(void *user, int32_t id) {
     tc_cast *c = (tc_cast *)user;
@@ -75,6 +76,7 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->self_id = e->id;
     p->globals = &c->globals;
     p->level_name = c->main ? c->main->level_name : NULL; /* LevelIs (COND 62): the level, as for the main actor */
+    p->world_id = c->level->cast.world;
     p->active = e->active != 0;
     p->dead = e->dead != 0;
     p->reinit = e->reinit != 0;
@@ -85,7 +87,7 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->run_animation = e->animation;
     p->radius2 = e->radius2;
     p->hit_points = e->hit_points;
-    p->hit_points_max = e->hit_points_max;
+    p->hit_points_max = p->hit_points_max_init = e->hit_points_max;
     p->position = tc_v3(e->world.m[3], e->world.m[7], e->world.m[11]);
     p->heading = a->heading0;
     c->rng = c->rng * 1103515245u + 12345u;
@@ -93,7 +95,78 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->time_ms = c->main ? c->main->time_ms : p->time_ms;
     a->state_prev = p->state;
     a->frame_prev = p->state_frame;
+    a->position_prev = p->position;
+    a->rot_prev = tc_v3(0, 0, p->heading);
+    memset(&a->dyn, 0, sizeof(a->dyn));
+    a->dyn.card_type = 0xFFFF;
+    tc_mec_walk_reset(&a->dyn.walk);
+    a->sector.sector = e->sector;
+    a->sector.position = p->position;
+    a->sector.placed = 0;
     return TC_OK;
+}
+
+/* The main actor's links the cast gives him (tc_cast_init). */
+static void link_main(tc_cast *c, tc_ai_perso *main) {
+    const tc_level *l = c->level;
+    main->find = cast_find;
+    main->find_user = c;
+    main->self_id = c->main_id;
+    main->globals = &c->globals;
+    main->world_id = l->cast.world;
+    if (l->cast.main_zones.zone_count) {
+        main->zones_of = &l->cast.main_zones;
+        main->zones_follow = true;
+    }
+}
+
+void tc_cast_detach_main(tc_cast *c) {
+    uint32_t i;
+    if (!c || !c->main) return;
+    for (i = 0; i < c->ghost_count; i++) {
+        tc_cast_ghost_perso *g = &c->ghosts[i];
+        uint8_t *own;
+        if (g->main_other < 0) continue;
+        /* his copy goes with him: the ghost keeps the values in memory of its own (the layout stays borrowed) */
+        own = (uint8_t *)tc_alloc(g->model.dsg.size ? g->model.dsg.size : 1);
+        if (own && g->ai.dsg) memcpy(own, g->ai.dsg, g->model.dsg.size);
+        else if (own) memset(own, 0, g->model.dsg.size ? g->model.dsg.size : 1);
+        g->ai.dsg = own;
+        g->main_other = TC_CAST_GHOST_OWN_MEMORY;
+    }
+    if (c->main->find_user == c) {
+        c->main->find = NULL;
+        c->main->find_user = NULL;
+        c->main->globals = NULL;
+        c->main->zones_of = NULL;
+        c->main->zones_follow = false;
+    }
+    c->main = NULL;
+}
+
+void tc_cast_set_main(tc_cast *c, tc_ai_perso *main) {
+    uint32_t i, k;
+    if (!c) return;
+    if (c->main && c->main != main) tc_cast_detach_main(c);
+    c->main = main;
+    if (!main) return;
+    link_main(c, main);
+    /* the ghosts he keeps a copy of (the camera) share his copy again, as tc_cast_init sets them up */
+    for (i = 0; i < c->ghost_count; i++) {
+        tc_cast_ghost_perso *g = &c->ghosts[i];
+        if (g->main_other != TC_CAST_GHOST_OWN_MEMORY || !main->model) continue;
+        for (k = 0; k < main->model->other_count; k++) {
+            const tc_ai_other *o = &main->model->others[k];
+            if (o->id != g->ai.self_id || !main->other_dsg) continue;
+            tc_free(g->ai.dsg);
+            g->ai.dsg = main->other_dsg[k];
+            g->model.dsg = o->dsg;
+            g->ai.position = main->other_positions[k];
+            g->ai.read_only_for_cast = o->role == 1;
+            g->main_other = (int32_t)k;
+            break;
+        }
+    }
 }
 
 tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
@@ -104,16 +177,8 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
     c->main = main;
     c->main_id = d->main_actor;
     c->rng = 0xCA57u;
-    if (main) {
-        main->find = cast_find;
-        main->find_user = c;
-        main->self_id = c->main_id;
-        main->globals = &c->globals;
-        if (l->cast.main_zones.zone_count) {
-            main->zones_of = &l->cast.main_zones;
-            main->zones_follow = true;
-        }
-    }
+    c->main_carrier = -1;
+    if (main) link_main(c, main);
     if (!d->count) return TC_OK;
     c->states = (tc_ai_state **)tc_calloc(d->family_count ? d->family_count : 1, sizeof(*c->states));
     c->sounds = (tc_ai_sound **)tc_calloc(d->family_count ? d->family_count : 1, sizeof(*c->sounds));
@@ -192,6 +257,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
         }
         gp->ai.self_id = g->id;
         gp->ai.main_actor = c->main_id;
+        gp->ai.world_id = d->world;
         gp->ai.find = cast_find;
         gp->ai.find_user = c;
         if (g->id < c->id_count && c->by_id[g->id] < 0) c->by_id[g->id] = (int32_t)(c->count + c->ghost_count);
@@ -215,6 +281,8 @@ void tc_cast_free(tc_cast *c) {
     for (i = 0; c->ghosts && i < c->ghost_count; i++) {
         if (c->ghosts[i].main_other >= 0) { /* borrowed from the main actor */
             c->ghosts[i].ai.dsg = NULL;
+            memset(&c->ghosts[i].model.dsg, 0, sizeof(c->ghosts[i].model.dsg));
+        } else if (c->ghosts[i].main_other == TC_CAST_GHOST_OWN_MEMORY) { /* its memory, his model's layout */
             memset(&c->ghosts[i].model.dsg, 0, sizeof(c->ghosts[i].model.dsg));
         }
         tc_ai_free(&c->ghosts[i].ai);
@@ -255,6 +323,8 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         float d2;
         a->state_prev = p->state;
         a->frame_prev = p->state_frame;
+        a->position_prev = p->position;
+        a->rot_prev = a->dyn.tilted ? a->dyn.rot : tc_v3(0, 0, p->heading);
         a->thought = false;
         if (p->reinit_requested) { /* PROC 257 on a perso that comes back (std game +0x20 = 1): from its start, out */
             tc_ai_free(p);
@@ -263,7 +333,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         }
         if (!p->model || !p->active) { a->awake = false; return; }
         a->awake = (a->entry->flags & TC_CAST_ALWAYS_AWAKE) || !s || main_sector == TC_SECTOR_NONE ||
-                   a->entry->sector == TC_SECTOR_NONE || tc_sectors_active(s, main_sector, a->entry->sector);
+                   a->sector.sector == TC_SECTOR_NONE || tc_sectors_active(s, main_sector, a->sector.sector);
         if (!a->awake) return;
         c->awake++;
         d2 = tc_v3_length_sq(tc_v3_sub(p->position, main_pos));
@@ -282,10 +352,14 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         }
         a->thought = think;
         c->thinking += think;
-        if (p->run_mechanics) { /* port: turning in place stands in for the mechanics */
+        if (p->run_mechanics && !tc_cast_mechanics(c, a, dt)) { /* port: turning in place stands in for the others */
             if (p->motion.heading_set) p->heading = p->motion.heading;
             else if (p->motion.turning) p->heading += p->motion.turn_speed * dt;
         }
+        if (s && a->sector.sector != TC_SECTOR_NONE && (p->position.x != a->sector.position.x ||
+                                                       p->position.y != a->sector.position.y ||
+                                                       p->position.z != a->sector.position.z))
+            tc_sector_move(&a->sector, s, p->position); /* GAM_0042c810: through the portals it crossed */
         if (d2 <= TC_CAST_HEARING * TC_CAST_HEARING)
             for (k = 0; k < p->sound_count; k++) {
                 uint16_t e = p->sounds[k];
@@ -301,21 +375,71 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
     }
 }
 
-/* The exe's order (docs/ENGINE.md "The frame"): the run-first list (0x8c1738, GAM_004287b0: the platforms, lifts,
- * crates) before the dynamic world's walk (GAM_00428550). Port: within each pass in level perso order (the exe walks
- * the list's order, then the tree's); the main actor stepped before both (tc_viewer). */
-void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
-    uint32_t i, pass;
-    tc_vec3 main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+/* Its obstacle (tc_obstacle.h) where it is now: its state animation's current frame at its matrix; not met while it is
+ * out or dead (FUN_0043c640) or not drawn. */
+static void pose_obstacle(tc_cast *c, tc_cast_actor *a) {
+    tc_obstacle *ob = a->obstacle;
+    tc_mat34 w;
+    const tc_cast_anim *an;
+    tc_sample sm;
+    if (!ob) return;
+    if (!tc_cast_pose(c, a, 1, &w, &an, &sm)) {
+        ob->live = false;
+        return;
+    }
+    ob->live = a->ai.active && !a->ai.dead;
+    ob->sector = a->sector.sector;
+    tc_obstacle_pose(ob, &w, &an->transforms[(size_t)sm.s0 * an->channel_count], &an->shown[(size_t)sm.s0 * an->channel_count],
+                     an->channel_count);
+}
+
+static void begin_step(tc_cast *c) {
+    uint32_t i;
     c->sounds_out_count = 0;
     c->awake = c->thinking = 0;
     for (i = 0; i < c->ghost_count; i++) /* the shared ones: where the main actor's host says they are (the camera's eye) */
         if (c->ghosts[i].main_other >= 0 && c->main && c->main->other_positions)
             c->ghosts[i].ai.position = c->main->other_positions[c->ghosts[i].main_other];
-    for (pass = 0; pass < 2; pass++)
-        for (i = 0; i < c->count; i++)
-            if (((c->actors[i].entry->flags & TC_CAST_RUN_FIRST) != 0) == (pass == 0))
-                step_actor(c, &c->actors[i], dt, s, main_sector, main_pos);
+}
+
+static void step_pass(tc_cast *c, bool first, float dt, const tc_sectors *s, uint16_t main_sector) {
+    uint32_t i;
+    c->sectors = s;
+    tc_vec3 main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+    for (i = 0; i < c->count; i++)
+        if (((c->actors[i].entry->flags & TC_CAST_RUN_FIRST) != 0) == first) {
+            step_actor(c, &c->actors[i], dt, s, main_sector, main_pos);
+            pose_obstacle(c, &c->actors[i]);
+        }
+}
+
+/* The exe's order (docs/ENGINE.md "The frame"): the run-first list (0x8c1738, GAM_004287b0: the platforms, lifts,
+ * crates) before the dynamic world's walk (GAM_00428550). Port: within each pass in level perso order (the exe walks
+ * the list's order, then the tree's). tc_viewer steps the main actor between the two (tc_cast_step_first, his step,
+ * tc_cast_step_rest), so what he stands on has moved first; tc_cast_step runs both passes. */
+void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
+    begin_step(c);
+    step_pass(c, true, dt, s, main_sector);
+}
+
+void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
+    step_pass(c, false, dt, s, main_sector);
+}
+
+void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
+    tc_cast_step_first(c, dt, s, main_sector);
+    tc_cast_step_rest(c, dt, s, main_sector);
+}
+
+void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o) {
+    uint32_t i;
+    c->obstacles = o;
+    for (i = 0; i < c->count; i++) {
+        tc_cast_actor *a = &c->actors[i];
+        a->obstacle = o ? tc_obstacles_find(o, a->entry->id) : NULL;
+        if (a->obstacle && !(a->obstacle->flags & TC_PCOL_CAST)) a->obstacle = NULL; /* posed once, by the export */
+        pose_obstacle(c, a);
+    }
 }
 
 bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
@@ -367,16 +491,33 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
     s->s0 = s0;
     s->s1 = s0 + 1 < n ? s0 + 1 : (st->next == (int16_t)p->state ? 0 : n - 1);
     *anim = an;
-    /* The placement turned about Z by the heading's change (local -Y = the front, along (sin h, -cos h)). */
+    /* The placement turned about Z by the heading's change (local -Y = the front, along (sin h, -cos h)), where its
+     * mechanics put it (between the last two ticks); tilted ones (card type 7 under a rider) by their whole rotation
+     * relative to the placement's heading. */
     *world = a->entry->world;
-    d = p->heading - a->heading0;
-    if (d != 0) {
-        cs = cosf(d), sn = sinf(d);
-        for (r = 0; r < 3; r++) {
-            float x = a->entry->world.m[r], y = a->entry->world.m[4 + r];
-            world->m[r] = cs * x - sn * y;
-            world->m[4 + r] = sn * x + cs * y;
+    {
+        tc_vec3 rot = a->dyn.tilted ? a->dyn.rot : tc_v3(0, 0, p->heading), r0 = a->rot_prev, pos;
+        tc_vec3 axis;
+        float angle, m3[9];
+        int k;
+        rot = tc_v3_add(r0, tc_v3_scale(tc_v3_sub(rot, r0), t));
+        pos = tc_v3_add(a->position_prev, tc_v3_scale(tc_v3_sub(p->position, a->position_prev), t));
+        rot.z -= a->heading0;
+        angle = tc_v3_length(rot);
+        if (angle > 1e-7f) {
+            axis = tc_v3_scale(rot, 1 / angle);
+            cs = cosf(angle), sn = sinf(angle), d = 1 - cs;
+            m3[0] = cs + axis.x * axis.x * d;          m3[1] = axis.x * axis.y * d - axis.z * sn; m3[2] = axis.x * axis.z * d + axis.y * sn;
+            m3[3] = axis.y * axis.x * d + axis.z * sn; m3[4] = cs + axis.y * axis.y * d;          m3[5] = axis.y * axis.z * d - axis.x * sn;
+            m3[6] = axis.z * axis.x * d - axis.y * sn; m3[7] = axis.z * axis.y * d + axis.x * sn; m3[8] = cs + axis.z * axis.z * d;
+            for (r = 0; r < 3; r++)
+                for (k = 0; k < 3; k++)
+                    world->m[4 * r + k] = m3[3 * r] * a->entry->world.m[k] + m3[3 * r + 1] * a->entry->world.m[4 + k] +
+                                          m3[3 * r + 2] * a->entry->world.m[8 + k];
         }
+        world->m[3] = pos.x;
+        world->m[7] = pos.y;
+        world->m[11] = pos.z;
     }
     return true;
 }

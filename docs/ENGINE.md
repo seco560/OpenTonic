@@ -78,28 +78,159 @@ the hook for it.
 
 ## The port today
 - **tc_cast (core/src/tc_cast.c)** is the loop for the level's persos: the always-awake list and the sector /
-  activity marks decide who is awake (.ttlv CAST flags 4 and 8, tools/ttre/cast.py); within a tick, the run-first ones
-  step before the rest (**read**). Within each pass in level perso order (**port**: the exe walks the list's order,
-  then the tree's); the frame stamp is implicit (each actor steps once).
-- **Ed** is stepped by tc_ed_ai before the cast, every tick (tc_viewer step_ai) (**port**: in the exe he is one
-  perso of the tree walk). Folding him into the same loop is the direction (docs/DIRECTION.md, point 2).
-- **The cast does not run mechanics or move** (**port**, the biggest gap): persos with the mechanics flag turn in
-  place. Their collision is baked into the static world at frame 0 by the exporter (tools/ttre/level.py
-  `collision`), so nothing moves under Ed, `FUNC 54` (the perso he stands on) is always none and the crate cannot be
-  pushed.
+  activity marks decide who is awake (.ttlv CAST flags 4 and 8, tools/ttre/cast.py). Each tick (tc_viewer step_ai)
+  runs the run-first persos (`tc_cast_step_first`), then Ed (tc_ed_ai), then the rest (`tc_cast_step_rest`), as the
+  exe's frame does (**read**; within each pass in level perso order: **port**, the exe walks the list's order, then the
+  tree's). An actor's sector follows it through the portals when its mechanics move it (`tc_sector_move`, GAM_0042c810).
+- **Ed** is stepped by tc_ed_ai between the two passes (**port**: in the exe he is one perso of the tree walk).
+  Folding him into the same loop is the direction (docs/DIRECTION.md, point 2).
+- **Perso collision (2026-11-05):** each perso's collision is its own (.ttlv PCOL, tc_obstacle.h), no longer baked
+  into the static world. Cast actors pose theirs after each step (state animation, position, tilt); the others stand
+  at their frame-0 pose. Ed's sweeps meet them by the exe's rules and tests (below); `FUNC 54` and riding work.
+- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift) and 7 (pushed and floating things)
+  run; other card types still turn in place (**port**, the biggest gap left: 0 / 4 walkers, 9, 10, 3, 8, 12).
 - Left out of the cast (**port**): the camera and its directors, the cheat-code reader, the arches, the persos the
   exporter reduced to data (portals and walk-in passages: .ttai PORT; Totalski's obstacles: TRIG; the light managers:
   LAIS). Each is a stopgap to fold back into the cast, one subsystem at a time (docs/DIRECTION.md).
 
-## Next: moving collision (the "run first" persos)
-What it takes, in order (each read from the exe, with a headless check):
-1. **Per-perso collision.** Export each perso's ZDR collide set as its own mesh in its own axes (not baked into the
-   static world), with the sector it is in; the sweep tests them where the perso is now. Read first: how
-   `FUN_0043c640` (the characters of the swept sectors) builds their matrices, and the flag-8 sweep's perso
-   exception (collide set +0x37) (docs/DECOMP.md "Where the port is not the exe", item 4).
-2. **Their mechanics.** The card types the platforms and the crate use (9, 10, the fn1 handlers of 1, 3, 6, 8, 12:
-   docs/DECOMP.md item 9), root motion from their animations, and the requests their scripts make
-   (SetMoveDirection under mode 12: the crate's push).
-3. **Riding.** The moving-frame second pass (`DAT_008bcaec`): a perso standing on another moves with it; `FUNC 54`.
-4. Then the cavedoc crate puzzle (docs/NOTES.md "The cast": JET_AReparer), sud0's slab (dalfou), north's rings,
-   Land's bridges become playable.
+## Moving collision, read (2026-11-05; all **read** unless marked)
+The port's plan for it is at the end of this section.
+
+**Who collides with whom: `MEC_SweepPass_0043c830`.** Both sweeps of the mover's ZDM (the flag-8 one and the rest)
+first test the persos in its sector's character list and in those of every sector on its +0x58 list (not itself),
+through `FUN_0043c640`, but only when the mover's own collide set byte **+0x35** is 1. Then the sector's static trees
+(`FUN_0043c410`). Per other perso (`FUN_0043c640`):
+- it must be active and not dead (`GAM_00423d20`: std game +0x18, not +0x17), and have no collide set or one with
+  +0x35 set;
+- a bounding-volume pretest (`FUN_00464650`, the SuperObjects' +0x34);
+- **priority**: collide set byte **+0x34**, 0 without a collide set. The mover's ZDM meets the other's geometry only
+  when the other's priority <= the mover's;
+- the other's **geometry** = each channel object (p3d +0x164 list, type 0xB) whose physical object has a ZDR collide
+  object (`FUN_0047a750(3, po)`), at the channel SuperObject's world matrix (+0x24) (`FUN_0043c770`). This is what the
+  exporter has baked at frame 0 so far;
+- **ZDR against ZDR**: the mover's own ZDR zones (its collide set list 3, active in its state) against the other's
+  (`FUN_0043c7d0`), when the mover has any. Ed has none;
+- hits on a perso are recorded with obstacle type 1 and the hit SuperObject (the channel); `MEC_SweepZones_0043bff0`
+  turns them into contact kind 2 with the perso's dynamics.
+- The flag-8 sweep (the hand point) throws away its hit when the nearest is a perso whose collide set has
+  **+0x37 floor_ok** = 0 (`GAM_CollSetFloorOk_00431730`).
+
+**In the obstacle's axes: `FUN_00464240`.** The mover's start and end matrices go into the obstacle's axes (the
+inverse of its matrix; a uniform scale only, `FUN_0047c8d0`: radii are divided by it), the tests run there, and hit
+point and normal come back through the obstacle's matrix. Tests by obstacle element type (`FUN_004656d0`; points
+`FUN_00470a40`):
+- 1 triangles: as the static world (`FUN_00465b60`, `FUN_0046ff70`; docs/DECOMP.md).
+- 7 **spheres** (`FUN_0046d600`): the mover's sphere centre swept against the obstacle sphere's centre with radius
+  R + r (`FUN_00469500`, the same test as a triangle corner). Normal = (centre - C) / (R + r); point = centre +
+  (C - centre) r / (R + r). Kind 3. A point (r = 0) the same (`FUN_004704c0`), own shape 0.
+- 8 **boxes** (axis-aligned in the obstacle's axes; `FUN_0046d8a0` -> `FUN_004679d0`): the box grown by r on every
+  side (so its corners are square, not rounded). The start must be outside it (region code `FUN_004663e0`: bits
+  1 / 2 x below / above, 4 / 8 y, 0x10 / 0x20 z), and the start's and end's codes must share no bit. Then, for each
+  face the start is outside of (x-, x+, y-, y+, z-, z+), the crossing t and point, inside the face's rectangle
+  (`FUN_004664c0` / `00466520` / `00466460`, bounds inclusive): the first one found is the hit. Normal = the face's
+  axis (constants 0x4e1ca0). The point is the centre at t minus r n. Kind 4. A point the same without growing
+  (`FUN_00466600`).
+
+**Contacts with a perso: `MEC_004bd689`** (from `MEC_CollideMove_004be1bd` when the contact kind is 2; the sphere
+mover's twin is `MEC_004bdac7`):
+- obstacle == the current carrier: classified as usual, plus report **0x30000**. In the carrier-follow collide (flags 0,
+  first pass) such a contact ends the move at once with no contact: the carried move is taken whole.
+- else, when the mover's walk card byte **+0x3C** is set, the obstacle **carries** (std game **+0x31** of its first
+  perso ancestor, `GAM_0042bc67`), the normal is within the card's steep slope (n . up >= +0x20) and the touching
+  part's zone type is 1 or 2: the ground response (`MEC_RespondGround_004bb904`), the record kept as ground and as
+  "other" (+0x1C4), report **0x30001** (ground) or **0x30002** (steep), target pushed out by 0.01 n.
+- else classified as usual; a step-up (0x40) onto a carrier adds 0x30000.
+
+**Riding is reparenting** (`DNM_IntegrateWalk_004aa6af`, the type 0 / 4 integrator; type 11 and 12 do the same):
+- After the collide-and-move, report & 0x30000 == 0x30000 and the obstacle is not the carrier:
+  `SPO_SetParent_00483430(so, obstacle)`. The perso becomes a child of the channel SuperObject it stands on.
+- At the end of the integrator, with a carrier, the local matrix is recomputed from the world one (local =
+  carrier world^-1 x world).
+- **Every frame first** (`DNM_FollowCarrier_004a83d2` -> `FUN_004a7c25`): the world matrix = the carrier chain's
+  product x the local one; the position follows (`FUN_004a7899`). The move from last frame's position is collided
+  (flags 0; a 0x20 "blocked" result puts him back and carries nothing; no contact restores the reports). The carried
+  motion is kept for the leaving.
+- **Leaving** (`DNM_LeftCarrier_004a8388`): when neither this frame's nor last frame's report has 0x30000, a sweep
+  0.2 down along up (`FUN_004c2ba0`) must still find the carrier, else he is detached (`FUN_004c2ac1`: back to the
+  dynamic world) and **velocity += carried x 0.666666** (`DAT_004d3034`), unless the carrier's std game +0x26 is 3.
+- Standing still (no velocity, no turn) skips the collide: the report becomes 0 (keep_reports clear) or & 3 (set).
+  So 0x30000 is lost while standing, but the parent link stays and he keeps moving with the carrier.
+- **FUNC 54** (`Func_GetFather`, the port's StandingOnPerso): with report_seen & 0x30000 == 0x30000, the first perso
+  ancestor of the perso's parent. Else none.
+
+**Card type 6, the lift** (`DNM_RequestType6_004b11ea`; its integrator only shifts the snapshots). Driven by
+**META 28 `Action_MoveLift`(from, to, time)** (`META_28_004a0990` / `META_28Cont_004a09c0`): ProposalVecA = from,
+ProposalVecD = to, proposal [0] = T. The first frame queues mode **14**, then mode **15** until velocity_snap is zero.
+- Mode 14: s = 0, x = 0, the lag rate 0, the position = A, "moving" (velocity_snap.x = 1).
+- Mode 15, L = |B - A|: the lag `FUN_004c9afb`({x, rate, T/2, L}, dt): x += (L - x) / (T/2) dt. While s < 0.6321 L
+  (1 - 1/e): s = x, elapsed = T/2. After: s = ((elapsed - T/2) / (T/2 e) + 0.6321) L, elapsed += dt. So the lift
+  covers 63 % of the way in T/2, slowing exponentially, then the rest at that speed, arriving at T. Position = A +
+  (B - A) / L x s. At s >= L: at B, stopped (velocity_snap = 0: the meta-action ends).
+- The position goes straight into the perso's matrix. Velocity = dt x the step (stored, not used for riding).
+- State (dynamics +0x2B0 s, +0x2B4 elapsed, +0x2BC x, +0x2C8 rate). Constants 0.5, 0.6321, 2.718 (0x4d2f38..40).
+
+**Card type 7, floating and pushed things** (`DNM_RequestType7_004b17d1`, `DNM_IntegrateType7_004acb49`, forces
+`DNM_Type7Forces_004c831a`). Card: +4 mass, +0xC min speed, +0x10 min turn, +0x14 max speed, +0x18 max turn,
++0x1C gravity factor g7, +0x20 damping, +0x24 stiffness.
+- Requests: 3 / 4 turn by [0xD] (clamped to min / max turn), 5 / 0x12 turn to an angle; **12** wanted = the move
+  direction x speed (clamped) in the perso's axes, **0x14** the same in world axes plus a turn towards it, 0x15 a spring
+  towards ProposalVecA (only with g7 = 0), 0x17 an orbit. Each move request sets dynamics +0x70 = -1.
+- Forces: a pending velocity (PROC 35) replaces the velocity (z := 0). With g7 = 0: no motion of its own (the plane
+  spring when +0x70 >= 0). With g7 != 0, **a damped vertical spring under the load**: load = the masses of the persos
+  riding it (`FUN_004c32f6`, its children), M = mass + load, g' = g7 x g. When +0x70 < 0 the rest height latches:
+  rest = z + M g' / k, +0x70 = 0, dynamics flag 0x20000. Then vz += (k (rest - z) - M g' - damping vz) dt / M. A
+  rider sinks it to a new rest and it rises when he leaves.
+- **Tilt**, only above mass 125 (`DAT_004e77fc`): when the first rider is more than 0.5 off centre (squared distance
+  > 0.25), a torque -(200 + load) g' (dy, -dx, 0) tilts it towards him, against a restoring -25000 x its tilt and a
+  damping -3250 x its tilt rate (rotation vectors added as vectors, `FUN_004b73db`; `FUN_004b7c6f` takes their x, y).
+  The exe also adds the angular velocity itself to the torque before scaling by dt / mass (kept as read).
+- With flag 0x20000 the integrator steps in **0.005 s** substeps. Then a collide-and-move of its own ZDM (flags 4;
+  most have none), and the full rotation from its axis-angle.
+
+**Data, measured (2026-11-05, all 12 playable levels with perso collision):** about 300 persos carry collision; the
+card types of their states are mostly 6 (146 states) and 7 (142), then 0 (69), 4, 10, 9. Only about 50 move their
+collision by animation; the platforms, lifts and the crate move by mechanics. 74 are on the run-first list. 231 are
+in the cast.
+- **Port bug found:** cast.py leaves out every perso calling PROC 6 (meant for the skier's start, which deactivates
+  the fix Ed). That drops cavedoc's 11 BEM_PFQuiSeDesagrege ("the platform that falls apart") platforms, whose B3
+  deactivates themselves and whose B0 / B2 test `InPersoContext(MainActor, StandingOnPerso) == Me`.
+
+**Built (2026-11-05), headless only; nothing seen in the app yet.**
+- **Data** (tools/ttre/ttlv.py `perso_collision`, cast.py `mech_chunk`): .ttlv **PCOL** holds every perso's own
+  collision in its objects' axes (triangles, spheres, boxes, each with its material), with the collide set's +0x34 /
+  +0x35 / +0x37 and std game +0x31. COLL holds the static world only. .ttlv **CMEC** holds the cast families' state
+  cards and each actor's own sweep sphere (+0x36 / +0x30). Old exports without PCOL keep their baked collision.
+- **Core:** `tc_obstacle.c` poses each obstacle (cast actors after every step, the others once). `tc_mec_sweep`
+  tests the obstacles in their axes before the static world, with the rules above. The perso contact classification
+  and riding live in tc_mec_walk.c (`respond_perso`, `tc_mec_walk_carry`, `ride`). FUNC 54, COND 37, META 28 and the
+  NormSpeed field are in tc_ai.c. Card types 6 and 7 for the cast are in tc_cast_mec.c.
+- **Also read and ported on the way:** the **ground press** (`DNM_WalkForces_004c41c5`, DAT_004d3084 = -0.04): grounded
+  by the step before but not the last, the wanted motion gets 0.04 into the ground. Standing still shifts the report
+  (Ed's dynamics +0x38C, keep_reports, is 0 in the data). So a grounded perso touches its ground every other step,
+  and on a perso report_seen keeps 0x30000. Before, the port froze the contacts while standing. All checks pass with it.
+  mechcheck's 0.45 step is no longer slowed (the step-up wants last step's ground, which the press keeps). Also ported:
+  FUNC 88 / 100 / 101 run as OP 24's perso (they used the asker's axes).
+- **Checks:** `tools/exe/oracle.py point_sphere sphere_box`: `FUN_00469500` and `FUN_004679d0` against the core, 100,000
+  of 100,000 random cases agree each. viewcheck `ride_scenario` (cavedoc, needs PCOL): Ed dropped on SDO_PFCaveDoc1
+  lands on it, rides it (437 of 480 frames), FUNC 54 names it, MoveLift takes it 45 units with him on it. castcheck on
+  all 21 levels (254 ok) with the larger cast. A scratch probe pushes the cavedoc crate from its four sides: it slides
+  with Ed and stops (at the ledge, at a wall).
+- **Port choices and gaps** (marked in the code):
+  - The pretest per obstacle part is a bounding sphere (the exe's `FUN_00464650` is not read).
+  - Persos outside the cast stay at their frame-0 pose, in their snapshot sector.
+  - Riding is the type 0 / 4 integrator's. The exe's types 11 and 12 ride too. Any other card lets go of the carrier.
+  - Leaving keeps 2/3 of the carried velocity always (the exe skips that when the carrier's std game +0x26 is 3;
+    not exported).
+  - The type 7 forces take g = 9.81 (every level's air) instead of looking the environment up.
+  - Type 7 mode 0x17 (orbit) is not ported. Card types 0 / 4 / 9 / 10 / 3 / 8 / 12 for the cast still turn in
+    place (the rolling rocks, the doors with card 0, the guards).
+  - The type 7 sweep body is the collide set's single sphere only (the crate). Its contacts push it out 0.01 each
+    and nothing pulls it down (gravity factor 0), so it creeps up a little where the floor is uneven: the exe's own
+    algorithm, kept.
+  - **Special Edition** data: its collide-set and std-game bytes past +0x2A are not read, so every SE perso obstacle is
+    met by all (priority 0, floor_ok, carries), and the borrowed retail Ed keeps retail Ed's collide set (127, meets).
+  - The static world's raycasts (camera, footsteps lookup, FUNC 162, tc_player) no longer see perso geometry.
+    Footsteps on a perso take the ground contact's floor sound instead.
+  - `MEC_004bd689`'s inverted steep flag (above) is kept as read.
+- **Next:** the cast's walkers (types 0 / 4 with their ZDM sets and root motion), types 9 / 10 (the rolling rocks),
+  the ZDE zones (COND 18-29), the ZDR-against-ZDR test, persos' obstacles for the camera's sight.

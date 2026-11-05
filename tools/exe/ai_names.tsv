@@ -185,8 +185,8 @@ FUNC	37	Counter37?	0x49ad30
 FUNC	91	Report2BC	0x49b610	dynamics +0x2BC
 FUNC	92	Report2C0	0x49b610	dynamics +0x2C0
 PROC	66	SetHitPoints	0x489590	std game +0x14 := n (FUN_004cebf0)
-PROC	70	SetCounter70?	0x489590	AI_00489790 -> FUN_004cecb0
-PROC	71	SetCounter71?	0x489590	AI_004896d0 -> GAM_00423ac0
+PROC	70	SubHitPoints	0x489590	AI_00489790 -> FUN_004cecb0: +0x14 -= n, not below 0 (SE Proc_SubHitPoints)
+PROC	71	SetHitPointsKept?	0x489590	AI_004896d0 -> GAM_00423ac0: +0x14 := n, and SAI_00481120(+0x14, 0x31) keeps it (re-init value?); retail-only
 PROC	80	CollectInZone80	0x489a70	GAM_ZdxStuff_00420580 into a list
 PROC	84	CollectNearby	0x489a70	0x54: GAM_ZdxStuff_0041fa70(perso, 0, a, list, b)
 PROC	85	CollectNearby85	0x489a70	0x55
@@ -265,6 +265,11 @@ PROC	21	SetActivity(1,1,always)	0x488580
 PROC	22	SetActivityRadius	0x488580	GAM_004242d0
 PROC	68	FillHitPoints	0x489590	+0x14 := +0x15 (FUN_004cec10)
 PROC	69	AddHitPoints	0x489590	+= n up to +0x15 (FUN_004cec30)
+PROC	72	SetHitPointsMax	0x4897f0	AI_004898b0 -> FUN_004ced30: +0x15 := n (SE Proc_SetHitPointsMax)
+PROC	73	SetHitPointsMaxToInit	0x4897f0	GAM_00423c20 (SAI restore of +0x15)
+PROC	74	SetHitPointsMaxToCeiling	0x4897f0	FUN_004ced50: +0x15 := +0x16 (the max's ceiling)
+PROC	75	AddHitPointsMax	0x4897f0	AI_00489910: +0x15 += n up to +0x16 (FUN_004ced70), then +0x14 := +0x15
+PROC	76	SubHitPointsMax	0x4897f0	AI_00489980 -> FUN_004cedf0: +0x15 -= n (not below 0), +0x14 clamped to it
 PROC	77	SetLives	0x4899e0
 PROC	78	AddLife	0x4899e0
 PROC	143	IncSaveValue	0x48ac30	GAM_00419620

@@ -282,6 +282,13 @@ shorter runs, and leaves through an arch to Sud0 (STH_vers_Sud0). Its bottom are
   - `STH_reinitski`: skiing, teleported to the start.
   - skicheck uses the skier from ALTM (unchanged 2.4 %).
 - Not modelled yet: the ski lifts (`STH_cabine1 / 2`, B82 / B84 with a power and a button).
+- **Regression, fixed 2026-11-05 (user: "he no longer gets his plate out on totalski"):** `play_mode_zones` skipped
+  the switch on any level with a cast, because the cast holds links into the driver's AI that the switch frees. SE
+  Totalski had no cast until the pickups (below) gave it one: 27 items and World. So the switch never fired, and Ed
+  stayed walking on the start slope. Now the switch hands the cast its new driver: `tc_cast_detach_main` before the old
+  driver is freed (ghosts that shared his memory keep their own copy), then `tc_cast_set_main`. viewcheck runs SE
+  Totalski when `files/out/se/ttlv` is there: skier on the first tick, the ride down, every zone's swap with the cast
+  linked. That check fails on the old code.
 
 ## Portals (2026-11-05)
 
@@ -399,10 +406,61 @@ the shot, then Ed runs. Retail: castcheck on fresh sud0 / north / Land / cavedoc
 (timing aside), and every core check passes on the existing exports. **Not seen in the app:** the shot, the
 pictures, the characters' looks.
 
+## Pickups (2026-11-05)
+
+The SE's own collectibles now run their scripts on every SE level: the cast there is the items and World
+(`cast.SE_ITEM_FAMILIES`, `SE_SAVE_MODELS`; the outro keeps its whole scene). Read from the scripts:
+
+| item (family / model) | per level | when Ed is near (its dsg0 radius) |
+|---|---|---|
+| silver spade icon (`gen_icon_argen` / ARG_LifeAG) | 10 | `World.dsg1++`, World's hit points + 1, fades out; at World's target (dsg0 = 10) World's B3: dsg4 = 1 and `AddHitPointsMax(Ed, 1)`: +1 max hit point, filled |
+| gold icon (`gen_icon_or` / ARG_LifeExt) | 0-3 | its B4: refills Ed, 1 hit point every 200 ms until full, then leaves |
+| red heart (`gen_icon3` / ARG_Life) | 6-13 | + 1 hit point if he is hurt (else it stays) |
+| yellow beehive (`gen_ruche_j`) | 1-5 | into the inventory |
+| Doc's machine parts (`doc_domino`, `doc_elicon`, `doc_pig`, `doc_plum`, `doc_ressor`, `doc_kyou`) | 6 on one level each | into the inventory |
+| save point (`genplainenord` / ARG_Sauvegarde, JOB_Sauvegarde, POC_POC) | 1-9 | `Proc_SaveGame`, then leaves; port: Ed's checkpoint (as retail's DFM_Save) |
+
+**Made to work for this (all general, not SE-only):**
+- **World keyword** (KW 6, `Dot(World, dsg1)`): was unknown in the core (345 uses skipped on SE sud0; retail casts use
+  it 10-16 times per level too). The CAST header's spare u16 now names the world perso (the engine's 0x8c1744 via
+  `engine_lists`, else the level's World family perso); `tc_ai_perso.world_id`.
+- **The max hit points, PROC 72-76**, read from retail `PROC_72Etc_004897f0` (std game +0x14 hit points, +0x15 max,
+  +0x16 the max's ceiling): 72 max := n, 73 := its start, 74 := the ceiling, **75 max += n up to the ceiling, then the
+  hit points := the max**, 76 max -= n, the hit points clamped. Retail's Worlds and HEG_Inventaire use 72 / 75 for the
+  same collect-N reward, so it works on retail now too. The ceiling isn't exported: no cap (255). PROC 70
+  (SubHitPoints, Ed's own scripts 255 uses) and 71 stay no-ops: that is Ed's damage, a subsystem of its own.
+- **A mapping error fixed:** SE `Proc_SetHitPointsMax` is retail 72, not 71 (their wrappers trace alike, the calls
+  being skipped); `tools/exe/se_names.py` READ_PAIRS keeps the corrected pair (confidence `read`). Other pairs of
+  wrappers that differ only in the function they call could hide the same kind of error.
+- **Models of reflexes only** (the silver icons have no normal behaviour): the core accepted none and would have run
+  reflex 0 as the normal one.
+- **Separate id ranges:** the borrowed retail Ed's .ttai names persos in his donor level's numbering (2 = the camera
+  on most levels), the SE cast in the SE's: they collided (on SE sud0, SE Ed is perso 2). SE persos are now numbered
+  from `cast.SE_ID_BASE` (0x2000) and SE Ed's references go to the main actor (on Totalski the skier, from the donor's
+  CAST). The outro only worked before because its numbers happened to line up.
+- **SE LeCanyon's names:** its fix -> level link in the name tables resolves into unrelated data, so every LeCanyon
+  perso read as nameless; the tables are now walked back from their last entry when the forward walk fails
+  (`level._names_backward`): 201 instances named (10 silver icons, 5 hives, 5 saves, Doc's `doc_kyou`).
+
+**Checked headless** (a scratch probe: a fresh viewer per item, Ed at 1 hit point put on it for 1.5 s): taken 32 / 32
+carota, 21 / 21 cavedoc, 25 / 25 cock01, 13 / 14 Land, 32 / 32 LeCanyon, 23 / 30 marmite, 30 / 31 north, 43 / 44
+pyramide, 27 / 29 sud0, 26 / 26 Totalski. Hearts heal 1 -> 2, the silver icons fill World's count and its reward
+fires (sud0: dsg1 = 10, dsg4 = 1, Ed 4 -> 5 / 5), save points set the checkpoint. Not taken:
+- marmite's 7 pigs: caught with `Cond_CollidePersoTypeZDEWithPersoTypeZDE(Me, 1, Ed, 2)` (zone types: his attack,
+  probably), and they run between waypoints, which the cast doesn't move: they wait for the collision work.
+- Save points with radius 0 in the data (sud0 ZOR_Save1, Land POC_SauvAvantPf, pyramide Gun_Actor24): never fire in the
+  game either. sud0's Doc feather sits at z -75 (Ed falls past it there: reached otherwise, probably). north's
+  ARG_LifeAG1 starts hidden (R3) until something spawns it.
+castcheck passes on all 11 SE levels; retail checks unchanged (castcheck on fresh sud0 / north / Land / cavedoc exports:
+only PROC 72 no longer listed as skipped). Not ported: the inventory itself (`Proc_AddObjectInInventory`: the item
+just leaves), the SE's sounds, `Proc_DisplayChrono` (SE Totalski's World, every frame: a race timer?). **Not seen in
+the app.**
+
 ## Next
 
-The long-term goal these steps lead to (user): retail, SE, or both interwoven as alternate universes with portals
-between the two versions of a level. See docs/DIRECTION.md, "Final goal: two editions, one game".
+The long-term goal these steps lead to (user, 2026-11-05): Open Tonic as one merged Definitive Edition, Ed moving
+between both editions' levels and collecting from both. See docs/DIRECTION.md, "Future direction: Open Tonic, the
+Definitive Edition".
 
 
 1. Playtest SE Totalski in the app (camera, speed, the slope's end: there is no finish trigger), and the SE outro

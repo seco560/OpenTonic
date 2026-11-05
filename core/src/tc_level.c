@@ -110,8 +110,10 @@ void tc_level_free(tc_level *level) {
         }
         tc_free(f->states);
         tc_free(f->anims);
+        tc_free(f->cards);
     }
     tc_free(level->cast.families);
+    tc_free(level->cast.cards);
     for (i = 0; level->cast.entries && i < level->cast.count; i++) {
         tc_free(level->cast.entries[i].scripts);
         tc_free(level->cast.entries[i].tables);
@@ -121,6 +123,12 @@ void tc_level_free(tc_level *level) {
     tc_free(level->cast.main_zones.zones);
     for (i = 0; level->cast.ghosts && i < level->cast.ghost_count; i++) tc_free(level->cast.ghosts[i].dsg);
     tc_free(level->cast.ghosts);
+    for (i = 0; level->pcol.persos && i < level->pcol.count; i++) {
+        tc_free(level->pcol.persos[i].objects);
+        tc_free(level->pcol.persos[i].pose);
+    }
+    tc_free(level->pcol.persos);
+    tc_free(level->pcol.prims);
     tc_free(level->lights);
     memset(level, 0, sizeof *level);
 }
@@ -229,7 +237,7 @@ static void read_cast(tc_cast_data *c, reader *r) {
     c->count = rd_u16(r);
     c->main_alias = rd_u16(r);
     c->main_zones.zone_count = rd_u16(r);
-    (void)rd_u16(r);
+    c->world = rd_u16(r); /* 0 in files from before 2026-11-05 */
     read_zones(&c->main_zones, r);
     c->ghost_count = rd_u16(r);
     (void)rd_u16(r);
@@ -343,6 +351,144 @@ static void read_cast(tc_cast_data *c, reader *r) {
             if (r->offset > r->size) r->error = TC_ERR_TRUNCATED;
         }
         if (e->family >= c->family_count) e->size = 0; /* not run */
+    }
+}
+
+/* .ttlv CMEC (tools/ttre/cast.py mech_chunk): after CAST. */
+static void read_cmec(tc_cast_data *c, reader *r) {
+    uint32_t i, k, n_fam;
+    c->card_count = rd_u16(r);
+    n_fam = rd_u16(r);
+    c->cards = (tc_ai_card *)rd_array(r, c->card_count, sizeof(tc_ai_card), 8);
+    if (!c->cards) c->card_count = 0;
+    for (i = 0; i < c->card_count && !r->error; i++) {
+        tc_ai_card *d = &c->cards[i];
+        uint32_t n;
+        d->type = rd_u32(r);
+        n = rd_u32(r);
+        d->word_count = n < 19 ? n : 19;
+        for (k = 0; k < n; k++) {
+            uint32_t w = rd_u32(r);
+            if (k < 19) d->words[k] = w;
+        }
+    }
+    for (i = 0; i < n_fam && !r->error; i++) {
+        uint16_t n = rd_u16(r);
+        tc_cast_family *f = i < c->family_count ? &c->families[i] : NULL;
+        uint16_t *row = (uint16_t *)rd_array(r, n, 2, 2);
+        for (k = 0; row && k < n; k++) {
+            row[k] = rd_u16(r);
+            if (row[k] != 0xFFFF && row[k] >= c->card_count) row[k] = 0xFFFF;
+        }
+        if (f && row && n == f->state_count) f->cards = row;
+        else tc_free(row);
+    }
+    if (r->offset < r->size) { /* the entries' own sweep bodies */
+        uint16_t n = rd_u16(r);
+        (void)rd_u16(r);
+        for (i = 0; i < n && !r->error; i++) {
+            float rad = rd_f32(r);
+            uint8_t prio = rd_u8(r), meets = rd_u8(r);
+            (void)rd_u16(r);
+            if (i < c->count) {
+                c->entries[i].own_radius = rad;
+                c->entries[i].own_priority = prio;
+                c->entries[i].own_meets = meets;
+            }
+        }
+    }
+}
+
+/* .ttlv PCOL (tools/ttre/ttlv.py perso_collision). */
+static void read_pcol(tc_pcol *c, reader *r) {
+    uint32_t i, k, j, total = 0;
+    size_t start = r->offset;
+    c->count = rd_u16(r);
+    c->main_priority = rd_u8(r);
+    c->main_flags = rd_u8(r);
+    /* first pass: count the primitives, to allocate them in one array */
+    for (i = 0; i < c->count && !r->error; i++) {
+        uint16_t no, np;
+        r->offset += 8 + 48;
+        no = rd_u16(r);
+        np = rd_u16(r);
+        for (k = 0; k < no && !r->error; k++) {
+            uint16_t n;
+            (void)rd_u16(r);
+            n = rd_u16(r);
+            total += n;
+            if (!have(r, (size_t)n * 48)) break;
+            r->offset += (size_t)n * 48;
+        }
+        if (!have(r, (size_t)np * 52)) break;
+        r->offset += (size_t)np * 52;
+    }
+    if (r->error) return;
+    r->offset = start + 4;
+    c->persos = (tc_pcol_perso *)rd_array(r, c->count, sizeof(tc_pcol_perso), 60);
+    c->prims = (tc_pcol_prim *)rd_array(r, total, sizeof(tc_pcol_prim), 48);
+    if (!c->persos || (total && !c->prims)) { c->count = 0; return; }
+    c->prim_count = 0;
+    for (i = 0; i < c->count && !r->error; i++) {
+        tc_pcol_perso *p = &c->persos[i];
+        p->id = rd_u16(r);
+        p->prso = rd_u16(r);
+        p->sector = rd_u16(r);
+        p->priority = rd_u8(r);
+        p->flags = rd_u8(r);
+        rd_mat34(r, &p->world);
+        p->object_count = rd_u16(r);
+        p->pose_count = rd_u16(r);
+        p->objects = (tc_pcol_object *)rd_array(r, p->object_count, sizeof(tc_pcol_object), 4);
+        p->pose = (tc_pcol_pose *)rd_array(r, p->pose_count, sizeof(tc_pcol_pose), 52);
+        if ((p->object_count && !p->objects) || (p->pose_count && !p->pose)) { p->object_count = p->pose_count = 0; break; }
+        for (k = 0; k < p->object_count && !r->error; k++) {
+            tc_pcol_object *o = &p->objects[k];
+            tc_vec3 lo = tc_v3(INFINITY, INFINITY, INFINITY), hi = tc_v3(-INFINITY, -INFINITY, -INFINITY);
+            uint16_t n;
+            o->object = rd_u16(r);
+            n = rd_u16(r);
+            o->first = c->prim_count;
+            for (j = 0; j < n && !r->error && c->prim_count < total; j++) {
+                tc_pcol_prim *q = &c->prims[c->prim_count++];
+                float v[9];
+                uint32_t m;
+                q->kind = rd_u8(r);
+                q->sound = rd_u8(r);
+                q->collide_id = rd_u16(r);
+                q->floor.grip = rd_f32(r);
+                q->floor.rebound = rd_f32(r);
+                for (m = 0; m < 9; m++) v[m] = rd_f32(r);
+                q->a = tc_v3(v[0], v[1], v[2]);
+                q->b = tc_v3(v[3], v[4], v[5]);
+                q->c = tc_v3(v[6], v[7], v[8]);
+                if (q->kind == TC_PCOL_TRIANGLE) {
+                    tc_vec3 nn = tc_v3_cross(tc_v3_sub(q->b, q->a), tc_v3_sub(q->c, q->a));
+                    float len = tc_v3_length(nn);
+                    q->n = len > 1e-12f ? tc_v3_div(nn, len) : tc_v3(0, 0, 1);
+                    lo = tc_v3_min(lo, tc_v3_min(q->a, tc_v3_min(q->b, q->c)));
+                    hi = tc_v3_max(hi, tc_v3_max(q->a, tc_v3_max(q->b, q->c)));
+                } else if (q->kind == TC_PCOL_SPHERE) {
+                    q->r = v[3];
+                    q->b = q->c = tc_v3(0, 0, 0);
+                    lo = tc_v3_min(lo, tc_v3_adds(q->a, -q->r));
+                    hi = tc_v3_max(hi, tc_v3_adds(q->a, q->r));
+                } else {
+                    lo = tc_v3_min(lo, q->a);
+                    hi = tc_v3_max(hi, q->b);
+                }
+            }
+            o->count = c->prim_count - o->first;
+            if (o->count) {
+                o->centre = tc_v3_scale(tc_v3_add(lo, hi), 0.5f);
+                o->radius = 0.5f * tc_v3_length(tc_v3_sub(hi, lo));
+            }
+        }
+        for (k = 0; k < p->pose_count && !r->error; k++) {
+            p->pose[k].object = rd_u16(r);
+            (void)rd_u16(r);
+            rd_mat34(r, &p->pose[k].m);
+        }
     }
 }
 
@@ -503,6 +649,16 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 
     if (chunk_need(&cs, "CAST", r)) {
         read_cast(&level->cast, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "CMEC", r)) { /* optional: the cast's cards (absent: the cast runs no mechanics) */
+        read_cmec(&level->cast, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "PCOL", r)) { /* optional: older files have the persos' collision in COLL */
+        read_pcol(&level->pcol, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 

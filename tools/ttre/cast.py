@@ -14,9 +14,11 @@ Per perso the std game's activity fields are exported as the snapshot holds them
 when PROC 257 takes it out, +0x2A run the mechanics, +0x2B play the animation without mechanics, +0x2C the squared
 activation radius (-1: always; else the AI runs only while the main actor's origin is closer).
 
-CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes), u16 n_families, u16 n_cast,
+CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes; Special Edition persos: SE_ID_BASE +
+  k + 1), u16 n_families, u16 n_cast,
   u16 main_alias (the fix Ed's id where another perso is the player: the skier; he stands for the main actor; 0 none),
-  u16 n_main_zones, u16 0, n_main_zones x a zone as below (the main actor's ZDD zones, in his axes: they move with him)
+  u16 n_main_zones, u16 world (the World keyword's perso id, 0 none),
+  n_main_zones x a zone as below (the main actor's ZDD zones, in his axes: they move with him)
   u16 n_ghosts, u16 0, n_ghosts x { u16 perso id, u16 0, f32 position[3], u32 size, size bytes = its dsgvars as a .ttai
       writes them (ai.perso_dsg_block) }: the persos the scripts name that do not run (one shared copy each)
   n_families x {
@@ -69,22 +71,38 @@ HANDLED_PROCS = {6, 7, 8, 29, 283}
 # guard: the outro's relay of characters, each taking itself out after its turn).
 SE_CAST_LEVELS = {'outro'}
 SE_HANDLED_PROCS = {7, 8, 29, 283}
+# On the other SE levels only the items run (docs/SE.md "Pickups"), with World, which counts them: the silver icons
+# (gen_icon_argen, World's dsg1 towards its dsg0 = 10: +1 max hit points), the gold (gen_icon_or: refills Ed) and red
+# ones (gen_icon3: + 1 hit point), the beehives (gen_ruche_j) and Doc's machine parts (doc_*: the inventory), the save
+# points (SE_SAVE_MODELS).
+SE_ITEM_FAMILIES = {'gen_icon_argen', 'gen_icon_or', 'gen_icon3', 'gen_ruche_j', 'doc_domino', 'doc_elicon', 'doc_pig',
+                    'doc_plum', 'doc_ressor', 'doc_kyou', 'World'}
+SE_SAVE_MODELS = {'ARG_Sauvegarde', 'JOB_Sauvegarde', 'POC_POC'}  # genplainenord: Proc_SaveGame within dsg0, then out
 SCENE = 16  # entry flag: core tc_level.h TC_CAST_SCENE
 TABLES = 32  # entry flag (TC_CAST_TABLES): its scripts' strings and constant vectors follow them (the STRS and VECS
              # bodies of a .ttai), which the cast had none of before 2026-11-05 (every string and vector read as nothing)
 
 
-def _calls(a, procs):
+def _calls(a, procs, fix=frozenset()):
+    """Whether its scripts call one of procs. PROC 6 (DeactivatePerso) counts only when it deactivates a fix perso (the
+    skier's start: PROC_6(fix Ed)); on Me or another level perso it is the perso's own logic (cavedoc's platforms that
+    fall apart, BEM_PFQuiSeDesagrege: B3 deactivates itself), which was left out before 2026-11-05."""
+    def hit(n):
+        if n.type != 4 or n.param not in procs:
+            return False
+        if n.param != 6:
+            return True
+        c = n.children[0] if n.children else None
+        return c is not None and c.type == 24 and getattr(c, 'ref', None) in fix
+
     def walk(ns):
-        return any((n.type == 4 and n.param in procs) or walk(n.children) for n in ns)
+        return any(hit(n) or walk(n.children) for n in ns)
     return any(walk(s) for b in a.behaviours for s in b.scripts + ([b.schedule] if b.schedule else []))
 
 
 def select(d):
     """[(perso location, perso id, AI)] in level perso order, and {reason: count} of the persos left out."""
     lv = d.lv
-    if d.se and d.lv.name.lower() not in SE_CAST_LEVELS:  # not read yet (docs/SE.md): the SE persos stay props
-        return [], {'special edition': len(d.persos())}
     handled = SE_HANDLED_PROCS if d.se else HANDLED_PROCS
     player = d.player()
     fix = {x[0] for x in d.perso_in_fix if x and x[0]}
@@ -103,6 +121,10 @@ def select(d):
             continue
         names = d.perso_names(p.loc)
         reason = None
+        if d.se and d.lv.name.lower() not in SE_CAST_LEVELS and names[0] not in SE_ITEM_FAMILIES \
+                and names[1] not in SE_SAVE_MODELS:
+            skipped['special edition: not an item'] = skipped.get('special edition: not an item', 0) + 1
+            continue
         try:
             a = ai.AI(d, p.loc)
         except Exception:
@@ -115,7 +137,7 @@ def select(d):
             reason = 'trigger (TRIG)'
         elif a is not None and k + 1 in gates:
             reason = 'portal (PORT)'
-        elif a is not None and _calls(a, handled):
+        elif a is not None and _calls(a, handled, frozenset(fix)):
             reason = 'portal / level / light (PORT, LAIS)'
         if reason:
             skipped[reason] = skipped.get(reason, 0) + 1
@@ -244,9 +266,16 @@ def zones(d, loc, a):
     return out
 
 
-def chunk(d, cast, prso_index, family_cache):
+# The Special Edition's persos are numbered from here (cast.chunk): the borrowed retail Ed's .ttai names persos in his
+# donor level's numbering (2 = the camera, ...), and the two share the core's id space (tc_cast find). SE Ed's own
+# references go to the main actor.
+SE_ID_BASE = 0x2000
+
+
+def chunk(d, cast, prso_index, family_cache, donor_head=None):
     """The CAST chunk's body, and a listing (lines). cast: select()'s list; prso_index: {perso location: PRSO index};
-    family_cache: {family location: (keys, anims)} as load_cast_objects used them."""
+    family_cache: {family location: (keys, anims)} as load_cast_objects used them. donor_head: the first 8 bytes of a
+    donor's CAST (se.donor_cast: the skier's main actor and alias, in the donor's numbering) for an SE level."""
     lv = d.lv
     behaviours = {}
     player = d.player()
@@ -262,16 +291,29 @@ def chunk(d, cast, prso_index, family_cache):
     from .sfx import level_snd, sound_at
     sounds = {} if d.se else level_snd(d.lv.name)  # the SE's own sound tables: not read
     persos = d.persos()
-    idx_of = {p.loc: k + 1 for k, p in enumerate(persos)}
-    # the SE: the retail donor Ed stands in SE Ed's place (the fix Ed's perso number; se.py), none of whose behaviours
-    # resolve (they are SE Ed's: no SE perso forces him)
+    by_loc = {p.loc: p for p in persos}
+    base = SE_ID_BASE if d.se else 0
+    idx_of = {p.loc: base + k + 1 for k, p in enumerate(persos)}
+    # the SE: the retail donor Ed stands in SE Ed's place (none of whose behaviours resolve: they are SE Ed's, no SE perso
+    # forces him); SE Ed's references are the main actor's: his own number, or the donor's (the skier's) with donor_head
     main_loc = d.perso_in_fix[0][0] if d.se and d.perso_in_fix else player
-    main = next((k + 1 for k, p in enumerate(persos) if p.loc == main_loc), 0)
+    main = idx_of.get(main_loc, 0)
+    donor_alias = 0
+    if d.se and donor_head:
+        main, _, _, donor_alias = struct.unpack_from('<4H', donor_head)
+    if d.se and main_loc:
+        idx_of[main_loc] = main
+    # the World keyword's perso: the engine's world perso (gpt -> 0x8c1744, LevelData.engine_lists), else (the SE's
+    # .gpt is not read) the level's World family perso
+    world_loc = d.engine_lists()[2]
+    world_id = idx_of.get(world_loc) or next((idx_of[p.loc] for p in persos if d.perso_names(p.loc)[0] == 'World'), 0)
     main_buttons = ai.button_order(ai.AI(d, player)) if player else {}
     families, fam_blocks, entries, listing = {}, [], [], []
+    cards, fam_cards = {}, []  # CMEC: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
     always, first, _ = d.engine_lists()
     always, first = set(always), set(first)
-    for loc, pid, a in cast:
+    for loc, _, a in cast:
+        pid = idx_of[loc]
         p3d = lv.ptr(loc)
         fam = lv.ptr(p3d, 0x14) if p3d else None
         if fam not in families:
@@ -280,11 +322,16 @@ def chunk(d, cast, prso_index, family_cache):
             fam_blocks.append(struct.pack('<HH', len(a.states), len(anims)) + _states_block(d, a, keys, anim_index, sounds)
                               + b''.join(_anim_block(anims[k]) for k in sorted(anims)))
             families[fam] = len(families)
+            row = []
+            for st in a.states:  # State +0x30, as ai.export's STAT rows
+                c = lv.ptr(st, 0x30)
+                row.append(cards.setdefault(c, len(cards)) if c and d.un('I', c)[0] in ai.CARD_SIZES else 0xFFFF)
+            fam_cards.append(row)
         frozen = freeze_story_removals(a)
         for n in a.nodes():  # the level's own sounds (sfx.level_snd): resolved here, by the node's address
             if n.type == 34 and n.loc and not d.se:
                 n.event = sound_at(sounds, n.loc, n.param)
-        body, unresolved, tables = ai.export(a, None, behaviours, main_buttons, tables=True)
+        body, unresolved, tables = ai.export(a, None, behaviours, main_buttons, tables=True, perso_ids=idx_of)
         sg = lv.ptr(loc, 4)
         hp, hp_max, _, dead, active = d.un('5B', sg, 0x14) if sg else (0, 0, 0, 0, 1)
         reinit = d.un('I', sg, 0x20)[0] == 1 if sg else False
@@ -294,11 +341,11 @@ def chunk(d, cast, prso_index, family_cache):
         # the state the baked loop shows (level.read_perso): Perso3dData +0, else +4 (the playing one)
         init_state = a.state_index.get(lv.ptr(p3d, 0) or lv.ptr(p3d, 4), 0) if p3d else 0
         sector = d.perso_sector(loc)
-        world = persos[pid - 1].world
+        world = by_loc[loc].world
         names = d.perso_names(loc)
         flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
-        if d.se:
-            flags = SCENE  # SE_CAST_LEVELS
+        if d.se:  # SE_CAST_LEVELS: a scene; elsewhere the items, and the save points as retail's DFM_Save
+            flags = SCENE if d.lv.name.lower() in SE_CAST_LEVELS else 2 if names[1] in SE_SAVE_MODELS else 0
         if names[0] in SAVE_POINTS:
             flags |= 2
         if loc in always:
@@ -324,7 +371,7 @@ def chunk(d, cast, prso_index, family_cache):
                        + (f' unresolved {unresolved}' if unresolved else ''))
     # the main actor's own ZDD zones (spheres, boxes), for the cast's COND_13(Ed, k, Me): the machine in front of Ed
     main_zones = [(k, z[:8]) for k, z in ((k, ai.zdd_zone(d, player, k - 1)) for k in range(1, 9)) if z] if player else []
-    zblock = struct.pack('<HH', len(main_zones), 0) + b''.join(
+    zblock = struct.pack('<HH', len(main_zones), world_id) + b''.join(
         struct.pack('<HH', k, len(z)) + b''.join(struct.pack('<I3f3f', t, *x, *y) for t, x, y in z) for k, z in main_zones)
     # the persos the cast's scripts name that do not run (World, the camera, the excluded ones): one shared copy of their
     # dsgvars each, so what one script writes there the others read (cavedoc's HEG_Inventaire counts its jingle into
@@ -332,19 +379,47 @@ def chunk(d, cast, prso_index, family_cache):
     # where another perso is the player (the skier), the fix Ed stands for him: Counter34(fix Ed) is the main
     # character's hit points (FUNC_Counter34Etc_0049ad30, the global table): an alias of the main actor, not a ghost
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
-    alias = idx_of.get(fix_ed, 0) if fix_ed and fix_ed != player and not d.se else 0
-    running = {pid for _, pid, _ in cast} | {main, alias}
+    alias = donor_alias if d.se else idx_of.get(fix_ed, 0) if fix_ed and fix_ed != player else 0
+    running = {idx_of[loc] for loc, _, _ in cast} | {main, alias}
     named = set()
     for _, _, a in cast:
         for n in a.nodes():
             if n.type == 24 and n.ref in idx_of:
                 named.add(idx_of[n.ref])
     ghosts = sorted(named - running)
+    loc_of = {v: k for k, v in idx_of.items() if k in by_loc}
     gblock = struct.pack('<HH', len(ghosts), 0)
     for gid in ghosts:
-        loc = persos[gid - 1].loc
+        loc = loc_of[gid]
         dsg, _ = ai.perso_dsg_block(d, loc)
-        w = persos[gid - 1].world
+        w = by_loc[loc].world
         gblock += struct.pack('<HH3fI', gid, 0, w[3], w[7], w[11], len(dsg)) + dsg
     head = struct.pack('<4H', main, len(fam_blocks), len(entries), alias) + zblock + gblock
-    return head + b''.join(fam_blocks) + b''.join(entries), listing
+    own = []  # CMEC: each entry's own sweep body (its collide set: a single sphere, +0x36 / +0x30) and +0x34 / +0x35
+    for loc, _, _ in cast:
+        cs = lv.ptr(loc, 0x14)
+        if cs:
+            diameter, = d.un('f', cs, 0x30)
+            prio, meets, single = d.un('3B', cs, 0x34)
+            own.append((diameter * 0.5 if single and diameter > 0 else 0.0, prio, 1 if meets else 0))
+        else:
+            own.append((0.0, 0, 0))
+    return head + b''.join(fam_blocks) + b''.join(entries), listing, mech_chunk(d, cards, fam_cards, own)
+
+
+def mech_chunk(d, cards, fam_cards, own=()):
+    """CMEC (the cast's mechanics; core tc_cast_mec.c, docs/ENGINE.md "Moving collision, read"): u16 n_cards, u16 n_families
+    (= CAST's), n_cards x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw: as the .ttai
+    CARD chunk) }, n_families x { u16 n_states, n_states x u16 card (0xFFFF none) },
+    u16 n_entries (= CAST's), u16 0, n_entries x { f32 radius (its collide set's single sphere at its origin, +0x36 with
+    +0x30 x 0.5 (DAT_004d2928), as MEC_SweepSphere_0043d480 sweeps it; 0 none), u8 priority (+0x34), u8 meets persos
+    (+0x35), u16 0 }."""
+    out = struct.pack('<HH', len(cards), len(fam_cards))
+    for c in cards:
+        t = d.un('I', c)[0]
+        n = ai.CARD_SIZES[t] // 4 - 1
+        out += struct.pack('<II', t, n) + struct.pack(f'<{n}I', *d.un(f'{n}I', c, 4))
+    for row in fam_cards:
+        out += struct.pack(f'<H{len(row)}H', len(row), *row)
+    out += struct.pack('<HH', len(own), 0) + b''.join(struct.pack('<f2BH', r, p, m, 0) for r, p, m in own)
+    return out

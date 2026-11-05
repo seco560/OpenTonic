@@ -61,7 +61,7 @@ def load_names(path='tools/exe/ai_names.tsv', se_path='tools/exe/se_ai_map.tsv')
             f = line.rstrip('\n').split('\t')
             if len(f) >= 7 and not line.startswith('#') and f[1].isdigit() and f[3]:
                 names[(f[0], int(f[1]))] = f[3]
-                if f[6] in ('code', 'code+order'):
+                if f[6] in ('code', 'code+order', 'read'):
                     sure.add((f[0], int(f[1])))
     if os.path.exists(path):
         for line in open(path, encoding='utf-8'):
@@ -1149,7 +1149,7 @@ def button_order(ai):
     return order
 
 
-def export(ai, path, behaviours=None, main_buttons=None, tables=False):
+def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids=None):
     """Write the perso's AI as .ttai (format above). Returns a summary dict. path None: returns (the SCPT chunk's
     body, unresolved references by node type) without writing anything (a perso that runs only its scripts).
     behaviours: {behaviour location: index | 0x10000 for reflexes} of other persos' models, for references into them
@@ -1166,7 +1166,8 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False):
         lists.append(n if arr else 0)
         for i in range(n if arr else 0):
             beh_index[(arr[0], arr[1] + 12 * i)] = flag | i
-    persos = {p.loc: k + 1 for k, p in enumerate(d.persos())}
+    # perso_ids: {location: id} instead of level perso k + 1 (cast.chunk: the Special Edition's own id range)
+    persos = dict(perso_ids) if perso_ids else {p.loc: k + 1 for k, p in enumerate(d.persos())}
     persos[ai.perso] = 0
     buttons, strings, vectors = {}, {}, {}
     btn = None
@@ -1438,7 +1439,7 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False):
         out += b''.join(struct.pack('<I3f3f', k, *a, *b) for k, a, b in prims)
     cut('ZONE')
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
-    tris, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True)  # as ttlv.py writes the triangles
+    tris, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True, persos=False)  # as ttlv.py writes COLL
     out += struct.pack('<I', len(sounds)) + bytes(x & 0xFF for x in sounds)
     cut('FSND')
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)

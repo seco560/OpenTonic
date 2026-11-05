@@ -204,6 +204,7 @@ class Perso:
     anim: 'Anim' = None
     objects: dict = field(default_factory=dict)  # object-list index -> (Geometric, 3x4 scale)
     collides: dict = field(default_factory=dict)  # object-list index -> collide (vertices, triangles)
+    physical: dict = field(default_factory=dict)  # object-list index -> its PhysicalObject (location)
 
     def posed(self, pose):
         """Anim.pose() result -> [(Geometric, world 3x4)] for the visible channels."""
@@ -777,6 +778,7 @@ class LevelData:
             if lods:
                 sx, sy, sz = un('3f', sp) if sp else (1, 1, 1)
                 p.objects[obj] = (lods[0], (sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0))
+                p.physical[obj] = po
                 col = self.collide(po)
                 if col:
                     p.collides[obj] = col
@@ -877,7 +879,83 @@ class LevelData:
         _, rebound, grip = self.un('3f', mm)
         return (grip, rebound)
 
-    def collision(self, floors=False, skip_decals=False, sounds=False, sectors=False):
+    def perso_prims(self, po, scale):
+        """A physical object's ZDR collide object (PhysicalObject +4 -> collide set +12, the exe's FUN_0047a750(3, po))
+        as primitives in the object's axes, the object-list scale applied: [(kind, sound, collide id, grip, rebound,
+        9 floats)]: kind 1 a triangle (a, b, c; wound so its normal is the scaled one's), 7 a sphere (centre, radius,
+        0 ...), 8 an axis-aligned box (min, max, 0 ...). sound / collide id / (grip, rebound) as floor_sound,
+        collide_id, floor_material (none: 0xFF, 0, (1, 1)). docs/ENGINE.md "Moving collision, read"."""
+        lv, un = self.lv, self.un
+        cs = lv.ptr(po, 4) if po else None
+        zdr = lv.ptr(cs, 12) if cs else None
+        if not zdr:
+            return []
+        sx, sy, sz = scale[0], scale[5], scale[10]
+        flip = sx * sy * sz < 0
+        nv, = un('I', zdr)
+        ne, = un('I', zdr, 0x14)
+        pv, pt = lv.ptr(zdr, 4), lv.ptr(zdr, 0x18)
+        verts = [un('3f', pv, 12 * i) for i in range(nv)] if pv else []
+        verts = [(x * sx, y * sy, z * sz) for x, y, z in verts]
+        out = []
+
+        def mat(gm):
+            f = self.floor_material(gm) or (1.0, 1.0)
+            return self.floor_sound(gm), self.collide_id(gm), f[0], f[1]
+        for i, t in enumerate(un(f'{ne}H', pt) if ne and pt else ()):
+            el = lv.ptr(lv.ptr(zdr, 0x1C), 4 * i)
+            if el is None:
+                continue
+            if t == 1:
+                nt, = un('H', el, 4)
+                ti = lv.ptr(el, 8)
+                m = mat(lv.ptr(el))
+                for k in range(nt if ti else 0):
+                    tri = un('3h', ti, 6 * k)
+                    if 0 <= min(tri) and max(tri) < nv:
+                        a, b, c = (verts[j] for j in (tri[::-1] if flip else tri))
+                        out.append((1,) + m + (*a, *b, *c))
+            elif t in (7, 8):
+                n, = un('I', el)
+                ents = lv.ptr(el, 4)
+                size = 12 if t == 7 else 8
+                for k in range(min(n, 64) if ents else 0):
+                    if t == 8:
+                        a, b = un('2H', ents, size * k)
+                        if max(a, b) >= nv:
+                            continue
+                        lo = tuple(min(verts[a][j], verts[b][j]) for j in range(3))
+                        hi = tuple(max(verts[a][j], verts[b][j]) for j in range(3))
+                        out.append((8,) + mat(lv.ptr(ents, size * k + 4)) + (*lo, *hi, 0.0, 0.0, 0.0))
+                    else:
+                        c, = un('H', ents, size * k)
+                        r, = un('f', ents, size * k + 4)
+                        if c >= nv or not r > 0:
+                            continue
+                        r *= max(abs(sx), abs(sy), abs(sz))
+                        out.append((7,) + mat(lv.ptr(ents, size * k + 8)) + (*verts[c], r, 0.0, 0.0, 0.0, 0.0, 0.0))
+            else:
+                self.collide_skipped = getattr(self, 'collide_skipped', {})
+                self.collide_skipped[t] = self.collide_skipped.get(t, 0) + 1
+        return out
+
+    def collide_set_flags(self, loc):
+        """(priority, flags) of a perso for PCOL: its collide set's (perso +0x14) byte +0x34 (priority; 0 without a set)
+        and PCOL flags: 1 +0x35 (meets other persos), 2 +0x37 (floor_ok: the hand point may land on it), 8 it has a
+        collide set; 4 std game +0x31 (carries persos standing on it), 16 std game +0x18 (active), 32 +0x17 (dead)."""
+        cs = self.lv.ptr(loc, 0x14)
+        sg = self.lv.ptr(loc, 4)
+        prio, flags = 0, 0
+        if cs:
+            b = self.un('4B', cs, 0x34)
+            prio = b[0]
+            flags |= 8 | (1 if b[1] else 0) | (2 if b[3] else 0)
+        if sg:
+            dead, active = self.un('2B', sg, 0x17)
+            flags |= (4 if self.un('B', sg, 0x31)[0] else 0) | (16 if active else 0) | (32 if dead else 0)
+        return prio, flags
+
+    def collision(self, floors=False, skip_decals=False, sounds=False, sectors=False, persos=True):
         """World-space collision triangles [((x, y, z) * 3)]: every static IPO's collide set, plus
         perso collide meshes posed at frame 0 of their initial state (sud0's lava-pit platforms,
         doors, ...; moving persos are treated as static). Ed's family has none.
@@ -915,7 +993,7 @@ class LevelData:
         for so in self.walk():
             if so.collide and not getattr(so, 'gated', False):
                 add(so.collide, so.world, self.static_sector(so) if sectors else None)
-        for p in self.persos():
+        for p in self.persos() if persos else ():
             if p.collides and p.anim:
                 for o, m in p.anim.pose(0):
                     if o in p.collides:
@@ -1062,9 +1140,24 @@ class LevelData:
                              if o >= 4 and (s, o - 4) != e and lv.ptr((s, o - 4), 8) == lv.ptr(e, 8)]
                     nxt = cands[0] if cands else None
                 e = nxt
+            if any(x == '?' or not x.isprintable() for x in names) or len(names) < count:
+                names = self._names_backward(g, off + 12 * t, count) or names
             tables.append(names)
         self._object_names = tables
         return tables
+
+    def _names_backward(self, g, head, count):
+        """A name table walked from its last entry (+4 of the header) by the prev links (+4) to its first: SE LeCanyon,
+        whose fix -> level link resolves into unrelated level data (the forward walk reads garbage past the fix
+        entries). None when the walk does not give `count` named entries."""
+        lv, un = self.lv, self.un
+        e, out, seen = lv.ptr(g, head + 4), [], set()
+        while e is not None and e not in seen and len(out) < count:
+            seen.add(e)
+            q = lv.ptr(e, 12)
+            out.append(bytes(un('64B', q)).split(b'\0')[0].decode('latin-1') if q else '?')
+            e = lv.ptr(e, 4)
+        return out[::-1] if len(out) == count and '?' not in out else None
 
     def perso_names(self, loc):
         """(family, model, instance) names of the perso at loc ('' where unknown)."""

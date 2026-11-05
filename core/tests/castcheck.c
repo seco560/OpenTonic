@@ -283,7 +283,14 @@ static void level(const char *dir, const char *name) {
                (int)c->main->hit_points, (unsigned)c->main->normal.behaviour, (double)moved);
         if (c->main->reflex.behaviour == (uint32_t)c->main->model->normal_count + 13)
             printf("  info  Super Ed (BigBoss's lasts the level) does not die of hit points\n");
-        else check(back && moved > 2, "Ed dies and comes back (the port's respawn), and runs");
+        else {
+            /* running he may reach a portal (SE LeCanyon: its exit arch is 6.3 behind the start, its zone reaches 5):
+             * the walk-in takes him then, which still shows he was under control if he moved first */
+            const tc_ed_ai *dr = tc_viewer_driver(&v);
+            bool portal = dr && dr->portal >= 0 && moved > 1;
+            if (portal) printf("  (he ran into a portal, which took him: walk-in behaviour %u)\n", (unsigned)c->main->normal.behaviour);
+            check(back && (moved > 2 || portal), "Ed dies and comes back (the port's respawn), and runs");
+        }
     }
 
     /* Ed at each sleeper (its origin, 0.5 up), 2 s; pickups take themselves out */
@@ -435,7 +442,7 @@ static void level(const char *dir, const char *name) {
                 a->entry->prso != 0xFFFF || !a->ai.active)
                 continue;
             at = tc_v3_add(a->ai.position, tc_v3(0, 0, 0.5f));
-        } else if (strcmp(name, "north") == 0) {
+        } else if (strcmp(name, "north") == 0 && lv.edition == 0) { /* retail north (the SE's is another map) */
             at = tc_v3(0, 0, -100); /* World's R0: z < -105 */
         } else continue;
         tc_player_teleport((tc_player *)tc_viewer_player(&v), at, 0);

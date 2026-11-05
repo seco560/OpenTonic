@@ -58,6 +58,27 @@ static inline tc_mat4 tc_mat4_mul(const tc_mat4 *a, const tc_mat4 *b) {
                              a->m[8 + k] * b->m[c * 4 + 2] + a->m[12 + k] * b->m[c * 4 + 3];
     return r;
 }
+/* Row-major 3x4 affine: a x b (b applied first). */
+static inline tc_mat34 tc_m34_mul(const tc_mat34 *a, const tc_mat34 *b) {
+    tc_mat34 r;
+    int i, j;
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 4; j++)
+            r.m[4 * i + j] = a->m[4 * i] * b->m[j] + a->m[4 * i + 1] * b->m[4 + j] + a->m[4 * i + 2] * b->m[8 + j];
+        r.m[4 * i + 3] += a->m[4 * i + 3];
+    }
+    return r;
+}
+static inline tc_vec3 tc_m34_point(const tc_mat34 *a, tc_vec3 p) {
+    const float *m = a->m;
+    return tc_v3(m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3], m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+                 m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]);
+}
+static inline tc_vec3 tc_m34_vector(const tc_mat34 *a, tc_vec3 v) {
+    const float *m = a->m;
+    return tc_v3(m[0] * v.x + m[1] * v.y + m[2] * v.z, m[4] * v.x + m[5] * v.y + m[6] * v.z,
+                 m[8] * v.x + m[9] * v.y + m[10] * v.z);
+}
 /* a * (1 - t) + b * t, element-wise. */
 static inline tc_mat4 tc_mat4_lerp(const tc_mat4 *a, const tc_mat4 *b, float t) {
     tc_mat4 r;

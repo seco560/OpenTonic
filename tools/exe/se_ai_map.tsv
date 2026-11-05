@@ -402,8 +402,8 @@ PROC	67	46	Proc_SetHitPointsToInit	P	0.80	code+order
 PROC	68	47	Proc_SetHitPointsToMax	P	0.80	code+order	FillHitPoints
 PROC	69	48	Proc_AddHitPoints	PL	0.82	code+order	AddHitPoints
 PROC	70	49	Proc_SubHitPoints	PL	0.82	code+order	SetCounter70?
-PROC	71	50	Proc_SetHitPointsMax	PL	1.00	code	SetCounter71?
-PROC	72					retail-only	
+PROC	71					retail-only	SetHitPointsKept?
+PROC	72	50	Proc_SetHitPointsMax	PL	1.00	read	SetHitPointsMax
 PROC	73	51	Proc_SetHitPointsMaxToInit	P	1.00	code	
 PROC	74	52	Proc_SetHitPointsMaxToMax	P	1.00	code	
 PROC	75	53	Proc_AddHitPointsMax	PL	1.00	code	

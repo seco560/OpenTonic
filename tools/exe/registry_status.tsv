@@ -66,3 +66,28 @@
 0042ade0	GAM_HistoryInit	partial	the history filled with the current position when empty
 0042af40	GAM_DynamHistPosition	partial	tc_cam keeps its own 8-sample history of Ed (not the dynamics')
 00495800	PROC_184_CameraFlag	known	word 0 = params +0x94, word 1 = +0x92; bit index -> mask tables (docs/CAMERA.md)
+#
+# ---- moving collision, riding, card types 6 / 7 (2026-11-05, docs/ENGINE.md "Moving collision, read") ----
+0043c830	MEC_SweepPass	implemented	the persos of the mover's sector and its collide list first (tc_mec_walk.c sweep_obstacles), then the static trees
+0043c640	MEC_SweepPerso	implemented	active, not dead, collide set +0x35 both sides, priority +0x34; the bounding-volume pretest is the port's
+0043c770	MEC_SweepPersoChannel	implemented	each channel's physical object ZDR collide object at its matrix (.ttlv PCOL)
+0043c7d0	MEC_SweepPersoZdr	known	the mover's ZDR against the other's ZDR (Ed has none): not ported
+00464240	COL_ObstacleAxes	implemented	the mover into the obstacle's axes, a uniform scale (tc_obstacle_part inv / scale)
+0046d600	COL_SphereSphere	implemented	tc_mec_point_sphere at R + r; oracle point_sphere 100000/100000
+004679d0	COL_SphereBox	implemented	tc_mec_sphere_box: the box grown by r; oracle sphere_box 100000/100000
+00469500	COL_PointSphere	implemented	tc_mec_point_sphere; oracle point_sphere
+00466600	COL_PointBox	implemented	tc_mec_sphere_box with r 0
+004bd689	MEC_ClassifyPerso	implemented	respond_perso: the carrier, ride (card +0x3C, std game +0x31), 0x30001 / 0x30002; the inverted steep flag kept
+004bdac7	MEC_ClassifyPersoSphere	known	the single-sphere mover's twin: not used by the port's movers
+004a83d2	DNM_FollowCarrier	implemented	tc_mec_walk_carry (the carried move collided, flags 0)
+004a8388	DNM_LeftCarrier	implemented	ride(): the 0.2 sweep down (FUN_004c2ba0)
+004c2ac1	DNM_DetachCarrier	partial	velocity += carried x 0.666666; the carrier's std game +0x26 == 3 case not exported
+0049b240	FUNC_54_GetFather	implemented	tc_ai_perso.standing_on (report_seen & 0x30000 and the carrier)
+004c41c5	DNM_WalkForces	partial	weight, grip, the ground press (-0.04 / dt) ported; the box-perso pull (0.05, out flag 0x40) not
+004b11ea	DNM_RequestType6	implemented	MoveLift's way: modes 14 / 15, the lag {x, rate, T/2, L} (tc_cast_mec.c lift_request)
+004a0990	META_28_MoveLift	implemented	tc_ai.c meta_action case 28 (arguments once, mode 14 then 15 until stopped)
+004b17d1	DNM_RequestType7	partial	modes 3 / 4 / 5 / 0x12 / 12 / 0x14 / 0x15; 0x17 (orbit) not ported
+004c831a	DNM_Type7Forces	implemented	pending velocity, plane spring, the load spring, the tilt above mass 125; g = 9.81 taken
+004acb49	DNM_IntegrateType7	partial	5 ms substeps with 0x20000; the own sweep only with the collide set's single sphere
+004c32f6	DNM_CarriedLoad	partial	the riders' mass and the first rider's position: the main actor only
+004a6870	FIELD_3_NormSpeed	implemented	|Velocity|

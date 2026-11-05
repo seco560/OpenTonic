@@ -3,6 +3,7 @@
  * bounds. Not the original engine's collision (ZDx/MEC); just robust enough to walk on. */
 #ifndef TONIC_TC_COLLISION_H
 #define TONIC_TC_COLLISION_H
+#include <stdbool.h>
 #include <stdint.h>
 #include "tc_math.h"
 
@@ -39,6 +40,14 @@ typedef struct tc_collision {
      * it at a row while it moves a perso. */
     const uint8_t *solid;
     uint32_t solid_count;
+    /* Perso obstacles (tc_obstacle.h; NULL: none). The mover sets, for the length of its step, who it is: self (not
+     * its own obstacle), self_priority (its collide set +0x34: it meets obstacles of a priority up to it) and
+     * self_meets (+0x35: without it, no perso at all, MEC_SweepPass_0043c830); ignore = an obstacle it does not meet
+     * (its carrier while it is carried, DNM_FollowCarrier_004a83d2). Queries and raycasts see only the static world. */
+    struct tc_obstacles *obstacles;
+    int32_t self, ignore;
+    uint8_t self_priority;
+    bool self_meets;
 } tc_collision;
 
 typedef struct tc_hit {

@@ -47,6 +47,7 @@ int tc_collision_init(tc_collision *col, const tc_vec3 *vertices, uint32_t verte
     fill_ctx ctx;
 
     memset(col, 0, sizeof *col);
+    col->self = col->ignore = -1;
     if (vertex_count >= 3) {
         col->tris = (tc_tri *)tc_calloc(vertex_count / 3, sizeof(tc_tri));
         if (!col->tris) return -1;

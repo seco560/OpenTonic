@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "tonic/tonic.h"
+#include "tonic/tc_obstacle.h"
 
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
@@ -476,6 +477,142 @@ static void portal_scenario(const char *dir) {
     tc_level_free(&bar);
 }
 
+/* The Special Edition's Totalski switches Ed between walking and skiing (tc_ai_mode_zone, docs/SE.md "Sliding in the
+ * Special Edition"), with its pickups and World running as a cast (docs/SE.md "Pickups"). Regression (user,
+ * 2026-11-05: "he no longer gets his plate out on totalski"): the switch was skipped on levels with a cast. The start
+ * zone hands him to the skier on the first tick; then each zone's swap, walking and skiing, with the cast linked to the
+ * new driver. Its own folder: ../files/out/se/ttlv (skipped when it is not there). */
+static void se_ski_scenario(const char *dir) {
+    char path[1024], what[256];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_ai_model m;
+    float at[8][3];
+    uint32_t k, nz = 0, i, swaps = 0, linked = 1;
+    snprintf(path, sizeof(path), "%s/../se/ttlv/Totalski.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) {
+        free(data);
+        printf("  (no Special Edition Totalski: its walk / ski switch skipped)\n");
+        return;
+    }
+    free(data);
+    snprintf(path, sizeof(path), "%s/../se/ttlv/Totalski.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "totalski";
+    if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { check(0, "SE Totalski viewer"); free(ai); tc_level_free(&level); return; }
+    if (tc_ai_model_load(&m, ai, ai_size) == TC_OK) { /* where each zone is (its first primitive's centre) */
+        for (k = 0; k < m.mode_zone_count && nz < 8; k++, nz++) {
+            const tc_ai_mode_zone *z = &m.mode_zones[k];
+            const float *q = z->inverse;
+            tc_vec3 c = z->prim[0].kind == 8 ? tc_v3_scale(tc_v3_add(z->prim[0].a, z->prim[0].b), 0.5f) : z->prim[0].a;
+            tc_vec3 l = tc_v3(c.x - q[3], c.y - q[7], c.z - q[11]);
+            at[nz][0] = q[0] * l.x + q[4] * l.y + q[8] * l.z;
+            at[nz][1] = q[1] * l.x + q[5] * l.y + q[9] * l.z;
+            at[nz][2] = q[2] * l.x + q[6] * l.y + q[10] * l.z;
+        }
+        tc_ai_model_free(&m);
+    }
+    free(ai);
+    printf("Special Edition Totalski: %u mode zones, cast of %u\n", nz, tc_viewer_cast(&v) ? tc_viewer_cast(&v)->count : 0);
+    frame(&v, 1.0f / 60);
+    frame(&v, 1.0f / 60);
+    check(tc_viewer_play_mode(&v) == TC_AI_MODE_SKI, "SE Totalski: the start zone hands Ed to the skier at once");
+    run(&v, 3, 0);
+    snprintf(what, sizeof(what), "... and he rides down (%.1f u/s after 3 s)", (double)tc_v3_length(tc_viewer_player(&v)->velocity));
+    check(tc_v3_length(tc_viewer_player(&v)->velocity) > 10, what);
+    for (i = 0; i < nz; i++) { /* every zone that fires from the mode he is in, in turn: walk <-> ski */
+        uint32_t want = tc_viewer_play_mode(&v) == TC_AI_MODE_SKI ? TC_AI_MODE_WALK : TC_AI_MODE_SKI, j;
+        const struct tc_cast *c;
+        const struct tc_ed_ai *e;
+        for (k = 0; k < nz; k++) {
+            tc_player *p = (tc_player *)tc_viewer_player(&v);
+            p->position = tc_v3(at[k][0], at[k][1], at[k][2]);
+            p->velocity = tc_v3(0, 0, 0);
+            p->placed++;
+            for (j = 0; j < 30; j++) frame(&v, 1.0f / 60);
+            if (tc_viewer_play_mode(&v) == want) break;
+        }
+        if (k == nz) break;
+        swaps++;
+        c = tc_viewer_cast(&v);
+        e = tc_viewer_driver(&v);
+        if (c && (!e || c->main != &e->ai || e->ai.find_user != c)) linked = 0;
+    }
+    snprintf(what, sizeof(what), "SE Totalski: %u swaps between walking and skiing through its zones", swaps);
+    check(swaps >= 4, what);
+    check(linked, "... the cast follows each new driver (tc_cast_set_main)");
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
+/* Riding (docs/ENGINE.md "Moving collision, read"): cavedoc's lift platform SDO_PFCaveDoc1 (perso 166, card type 6).
+ * Ed dropped onto it lands on the perso (its own collision, .ttlv PCOL), rides it (tc_mec_walk.carrier), and its script
+ * sees him through FUNC 54 (StandingOnPerso == Me): MoveLift (META 28) takes it to its other stop, Ed on it. Needs an
+ * export with PCOL (skipped otherwise). */
+static void ride_scenario(const char *dir) {
+    char path[1024], what[256];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const struct tc_obstacles *os;
+    struct tc_obstacle *ob;
+    tc_player *p;
+    tc_vec3 start, lift0;
+    uint32_t i, rode = 0, seen = 0;
+    snprintf(path, sizeof(path), "%s/cavedoc.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no cavedoc: riding skipped)\n"); return; }
+    free(data);
+    if (!level.pcol.count) { printf("  (cavedoc has no PCOL, an older export: riding skipped)\n"); tc_level_free(&level); return; }
+    snprintf(path, sizeof(path), "%s/cavedoc.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "cavedoc";
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "cavedoc viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    run(&v, 0.5f, 0);
+    p = (tc_player *)tc_viewer_player(&v);
+    os = p->world->obstacles;
+    ob = os ? tc_obstacles_find(os, 166) : NULL;
+    printf("riding (cavedoc): %u perso obstacles\n", os ? os->count : 0);
+    check(ob && ob->live && ob->part_count, "the lift platform (166) is a live obstacle");
+    if (!ob) { tc_viewer_free(&v); tc_level_free(&level); return; }
+    lift0 = tc_v3(ob->world.m[3], ob->world.m[7], ob->world.m[11]);
+    p->position = tc_v3((ob->lo.x + ob->hi.x) / 2, (ob->lo.y + ob->hi.y) / 2, ob->hi.z + 1.5f);
+    p->velocity = tc_v3(0, 0, 0);
+    p->placed++;
+    start = p->position;
+    for (i = 0; i < 60 * 8; i++) {
+        const struct tc_ed_ai *e = tc_viewer_driver(&v);
+        frame(&v, 1.0f / 60);
+        e = tc_viewer_driver(&v);
+        rode += e->walk.carrier == 166;
+        seen += e->ai.standing_on == 166;
+    }
+    snprintf(what, sizeof(what), "Ed lands on it and rides it (%u of %u frames), FUNC 54 names it (%u)", rode, 60 * 8, seen);
+    check(rode > 60 * 6 && seen > 60 * 6, what);
+    {
+        tc_vec3 lift = tc_v3(ob->world.m[3], ob->world.m[7], ob->world.m[11]);
+        float moved = tc_v3_distance(lift, lift0), carried = tc_v3_distance(p->position, start);
+        snprintf(what, sizeof(what), "its script moves it (MoveLift): %.1f from its start, Ed carried %.1f, %.2f above it", moved,
+                 carried, p->position.z - lift.z);
+        check(moved > 20 && fabsf(carried - moved) < 3 && p->position.z > lift.z, what);
+    }
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv", *name = argc > 2 ? argv[2] : "bar";
     char path[1024], status[512];
@@ -642,6 +779,8 @@ done:
     sector_scenario(dir);
     demo_scenario(dir);
     portal_scenario(dir);
+    se_ski_scenario(dir);
+    ride_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
     check(bad_frames == 0, "every frame's draw list is valid");

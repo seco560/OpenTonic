@@ -165,15 +165,17 @@ The wall slide itself (`MEC_004bbc4c`) is faithful, checked against the instruct
 
 ## Where the port is not the exe (mechanics)
 Each item is marked in the code or in docs/NOTES.md.
-1. **Prop spheres and boxes** (element types 7, 8 on persos) are triangulated by the exporter (80-face icospheres,
-   boxes). The exe tests them as shapes (`FUN_0046d740`, `FUN_0046d9e0`); points against them `FUN_00470590`,
-   `FUN_00470700`. Needs a .ttlv chunk for the shapes and their materials.
+1. **Prop spheres and boxes**: done 2026-11-05. They are tested as shapes in the perso's axes (`FUN_0046d600` /
+   `FUN_0046d8a0`, points `FUN_004704c0` / `FUN_00470610`; core `tc_mec_point_sphere`, `tc_mec_sphere_box`,
+   oracle-checked) from .ttlv PCOL (docs/ENGINE.md "Moving collision, read"). Old exports still triangulate them.
 2. **Depenetration** before each move (tc_mec_walk.c) stays, though not in the exe. Without it the wander test gets
    more stalls (Land, sud0) and two front-face tunnels on the ski levels, so the port still creates overlaps the exe
    does not (sphere sets swapping on state changes, the respawn and re-snap paths). Remove it once those are found.
 3. **Hang alignment**: `FUN_004c6993`'s turn towards the ledge's edge (`FUN_00463940`) is not ported.
-4. **Perso obstacles**: the flag-8 sweep's exception for perso obstacles (collide set +0x37) and the moving-frame
-   second pass (`DAT_008bcaec`) are not ported; the port's persos are static triangles.
+4. **Perso obstacles**: done 2026-11-05 (docs/ENGINE.md "Moving collision, read"): posed where each perso is, the
+   exe's who-meets-whom rules, the hand point's floor_ok (+0x37), riding. `DAT_008bcaec` is not a moving frame: a
+   second collide object swept at the same translations without the rotation (`FUN_0043c410`). Who sets it is
+   **open**.
 5. **Fixed tick**: done (30 Hz, third pass above). Dynamics +0x38C is open.
 6. **Root motion**: found (FUN_0042a8d0); the port's equivalent is kept.
 7. **Card 11 (hang)**: gravity in the air (x dt^2, negligible) is not applied; see 3 for the alignment.
@@ -183,8 +185,9 @@ Each item is marked in the code or in docs/NOTES.md.
    **2026-10-31:** the forces, request and speed cap re-read (docs/NOTES.md "Sliding stages", second pass): wall
    friction by the wall's grip, the steep-face rule FUN_004c1686, the jump clearing the report, the probe from the
    origin. `make skicheck` measures the stops.
-9. **Other card types**: types 9 and 10 (forces FUN_004c5aa0 and FUN_004c709a, dumped, 8.5 KB together) and the
-   fn1 handlers of types 1, 3, 6, 8 and 12 are not read. They matter for other persos and moving platforms.
+9. **Other card types**: types 6 (MoveLift) and 7 (pushed and floating things) read and ported for the cast
+   (2026-11-05, docs/ENGINE.md). Types 9 and 10 (forces FUN_004c5aa0 and FUN_004c709a, dumped, 8.5 KB together) and
+   the request handlers of types 3, 8 and 12 for the cast are not ported.
 10. **ANIM_TIME_SCALE 0.25** for non-Ed persos contradicts the animation clock as read (the user matched it against
    the original running in Wine).
 11. **Momentum at the jump's apex (deliberate, user's choice 2026-10-29).** Ed's jump reflex R26 (entered through R1,
@@ -202,7 +205,8 @@ Each item is marked in the code or in docs/NOTES.md.
    stand, turning in place); the talking characters may not take Ed over (cast.py MAY_FORCE_MAIN); FUNC 54 (standing on
    a perso) is always none; the cast's animation clock is the exe's (the 0.25 of item 10 stays for the baked loops only).
    **2026-11-04:** the entity loop read (docs/ENGINE.md): the always-awake and run-first lists are followed; World and
-   the pit markers may force Ed (docs/NOTES.md "Falling into pits"). Moving collision is the next item there.
+   the pit markers may force Ed (docs/NOTES.md "Falling into pits"). **2026-11-05:** the cast's card types 6 and 7 run,
+   its persos' collision moves with them, Ed rides them, FUNC 54 works (docs/ENGINE.md "Moving collision, read").
 
 ## Plan, in order (mechanics first)
 1. **The user checks in the game**: the ledge hang (jump at a ledge too high to step on), shimmy, climb; steps

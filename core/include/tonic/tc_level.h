@@ -138,7 +138,15 @@ typedef struct tc_cast_anim {
     tc_mat34 *transforms;        /* [frame * channel_count + channel], channel -> perso */
     uint16_t *shown;             /* object shown, TC_HIDDEN none */
 } tc_cast_anim;
-typedef struct tc_cast_family { uint16_t state_count, anim_count; tc_cast_state *states; tc_cast_anim *anims; } tc_cast_family;
+/* A mechanics ID card (MEC hidcard): type 0-12 picks the engine's handler pair; words = the card after its type
+ * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
+typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
+typedef struct tc_cast_family {
+    uint16_t state_count, anim_count;
+    tc_cast_state *states;
+    tc_cast_anim *anims;
+    uint16_t *cards;             /* .ttlv CMEC: per state, its ID card (tc_cast_data.cards), 0xFFFF none; NULL: none */
+} tc_cast_family;
 /* A ZDD zone of a cast perso (COND 13): spheres (kind 7: a centre, b.x radius) and boxes (8: a min, b max) in its axes. */
 #define TC_CAST_ZONE_PRIMS 8
 typedef struct tc_cast_zone_prim { uint32_t kind; tc_vec3 a, b; } tc_cast_zone_prim;
@@ -158,6 +166,10 @@ typedef struct tc_cast_entry {
     uint8_t *scripts;            /* for tc_ai_model_load_scripts */
     uint32_t tables_size;        /* TC_CAST_TABLES: the strings and constant vectors they index (tc_ai_model_load_tables) */
     uint8_t *tables;
+    /* .ttlv CMEC: its own sweep body for its mechanics (its collide set's single sphere at the origin, +0x36: radius
+     * +0x30 / 2; 0 none) and the set's priority (+0x34) and +0x35 (it meets persos) */
+    float own_radius;
+    uint8_t own_priority, own_meets;
 } tc_cast_entry;
 #define TC_CAST_MAY_FORCE_MAIN 1u /* its PROC 237 / 238 may set the main actor's behaviours (tools/ttre/cast.py) */
 #define TC_CAST_SAVE_POINT 2u     /* a save point: when it takes itself out, the main actor's checkpoint is where he is */
@@ -171,13 +183,60 @@ typedef struct tc_cast_entry {
 typedef struct tc_cast_data {
     uint16_t main_actor;         /* the player's perso id */
     uint16_t main_alias;         /* the fix Ed where another perso is the player (the skier): the same as him, 0 none */
+    uint16_t world;              /* the world perso's id (the World keyword, KW 6), 0 none */
     uint16_t family_count, count;
     tc_cast_family *families;
     tc_cast_entry *entries;
     tc_cast_entry main_zones;    /* the main actor's ZDD zones (zones, zone_count only: in his moving axes) */
     uint16_t ghost_count;        /* the persos the cast's scripts name that do not run: their dsgvars, shared */
     struct tc_cast_ghost { uint16_t id; tc_vec3 position; uint32_t size; uint8_t *dsg; } *ghosts;
+    uint16_t card_count;         /* .ttlv CMEC: the families' states' ID cards (the cast's mechanics, tc_cast_mec.c) */
+    tc_ai_card *cards;
 } tc_cast_data;
+
+/* .ttlv PCOL (tools/ttre/ttlv.py perso_collision; docs/ENGINE.md "Moving collision, read"): each perso's own collision,
+ * in its objects' axes (the object-list scale applied), posed where the perso is by the core (tc_obstacle.h). Kinds are
+ * the collide element types: 1 a triangle (a, b, c; n its unit normal from the winding), 7 a sphere (a the centre, r),
+ * 8 an axis-aligned box (a min, b max). */
+#define TC_PCOL_TRIANGLE 1u
+#define TC_PCOL_SPHERE 7u
+#define TC_PCOL_BOX 8u
+typedef struct tc_pcol_prim {
+    uint8_t kind, sound;         /* sound: GameMaterial +8 (the footstep switch), 0xFF none */
+    uint16_t collide_id;         /* the collide material's identifier (GameMaterial +0xC -> +2) */
+    tc_floor floor;              /* its mechanics material (none: {1, 1}) */
+    tc_vec3 a, b, c, n;
+    float r;
+} tc_pcol_prim;
+typedef struct tc_pcol_object {
+    uint16_t object;             /* object-list index: drawn by the channels that show it */
+    uint32_t first, count;       /* its primitives in tc_pcol.prims */
+    tc_vec3 centre;              /* a bounding sphere of them, object axes */
+    float radius;
+} tc_pcol_object;
+typedef struct tc_pcol_pose { uint16_t object; tc_mat34 m; } tc_pcol_pose; /* object -> perso, the initial frame 0 */
+#define TC_PCOL_MEETS_PERSOS 1u  /* collide set +0x35: its sweeps meet other persos; as an obstacle, others may meet it */
+#define TC_PCOL_FLOOR_OK 2u      /* collide set +0x37: the hand point (flag-8 sweep) may land on it */
+#define TC_PCOL_CARRIES 4u       /* std game +0x31: persos standing on it ride it (become its children) */
+#define TC_PCOL_HAS_SET 8u       /* it has a collide set (without one: priority 0, always met) */
+#define TC_PCOL_ACTIVE 16u       /* std game +0x18 at load */
+#define TC_PCOL_DEAD 32u         /* std game +0x17 at load */
+#define TC_PCOL_CAST 64u         /* in the cast: posed by its actor every tick (else by `pose`, once) */
+typedef struct tc_pcol_perso {
+    uint16_t id, prso, sector;
+    uint8_t priority, flags;     /* collide set +0x34 (0 without one); TC_PCOL_* */
+    tc_mat34 world;
+    uint16_t object_count, pose_count;
+    tc_pcol_object *objects;
+    tc_pcol_pose *pose;
+} tc_pcol_perso;
+typedef struct tc_pcol {
+    uint8_t main_priority, main_flags; /* the player's own collide set (his sweeps: +0x35 must be set to meet persos) */
+    uint16_t count;
+    tc_pcol_perso *persos;
+    uint32_t prim_count;
+    tc_pcol_prim *prims;
+} tc_pcol;
 
 /* A light of the original (.ttlv LITE; GLI light record, docs/DECOMP.md "Rendering and lighting"). The sectors list
  * which of them light a frame drawn from them (tc_sector.lights). */
@@ -217,6 +276,7 @@ typedef struct tc_level {
     tc_ed ed;
     tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
     tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
+    tc_pcol pcol;                /* .ttlv PCOL (count 0: none; older files baked the persos' collision into COLL) */
     uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
     int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
     uint32_t light_count;        /* centres (without it only the port's old lighting works) */

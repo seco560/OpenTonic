@@ -78,9 +78,7 @@ typedef struct tc_ai_other { uint16_t id; uint8_t role; tc_ai_dsg_def dsg; } tc_
 /* A procedure of the port's own (tools/ttre/cast.py PORT_FREEZE): a RemovePerso under a story check, rewritten: the target
  * stays as a prop (frozen). */
 #define TC_AI_PROC_FREEZE 0x8101u
-/* A mechanics ID card (MEC hidcard): type 0-12 picks the engine's handler pair; words = the card after its type
- * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
-typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
+/* tc_ai_card (a mechanics ID card): tc_level.h, which the cast's cards (.ttlv CMEC) use too. */
 /* A state's mechanics collision body (the collide set's ZDM zones active in it): spheres in the perso's axes. */
 #define TC_AI_MAX_SPHERES 12
 /* One part of the mechanics body: a sphere, or a point (point = 1, radius 0: collide element type 5, e.g. Ed's hand
@@ -190,6 +188,8 @@ typedef struct tc_ai_transitions {
 
 /* Field of a card as f32, by its byte offset in the engine's card (+4 = words[0]); 0 if out of range. */
 float tc_ai_card_f32(const tc_ai_card *c, uint32_t offset);
+/* The same word raw (bytes and flags: the walk card's ride byte +0x3C is its low byte). */
+uint32_t tc_ai_card_u32(const tc_ai_card *c, uint32_t offset);
 
 /* WPTS: a state's water sample points (State +0x34 list, GAM_00437900): kind 1..6 (the head down to the feet) and a point
  * in the perso's axes; each frame the water flag of the environment there (MecEnv +0x28) is the zone value of its kind. */
@@ -294,7 +294,11 @@ typedef struct tc_ai_motion {
     tc_vec3 teleport;
 } tc_ai_motion;
 
-typedef struct tc_ai_slot { uint32_t node; int32_t a, b; } tc_ai_slot; /* a meta-action in progress */
+typedef struct tc_ai_slot { /* a meta-action in progress */
+    uint32_t node;
+    int32_t a, b;
+    float v[7];                  /* the arguments it evaluated at its start (META_2Etc_0048f4c0: MoveLift's from, to, time) */
+} tc_ai_slot;
 
 typedef struct tc_ai_intel {
     uint16_t behaviour;          /* index into model->behaviours */
@@ -346,6 +350,10 @@ struct tc_ai_perso {
     tc_vec3 position, velocity;  /* feet, world */
     float heading;               /* as tc_player: local -Y points along (sin, -cos) */
     uint32_t contacts;           /* TC_AI_CONTACT_* */
+    uint32_t report_high;        /* host-fed: the report bits above them (0x10000 | 0x20000: on a perso; COND 37) */
+    int32_t standing_on;         /* host-fed: the perso it rides (FUNC 54, Func_GetFather), 0 none */
+    bool mech_moving;            /* host-fed: its mechanics moved it last step (dynamics velocity_snap != 0: MoveLift's
+                                    end test, META_28Cont_004a09c0) */
     struct tc_collision *world;  /* host-fed: FUNC 162's probe (NULL: nothing in the way) */
     /* The collide flags of the body part (tc_ai_sphere.flags) that made the ground and wall contacts, 0 none: the
      * material conditions read these (ContactRecord +0x70, the own material; COND 44-49, FUN_00497890). */
@@ -408,6 +416,7 @@ struct tc_ai_perso {
     tc_ai_perso *(*find)(void *user, int32_t id);
     void *find_user;
     int32_t main_actor;          /* KW_5 (the main actor) as a perso id: 0 = this perso is it (Ed) */
+    int32_t world_id;            /* KW_6 (World: the level's world perso) as a perso id, 0 none (tc_cast_data.world) */
     int32_t self_id;             /* this perso's id (0: unknown): a perso stored in a dsgvar is kept as its id, so
                                     "Me" written into another perso's dsgvar names the writer there */
     float main_distance2;        /* host-fed: squared distance from this perso's origin to the main actor's
@@ -422,6 +431,8 @@ struct tc_ai_perso {
     uint8_t run_mechanics, run_animation;
     float radius2;
     int32_t hit_points_max;      /* FUNC 37, std game +0x15 (Ed: the port's 4) */
+    int32_t hit_points_max_init; /* the max it started with (PROC 73) */
+    int32_t hit_points_ceiling;  /* std game +0x16, the max's ceiling (PROC 74 / 75); not exported: 255 (no cap) */
     int32_t forced_by;           /* diagnostics: the id of the perso whose PROC 237 / 238 last set this one's behaviour */
     const tc_cast_entry *zones_of; /* host-fed (the cast): its ZDD zones for COND 13 (NULL: not modelled) */
     bool zones_follow;           /* ... in its live axes (position, heading: the main actor), not zones_of->zone_inverse */

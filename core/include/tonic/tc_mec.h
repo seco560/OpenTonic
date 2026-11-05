@@ -156,17 +156,38 @@ typedef struct tc_mec_walk {
     bool firm_floors;
     uint32_t ground_tri, wall_tri; /* the contacts' triangles (tc_tri.source; UINT32_MAX none): their materials */
     uint16_t ground_own, wall_own; /* the collide flags of the body part that made them (tc_ai_sphere.flags) */
+    uint8_t ground_sound;        /* the ground contact's floor sound when it is a perso's (tc_pcol_prim.sound), 0xFF none */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
+    /* Riding (docs/ENGINE.md "Moving collision, read"): the exe makes the perso a child of the obstacle's SuperObject
+     * it stands on; the port keeps the carrier's id and object and where the perso is in that object's axes. */
+    int32_t carrier;             /* the perso it rides, -1 none */
+    uint16_t carrier_object;
+    tc_vec3 carrier_local, carrier_front; /* its origin and front (local -y) in the carrier object's axes */
+    tc_vec3 carried;             /* the carried move this step / dt (DNM_FollowCarrier_004a83d2's out) */
+    int32_t other;               /* contact record +0x1C4: the last perso contact (id, object), -1 none */
+    uint16_t other_object;
+    bool moved;                  /* this step ran the collide-and-move (standing still does not) */
 } tc_mec_walk;
 
 void tc_mec_walk_reset(tc_mec_walk *w);
+/* DNM_FollowCarrier_004a83d2, the start of every type 0 / 4 step while riding: the carrier's object has moved, so the
+ * perso goes where it is in that object's axes now (the exe's hierarchy: world = carrier x local), turned with it
+ * (heading: tc_player's), and that move is collided (flags 0: the carrier itself is passed through on the first
+ * pass). Blocked (0x20): it stays and carries nothing. No contact: the reports stay as they were. A carrier that is
+ * gone (not live, the object not shown) lets go. */
+void tc_mec_walk_carry(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float *heading, float dt,
+                       tc_vec3 *position);
 /* What the AI sees (+0xC8 = +0xC0 | +0xC4): contacts of this frame and the one before. */
 uint32_t tc_mec_walk_contacts(const tc_mec_walk *w);
 /* Request handler side for an air card (type 4, FUN_004b0f2a): forget the contacts. */
 void tc_mec_walk_air(tc_mec_walk *w);
-/* Contact kinds of a sphere against a triangle (FUN_00465b60, hit record +0x7A). */
-enum { TC_MEC_VERTEX = 0, TC_MEC_FACE = 1, TC_MEC_EDGE = 2 };
+/* Contact kinds (hit record +0x7A): a sphere against a triangle (FUN_00465b60), against a perso's sphere (3,
+ * FUN_0046d600) or box (4, FUN_0046d8a0). */
+enum { TC_MEC_VERTEX = 0, TC_MEC_FACE = 1, TC_MEC_EDGE = 2, TC_MEC_SPHERE = 3, TC_MEC_BOX = 4 };
+/* Report bits of a contact with a perso (MEC_004bd689): both set = standing on (or carried by) it, which the integrator
+ * turns into riding it (DNM_IntegrateWalk_004aa6af) and FUNC 54 reads. */
+#define TC_MEC_ON_PERSO 0x30000u
 /* One sphere moving from p0 by d against one triangle (n its unit normal, the winding's), FUN_00465b60: the face when
  * the sphere moves into its front (touching counts), else the earliest of the three edges, else the earliest of the
  * three corners. On a hit: t in 0..1, *kind TC_MEC_*, the normal (face: n; edge, corner: from the touched point to the
@@ -187,7 +208,13 @@ typedef struct tc_mec_hit {
     uint16_t own_flags;          /* the touching part's collide flags (the record's own material, +0x70) */
     float own_rebound, own_grip; /* its mechanics material (record +0x50, +0x54): times the obstacle's */
     bool own_point;              /* a point made it (own shape 0; spheres 3) */
-    const tc_tri *tri;
+    const tc_tri *tri;           /* the static world's triangle, NULL for a perso */
+    int32_t obstacle;            /* the perso hit (its id), -1 the static world (contact kind 1 / 2, record +0) */
+    uint16_t obstacle_object;    /* ... and the object of its that was hit (the channel SuperObject the exe records) */
+    tc_floor floor;              /* the obstacle's mechanics material (record +0x30: rebound, grip; none {1, 1}) */
+    uint16_t collide_id;         /* a perso primitive's collide identifier and floor sound (static triangles: the
+                                    .ttai tables have them, 0 / 0xFF here) */
+    uint8_t sound;
 } tc_mec_hit;
 /* A point moving from p0 by d against one triangle, FUN_0046ff70 -> FUN_004683b0 -> FUN_00467d40: only the face, only
  * moving into its front, strictly from in front of the plane (no edges or corners). On a hit t in 0..1 and the point. */

@@ -23,9 +23,31 @@ Honestly, the scale is large: realistically many sessions, and parts of the exe 
 
 ---
 
-## Final goal: two editions, one game (user, 2026-11-05)
+## Future direction: Open Tonic, the Definitive Edition (user, 2026-11-05, later that day)
 
-A plan, not started; a long way off. Written down as the user put it.
+The user's design decision, written down as future direction; nothing below is built yet, and it is a long road.
+
+- **Open Tonic is, by design, one merged game:** a Definitive Edition that combines retail Tonic Trouble and the
+  Special Edition into a single, longer, more complete game. Ed moves between the levels of both and has to collect
+  things from both.
+- **The UI changes accordingly.** The main menu shows the pickups from both versions of the levels (each level's
+  retail and SE collectibles side by side).
+- **No faithful versions of the original games are maintained as products.** Bringing just one game's data to play
+  that game ("what you bring decides what you play", below) is fine for now, while exploring levels, but it is not
+  the goal any more.
+- **Separation later, maybe:** options to play the editions apart get explored once the systems that carry all this
+  are mapped out.
+
+What this means for the work, as read so far (not the user's words): the exe is still read closely, because the
+merged game is built from what both games actually do; "port choice" notes stay explicit, but the measure of a choice
+becomes the merged game rather than fidelity to one edition. Shared state that now lives per level (World's counters,
+the inventory, Ed's hit points and their maximum, save points) will have to become one game state across both
+editions' levels: the pickups work of 2026-11-05 (docs/SE.md "Pickups") is the first piece that touches it.
+
+## Earlier goal: two editions, one game (user, 2026-11-05)
+
+Superseded as the end goal by the Definitive Edition above; kept for the history. A plan, not started; a long way
+off. Written down as the user put it.
 
 **What you bring decides what you play.**
 - Bring the **Retail Edition** (its GAMEDATA): you play a version of retail Tonic Trouble.

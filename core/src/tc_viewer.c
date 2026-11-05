@@ -7,12 +7,14 @@
 #include "tonic/tc_anim.h"
 #include "tonic/tc_ed_ai.h"
 #include "tonic/tc_cast.h"
+#include "tonic/tc_obstacle.h"
 
 /* ---- play session ---- */
 
 /* The tc_player points at its world and the AI driver at the player, so the session stays at one address. */
 struct tc_viewer_play {
     tc_collision world;
+    tc_obstacles obstacles;      /* the persos' own collision (.ttlv PCOL), met by Ed's sweeps (world.obstacles) */
     tc_player player;
     tc_ai_model model;
     bool has_model;
@@ -99,6 +101,15 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         p->has_cast = r == TC_OK;
         if (r != TC_OK) v->ai_result = r;
     }
+    /* The persos' own collision (docs/ENGINE.md "Moving collision, read"): Ed's sweeps meet it where each perso is now
+     * (the cast poses its actors' every tick), as his collide set says (the player's +0x34 / +0x35) */
+    if (tc_obstacles_init(&p->obstacles, l) == TC_OK && p->obstacles.count) {
+        p->world.obstacles = &p->obstacles;
+        p->world.self_priority = l->pcol.main_priority;
+        p->world.self_meets = (l->pcol.main_flags & TC_PCOL_MEETS_PERSOS) != 0;
+        if (p->has_cast) tc_cast_set_obstacles(&p->cast, &p->obstacles);
+    }
+    if (p->has_cast) p->cast.world = &p->world;
     p->use_ai = p->has_driver;
     return p;
 }
@@ -110,6 +121,7 @@ static void play_destroy(tc_viewer_play *p) {
     if (p->has_model) tc_ai_model_free(&p->model);
     if (p->has_alt) tc_ai_model_free(&p->alt);
     tc_collision_free(&p->world);
+    tc_obstacles_free(&p->obstacles);
     tc_free(p);
 }
 
@@ -1436,7 +1448,9 @@ static void play_mode_zones(tc_viewer *v) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
     uint32_t i;
-    if (!p->has_alt || !p->has_driver || p->has_cast) return;
+    /* The SE's walk / ski switch. With a cast (SE Totalski's pickups and World since 2026-11-05) the cast is handed
+     * the new driver: it holds links into the old one's AI (tc_cast_detach_main / tc_cast_set_main). */
+    if (!p->has_alt || !p->has_driver) return;
     for (i = 0; i < p->model.mode_zone_count; i++) {
         const tc_ai_mode_zone *z = &p->model.mode_zones[i];
         tc_ai_model *next = z->mode == TC_AI_MODE_SKI ? &p->alt : &p->model;
@@ -1451,10 +1465,12 @@ static void play_mode_zones(tc_viewer *v) {
             p->player.position = tc_v3_add(p->player.position, z->vector);
             p->player.placed++;
         }
+        if (p->has_cast) tc_cast_detach_main(&p->cast);
         tc_ed_ai_free(&p->driver);
         p->has_driver = tc_ed_ai_init(&p->driver, next, &p->player, p->level_name) == TC_OK;
         if (!p->has_driver) { p->use_ai = false; return; }
         tc_ed_ai_set_sectors(&p->driver, l->sectors.count ? &l->sectors : NULL);
+        if (p->has_cast) tc_cast_set_main(&p->cast, &p->driver.ai);
         p->mode = z->mode;
         p->driver.walk.firm_floors = p->mode == TC_AI_MODE_WALK;
         if (p->mode == TC_AI_MODE_WALK) p->ski_shot = false;
@@ -1498,6 +1514,14 @@ static void step_ai(tc_viewer *v, float dt) {
         bool still = v->cam.first_person || v->director; /* the director's shot: Ed waits, as the SE parks its Ed */
         play_mode_zones(v);
         if (!p->has_driver) break;
+        /* the exe's frame (docs/ENGINE.md): the run-first persos (platforms, lifts) move before the rest, so Ed rides
+         * and collides with them where they are this tick; then Ed, then the other persos */
+        if (p->has_cast) {
+            const tc_ai_state *st = &p->driver.ai.model->states[p->driver.ai.state];
+            p->cast.main_carrier = p->driver.walk.carrier;
+            p->cast.main_mass = st->card != TC_AI_NONE16 ? tc_ai_card_f32(&p->driver.ai.model->cards[st->card], 4) : 0;
+            tc_cast_step_first(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
+        }
         tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, v->director ? 0 : ai_inputs(v), still ? 0 : v->move_x,
                       still ? 0 : v->move_y, v->camera.position);
         if (p->driver.events.restarted) {
@@ -1508,7 +1532,7 @@ static void step_ai(tc_viewer *v, float dt) {
         for (n = 0; n < p->driver.ai.sound_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
             v->sounds[v->sound_count++] = p->driver.ai.sounds[n];
         if (p->has_cast) { /* after Ed, on his clock and from his sector */
-            tc_cast_step(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
+            tc_cast_step_rest(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
             for (n = 0; n < p->cast.sounds_out_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
                 v->sounds[v->sound_count++] = p->cast.sounds_out[n];
         }

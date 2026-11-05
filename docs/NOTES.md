@@ -40,6 +40,35 @@
 - **Unresolved fix→level pointers (answered):** all belong to the 3 fix persos' runtime state and are rewritten at load. In bar: std_game+0xC ×3 (= the new level SuperObject, as raymap patches it), Perso3dData +0x70, +0x94 (Ed only) and +0x164/+0x168/+0x16C ×3, plus 6 triplets of consecutive pointers and 3 single pointers elsewhere in fix (probably linked-list next/prev/header nodes into level data; not traced). None are needed for rendering.
 - Not exported yet: sprites, sector data (lights, fog, neighbours, sky material). Collision: see "Play as Ed".
 
+### Aside on Future Tech Debt (/btw conversation, 2026-11-05)
+Being wary is reasonable. A fair amount of SE support rests on stopgaps, and some of them interact. The debt falls into three groups.
+
+**Solid ground: read from data or the exe, low risk**
+- The format differences: unencrypted files, the sector +4 shift, SE animations, old .gf textures, relocations.
+- The SE → retail primitive map, mostly matched by code. But we just found an off-by-one (SE `SetHitPointsMax` is retail 72, not 71). The tracer can't tell apart wrappers that differ only in the function they call. Other pairs could be wrong the same way, especially the "order" and "position" ones, and nothing systematically checks for this.
+- The outro relay, mode 6, the vignette hold, max-HP procs 72–76, cast string tables: read from code.
+
+**Principled port choices: documented and contained**
+- SE arches captured at ±5, skip on Jump/Action/Shoot, the director shot's eye taken from level data.
+- SE persos always awake (the SE has no activation radius).
+
+**Real debt: stopgaps that paper over missing systems**
+1. **The donor Ed.** The whole SE runs on a retail Ed whose `.ttai` speaks retail perso numbering, inside SE levels that speak SE numbering. The outro only worked because ids 1–3 lined up by luck. The id-offset fix in progress is the right patch, but it's still a patch for "Ed doesn't belong to this level". Everything SE scripts do *to Ed* is blocked or translated: forced behaviours dropped, dsgvar writes refused.
+2. **Walk/ski switching on SE Totalski** swaps between two retail AI models at SE zones (MODZ/ALTM). It works, but it's a port mechanism the SE never had.
+3. **Floors:** SE snow remapped to retail values, a grip clamp elsewhere, `firm_floors` while walking on snow.
+4. **Sectors:** "no SE sector is virtual" plus "every SE sector collides with every solid one", because the SE's lookup and collide rules aren't read. Measured to work, but skicheck went over its limit (2.4 %).
+5. **The cast gates:** the SE cast runs per-level (`SE_CAST_LEVELS`) or per-family (`SE_ITEM_FAMILIES`). Retail has MAY_FORCE_MAIN / MAY_NOT_FORCE_MAIN / freeze-story-removals / removal guard. These are allow-lists, which FINDINGS.md already calls stopgaps. Every new list says "the port can't finish what this starts".
+6. **Silent and partial bits:** no SE sound tables, the inventory not modelled, Ed's damage (PROC 70/71) still no-ops on purpose, engine lists unread for SE.
+
+**Where the risk concentrates:** the ids, the allow-lists and the donor Ed are coupled. Each SE feature added now needs another exception in one of them. That's the pattern that bit us with the cast's first playtest.
+
+**How the Definitive Edition direction changes this:** it helps. You've dropped faithfulness to either game as a constraint, so the goal becomes **one Ed and one set of rules that both editions' levels plug into**, not making the retail Ed impersonate SE Ed. That points to three things to do before much more SE content:
+- **A neutral id space per level** (the 0x2000 offset is a first step), with "the player" as an engine role, not a perso number either edition owns.
+- **An Ed-facing interface the cast talks to:** hit points, inventory, counters, "force a mode", "park for a cutscene". Level scripts from either edition would request these instead of poking Ed's dsgvars or behaviour indices. That would let most of the allow-lists go.
+- **Proper collision (next on the list)** to retire the sector stopgaps (item 4) for both editions.
+
+I'd finish the pickups as scoped, then have the collision work and those two interfaces absorb the debt rather than add to it. I can't check the code from here. If you want a definitive inventory, ask the main session to list every workaround in SE.md and NOTES with a keep / replace / delete verdict under the Definitive Edition plan.
+
 ## The cast (2026-11-02): the level persos run their own AI
 Every level perso with an AI model now runs its scripts in play mode (core/src/tc_cast.c, tc_cast.h; exporter
 tools/ttre/cast.py; .ttlv CAST chunk). Before, they looped their initial animation. Per level, about 100-170 run
@@ -72,7 +101,16 @@ old 0. KW_5 is the main actor's id. A scripts-only perso reads the main actor's 
 **2026-11-05:** cast entries carry their scripts' strings and constant vectors (CAST flag 32, `TC_CAST_TABLES`); before,
 every string a cast script read was nothing, so LevelIs (COND 62: HEG_Inventaire, sud0's HEG_RichMine) was always
 false; cast actors also get the level's name now. Scene casts (flag 16, the SE outro) have no removal guard. The cast's
-camera procedures (177 / 178 / 180) and pictures (210) are recorded for the viewer: docs/SE.md "The outro".
+camera procedures (177 / 178 / 180) and pictures (210) are recorded for the viewer: docs/SE.md "The outro". Later the
+same day: the World keyword (KW 6; CAST header names the world perso), the max hit points (PROC 72-76: retail's
+collect-N rewards now give +1 max hit point), models of reflexes only, and the SE's own perso id range (0x2000+):
+docs/SE.md "Pickups".
+
+**2026-11-05 (collision):** PROC 6 leaves a perso out of the cast only when it deactivates a fix perso (the skier's
+start, PROC_6(fix Ed)). Before, every PROC 6 caller was left out, among them cavedoc's 11 platforms that fall apart
+(BEM_PFQuiSeDesagrege, whose B3 deactivates itself): cavedoc 144 -> 176 cast persos, Land 129 -> 166, north 159 -> 202.
+The cast's card types 6 and 7 run, its persos' collision is posed where they are, and Ed rides them
+(docs/ENGINE.md "Moving collision, read").
 
 **Port choices, not the exe:**
 - Left out of the cast: the camera and its directors (Camera, GenD_Cam), gen_cheatCode, World (lives / death /
@@ -83,8 +121,8 @@ camera procedures (177 / 178 / 180) and pictures (210) are recorded for the view
   the outro's cinematique) hand Ed to behaviours that wait for conversations and cutscenes the port does not run: he
   would stand there for good. marmite's magnet switch (JET_SwAimant) is held out too (MAY_NOT_FORCE_MAIN): Ed holds it
   with dsg3 = 1 and leaning it to let go does not take yet.
-- The cast does not move (no mechanics for other card types); persos with the mechanics flag turn in place by their
-  turn requests. Sounds: only global (Bnk_0) events; levels' own banks are not read, so many cast sounds are silent;
+- The cast moves by its card types 6 and 7 only (2026-11-05); with other cards, persos with the mechanics flag turn in
+  place by their turn requests. Sounds: only global (Bnk_0) events; levels' own banks are not read, so many cast sounds are silent;
   only those within TC_CAST_HEARING (30) of Ed are played, flat.
 - **Perf shortcuts:** the activation radius and the sector activity lists are the original's
   budget tricks, but the scripts depend on them (the pickups sleep until Ed is near): kept faithful.
