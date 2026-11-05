@@ -39,5 +39,7 @@ void view_draw_frame(view *v, gpu_frame *f);
 /* The screen transition, black, or the loading screen's black backdrop (o from tc_viewer_overlay) in a 2D pass over
  * the frame. The loading screen itself (vignette, caption, bar) is the app's. */
 void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_view_overlay *o);
+/* The gunsight (tc_viewer_crosshair); pass NULL: only whether there is one this frame. */
+bool view_draw_crosshair(view *v, gpu_frame *f, SDL_GPURenderPass *pass);
 
 #endif

@@ -304,6 +304,16 @@ void view_draw_frame(view *v, gpu_frame *f) {
     gpu_pass_3d_end(v->g, f, pass);
 }
 
+/* The gunsight in first person (tc_viewer_crosshair): the texture's own colours (overlay mode 3). */
+bool view_draw_crosshair(view *v, gpu_frame *f, SDL_GPURenderPass *pass) {
+    tc_view_overlay o;
+    if (!tc_viewer_crosshair(&v->viewer, f->height ? (float)f->width / (float)f->height : 1, &o)) return false;
+    SDL_GPUTexture *tex = v->effects && o.texture >= 0 && (uint32_t)o.texture < v->effect_count ? v->effects[o.texture] : NULL;
+    if (!tex) return false;
+    if (pass) gpu_overlay(v->g, f, pass, tex, o.corners, o.uv, 3, 0);
+    return true;
+}
+
 void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_view_overlay *o) {
     int mode;
     switch (o->kind) {

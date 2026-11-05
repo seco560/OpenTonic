@@ -34,7 +34,8 @@ CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes; 
     u16 perso id, u16 PRSO index (0xFFFF: not drawn), u16 family, u16 sector (0xFFFF none),
     u16 initial state, u8 hit points, u8 max, u8 active, u8 dead, u8 mechanics, u8 animation, u8 re-init,
     u8 flags (1: may force the main actor's behaviours, MAY_FORCE_MAIN; 2: a save point, SAVE_POINTS; 4: on the engine's
-      always-awake list, 8: on its run-first list: LevelData.engine_lists; 16: a scene's actor, SCENE; 32: TABLES),
+      always-awake list, 8: on its run-first list: LevelData.engine_lists; 16: a scene's actor, SCENE; 32: TABLES;
+      64: a spawnable template, SPAWN, out until instanced),
     u16 0, f32 radius2 (raw +0x2C), f32 world[12] (row-major 3x4),
     u16 n_zones, u16 0, [n_zones > 0: f32 inverse world[12]], n_zones x { u16 k (1-based ZDD zone of COND_13(Me, k, ..)),
       u16 n_prims, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3] } },
@@ -79,6 +80,7 @@ SE_ITEM_FAMILIES = {'gen_icon_argen', 'gen_icon_or', 'gen_icon3', 'gen_ruche_j',
                     'doc_plum', 'doc_ressor', 'doc_kyou', 'World'}
 SE_SAVE_MODELS = {'ARG_Sauvegarde', 'JOB_Sauvegarde', 'POC_POC'}  # genplainenord: Proc_SaveGame within dsg0, then out
 SCENE = 16  # entry flag: core tc_level.h TC_CAST_SCENE
+SPAWN = 64  # entry flag (TC_CAST_SPAWN): a spawnable template (LevelData.spawnables), out until META 11 instances it
 TABLES = 32  # entry flag (TC_CAST_TABLES): its scripts' strings and constant vectors follow them (the STRS and VECS
              # bodies of a .ttai), which the cast had none of before 2026-11-05 (every string and vector read as nothing)
 
@@ -143,6 +145,14 @@ def select(d):
             skipped[reason] = skipped.get(reason, 0) + 1
             continue
         out.append((p.loc, k + 1, a))
+    ids = d.perso_ids()
+    for t in d.spawnables():  # the templates the scripts instance (SPAWN: inactive and undrawn until then)
+        try:
+            a = ai.AI(d, t.loc)
+        except Exception:
+            continue
+        if a.behaviours and t.anim and t.objects:
+            out.append((t.loc, ids[t.loc], a))
     return out, skipped
 
 
@@ -291,9 +301,10 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     from .sfx import level_snd, sound_at
     sounds = {} if d.se else level_snd(d.lv.name)  # the SE's own sound tables: not read
     persos = d.persos()
-    by_loc = {p.loc: p for p in persos}
+    spawn_locs = {t.loc for t in d.spawnables()}
+    by_loc = {p.loc: p for p in persos + d.spawnables()}
     base = SE_ID_BASE if d.se else 0
-    idx_of = {p.loc: base + k + 1 for k, p in enumerate(persos)}
+    idx_of = {p.loc: base + k + 1 for k, p in enumerate(persos)} if d.se else dict(d.perso_ids())
     # the SE: the retail donor Ed stands in SE Ed's place (none of whose behaviours resolve: they are SE Ed's, no SE perso
     # forces him); SE Ed's references are the main actor's: his own number, or the donor's (the skier's) with donor_head
     main_loc = d.perso_in_fix[0][0] if d.se and d.perso_in_fix else player
@@ -310,6 +321,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     main_buttons = ai.button_order(ai.AI(d, player)) if player else {}
     families, fam_blocks, entries, listing = {}, [], [], []
     cards, fam_cards = {}, []  # CMEC: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
+    fam_walk = []  # CMEC's walker tail: each family's root motion and ZDM bodies (walk_block)
+    fam_zde = []  # CMEC's ZDE tail: each family's ZDE zones (ai.zde_block)
     always, first, _ = d.engine_lists()
     always, first = set(always), set(first)
     for loc, _, a in cast:
@@ -327,6 +340,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
                 c = lv.ptr(st, 0x30)
                 row.append(cards.setdefault(c, len(cards)) if c and d.un('I', c)[0] in ai.CARD_SIZES else 0xFFFF)
             fam_cards.append(row)
+            fam_walk.append(walk_block(d, loc, a.states, keys))
+            fam_zde.append(ai.zde_block(d, loc, len(a.states)))
         frozen = freeze_story_removals(a)
         for n in a.nodes():  # the level's own sounds (sfx.level_snd): resolved here, by the node's address
             if n.type == 34 and n.loc and not d.se:
@@ -352,6 +367,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
             flags |= 4  # the engine's always-awake list (LevelData.engine_lists)
         if loc in first:
             flags |= 8  # its run-first list
+        if loc in spawn_locs:
+            flags |= SPAWN
         flags |= TABLES
         zs = zones(d, loc, a)
         zone_block = struct.pack('<HH', len(zs), 0)
@@ -398,22 +415,52 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     own = []  # CMEC: each entry's own sweep body (its collide set: a single sphere, +0x36 / +0x30) and +0x34 / +0x35
     for loc, _, _ in cast:
         cs = lv.ptr(loc, 0x14)
+        sg = lv.ptr(loc, 4)
+        ftype = d.un('I', sg)[0] & 0xFFFF if sg and not d.se else 0xFFFF  # its family's index (T22 nodes hold it)
         if cs:
             diameter, = d.un('f', cs, 0x30)
             prio, meets, single = d.un('3B', cs, 0x34)
-            own.append((diameter * 0.5 if single and diameter > 0 else 0.0, prio, 1 if meets else 0))
+            own.append((diameter * 0.5 if single and diameter > 0 else 0.0, prio, 1 if meets else 0, ftype))
         else:
-            own.append((0.0, 0, 0))
-    return head + b''.join(fam_blocks) + b''.join(entries), listing, mech_chunk(d, cards, fam_cards, own)
+            own.append((0.0, 0, 0, ftype))
+    return (head + b''.join(fam_blocks) + b''.join(entries), listing,
+            mech_chunk(d, cards, fam_cards, own, fam_walk, fam_zde))
 
 
-def mech_chunk(d, cards, fam_cards, own=()):
+def walk_block(d, perso, states, keys):
+    """A family's walker data (CMEC's last part; the card types 0 / 4 of core tc_cast_mec.c), from its first cast perso,
+    as Ed's .ttai BODY + ZDMF (ai.py): u32 n_rows, n_rows x f32[3] (root motion: each A3D frame's own vector, units per
+    animation frame in its axes), n_states x { u32 first row, u16 n_rows, u16 body (0xFFFF none) }, u16 n_bodies, u16 0,
+    n_bodies x { u16 n, u16 0, n x { f32 centre[3], f32 radius, u16 collide flags, u16 element type (7 sphere, 5
+    point), f32 rebound, f32 grip } } (ai.zdm_sets: its collide set's ZDM zones active per state; a collide set with
+    +0x36: the one sphere at its origin). The Special Edition's: none (its collide sets are not read)."""
+    n = len(states)
+    if d.se:
+        return struct.pack('<I', 0) + struct.pack('<IHH', 0, 0, 0xFFFF) * n + struct.pack('<HH', 0, 0)
+    roots = ai.root_motion(d, states, keys)
+    sets, per_state = ai.zdm_sets(d, perso, n)
+    rows, index = [], []
+    for k in keys:
+        r = roots.get(k, [])
+        index.append((len(rows), len(r)))
+        rows += r
+    out = struct.pack('<I', len(rows)) + b''.join(struct.pack('<3f', *r) for r in rows)
+    out += b''.join(struct.pack('<IHH', first, cnt, b) for (first, cnt), b in zip(index, per_state))
+    out += struct.pack('<HH', len(sets), 0)
+    for zs in sets:
+        out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f2H2f', *z[:4], z[4], z[5], z[6], z[7]) for z in zs)
+    return out
+
+
+def mech_chunk(d, cards, fam_cards, own=(), walk=(), zde=()):
     """CMEC (the cast's mechanics; core tc_cast_mec.c, docs/ENGINE.md "Moving collision, read"): u16 n_cards, u16 n_families
     (= CAST's), n_cards x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw: as the .ttai
     CARD chunk) }, n_families x { u16 n_states, n_states x u16 card (0xFFFF none) },
     u16 n_entries (= CAST's), u16 0, n_entries x { f32 radius (its collide set's single sphere at its origin, +0x36 with
     +0x30 x 0.5 (DAT_004d2928), as MEC_SweepSphere_0043d480 sweeps it; 0 none), u8 priority (+0x34), u8 meets persos
-    (+0x35), u16 0 }."""
+    (+0x35), u16 family index (std game +0: what T22 nodes hold; 0xFFFF none) },
+    u16 n_families (= CAST's; 0: none), u16 0, n_families x walk_block (root motion and ZDM bodies),
+    u16 n_families (0: none), u16 0, n_families x ai.zde_block (ZDE zones and their activation per state)."""
     out = struct.pack('<HH', len(cards), len(fam_cards))
     for c in cards:
         t = d.un('I', c)[0]
@@ -421,5 +468,7 @@ def mech_chunk(d, cards, fam_cards, own=()):
         out += struct.pack('<II', t, n) + struct.pack(f'<{n}I', *d.un(f'{n}I', c, 4))
     for row in fam_cards:
         out += struct.pack(f'<H{len(row)}H', len(row), *row)
-    out += struct.pack('<HH', len(own), 0) + b''.join(struct.pack('<f2BH', r, p, m, 0) for r, p, m in own)
+    out += struct.pack('<HH', len(own), 0) + b''.join(struct.pack('<f2BH', r, p, m, f) for r, p, m, f in own)
+    out += struct.pack('<HH', len(walk), 0) + b''.join(walk)
+    out += struct.pack('<HH', len(zde), 0) + b''.join(zde)
     return out

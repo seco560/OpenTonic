@@ -1453,6 +1453,38 @@ class LevelData:
                     self._static_sector[o.loc] = i
         return self._static_sector.get(so.loc)
 
+    def spawnables(self):
+        """The engine's spawnable persos: templates the scripts instance at run time (META 11
+        Action_ExecuteActionAndGenerateObject: Ed's bees; the guards' shots, explosions, impacts, generated pickups;
+        GAM_Always_004259a0). The gpt list after num_always: {head, tail, n} of {next, prev, list, u32 count, ptr perso}.
+        Perso objects (world: identity), in list order. The Special Edition's: none (not read). Cached."""
+        if getattr(self, '_spawnables', None) is not None:
+            return self._spawnables
+        out = []
+        if not self.se:
+            lv, un, g = self.lv, self.un, self.lv.gpt
+            n, = un('I', (g, 0))
+            node = lv.ptr((g, 4 + 0x60 * n + 20))
+            seen = {p.loc for p in self.persos()}
+            while node and len(out) < 64:
+                loc = lv.ptr(node, 0x10)
+                if loc and loc not in seen:
+                    seen.add(loc)
+                    out.append(self.read_perso(loc, IDENTITY))
+                node = lv.ptr(node)
+        self._spawnables = out
+        return out
+
+    def perso_ids(self):
+        """{perso location: id} as the scripts' perso nodes hold them: level perso k + 1, then the spawnables after them."""
+        if getattr(self, '_perso_ids', None) is None:
+            ps = self.persos()
+            ids = {p.loc: k + 1 for k, p in enumerate(ps)}
+            for j, t in enumerate(self.spawnables()):
+                ids[t.loc] = len(ps) + 1 + j
+            self._perso_ids = ids
+        return self._perso_ids
+
     def perso_sector(self, perso_loc):
         """A perso's current sector in the snapshot (SectorInfo, perso +0x24: +4 the sector), as an index in sectors(),
         or None (fix persos: stale; some level persos have none)."""

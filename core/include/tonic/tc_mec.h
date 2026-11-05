@@ -230,6 +230,13 @@ uint32_t tc_mec_collide_move(tc_mec_walk *w, const tc_ai_card *card, tc_collisio
 /* MEC_004bf9f0: ground within distance below with normal . up >= min_cos -> stand 0.01 above it (report |= ground). */
 bool tc_mec_resnap(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float heading, float distance,
                    float min_cos, tc_vec3 *position);
+/* DNM_RequestWalk_004ae392 case 0x14 (types 0 and 12; GoToWP, GoOverWay): the world direction proposal [7..9] times
+ * the speed [10] (its magnitude capped by card +0x14; type 12: +0x10), horizontal: the direction's xy part times its
+ * own length (as read: the sqrt multiplies, so a direction 30 deg off the horizontal walks at 3/4 speed). *turn = the
+ * turn rate towards it (FUN_004ae280: the angle from the front over dt, its magnitude within card +0x10 .. +0x18;
+ * type 12: +0xC .. +0x14) when min < max, else 0. Returns the wanted world velocity. */
+tc_vec3 tc_mec_walk_request_world(const tc_ai_card *card, const float *proposal, float heading, float dt, float *turn);
+
 /* One frame of FUN_004aa6af. wanted = the request handlers' motion this frame (world velocity: root motion or a
  * move direction; ignored in the air unless wanted_in_air, the type 4 handler's +0xB8 = 8); impulse != NULL: a
  * velocity that replaces the old one (mode 7, the jump). Gravity = env x card +0x38 in the air or on grip < 1;

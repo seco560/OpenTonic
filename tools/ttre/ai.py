@@ -259,6 +259,7 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           FUN_0043bf70: 0x10 no collision, 8 floors only, 1 may step up) and kinds: u16 n_sets, then per set u16 n,
           n x { u16 flags, u16 collide element type (7 sphere, 5 point: radius 0 in BODY), f32 rebound, f32 grip
           (its own mechanics material: the responses multiply them with the obstacle's) } (ai.zone_parts)
+  ZDES  his ZDE zones (the hits: COND 18-29, CollectNearby) and which are active per state (zde_block)
   TRIG  u16 n, u16 0, n x { f32 position[3], f32 radius, u16 behaviour, u16 guard dsgvar, u32 sleep ms }
           (ai.proximity_triggers)
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
@@ -575,8 +576,9 @@ def zdm_sets(d, perso, n_states):
         # Collide set byte +0x36 set (GAM_00431720; the skier): the mechanics sweep one sphere centred on the
         # perso's origin (FUN_0043d480 -> FUN_004717d0) of radius +0x30 x 0.5 (DAT_004d2928; skier 1.3 -> 0.65),
         # whatever the state. His riding poses reach 0.61-0.65 below the origin: the board rides on that sphere.
+        # Radius 0 (north's guards: +0x30 = 0): the same sweep with a point (FUN_004717d0's sphere of radius 0).
         r = un('f', cs, 0x30)[0] * 0.5
-        return ([[(0.0, 0.0, 0.0, r, 0, 7, 1.0, 1.0)]], [0] * n_states) if r > 0 else ([], [0xFFFF] * n_states)
+        return ([[(0.0, 0.0, 0.0, max(r, 0.0), 0, 7 if r > 0 else 5, 1.0, 1.0)]], [0] * n_states)
     if not cs or not lv.ptr(cs, 8) or not lv.ptr(cs, 0x18):
         return [], [0xFFFF] * n_states
     zones, e = [], lv.ptr(lv.ptr(cs, 8))
@@ -596,6 +598,62 @@ def zdm_sets(d, perso, n_states):
             per_state[st] = sets.setdefault(tuple(z), len(sets))
         e = lv.ptr(e)
     return [list(s) for s in sets], per_state
+
+
+def zde_prims(d, g):
+    """A ZDE zone's GeometricObjectCollide -> [(kind, a, b, type)] in the perso's axes: spheres (element type 7: entries
+    at element +4, 12 bytes {u16 centre vertex, u16, f32 radius, ptr game material}: a = centre, b = (r, 0, 0)) and
+    boxes (type 8: 8 bytes {u16 min vertex, u16 max vertex, ptr game material}). type = the element's collide material
+    identifier (collide_flags): what COND 18-29 mask (GAM_0041f060 / CPA_004493d0: flags & mask == mask). Other element
+    types (points, triangles) are left out."""
+    lv, un = d.lv, d.un
+    if not g:
+        return []
+    verts, ne = lv.ptr(g, 4), un('I', g, 0x14)[0]
+    out = []
+    for i in range(ne if ne < 64 else 0):
+        t, el = un('H', lv.ptr(g, 0x18), 2 * i)[0], lv.ptr(lv.ptr(g, 0x1C), 4 * i)
+        if not el or t not in (7, 8):
+            continue
+        n, entries = un('I', el)[0], lv.ptr(el, 4)
+        for j in range(min(n, 16) if entries else 0):
+            if t == 7:
+                c, = un('H', entries, 12 * j)
+                out.append((7, un('3f', verts, 12 * c), (un('f', entries, 12 * j + 4)[0], 0.0, 0.0),
+                            collide_flags(d, lv.ptr(entries, 12 * j + 8))))
+            else:
+                lo, hi = un('2H', entries, 8 * j)
+                out.append((8, un('3f', verts, 12 * lo), un('3f', verts, 12 * hi), collide_flags(d, lv.ptr(entries, 8 * j + 4))))
+    return out
+
+
+def zde_block(d, perso, n_states):
+    """A perso's ZDE zones (collide set +4, the exe's list 2) and which are active per state (activation list +0x14:
+    {.., +0xC zone entries {.., +0xC zone index}, +0x10 state}): u16 n_zones, u16 n_states, n_zones x { u16 n_prims,
+    u16 0, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3], u16 type,
+    u16 0 } }, n_states x u32 mask of its active zones (zone k = bit k; the scripts' zone N is k = N - 1). At most 32
+    zones (Ed has 18). Core: tc_level.h tc_zde_set."""
+    lv, un = d.lv, d.un
+    cs = lv.ptr(perso, 0x14) if perso and not d.se else None  # the Special Edition's collide sets: not read (no zones)
+    zones, active = [], [0] * n_states
+    e = lv.ptr(lv.ptr(cs, 4)) if cs and lv.ptr(cs, 4) else None
+    while e and len(zones) < 32:
+        zones.append(zde_prims(d, lv.ptr(e, 0xC)))
+        e = lv.ptr(e)
+    a = lv.ptr(lv.ptr(cs, 0x14)) if cs and lv.ptr(cs, 0x14) else None
+    guard = 0
+    while a and guard < 1024:
+        st, f = un('I', a, 0x10)[0], lv.ptr(lv.ptr(a, 0xC)) if lv.ptr(a, 0xC) else None
+        while f and guard < 1024:
+            k = un('I', f, 0xC)[0]
+            if k < len(zones) and st < n_states:
+                active[st] |= 1 << k
+            f, guard = lv.ptr(f), guard + 1
+        a = lv.ptr(a)
+    out = struct.pack('<HH', len(zones), n_states)
+    for z in zones:
+        out += struct.pack('<HH', len(z), 0) + b''.join(struct.pack('<I3f3fHH', k, *x, *y, t, 0) for k, x, y, t in z)
+    return out + b''.join(struct.pack('<I', m) for m in active)
 
 
 def perso_dsg_value(d, perso, k):
@@ -1113,21 +1171,126 @@ def started_by_others(ai):
     return found
 
 
-def perso_dsg_block(d, perso):
-    """A perso's dsgvars as the .ttai writes them (u16 count, u16 0, u32 size, count x {u32 offset, u8 type, 3 pad}, the
-    buffer padded to 4), and the count. mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def
-    {ptr default buffer, ptr infos (16 B {u32 offset, u32 type, ...}), u32 buffer size, u32 count}."""
+def _dsg_parts(d, perso):
+    """(infos [(offset, type)], buffer location, size) of a perso's dsgvars (perso_dsg_block's layout), or None."""
     lv = d.lv
     brain = lv.ptr(perso, 0xC)
     m = lv.ptr(brain) if brain else None
     dm = lv.ptr(m, 0xC) if m else None
+    if not dm:
+        return None
+    dfn = lv.ptr(lv.ptr(dm))
+    infos, (size, count) = lv.ptr(dfn, 4), d.un('2I', dfn, 8)
+    src = lv.ptr(dm, 4) or lv.ptr(dfn)
+    return [d.un('2I', infos, 16 * i) for i in range(count)], src, size
+
+
+def _perso_ways(d, perso):
+    """A perso's ways (perso +0x1C, the MS_Way: {ptr list, ...}; list {head, tail, n}; node {next, prev, list, way,
+    u8 current waypoint, u8 link step, u8 previous waypoint (0xFF none), u8 saved link step}; way {ptr waypoints (ptr[n]),
+    ptr links (ptr[n - 1]), u8 n, u8 current, u8 previous, ...}): [[waypoint location, ...] per way], in list order
+    (the scripts' way index, GAM_004257f0: the n-th node). A node without a way keeps its place, empty."""
+    lv, un = d.lv, d.un
+    ms = lv.ptr(perso, 0x1C)
+    lst = lv.ptr(ms) if ms else None
+    node = lv.ptr(lst) if lst else None
+    out = []
+    while node and len(out) < 64:
+        way = lv.ptr(node, 0xC)
+        pts = []
+        if way:
+            arr = lv.ptr(way)
+            pts = [lv.ptr(arr, 4 * i) for i in range(un('B', way, 8)[0])] if arr else []
+        out.append([w for w in pts if w])
+        node = lv.ptr(node)
+    return out
+
+
+def waypoints(d):
+    """The level's waypoints (the .ttlv WAYS chunk: ways_chunk), numbered from 1 (0: none) in a fixed order so the .ttlv
+    and the .ttai, written by separate runs, agree: the level's persos (d.persos(), then the player and the fix persos),
+    each with its ways' waypoints, its script nodes' (type 29) and its waypoint dsgvars' (type 8). A waypoint (0x1C
+    bytes, AI_0048dcf0): u32, f32 position[3] (in its father's axes when it has one), f32 radius (+0x10,
+    GEN_GetFloat10_00432030: the GoTo meta-actions' arrival distance), u32, ptr father SuperObject (+0x14).
+    Returns {location: index}. Cached on d."""
+    if getattr(d, '_waypoints', None) is not None:
+        return d._waypoints
+    lv = d.lv
+    table, models = {}, set()
+
+    def add(w):
+        if w and w not in table:
+            table[w] = len(table) + 1
+    owners = [p.loc for p in d.persos()]
+    for loc in [d.player()] + [p for p, _ in d.perso_in_fix]:
+        if loc and loc not in owners:
+            owners.append(loc)
+    for loc in owners:
+        for way in _perso_ways(d, loc):
+            for w in way:
+                add(w)
+        try:
+            a = AI(d, loc)
+        except Exception:
+            a = None
+        if a and a.model not in models:
+            models.add(a.model)
+            for n in a.nodes():
+                if n.type == 29:
+                    add(n.ref)
+        parts = _dsg_parts(d, loc)
+        if parts:
+            infos, src, size = parts
+            for off, typ in infos:
+                if typ == 8 and off + 4 <= size:
+                    add(lv.ptr(src, off))
+    d._waypoints = table
+    return table
+
+
+def ways_chunk(d):
+    """WAYS (core tc_level.c read_ways; docs/ENGINE.md "Ways and waypoints"): u16 n_waypoints, u16 n_persos,
+    n_waypoints x { f32 position[3], f32 radius, u16 father (its perso's id: level perso k + 1; 0 none: world axes),
+    u16 0 }, n_persos x { u16 perso id, u16 n_ways, n_ways x { u16 n_points, n_points x u16 waypoint (1-based) },
+    padded to 4 }. The ways' links are not exported: every link in the 21 retail levels is type 0 (straight; link +0x38),
+    whose GoOverWay goes waypoint to waypoint."""
+    lv, un = d.lv, d.un
+    table = waypoints(d)
+    ids = {p.loc: k + 1 for k, p in enumerate(d.persos())}
+    out = bytearray(struct.pack('<HH', len(table), 0))
+    for w in sorted(table, key=table.get):
+        father = lv.ptr(w, 0x14)
+        fp = lv.ptr(father, 4) if father and un('I', father)[0] == 4 else None
+        out += struct.pack('<4fHH', *un('3f', w, 4), un('f', w, 0x10)[0], ids.get(fp, 0), 0)
+    n = 0
+    for p in d.persos():
+        ways = _perso_ways(d, p.loc)
+        if not ways:
+            continue
+        n += 1
+        rec = struct.pack('<HH', ids[p.loc], len(ways))
+        for way in ways:
+            rec += struct.pack(f'<H{len(way)}H', len(way), *(table[w] for w in way))
+        out += rec + b'\0' * (-len(rec) % 4)
+    struct.pack_into('<H', out, 2, n)
+    return bytes(out)
+
+
+def perso_dsg_block(d, perso):
+    """A perso's dsgvars as the .ttai writes them (u16 count, u16 0, u32 size, count x {u32 offset, u8 type, 3 pad}, the
+    buffer padded to 4), and the count. mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def
+    {ptr default buffer, ptr infos (16 B {u32 offset, u32 type, ...}), u32 buffer size, u32 count}. A waypoint (type 8)
+    holds its number in the level's table (waypoints(): 1-based, 0 none) instead of the snapshot's pointer."""
     dsg, buf = [], b''
-    if dm:
-        dfn = lv.ptr(lv.ptr(dm))
-        infos, (size, count) = lv.ptr(dfn, 4), d.un('2I', dfn, 8)
-        src = lv.ptr(dm, 4) or lv.ptr(dfn)
-        dsg = [d.un('2I', infos, 16 * i) for i in range(count)]
-        buf = bytes(d.un(f'{size}B', src))
+    parts = _dsg_parts(d, perso)
+    if parts:
+        dsg, src, size = parts
+        buf = bytearray(d.un(f'{size}B', src))
+        table = {} if d.se else waypoints(d)  # the Special Edition's ways: not exported (0: none)
+        for off, typ in dsg:
+            if typ == 8 and off + 4 <= size:
+                struct.pack_into('<I', buf, off, table.get(d.lv.ptr(src, off), 0))
+        buf = bytes(buf)
     out = struct.pack('<HHI', len(dsg), 0, len(buf))
     for off, typ in dsg:
         out += struct.pack('<IB3x', off, typ)
@@ -1167,7 +1330,7 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
         for i in range(n if arr else 0):
             beh_index[(arr[0], arr[1] + 12 * i)] = flag | i
     # perso_ids: {location: id} instead of level perso k + 1 (cast.chunk: the Special Edition's own id range)
-    persos = dict(perso_ids) if perso_ids else {p.loc: k + 1 for k, p in enumerate(d.persos())}
+    persos = dict(perso_ids) if perso_ids else dict(d.perso_ids())  # level persos k + 1, then the spawnables
     persos[ai.perso] = 0
     buttons, strings, vectors = {}, {}, {}
     btn = None
@@ -1204,6 +1367,12 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
             return beh_index[ref]
         if t == 32 and behaviours and ref in behaviours:
             return behaviours[ref]
+        if t == 22 and ref and not d.se:  # a family: its index (family +0xC = the std game's +0, the names table 0)
+            return d.un('I', ref, 0xC)[0]
+        if t == 29 and not d.se:  # a waypoint: its number in the level's table (waypoints(), the .ttlv WAYS)
+            got = waypoints(d).get(ref, 0) if ref else 0
+            if got or not ref:
+                return got
         if ref is not None or t in (14, 15, 20, 24, 25, 32):
             unresolved[t] += 1
             return 0xFFFFFFFF
@@ -1357,6 +1526,8 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
     out += struct.pack('<H', len(sphere_sets)) + b''.join(
         struct.pack('<H', len(zs)) + b''.join(struct.pack('<2H2f', *z[4:8]) for z in zs) for zs in sphere_sets)
     cut('ZDMF')
+    out += zde_block(d, ai.perso, len(ai.states))
+    cut('ZDES')
     triggers = proximity_triggers(ai)
     out += struct.pack('<HH', len(triggers), 0)
     for pos, radius, beh, guard, sleep_ms, _ in triggers:

@@ -347,6 +347,10 @@ static void walk(tc_ed_ai *e, const tc_ai_card *card, const tc_ai_sphere_set *bo
         float speed = m->proposal[10], cap = card ? tc_ai_card_f32(card, card->type == 0 ? 0x14 : 0x10) : 0;
         if (cap > 0 && fabsf(speed) > cap) speed = speed < 0 ? -cap : cap;
         wanted = tc_v3_scale(local_to_global(p->heading, tc_v3(m->proposal[7], m->proposal[8], m->proposal[9])), speed);
+    } else if (m->direction_set && m->mech_mode == 20) { /* the GoTo meta-actions (GoToWP: his cutscene walks) */
+        float turn;
+        wanted = tc_mec_walk_request_world(card, m->proposal, p->heading, dt, &turn);
+        p->heading += turn * dt;
     } else {
         wanted = tc_v3_scale(local_to_global(p->heading, root_motion(a)), (float)a->frame_rate);
     }

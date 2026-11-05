@@ -490,6 +490,7 @@ import TonicCore
         enc.setDepthStencilState(blendedDepthState)
         for i in Int(opaque)..<Int(count) { drawMesh(draws[i]) }
         drawOverlay(enc, viewer!)
+        drawCrosshair(enc, v, Float(size.width / max(size.height, 1)))
         enc.endEncoding()
         if let scaled {  // supersampled: filter it down into the drawable
             let p = MTLRenderPassDescriptor()
@@ -535,6 +536,23 @@ import TonicCore
     }
 
     private struct OverlayVertex { var position: SIMD2<Float>; var uv: SIMD2<Float> }
+
+    /// The gunsight in first person while Ed is in a shooting behaviour (tc_viewer_crosshair): the texture's own colours.
+    private func drawCrosshair(_ enc: MTLRenderCommandEncoder, _ v: UnsafeMutablePointer<tc_viewer>, _ aspect: Float) {
+        var o = tc_view_overlay()
+        guard tc_viewer_crosshair(v, aspect, &o), o.texture >= 0, Int(o.texture) < effects.count,
+              let tex = effects[Int(o.texture)] else { return }
+        let c = withUnsafeBytes(of: o.corners) { Array($0.bindMemory(to: Float.self)) }
+        let t = withUnsafeBytes(of: o.uv) { Array($0.bindMemory(to: Float.self)) }
+        var verts = [0, 1, 2, 1, 3, 2].map { OverlayVertex(position: [c[2 * $0], c[2 * $0 + 1]], uv: [t[2 * $0], t[2 * $0 + 1]]) }
+        var params = OverlayParams(mode: 3, threshold: 0)
+        enc.setRenderPipelineState(overlayPipeline)
+        enc.setDepthStencilState(overlayDepthState)
+        enc.setVertexBytes(&verts, length: MemoryLayout<OverlayVertex>.stride * verts.count, index: 0)
+        enc.setFragmentBytes(&params, length: MemoryLayout<OverlayParams>.stride, index: 0)
+        enc.setFragmentTexture(tex, index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+    }
     private struct OverlayParams { var mode: UInt32; var threshold: Float }
 
     /// The screen transition (mask wipe or spinning logo), black, or the loading screen's black backdrop.

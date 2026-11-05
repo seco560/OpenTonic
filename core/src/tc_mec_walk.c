@@ -765,6 +765,28 @@ void tc_mec_walk_carry(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_s
     *position = x.target;
 }
 
+tc_vec3 tc_mec_walk_request_world(const tc_ai_card *card, const float *pr, float heading, float dt, float *turn) {
+    bool t12 = card && card->type == 12;
+    float max_speed = card_f(card, t12 ? 0x10 : 0x14, 0), max_turn = card_f(card, t12 ? 0x14 : 0x18, 0);
+    float min_turn = card_f(card, t12 ? 0x0C : 0x10, 0), x = pr[7], y = pr[8], h, speed = pr[10];
+    *turn = 0;
+    if (x == 0 && y == 0) return tc_v3(0, 0, 0);
+    h = sqrtf(x * x + y * y);
+    x *= h, y *= h;
+    if (fabsf(speed) > max_speed) speed = speed < 0 ? -max_speed : max_speed;
+    if (min_turn < max_turn && dt > 0) {
+        /* FUN_004ae280: acos(-y) signed by x, minus the heading, both wrapped to [-pi, pi] (on the scaled vector) */
+        float a = -y >= 1 ? 0 : -y <= -1 ? TC_PI : acosf(-y), rate;
+        if (x < 0) a = -a;
+        a = remainderf(a - remainderf(heading, 2 * TC_PI), 2 * TC_PI);
+        rate = a / dt;
+        if (fabsf(rate) > max_turn) rate = rate < 0 ? -max_turn : max_turn;
+        else if (fabsf(rate) < min_turn) rate = rate < 0 ? -min_turn : min_turn;
+        *turn = rate;
+    }
+    return tc_v3(x * speed, y * speed, 0);
+}
+
 void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc_collision *world,
                       const tc_ai_sphere_set *body, float heading, tc_vec3 wanted, bool wanted_in_air,
                       const tc_vec3 *impulse, float dt, tc_vec3 *position, tc_vec3 *velocity) {

@@ -210,6 +210,142 @@ static void float_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, con
     d->moving = tc_v3_length_sq(d->velocity) > 0 || tc_v3_length_sq(wanted->v) > 0;
 }
 
+/* The ground walkers' wanted motion this frame (DNM_RequestWalk_004ae392, types 0 and 12; type 12's card fields sit 4
+ * bytes lower): mode 12's move direction x speed in its axes, mode 0x14's in the world's (turning it), else the
+ * animation's own motion (FUN_0042a8d0 pushes it as mode 12). */
+static tc_vec3 ground_wanted(tc_ai_perso *p, const tc_ai_card *card, float dt) {
+    const tc_ai_motion *m = &p->motion;
+    const tc_ai_state *st = &p->model->states[p->state];
+    if (m->direction_set && m->mech_mode == 12) {
+        float speed = clamp_magnitude(m->proposal[10], 0, tc_ai_card_f32(card, card->type == 12 ? 0x10 : 0x14));
+        return tc_v3_scale(local_to_global(p->heading, tc_v3(m->proposal[7], m->proposal[8], m->proposal[9])), speed);
+    }
+    if (m->direction_set && m->mech_mode == 20) { /* the GoTo meta-actions (GoToWP, GoOverWay) */
+        float turn;
+        tc_vec3 v = tc_mec_walk_request_world(card, m->proposal, p->heading, dt, &turn);
+        p->heading += turn * dt;
+        return v;
+    }
+    if (st->root_count) {
+        uint32_t fr = p->state_frame > 0 ? (uint32_t)p->state_frame % st->root_count : 0;
+        return tc_v3_scale(local_to_global(p->heading, p->model->root[st->root_first + fr]), (float)p->frame_rate);
+    }
+    return tc_v3(0, 0, 0);
+}
+
+/* Type 12 (DNM_IntegrateType12_004a9d20), and the port's stand-in for a type 0 / 4 state without a body: it collides
+ * only while its report has no ground (MEC_CollideMoveNoTurn_004bedd6 under (report & 3) == 0), and on a grippy ground
+ * its forces (FUN_004c3e50: grip >= 1) cancel gravity and the old velocity: a grounded type 12 perso goes where its
+ * requests take it, through walls, at its height. Port: it starts grounded (the snapshot's report is not exported:
+ * Suzy and the like stand on their floor in the data), so no collision at all. A perf shortcut of the original (NPCs
+ * walking without collision tests); kept as read. */
+static void glide_step(tc_cast_actor *a, const tc_ai_card *card, float dt) {
+    tc_ai_perso *p = &a->ai;
+    tc_cast_dyn *d = &a->dyn;
+    tc_vec3 v = tc_v3(0, 0, 0);
+    if (p->motion.turning) p->heading += p->motion.turn_speed * dt;
+    if (!p->motion.stop) v = ground_wanted(p, card, dt);
+    v.z = 0;
+    p->position = tc_v3_add(p->position, tc_v3_scale(v, dt));
+    d->velocity = v;
+    p->velocity = v;
+    p->contacts = TC_AI_CONTACT_GROUND;
+    d->moving = tc_v3_length_sq(v) > 0;
+}
+
+/* ---- Types 0 and 4: the walkers (DNM_IntegrateWalk_004aa6af with DNM_RequestWalk_004ae392 on the ground, FUN_004b0f2a
+ * in the air), as Ed's (tc_ed_ai.c walk()): its state's ZDM body (CMEC's walker part), riding (tc_mec_walk_carry), the
+ * requests or else the animation's root motion, then the collide-and-move of tc_mec_walk_step. Returns false when the
+ * state has no body (then glide_step). */
+static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, float dt) {
+    const tc_cast_family *f = &c->level->cast.families[a->entry->family];
+    tc_ai_perso *p = &a->ai;
+    const tc_ai_motion *m = &p->motion;
+    const float *pr = m->proposal;
+    tc_cast_dyn *d = &a->dyn;
+    tc_collision *w = c->world;
+    const tc_ai_sphere_set *body;
+    tc_vec3 wanted = tc_v3(0, 0, 0), jump = tc_v3(0, 0, 0);
+    const tc_vec3 *impulse = NULL;
+    const uint8_t *solid;
+    int32_t self, ignore;
+    uint8_t prio, k;
+    bool meets, air = card->type == 4;
+    tc_mec_env env = tc_mec_env_default();
+    if (!w || !f->body || p->state >= f->state_count || f->body[p->state] == 0xFFFF) return false;
+    body = &f->bodies[f->body[p->state]];
+    solid = w->solid, self = w->self, ignore = w->ignore, prio = w->self_priority, meets = w->self_meets;
+    w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
+    w->self = a->entry->id;
+    w->ignore = -1;
+    w->self_priority = a->entry->own_priority;
+    w->self_meets = a->entry->own_meets != 0;
+    if (c->sectors && a->sector.sector != TC_SECTOR_NONE) tc_mec_env_at(c->sectors, a->sector.sector, p->position, &env);
+    tc_mec_walk_carry(&d->walk, w, body, &p->heading, dt, &p->position);
+    if (air) tc_mec_walk_air(&d->walk);
+    if (m->turning) p->heading += m->turn_speed * dt;
+    if (m->velocity_set) d->velocity = m->velocity;
+    if (air) {
+        for (k = 0; k < m->mode_count; k++) {
+            tc_vec3 va = local_to_global(p->heading, tc_v3(pr[1], pr[2], pr[3]));
+            switch (m->modes[k]) {
+            case 6: case 7: case 21: jump = va; impulse = &jump; wanted = tc_v3(0, 0, 0); break;
+            case 8: wanted = tc_v3_add(wanted, va); break;
+            case 9: wanted = tc_v3_add(wanted, local_to_global(p->heading, tc_v3(pr[4], pr[5], pr[6]))); break;
+            default: break;
+            }
+        }
+    } else if (m->stop) {
+        d->velocity = tc_v3(0, 0, 0);
+    } else {
+        wanted = ground_wanted(p, card, dt);
+    }
+    if (air && m->stop) d->velocity = tc_v3(0, 0, 0);
+    tc_mec_walk_step(&d->walk, card, env, w, body, p->heading, wanted, air, impulse, dt, &p->position, &d->velocity);
+    w->solid = solid, w->self = self, w->ignore = ignore, w->self_priority = prio, w->self_meets = meets;
+    if (p->position.z < w->bounds_min.z - 20) { /* port: fell out of the level: back where it was placed, at rest */
+        p->position = tc_v3(a->entry->world.m[3], a->entry->world.m[7], a->entry->world.m[11]);
+        d->velocity = tc_v3(0, 0, 0);
+        tc_mec_walk_reset(&d->walk);
+    }
+    p->velocity = d->velocity;
+    p->contacts = tc_mec_walk_contacts(&d->walk) & 0x1F;
+    p->report_high = (d->walk.report | d->walk.report_prev) & TC_MEC_ON_PERSO;
+    p->standing_on = p->report_high == TC_MEC_ON_PERSO && d->walk.carrier > 0 ? d->walk.carrier : 0;
+    p->ground_material = d->walk.ground_own;
+    p->wall_material = d->walk.wall_own;
+    d->moving = tc_v3_length_sq(d->velocity) > 0;
+    return true;
+}
+
+/* ---- Type 10: the projectiles (DNM_RequestType10_004b252e, DNM_IntegrateType10_004adfc3, forces FUN_004c709a) ----
+ * Card +4 mass, +8 gravity factor. Requests: 0x13 / 0x16 ProposalVecA as the wanted velocity in world axes, 0x15 in its
+ * own; none: the forces keep the velocity (+0x38) when the gravity factor is 0 (Ed's bees: they fly straight). Port:
+ * with a gravity factor, gravity x it on the velocity (the exe's ballistic forces with thrust are not read), and no
+ * collide-and-move of its own (the bee's scripts end it at the wall their probe found, or on a ZDE hit). */
+static void projectile_step(tc_cast_actor *a, const tc_ai_card *card, float dt) {
+    tc_ai_perso *p = &a->ai;
+    const tc_ai_motion *m = &p->motion;
+    const float *pr = m->proposal;
+    tc_cast_dyn *d = &a->dyn;
+    tc_vec3 v = d->velocity, va = tc_v3(pr[1], pr[2], pr[3]);
+    float g = tc_ai_card_f32(card, 0x08);
+    uint8_t k;
+    bool requested = false;
+    if (m->velocity_set) v = m->velocity;
+    for (k = 0; k < m->mode_count; k++) {
+        if (m->modes[k] == 0x13 || m->modes[k] == 0x16) v = va, requested = true;
+        else if (m->modes[k] == 0x15) v = local_to_global(p->heading, va), requested = true;
+    }
+    if (!requested && g != 0) v.z -= 9.81f * g * dt; /* port */
+    if (m->turning) p->heading += m->turn_speed * dt;
+    p->position = tc_v3_add(p->position, tc_v3_scale(v, dt));
+    d->velocity = v;
+    p->velocity = v;
+    p->contacts = 0;
+    d->moving = tc_v3_length_sq(v) > 0;
+}
+
 bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
     const tc_cast_family *f = &c->level->cast.families[a->entry->family];
     tc_ai_perso *p = &a->ai;
@@ -220,6 +356,22 @@ bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
     uint8_t k;
     if (!f->cards || p->state >= f->state_count || (ci = f->cards[p->state]) == 0xFFFF) return false;
     card = &c->level->cast.cards[ci];
+    if (card->type == 10) {
+        d->card_type = 10;
+        projectile_step(a, card, dt);
+        p->mech_moving = d->moving;
+        return true;
+    }
+    if (card->type == 0 || card->type == 4 || card->type == 12) { /* the walkers */
+        if (card->type != d->card_type) {
+            if (d->card_type != 0 && d->card_type != 4 && d->card_type != 12)
+                tc_mec_walk_reset(&d->walk), d->velocity = tc_v3(0, 0, 0);
+            d->card_type = card->type;
+        }
+        if (card->type == 12 || !walk_step(c, a, card, dt)) glide_step(a, card, dt);
+        p->mech_moving = d->moving;
+        return true;
+    }
     if (card->type != 6 && card->type != 7) return false;
     if (card->type != d->card_type) { /* DNM_CardTypeInit_004a7459 (port: what the two types need) */
         d->velocity = d->omega = tc_v3(0, 0, 0);

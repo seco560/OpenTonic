@@ -43,6 +43,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
   CMEC* the cast's mechanics: its families' states' ID cards (cast.mech_chunk has the layout)
   PCOL* the persos' own collision, in their objects' axes (perso_collision has the layout); COLL no longer holds it
         (2026-11-05): the core poses it where each perso is, every tick (docs/ENGINE.md "Moving collision, read").
+  WAYS* the level's waypoints and the persos' ways (ai.ways_chunk has the layout; retail only): script nodes of type 29
+        and waypoint dsgvars (in the .ttlv's CAST and in the .ttai) hold their 1-based numbers.
   CAST* the level persos whose own AI the core runs, their families' states and state animations (cast.py has the
         layout). Their PRSO entries hold a part for every object those animations show (channel 0xFFFF: not in the
         initial animation).
@@ -376,14 +378,15 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
     # The cast (cast.py): every object their families' animations show, as extra parts on channel 0xFFFF
     cast_list, cast_skipped = cast.select(data) if persos else ([], {})
     cast_locs, family_cache, prso_index = {loc for loc, _, _ in cast_list}, {}, {}
-    for p in data.persos() if cast_locs else ():
+    for p in data.persos() + data.spawnables() if cast_locs else ():
         if p.loc in cast_locs:
             p3d = data.lv.ptr(p.loc)
             fam = data.lv.ptr(p3d, 0x14) if p3d else None
             if fam not in family_cache:
                 family_cache[fam] = cast.family_anims(data, data.family_states(fam))
             cast.load_cast_objects(data, p, family_cache[fam][1])
-    for p in data.persos() if persos else ():
+    spawned = [t for t in data.spawnables() if t.loc in cast_locs] if persos else []  # drawn when instanced (cast SPAWN)
+    for p in data.persos() + spawned if persos else ():
         a = p.anim
         if not a or not p.objects or (p.loc == fix_ed and ed_loc != fix_ed):
             continue  # (the fix Ed is left out where another perso is the player: unplaced there)
@@ -500,6 +503,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('CAST', cast_body) if cast_body else None,  # this level's cast, else the one passed in
            ('CMEC', cmec) if cmec else None,
            ('PCOL', pcol) if pcol else None,
+           ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
                          donor_lite))]

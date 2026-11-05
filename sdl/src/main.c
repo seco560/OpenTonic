@@ -910,10 +910,12 @@ static void draw(app *a) {
         }
     } else if (a->view) {
         view_draw_frame(a->view, &f);
-        if (o.kind != TC_VO_NONE || a->help) {  /* screen transition or loading screen, then the controls */
+        bool sight = view_draw_crosshair(a->view, &f, NULL);
+        if (o.kind != TC_VO_NONE || a->help || sight) {  /* screen transition or loading screen, the gunsight, the controls */
             SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, false, (SDL_FColor){0, 0, 0, 1});
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
+                if (sight) view_draw_crosshair(a->view, &f, pass);
                 if (o.kind == TC_VO_LOADING) draw_loading(a, &f, pass, o.progress);
                 if (o.kind == TC_VO_PICTURE) draw_picture(a, &f, pass);
                 if (a->help) draw_help(a, &f, pass);

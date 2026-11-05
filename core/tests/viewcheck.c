@@ -613,6 +613,134 @@ static void ride_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
+/* The cavedoc ruby (BNE_PFGuide, gro_pf01; docs/ENGINE.md "Ways and waypoints"): Ed stands on it, its reflex R0 puts
+ * its way's cursor on the nearest waypoint (Func_CloserWP, Proc_InitWayWithWp) and B0 takes it along the way
+ * (Action_GoOverWay: mode 0x14 towards each waypoint in turn, type 7 card) until R1 sees the last one within 2. */
+static void guide_scenario(const char *dir) {
+    char path[1024], what[256];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const struct tc_obstacles *os;
+    struct tc_obstacle *ob;
+    const tc_perso_ways *pw;
+    const tc_way *way;
+    tc_player *p;
+    uint32_t i, k, next = 0, order_ok = 1, rode = 0, frames = 60 * 50;
+    float last_d = 1e9f;
+    const uint16_t guide = 50; /* cavedoc's perso 50 */
+    snprintf(path, sizeof(path), "%s/cavedoc.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no cavedoc: the guide skipped)\n"); return; }
+    free(data);
+    if (!level.ways.waypoint_count || !level.pcol.count) { printf("  (cavedoc has no WAYS / PCOL, an older export: the guide skipped)\n"); tc_level_free(&level); return; }
+    snprintf(path, sizeof(path), "%s/cavedoc.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "cavedoc";
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "cavedoc viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    pw = tc_ways_of(&level.ways, guide);
+    way = pw && pw->count ? &level.ways.ways[pw->first] : NULL;
+    check(way && way->count == 10, "the ruby has its way (10 waypoints)");
+    run(&v, 0.5f, 0);
+    p = (tc_player *)tc_viewer_player(&v);
+    os = p->world->obstacles;
+    ob = os ? tc_obstacles_find(os, guide) : NULL;
+    check(ob && ob->live, "the ruby (50) is a live obstacle");
+    if (!ob || !way) { tc_viewer_free(&v); tc_level_free(&level); return; }
+    p->position = tc_v3((ob->lo.x + ob->hi.x) / 2, (ob->lo.y + ob->hi.y) / 2, ob->hi.z + 1.0f);
+    p->velocity = tc_v3(0, 0, 0);
+    p->placed++;
+    printf("the guide (cavedoc ruby) from (%.1f, %.1f, %.1f):\n", ob->world.m[3], ob->world.m[7], ob->world.m[11]);
+    for (i = 0; i < frames; i++) {
+        tc_vec3 at;
+        frame(&v, 1.0f / 60);
+        rode += tc_viewer_driver(&v)->walk.carrier == guide;
+        at = tc_v3(ob->world.m[3], ob->world.m[7], ob->world.m[11]);
+        for (k = next; k < way->count; k++) { /* the waypoints it comes within 2.5 of, in order */
+            const tc_waypoint *w = &level.ways.waypoints[level.ways.points[way->first + k] - 1];
+            if (tc_v3_distance(at, w->position) < 2.5f) {
+                if (k != next && next != 0) order_ok = 0;
+                printf("    waypoint %u at %.1f s\n", k, (float)i / 60);
+                next = k + 1;
+                break;
+            }
+        }
+        {
+            const tc_waypoint *w = &level.ways.waypoints[level.ways.points[way->first + way->count - 1] - 1];
+            last_d = fminf(last_d, tc_v3_distance(at, w->position));
+        }
+    }
+    snprintf(what, sizeof(what), "it follows its way in order (to waypoint %u of %u), nearest to the last %.1f; Ed rode %u of %u frames",
+             next, way->count, last_d, rode, frames);
+    check(order_ok && next >= way->count - 1 && last_d < 3, what);
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
+/* Ed shoots (docs/ENGINE.md "Shooting"): on north, Action takes the blowgun out (B69), Shoot fires: META 11 instances the
+ * bee (LOL_Actor1, a spawnable template: TC_CAST_SPAWN), which flies on its type 10 card; put 6 in front of the guard
+ * KEV_Garde_debut (46), the bee's ZDE zone meets his and his reflex takes it from its hit list (CollectNearby, ListSort-
+ * ByFamily): B6. */
+static void shoot_scenario(const char *dir) {
+    char path[1024], what[256];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tc_cast *c;
+    const tc_cast_actor *guard = NULL, *bee = NULL;
+    tc_player *p;
+    uint32_t i, spawned;
+    float flew = 0;
+    snprintf(path, sizeof(path), "%s/north.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no north: shooting skipped)\n"); return; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/north.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "north";
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "north viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    c = tc_viewer_cast(&v);
+    for (i = 0; c && i < c->count; i++) {
+        if (c->actors[i].entry->id == 46) guard = &c->actors[i];
+        if ((c->actors[i].entry->flags & TC_CAST_SPAWN) && c->actors[i].model.zde.zone_count && !bee) bee = &c->actors[i];
+    }
+    if (!guard || !bee) { printf("  (north has no spawnable bee / guard 46, an older export: shooting skipped)\n"); tc_viewer_free(&v); tc_level_free(&level); return; }
+    run(&v, 1, 0);
+    run(&v, 0.2f, BIT(TC_VA_ACTION));
+    run(&v, 1, 0);
+    p = (tc_player *)tc_viewer_player(&v);
+    p->position = tc_v3_add(guard->ai.position, tc_v3(0, 6, 0));
+    p->velocity = tc_v3(0, 0, 0);
+    p->heading = 0; /* facing -Y: the guard */
+    p->placed++;
+    run(&v, 0.5f, 0);
+    spawned = c->spawned;
+    for (i = 0; i < 60; i++) {
+        tc_vec3 a = bee->ai.position;
+        tc_viewer_set_action(&v, TC_VA_SHOOT, 1);
+        frame(&v, 1.0f / 60);
+        if (bee->ai.active && tc_v3_distance(a, bee->ai.position) < 5) flew += tc_v3_distance(a, bee->ai.position);
+    }
+    tc_viewer_set_action(&v, TC_VA_SHOOT, 0);
+    snprintf(what, sizeof(what), "Ed shoots: %u bees instanced, %.1f flown; the guard hit (behaviour %u, reflex %u)",
+             c->spawned - spawned, flew, guard->ai.normal.behaviour, guard->ai.reflex.behaviour);
+    check(c->spawned > spawned && flew > 3 && guard->ai.normal.behaviour == 6, what);
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv", *name = argc > 2 ? argv[2] : "bar";
     char path[1024], status[512];
@@ -781,6 +909,8 @@ done:
     portal_scenario(dir);
     se_ski_scenario(dir);
     ride_scenario(dir);
+    guide_scenario(dir);
+    shoot_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
     check(bad_frames == 0, "every frame's draw list is valid");

@@ -335,6 +335,15 @@ Causes found (headless, `camcheck`'s new "no shaking" checks: Ed's AI walking as
   original's camera button (Numpad 0, DIK 0x52) enters Ed's stick mode (B28 / B29, camera code 13 -> camera B1, which
   hangs the camera on his channel 0x27); the port can't use that path: its gate, Ed's dsg25, is never set by his
   scripts (an ability given by something else: not traced). Aim and shooting from it: later.
+- **The gunsight (2026-11-05, the user's request):** in first person, while Ed is in a behaviour that shoots (its scripts
+  hold META 11: his stick mode B29, B69, flying B45, B74, B105), the original's gunsight texture
+  (`gen_viseur/gen_viseur_nz.png`, four yellow triangles) is drawn in the middle (`tc_viewer_crosshair`, overlay mode 3
+  in both frontends; its size 9 % of the viewport's height: **port**). The original's stick mode shows text 7 of its 3D
+  font FontFix3D (Ed's B29 rule 2, `Proc_DisplayString`), whose glyph is this texture (**inferred**: the font is not
+  read). In first person Ed now faces where the player looks (**port**; B29 turns him with the stick), so what he shoots
+  goes towards the gunsight. Checked headless (a probe: shown only in first person and a shooting behaviour, Ed's
+  heading = pi - the look's yaw); the frontends' drawing is not seen (the SDL build not compiled here: no SDL3 /
+  glslangValidator; the Metal shader is compiled by the app).
 - **Keys:** 5 and 0 on the number row and the numpad (close-up, first person), across both frontends; the lighting
   variants moved to Alt / Option + 1-9 and Alt / Option + 0.
 

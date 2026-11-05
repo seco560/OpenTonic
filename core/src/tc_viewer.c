@@ -256,19 +256,55 @@ static void copy_text(char *dst, size_t n, const char *src) {
     dst[i] = 0;
 }
 
-/* The distinct effect textures of the model's transitions. */
+/* The distinct effect textures of the model's transitions, then the gunsight (tc_viewer_crosshair). */
 static bool collect_effects(tc_viewer *v, const tc_ai_model *m) {
     uint32_t i, k, j, n = 0;
-    for (i = 0; i < 4; i++) n += m->transitions.effects[i].variant_count;
-    if (!m->has_transitions || n == 0) return true;
-    v->effects = (const char **)tc_calloc(n, sizeof(*v->effects));
+    for (i = 0; m->has_transitions && i < 4; i++) n += m->transitions.effects[i].variant_count;
+    v->effects = (const char **)tc_calloc(n + 1, sizeof(*v->effects));
     if (!v->effects) return false;
-    for (i = 0; i < 4; i++)
+    for (i = 0; m->has_transitions && i < 4; i++)
         for (k = 0; k < m->transitions.effects[i].variant_count; k++) {
             const char *t = m->transitions.effects[i].variants[k];
             for (j = 0; j < v->effect_count && strcmp(v->effects[j], t) != 0; j++) {}
             if (t && j == v->effect_count) v->effects[v->effect_count++] = t;
         }
+    v->crosshair_effect = (int32_t)v->effect_count;
+    v->effects[v->effect_count++] = TC_VIEWER_CROSSHAIR_TEXTURE;
+    return true;
+}
+
+/* Whether behaviour b of the model fires a projectile (a META 11 node in its schedule or rules). */
+static bool behaviour_shoots(const tc_ai_model *m, uint32_t b) {
+    const tc_ai_behaviour *be;
+    int32_t k;
+    if (!m || b >= (uint32_t)m->normal_count + m->reflex_count) return false;
+    be = &m->behaviours[b];
+    for (k = be->schedule >= 0 ? -1 : 0; k < (int32_t)be->script_count; k++) {
+        uint32_t n = k < 0 ? m->scripts[be->schedule] : m->scripts[be->first_script + (uint32_t)k];
+        for (; n < m->node_count && m->nodes[n].type != TC_AI_END; n++)
+            if (m->nodes[n].type == TC_AI_META && m->nodes[n].param == 11) return true;
+    }
+    return false;
+}
+
+bool tc_viewer_crosshair(const tc_viewer *v, float aspect, tc_view_overlay *out) {
+    const tc_ai_perso *a;
+    float h = TC_VIEWER_CROSSHAIR_SIZE * 0.5f, w = aspect > 0 ? h / aspect : h;
+    memset(out, 0, sizeof(*out));
+    out->texture = -1;
+    if (!v->playing || !v->play || !v->play->has_driver || !v->cam.first_person || v->crosshair_effect < 0 ||
+        v->phase != TC_VP_PLAY)
+        return false;
+    a = &v->play->driver.ai;
+    if (a->normal.behaviour == 0xFFFF || !behaviour_shoots(a->model, a->normal.behaviour)) return false;
+    out->kind = TC_VO_SPRITE;
+    out->texture = v->crosshair_effect;
+    out->corners[0][0] = 0.5f - w, out->corners[0][1] = 0.5f - h;
+    out->corners[1][0] = 0.5f + w, out->corners[1][1] = 0.5f - h;
+    out->corners[2][0] = 0.5f - w, out->corners[2][1] = 0.5f + h;
+    out->corners[3][0] = 0.5f + w, out->corners[3][1] = 0.5f + h;
+    out->uv[1][0] = out->uv[3][0] = 1;
+    out->uv[2][1] = out->uv[3][1] = 1;
     return true;
 }
 
@@ -708,6 +744,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     tc_vec3 lo, hi;
     float size;
     memset(v, 0, sizeof(*v));
+    v->crosshair_effect = -1;
     v->level = l;
     v->ai_result = TC_OK;
     v->animation_speed = 1;
@@ -837,6 +874,14 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
             return TC_ERR_OUT_OF_MEMORY;
         }
     }
+    if (l->perso_count) { /* the spawnable templates' entries: never drawn where the data places them (at the origin) */
+        uint32_t k;
+        v->spawn_prso = (uint8_t *)tc_calloc(l->perso_count, 1);
+        if (!v->spawn_prso) { tc_viewer_free(v); return TC_ERR_OUT_OF_MEMORY; }
+        for (k = 0; k < l->cast.count; k++)
+            if ((l->cast.entries[k].flags & TC_CAST_SPAWN) && l->cast.entries[k].prso < l->perso_count)
+                v->spawn_prso[l->cast.entries[k].prso] = 1;
+    }
     if (ai_model(v) && !collect_effects(v, ai_model(v))) {
         tc_viewer_free(v);
         return TC_ERR_OUT_OF_MEMORY;
@@ -864,6 +909,7 @@ void tc_viewer_free(tc_viewer *v) {
     play_destroy(v->play);
     light_destroy(v->light);
     tc_free((void *)v->effects);
+    tc_free(v->spawn_prso);
     tc_free(v->carry);
     tc_free((void *)v->meshes);
     tc_free(v->mesh_water);
@@ -1522,6 +1568,9 @@ static void step_ai(tc_viewer *v, float dt) {
             p->cast.main_mass = st->card != TC_AI_NONE16 ? tc_ai_card_f32(&p->driver.ai.model->cards[st->card], 4) : 0;
             tc_cast_step_first(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
         }
+        /* port: in first person Ed faces where the player looks (the original's stick mode turns him with the stick, B29),
+         * so what he shoots goes where the gunsight is */
+        if (v->cam.first_person && !v->director) p->player.heading = TC_PI - v->camera.yaw;
         tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, v->director ? 0 : ai_inputs(v), still ? 0 : v->move_x,
                       still ? 0 : v->move_y, v->camera.position);
         if (p->driver.events.restarted) {
@@ -2161,6 +2210,7 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
         sec = v->sectors && v->sectors->perso_count == l->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
         z = water && sec < v->sectors->count ? v->sector_water[sec] : NAN; /* drawn in its sector's pass */
         actor = v->playing && v->play && v->play->has_cast && v->play->use_ai ? tc_cast_actor_of(&v->play->cast, i) : NULL;
+        if (!actor && v->spawn_prso && v->spawn_prso[i]) continue;
         if (actor) { /* its own AI's state animation; parts keyed by object (channel numbering differs per animation) */
             const tc_cast_anim *an;
             tc_mat34 w34;

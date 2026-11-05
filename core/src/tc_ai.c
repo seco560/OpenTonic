@@ -412,6 +412,12 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     m->link_crc = rd_u32(r);
     CHUNK_END(r);
 
+    if (chunk_need(&cs, "ZDES", r)) { /* optional: his ZDE zones (older files: none) */
+        tc_zde_set_read(&m->zde, r);
+        if (r->error == TC_ERR_OUT_OF_MEMORY) { e = r->error; goto fail; }
+        if (r->error || m->zde.state_count != m->state_count) tc_zde_set_free(&m->zde);
+    }
+
     if (chunk_need(&cs, "MODZ", r)) { /* optional: a Special Edition level's walk / ski switches (tc_ai_mode_zone) */
         m->mode_zone_count = rd_u16(r);
         (void)rd_u16(r);
@@ -534,6 +540,7 @@ bool tc_ai_zone_contains(const float inverse[12], const tc_ai_zone_prim *prims, 
 
 void tc_ai_model_free(tc_ai_model *m) {
     uint32_t i;
+    tc_zde_set_free(&m->zde);
     tc_free(m->mode_zones);
     tc_free(m->alt_data);
     for (i = 0; m->states && i < m->state_count; i++) {
@@ -760,6 +767,165 @@ static tc_vec3 perso_position(const tc_ai_perso *p, int32_t perso) {
     if (perso == 0) return p->position;
     if (q) return q->position;
     return o >= 0 && p->other_positions ? p->other_positions[o] : p->position;
+}
+
+/* ---- waypoints and ways (docs/ENGINE.md "Ways and waypoints") ---- */
+
+/* Waypoint number k (1-based, as the scripts hold them), or NULL. */
+static const tc_waypoint *waypoint(const tc_ai_perso *p, int32_t k) {
+    return p->ways && k > 0 && k <= (int32_t)p->ways->waypoint_count ? &p->ways->waypoints[k - 1] : NULL;
+}
+
+/* AI_0048dcf0: a waypoint's world position, through its father's matrix when it has one (port: the live father's
+ * position and heading; a father outside the cast leaves it in world axes). */
+static tc_vec3 waypoint_position(const tc_ai_perso *p, int32_t k) {
+    const tc_waypoint *w = waypoint(p, k);
+    const tc_ai_perso *f;
+    if (!w) return p->position;
+    if (w->father && (f = w->father == p->self_id ? p : live(p, w->father)) != NULL) {
+        float c = cosf(f->heading), s = sinf(f->heading);
+        tc_vec3 v = w->position;
+        return tc_v3_add(f->position, tc_v3(c * v.x - s * v.y, s * v.x + c * v.y, v.z));
+    }
+    return w->position;
+}
+
+/* GAM_004257f0: the perso's way n (the n-th node of its MS_Way list) and its cursor, or NULL. */
+static const tc_way *own_way(tc_ai_perso *p, int32_t n, uint8_t **cursor) {
+    if (!p->ways || !p->own_ways || n < 0 || n >= (int32_t)p->own_ways->count || n >= TC_AI_MAX_WAYS) return NULL;
+    *cursor = p->way_cursor[n];
+    return &p->ways->ways[p->own_ways->first + (uint32_t)n];
+}
+static int32_t way_point(const tc_ai_perso *p, const tc_way *w, uint32_t k) {
+    return k < w->count ? (int32_t)p->ways->points[w->first + k] : 0;
+}
+
+/* The cursor bytes (the MS_Way node's +0x10 .. +0x13). */
+enum { WAY_AT, WAY_STEP, WAY_FROM, WAY_SAVED };
+
+static void way_reinit(uint8_t *c) { c[WAY_AT] = 0, c[WAY_FROM] = 0xFF, c[WAY_STEP] = 0, c[WAY_SAVED] = 0xFF; } /* AI_0048d540 */
+static void way_reinit_back(const tc_way *w, uint8_t *c) {                                       /* AI_0048d5a0 */
+    c[WAY_AT] = (uint8_t)(w->count ? w->count - 1 : 0), c[WAY_FROM] = 0xFF, c[WAY_STEP] = 0, c[WAY_SAVED] = 0xFF;
+}
+
+/* AI_0048d390, on along the way (straight links only: every link in the retail levels is type 0, whose step test
+ * AI_004923d0 always passes). Returns 0 at the end (the cursor back at the start), else `go_on`. */
+static int way_next(const tc_way *w, uint8_t *c, int go_on) {
+    c[WAY_SAVED] = c[WAY_STEP];
+    if (c[WAY_AT] != 0 && c[WAY_FROM] != 0xFF) {
+        c[WAY_STEP]++;
+        if ((uint32_t)w->count == (uint32_t)c[WAY_AT] + 1) { way_reinit(c); return 0; }
+    }
+    /* AI_0048cd90 */
+    if (c[WAY_FROM] == 0xFF && (uint32_t)c[WAY_AT] + 1 == w->count) c[WAY_AT] = 0;
+    else c[WAY_FROM] = c[WAY_AT], c[WAY_AT]++;
+    if (c[WAY_FROM] != 0xFF && c[WAY_AT] != 0) c[WAY_STEP] = 0;
+    return go_on;
+}
+
+/* AI_0048d460, back along the way. Returns 0 at its start (the cursor then at the end), else `go_on`. */
+static int way_back(const tc_way *w, uint8_t *c, int go_on) {
+    if (c[WAY_AT] == 0 && c[WAY_SAVED] == 0) { way_reinit_back(w, c); return 0; }
+    c[WAY_SAVED] = c[WAY_STEP];
+    /* AI_0048cec0 */
+    if (c[WAY_FROM] == 1 && c[WAY_AT] == 0) c[WAY_FROM] = 0xFF, c[WAY_AT] = (uint8_t)(w->count - 1);
+    else c[WAY_FROM] = c[WAY_AT], c[WAY_AT]--;
+    if (c[WAY_FROM] != 0xFF) c[WAY_STEP] = 0;
+    return go_on;
+}
+
+/* ---- ZDE zones: the hits (COND 18-29, CollectNearby; docs/ENGINE.md "Shooting") ---- */
+
+/* Zone k of q, when active in its playing state (GAM_PersoActiveZones_0041f280). */
+static const tc_zde_zone *zde_zone(const tc_ai_perso *q, int32_t k) {
+    const tc_zde_set *z = q && q->model ? &q->model->zde : NULL;
+    if (!z || k < 0 || k >= (int32_t)z->zone_count || k >= 32 || q->state >= z->state_count) return NULL;
+    return (z->active[q->state] >> k) & 1u ? &z->zones[k] : NULL;
+}
+
+/* Whether the zone holds an element of that type (GAM_0041f060: flags & mask == mask; mask 0: any). */
+static bool zde_has(const tc_ai_perso *q, const tc_zde_zone *zn, uint16_t mask) {
+    uint32_t k;
+    for (k = 0; k < zn->count; k++)
+        if ((q->model->zde.prims[zn->first + k].type & mask) == mask) return true;
+    return false;
+}
+
+static tc_vec3 zde_to_world(const tc_ai_perso *q, tc_vec3 v) {
+    float c = cosf(q->heading), s = sinf(q->heading);
+    return tc_v3_add(q->position, tc_v3(c * v.x - s * v.y, s * v.x + c * v.y, v.z));
+}
+static tc_vec3 zde_to_local(const tc_ai_perso *q, tc_vec3 w) {
+    float c = cosf(q->heading), s = sinf(q->heading);
+    tc_vec3 d = tc_v3_sub(w, q->position);
+    return tc_v3(c * d.x + s * d.y, -s * d.x + c * d.y, d.z);
+}
+
+/* Box b (in qb's axes) against the box a in qa's axes: a's corners taken into qb's axes, their bounds against b. */
+static bool zde_box_in(const tc_ai_perso *qa, const tc_zde_prim *a, const tc_ai_perso *qb, const tc_zde_prim *b) {
+    tc_vec3 lo = tc_v3(INFINITY, INFINITY, INFINITY), hi = tc_v3(-INFINITY, -INFINITY, -INFINITY);
+    int k;
+    for (k = 0; k < 8; k++) {
+        tc_vec3 c = zde_to_local(qb, zde_to_world(qa, tc_v3(k & 1 ? a->b.x : a->a.x, k & 2 ? a->b.y : a->a.y,
+                                                              k & 4 ? a->b.z : a->a.z)));
+        lo = tc_v3_min(lo, c), hi = tc_v3_max(hi, c);
+    }
+    return lo.x <= b->b.x && hi.x >= b->a.x && lo.y <= b->b.y && hi.y >= b->a.y && lo.z <= b->b.z && hi.z >= b->a.z;
+}
+
+/* FUN_004631c0 for two elements (port: spheres exact; a box against a box by their bounds in each other's axes; the
+ * exe's own tests are not read). */
+static bool zde_prims_meet(const tc_ai_perso *qa, const tc_zde_prim *a, const tc_ai_perso *qb, const tc_zde_prim *b) {
+    if (a->kind == 8 && b->kind == 7) { const tc_ai_perso *t = qa; const tc_zde_prim *u = a; qa = qb, a = b, qb = t, b = u; }
+    if (a->kind == 7 && b->kind == 7) {
+        float r = a->b.x + b->b.x;
+        return tc_v3_length_sq(tc_v3_sub(zde_to_world(qa, a->a), zde_to_world(qb, b->a))) <= r * r;
+    }
+    if (a->kind == 7 && b->kind == 8) { /* the sphere's centre into the box's axes, the nearest point of the box */
+        tc_vec3 c = zde_to_local(qb, zde_to_world(qa, a->a)), n = tc_v3_max(b->a, tc_v3_min(b->b, c));
+        return tc_v3_length_sq(tc_v3_sub(c, n)) <= a->b.x * a->b.x;
+    }
+    if (a->kind == 8 && b->kind == 8) return zde_box_in(qa, a, qb, b) && zde_box_in(qb, b, qa, a);
+    return false;
+}
+
+/* Whether zone za of qa meets zone zb of qb (any of their elements; mask_b: only zb's elements of that type). */
+static bool zde_zones_meet(const tc_ai_perso *qa, const tc_zde_zone *za, const tc_ai_perso *qb, const tc_zde_zone *zb) {
+    uint32_t i, k;
+    if (!qa || !qb || qa == qb || !za || !zb) return false;
+    for (i = 0; i < za->count; i++)
+        for (k = 0; k < zb->count; k++)
+            if (zde_prims_meet(qa, &qa->model->zde.prims[za->first + i], qb, &qb->model->zde.prims[zb->first + k]))
+                return true;
+    return false;
+}
+
+/* Whether zone za of qa (NULL: any of its active zones of type mask_a) meets any active zone of qb of type mask_b. */
+static bool zde_meets(const tc_ai_perso *qa, const tc_zde_zone *za, uint16_t mask_a, const tc_ai_perso *qb, uint16_t mask_b) {
+    uint32_t a, b;
+    if (!qa || !qb || qa == qb || !qa->model || !qb->model) return false;
+    for (a = 0; a < qa->model->zde.zone_count; a++) {
+        const tc_zde_zone *x = za ? za : zde_zone(qa, (int32_t)a);
+        if (!x || (!za && !zde_has(qa, x, mask_a))) { if (za) break; continue; }
+        for (b = 0; b < qb->model->zde.zone_count; b++) {
+            const tc_zde_zone *y = zde_zone(qb, (int32_t)b);
+            if (y && zde_has(qb, y, mask_b) && zde_zones_meet(qa, x, qb, y)) return true;
+        }
+        if (za) break;
+    }
+    return false;
+}
+
+/* GAM_CollectNearby_0041fa70 (mode 0): the live persos, but q itself, with an active zone of type mask meeting q's
+ * zone k; up to cap of them into ids (as the scripts name them; q's own id for Me never comes up). */
+static uint32_t zde_collect(tc_ai_perso *q, int32_t k, uint16_t mask, int32_t *ids, uint32_t cap) {
+    const tc_zde_zone *z = zde_zone(q, k);
+    tc_ai_perso *o;
+    uint32_t n = 0, j;
+    if (!z || !q->each) return 0;
+    for (j = 0; n < cap && (o = q->each(q->find_user, j)) != NULL; j++)
+        if (o != q && zde_meets(q, z, 0, o, mask)) ids[n++] = o->self_id;
+    return n;
 }
 
 /* ---- states (GAM_00437260 and friends) ---- */
@@ -1094,10 +1260,43 @@ static bool in_water(const tc_ai_perso *p) {
     return p->zone_combined == 3 && (p->zone[3] == 1 || p->zone[4] == 1);
 }
 
+/* A perso argument as the live perso (Me, another of the cast, the main actor), or NULL. */
+static tc_ai_perso *who_arg(run *r, uint32_t i, int k) {
+    value v = arg(r, i, k);
+    if (v.type != V_PERSO || v.i < 0) return NULL;
+    return v.i == 0 ? r->p : live(r->p, v.i);
+}
+
 static bool condition(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     uint32_t c = N(r, i)->param;
     switch (c) {
+    /* COND_18Etc_00497ef0: the ZDE zones (zone numbers 1-based; the "module" variants, zones on a perso's channels, as its
+     * own: port). 18-21 (A, zone, B, zone); 22 / 23 (A, zone, B, type); 24 (A, type, B, type), 25 (A, B: any), 26 (A, type,
+     * B), 27 (A, B, type); 28 / 29 (A, zone, type): any other perso's zone of that type (AI_00490290) */
+    case 18: case 19: case 20: case 21: {
+        tc_ai_perso *a = who_arg(r, i, 0), *b = who_arg(r, i, 2);
+        return a && b && zde_zones_meet(a, zde_zone(a, as_int(arg(r, i, 1)) - 1), b, zde_zone(b, as_int(arg(r, i, 3)) - 1));
+    }
+    case 22: case 23: {
+        tc_ai_perso *a = who_arg(r, i, 0), *b = who_arg(r, i, 2);
+        const tc_zde_zone *z = a ? zde_zone(a, as_int(arg(r, i, 1)) - 1) : NULL;
+        return z && zde_meets(a, z, 0, b, (uint16_t)as_int(arg(r, i, 3)));
+    }
+    case 24: case 25: case 26: case 27: {
+        tc_ai_perso *a = who_arg(r, i, 0), *b;
+        uint16_t ma = 0, mb = 0;
+        if (c == 24 || c == 26) ma = (uint16_t)as_int(arg(r, i, 1)), b = who_arg(r, i, 2);
+        else b = who_arg(r, i, 1);
+        if (c == 24) mb = (uint16_t)as_int(arg(r, i, 3));
+        if (c == 27) mb = (uint16_t)as_int(arg(r, i, 2));
+        return zde_meets(a, NULL, ma, b, mb);
+    }
+    case 28: case 29: {
+        tc_ai_perso *a = who_arg(r, i, 0);
+        int32_t one;
+        return a && zde_collect(a, as_int(arg(r, i, 1)) - 1, (uint16_t)as_int(arg(r, i, 2)), &one, 1) > 0;
+    }
     case 0: return truthy(arg(r, i, 0)) && truthy(arg(r, i, 1));
     case 1: return truthy(arg(r, i, 0)) || truthy(arg(r, i, 1));
     case 2: return !truthy(arg(r, i, 0));
@@ -1161,6 +1360,7 @@ static bool condition(run *r, uint32_t i) {
                same_name(p->model->strings[s], p->level_name);
     }
     case 65: { value v = arg(r, i, 0); return v.type == V_PERSO ? v.i >= 0 && v.i != (int32_t)TC_AI_NONE : truthy(v); }
+    case 66: return waypoint(r->p, as_int(arg(r, i, 0))) != NULL; /* Cond_IsValidWayPoint (COND_IsValidEtc_00498af0) */
     /* The water zones (docs/NOTES.md "Swimming"): FUN_004976f0 (70) in water: all sample points in it, or mixed with
      * point 3 or 4 in it; 71 the head (point 1) out; 72 point 1 in (or none); 73 FUN_004977f0; 74 no point in water. */
     case 70: return in_water(p);
@@ -1196,9 +1396,32 @@ static bool condition(run *r, uint32_t i) {
 static value function(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     switch (N(r, i)->param) {
-    case 0: case 3: { /* GetPosition: of OP 24's perso (FUNC 0 takes none); PositionOf(perso) */
+    case 0: { /* GetPosition: of OP 24's perso */
         value who = arg(r, i, 0);
         return v_vec(perso_position(p, who.type == V_PERSO ? who.i : r->ctx));
+    }
+    case 3: { /* Func_GetWPAbsolutePosition (FUNC_GetPositionEtc_0049a140 case 3 -> AI_0048dcf0); a perso: its position */
+        value w = arg(r, i, 0);
+        return v_vec(w.type == V_PERSO ? perso_position(p, w.i) : waypoint_position(p, as_int(w)));
+    }
+    case 11: { /* Func_DistanceToWP (AI_00491990): from OP 24's perso's origin */
+        const tc_ai_perso *me = r->ctx ? live(p, r->ctx) : p;
+        int32_t k = as_int(arg(r, i, 0));
+        if (!waypoint(p, k)) return v_float(NAN);
+        return v_float(tc_v3_length(tc_v3_sub((me ? me : p)->position, waypoint_position(p, k))));
+    }
+    case 12: { /* Func_CloserWP(way) (FUNC_12_0049a5f0): the way's waypoint nearest this perso, its last one left out */
+        uint8_t *c;
+        const tc_way *w = own_way(p, as_int(arg(r, i, 0)), &c);
+        int32_t best = 0;
+        float best_d = -1;
+        uint32_t k;
+        for (k = 0; w && k + 1 < w->count; k++) {
+            int32_t q = way_point(p, w, k);
+            float dd = tc_v3_length(tc_v3_sub(waypoint_position(p, q), p->position));
+            if (best_d == -1 || dd < best_d) best_d = dd, best = q;
+        }
+        return v_int(best);
     }
     case 2: { /* horizontal angle (degrees, CCW, 0 = facing) from this perso to another, in this perso's frame */
         value who = arg(r, i, 0);
@@ -1221,6 +1444,16 @@ static value function(run *r, uint32_t i) {
     case 31: return v_float(argf(r, i, 0) * TC_PI / 180);
     case 32: return v_float(argf(r, i, 0) * 180 / TC_PI);
     case 33: return v_float(fabsf(argf(r, i, 0)));
+    case 35: case 36: { /* FUNC_Counter34Etc_0049ad30 0x23 / 0x24: hit points + n up to the maximum (FUN_004cec30), or - n
+                         * down to 0 (FUN_004cecb0), then read; the main actor's are the global table's (here his own) */
+        tc_ai_perso *q = who_arg(r, i, 0);
+        int32_t n = as_int(arg(r, i, 1));
+        if (!q) q = p;
+        q->hit_points += N(r, i)->param == 35 ? n : -n;
+        if (q->hit_points < 0) q->hit_points = 0;
+        if (q->hit_points_max > 0 && q->hit_points > q->hit_points_max) q->hit_points = q->hit_points_max;
+        return v_int(q->hit_points);
+    }
     case 34: case 37: { /* FUNC_Counter34Etc_0049ad30: the hit points (std game +0x14; the main actor's elsewhere) and
                           * their maximum (+0x15) of a perso */
         value who = arg(r, i, 0);
@@ -1272,7 +1505,14 @@ static value function(run *r, uint32_t i) {
         int32_t n = as_int(arg(r, i, 0));
         return v_int(n >= 0 && n < 31 ? g->values[n] : -1);
     }
-    case 95: return v_int(0);  /* GAM_00419440 (not read): as before */
+    /* The inventory (GAM_00419440 / GAM_004193d0: the save values by the object model's slot, perso +0x34 -> u16 +2):
+     * port stub, the user's choice (2026-11-05): the main actor always holds one of everything (Ed's bees: he shoots
+     * as often as his scripts let him), the others nothing, as before. 96 / 97 take one: the object stays. */
+    case 95: return v_int(p->main_actor == 0 ? 1 : 0);
+    case 96: case 97: {
+        value v = arg(r, i, 0);
+        return p->main_actor == 0 ? v : v_int(0);
+    }
     case 164: return v_int(0); /* the control type (0x8C175C): the port runs type 0 (docs/DECOMP.md) */
     case 40: case 41: case 42: { /* FUNC_40Etc_0049aff0: the lives byte; 41 adds one, 42 takes one first */
         tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
@@ -1291,19 +1531,25 @@ static value function(run *r, uint32_t i) {
     case 101: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(global_to_local(q ? q : p, argv3(r, i, 0))); }
     /* FUNC_VecLengthEtc_0049ab10 cases 0x66 / 0x67: a point through the perso's world matrix (FUN_0047b2f0) or its
      * inverse. Ed's underwater reflex R8 leaves the water when FUNC_102((0, 1, -1)) rises 0.55 above the surface. */
-    case 13: return v_float(tc_v3_length(argv3(r, i, 0))); /* used as a length (B82's climb test, B29's aim) */
-    case 162: { /* FUN_0049c690, a probe (not decoded): from a point along a direction, both in the perso's axes, to
-                 * the first surface; the hit point in those axes. Its uses (B82: (0, -1, 0) against 2.25) say the
-                 * ray is not bounded by the direction's length: a miss returns a point far along it. */
-        tc_vec3 o = argv3(r, i, 0), d = argv3(r, i, 1);
+    case 13: { /* FUNC_GetPositionEtc_0049a140 case 0xd: the squared distance from OP 24's perso's origin to the point (Ed's
+                * B29 fires when FUNC 162's wall is further than 10 of it, B82 climbs within 2.25: 3.2 and 1.5 units) */
+        const tc_ai_perso *me = r->ctx ? live(p, r->ctx) : p;
+        return v_float(tc_v3_length_sq(tc_v3_sub((me ? me : p)->position, argv3(r, i, 0))));
+    }
+    case 162: { /* FUNC_162_0049c690: from OP 24's perso's origin + the offset (world axes: added as it is) along the
+                 * direction (in its axes, FUN_0047b3d0) to the nearest surface of its sector's lists (FUN_00484130):
+                 * the hit point, in world axes; none: (FLT_MAX, ..). Port: the static world's raycast, up to 1000 (the
+                 * exe's reach is not read: its uses compare FUNC 13 of it, a squared distance, with 2.25 and 10). */
+        const tc_ai_perso *me = r->ctx ? live(p, r->ctx) : p;
+        tc_vec3 o = argv3(r, i, 0), d = argv3(r, i, 1), from;
         float l = tc_v3_length(d), reach = 1000;
         tc_hit hit;
-        if (!(l > 0)) return v_vec(o);
-        d = tc_v3_div(d, l);
-        if (p->world && tc_collision_raycast(p->world, tc_v3_add(p->position, local_to_global(p, o)),
-                                             local_to_global(p, d), reach, &hit))
-            reach = hit.distance;
-        return v_vec(tc_v3_add(o, tc_v3_scale(d, reach)));
+        if (!me) me = p;
+        from = tc_v3_add(me->position, o);
+        if (!(l > 0)) return v_vec(from);
+        d = local_to_global(me, tc_v3_div(d, l));
+        if (me->world && tc_collision_raycast(me->world, from, d, reach, &hit)) reach = hit.distance;
+        return v_vec(tc_v3_add(from, tc_v3_scale(d, reach)));
     }
     case 102: case 103: if (r->ctx != 0) { /* OP 24's perso (Ed's dsg57, the thing he carries): its own frame */
         const tc_ai_perso *q = live(p, r->ctx);
@@ -1422,6 +1668,26 @@ static void set_mech_mode(tc_ai_perso *p, int mode) {
     if (p->motion.mode_count < 8) p->motion.modes[p->motion.mode_count++] = (int8_t)mode; /* full: dropped, as FUN_0047a370 */
 }
 
+/* The perso list in dsgvar k (its count also into byte 0, which ListEmpty reads), made on first use. */
+static tc_ai_list *perso_list(tc_ai_perso *p, uint32_t k) {
+    uint32_t j;
+    for (j = 0; j < TC_AI_MAX_LISTS; j++)
+        if (p->lists[j].dsg == k + 1) return &p->lists[j];
+    for (j = 0; j < TC_AI_MAX_LISTS; j++)
+        if (p->lists[j].dsg == 0) { p->lists[j].dsg = k + 1; p->lists[j].count = 0; return &p->lists[j]; }
+    return NULL;
+}
+static void list_store(tc_ai_perso *p, uint32_t k, tc_ai_list *l) {
+    const tc_ai_dsg_def *def = &p->model->dsg;
+    if (k < def->count && def->vars[k].offset < def->size) p->dsg[def->vars[k].offset] = l->count;
+}
+/* The dsgvar a list argument names (a DSGVAR node of this perso), or -1. */
+static int32_t list_arg(run *r, uint32_t i, int k) {
+    uint32_t c = child(r, i, k);
+    if (c == TC_AI_NONE || (N(r, c)->type != TC_AI_DSGVAR && N(r, c)->type != TC_AI_DSGVAR_REF)) return -1;
+    return (int32_t)N(r, c)->param;
+}
+
 static uint32_t procedure(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     float *pr = p->motion.proposal;
@@ -1499,6 +1765,46 @@ static uint32_t procedure(run *r, uint32_t i) {
         set_mech_mode(p, mech[c - 51]);
         return 0;
     case 58: case 254: pr[0] = argf(r, i, 0); set_mech_mode(p, 10); return 0;
+    case 84: case 85: { /* Proc_ListAffectWithPersoTypeZDE(list, zone, type) (GAM_CollectNearby_0041fa70): the persos whose
+                         * zone of that type meets this one's (85, a module's zone: as the perso's own, port) */
+        int32_t k = list_arg(r, i, 0);
+        tc_ai_list *l = k >= 0 ? perso_list(p, (uint32_t)k) : NULL;
+        if (!l) return 0;
+        l->count = (uint8_t)zde_collect(p, as_int(arg(r, i, 1)) - 1, (uint16_t)as_int(arg(r, i, 2)), l->ids, TC_AI_LIST_CAP);
+        list_store(p, (uint32_t)k, l);
+        return 0;
+    }
+    case 86: return 0; /* Proc_ListAffectTypeZDEWithTypeZDE: not ported */
+    case 94: { /* Proc_ListSortByFamily(list, family) (AI_0048fe40): only that family's persos stay */
+        int32_t k = list_arg(r, i, 0), fam = as_int(arg(r, i, 1));
+        tc_ai_list *l = k >= 0 ? perso_list(p, (uint32_t)k) : NULL;
+        uint8_t n = 0, j;
+        if (!l) return 0;
+        for (j = 0; j < l->count; j++) {
+            const tc_ai_perso *q = live(p, l->ids[j]);
+            if (q && q->family_type == (uint16_t)fam) l->ids[n++] = l->ids[j];
+        }
+        l->count = n;
+        list_store(p, (uint32_t)k, l);
+        return 0;
+    }
+    case 251: case 252: case 253: { /* Proc_ReInitWay / ReInitWayBack / InitWayWithWp(way, waypoint) (PROC_251Etc_0048c0b0) */
+        uint8_t *cur;
+        const tc_way *w = own_way(p, as_int(arg(r, i, 0)), &cur);
+        uint32_t k;
+        if (!w) return 0;
+        if (c == 251) way_reinit(cur);
+        else if (c == 252) way_reinit_back(w, cur);
+        else { /* AI_0048d620 at the first match among all but the last waypoint */
+            int32_t q = as_int(arg(r, i, 1));
+            for (k = 0; k + 1 < w->count; k++)
+                if (way_point(p, w, k) == q) {
+                    cur[WAY_FROM] = cur[WAY_SAVED] = 0xFF, cur[WAY_AT] = (uint8_t)k, cur[WAY_STEP] = 0;
+                    break;
+                }
+        }
+        return 0;
+    }
     case 66: case 68: case 69: { /* PROC_SetCounter66Etc_00489590: 66 hit points := n (FUN_004cebf0), 68 := the maximum
                                   * (FUN_004cec10), 69 += n up to the maximum (FUN_004cec30) */
         tc_ai_perso *q = target(r, arg(r, i, 0));
@@ -1691,11 +1997,43 @@ static uint32_t procedure(run *r, uint32_t i) {
     }
     case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */
     case 25: case 26: case 32: case 33: case 70: case 71: case 80:
-    case 84: case 85: case 86: case 105: case 106: case 107: case 108:
+    case 105: case 106: case 107: case 108:
     case 154: case 155: case 236: case 278: case 279: case 291: case 292:
         return 0; /* world, sound, text, camera and channel effects: no-ops for now */
     default: unknown(r, i); return 0;
     }
+}
+
+/* FUN_0049f580 (by FUN_0049f4e0): towards a point, there within `radius` (FUN_0049f530). This frame's mode 12 requests
+ * go (FUN_0047a4a0); unless there, the unit direction goes into the proposal [7..9] and mode 0x14 is asked for (the
+ * speed [10] stays the script's: SetSpeed, SetMoveDirection). Returns F_META_DONE there, else F_STOP. */
+static uint32_t go_to(tc_ai_perso *p, tc_vec3 target, float radius) {
+    tc_vec3 d = tc_v3_sub(target, p->position);
+    float l = tc_v3_length(d);
+    uint8_t k, n = 0;
+    for (k = 0; k < p->motion.mode_count; k++)
+        if (p->motion.modes[k] != 12) p->motion.modes[n++] = p->motion.modes[k];
+    p->motion.mode_count = n;
+    if (l <= radius) return F_META_DONE;
+    if (d.x != 0 || d.y != 0 || d.z != 0) d = tc_v3_scale(d, 1 / l);
+    p->motion.proposal[7] = d.x, p->motion.proposal[8] = d.y, p->motion.proposal[9] = d.z;
+    p->motion.direction_set = true;
+    set_mech_mode(p, 20);
+    return F_STOP;
+}
+
+/* META 22 .. 26 (FUN_0049fd40(perso, go_on, back)): towards the way's current waypoint; there, on to the next one
+ * (back: the one before). GoOverWay (22) and GoOverWayBack (24) go on until the way's end, GoToNextWPOfWay (25) and
+ * its back twin (26) stop at the next waypoint. The target is the waypoint itself (AI_0048d060: a straight link's point
+ * is its end waypoint; port: in its father's live axes too, where the exe's link holds a copy). */
+static uint32_t go_over_way(tc_ai_perso *p, int32_t n, int go_on, int back) {
+    uint8_t *c;
+    const tc_way *w = own_way(p, n, &c);
+    const tc_waypoint *wp;
+    int32_t k;
+    if (!w || c[WAY_AT] >= w->count || !(wp = waypoint(p, k = way_point(p, w, c[WAY_AT])))) return F_META_DONE;
+    if (go_to(p, waypoint_position(p, k), wp->radius) == F_STOP) return F_STOP;
+    return (back ? way_back(w, c, go_on) : way_next(w, c, go_on)) ? F_STOP : F_META_DONE;
 }
 
 /* Meta-actions: start once, then a continuation every frame until done (AI_0048e7d0). */
@@ -1724,12 +2062,35 @@ static uint32_t meta_action(run *r, uint32_t i) {
             slot->a = 1;
             break;
         }
-        case 11: case 21: case 40: slot->a = 0; break; /* not modelled: finish at once */
+        case 21: slot->a = as_int(arg(r, i, 0)); break; /* Action_GoToWP(waypoint): META_2Etc_0048f4c0 keeps it */
+        case 22: case 23: case 24: case 25: case 26: /* the way (FUN_0049fca0: a float is made an int) */
+            slot->a = as_int(arg(r, i, 0));
+            break;
+        case 11: { /* Action_ExecuteActionAndGenerateObject(perso, state, vector) (META_SpawnInState_0049f190): when this
+                    * perso may go to the state (GAM_00437600), an instance of the perso's model at this one's place
+                    * (GAM_Always_004259a0; the host's spawn), this perso into the state, the instance's ProposalVecA :=
+                    * the vector; then as ChangeStateAndWait (continuation 0x49ef70) */
+            value who = arg(r, i, 0);
+            uint32_t s = arg_param(r, i, 1);
+            tc_vec3 v = argv3(r, i, 2);
+            tc_ai_perso *o = NULL;
+            slot->a = 0;
+            slot->b = (int32_t)s;
+            if (s < p->model->state_count && can_change_state(p, s) && who.type == V_PERSO && who.i > 0 && p->spawn)
+                o = p->spawn(p->find_user, who.i, p, v);
+            if (o && change_state(p, s)) {
+                float *op = o->motion.proposal;
+                op[1] = v.x, op[2] = v.y, op[3] = v.z, op[0] = tc_v3_length(v); /* AI_00488070 */
+                slot->a = 1;
+            }
+            break;
+        }
+        case 40: slot->a = 0; break; /* not modelled: finish at once */
         default: unknown(r, i); slot->a = 0; break;
         }
     }
     switch (m) {
-    case 4:
+    case 4: case 11:
         if (slot->a && p->wanted_state == (uint32_t)slot->b && !p->state_ended) return F_STOP;
         break;
     case 29: /* FUN_004a0b30: running until the clock passes start + ms (the ski props' sleep, the spring's jump) */
@@ -1770,6 +2131,17 @@ static uint32_t meta_action(run *r, uint32_t i) {
         if (!slot->a) slot->a = change_state(p, arg_param(r, i, 2));
         return F_STOP;
     }
+    case 21: { /* FUN_0049fc50: towards the waypoint, there within its radius */
+        const tc_waypoint *wp = waypoint(p, slot->a);
+        if (wp && go_to(p, waypoint_position(p, slot->a), wp->radius) == F_STOP) return F_STOP;
+        break;
+    }
+    case 22: case 23: /* 23 (GoOverWay3D, FUN_0049fe90: not read, unused in the retail levels) as 22 */
+        if (go_over_way(p, slot->a, 1, 0) == F_STOP) return F_STOP;
+        break;
+    case 24: if (go_over_way(p, slot->a, 1, 1) == F_STOP) return F_STOP; break;
+    case 25: if (go_over_way(p, slot->a, 0, 0) == F_STOP) return F_STOP; break;
+    case 26: if (go_over_way(p, slot->a, 0, 1) == F_STOP) return F_STOP; break;
     case 19: { /* TurnTowardOverFrames(perso, frames): face it (at once; the frame count is not modelled) */
         value who = arg(r, i, 0);
         tc_vec3 pos;
@@ -1935,6 +2307,7 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
         p->state_changes = 0;
     }
     p->motion.mech_mode = -1;
+    for (i = 0; i < TC_AI_MAX_WAYS; i++) way_reinit(p->way_cursor[i]);
     return TC_OK;
 }
 

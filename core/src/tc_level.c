@@ -111,6 +111,12 @@ void tc_level_free(tc_level *level) {
         tc_free(f->states);
         tc_free(f->anims);
         tc_free(f->cards);
+        tc_zde_set_free(&f->zde);
+        tc_free(f->root);
+        tc_free(f->root_first);
+        tc_free(f->root_rows);
+        tc_free(f->body);
+        tc_free(f->bodies);
     }
     tc_free(level->cast.families);
     tc_free(level->cast.cards);
@@ -130,6 +136,10 @@ void tc_level_free(tc_level *level) {
     tc_free(level->pcol.persos);
     tc_free(level->pcol.prims);
     tc_free(level->lights);
+    tc_free(level->ways.waypoints);
+    tc_free(level->ways.persos);
+    tc_free(level->ways.ways);
+    tc_free(level->ways.points);
     memset(level, 0, sizeof *level);
 }
 
@@ -310,6 +320,7 @@ static void read_cast(tc_cast_data *c, reader *r) {
     for (i = 0; i < c->count && !r->error; i++) {
         tc_cast_entry *e = &c->entries[i];
         uint32_t size;
+        e->family_type = 0xFFFF; /* CMEC's, when there */
         e->id = rd_u16(r);
         e->prso = rd_u16(r);
         e->family = rd_u16(r);
@@ -354,6 +365,52 @@ static void read_cast(tc_cast_data *c, reader *r) {
     }
 }
 
+void tc_zde_set_read(tc_zde_set *z, reader *r) {
+    uint32_t i, k, n = 0;
+    size_t start;
+    memset(z, 0, sizeof(*z));
+    z->zone_count = rd_u16(r);
+    z->state_count = rd_u16(r);
+    z->zones = (tc_zde_zone *)rd_array(r, z->zone_count, sizeof(tc_zde_zone), 4);
+    if (!z->zones) z->zone_count = 0;
+    start = r->offset; /* first pass: count the primitives */
+    for (i = 0; i < z->zone_count && !r->error; i++) {
+        uint16_t c = rd_u16(r);
+        (void)rd_u16(r);
+        if (!have(r, (size_t)c * 32)) { r->error = TC_ERR_TRUNCATED; return; }
+        r->offset += (size_t)c * 32;
+        n += c;
+    }
+    r->offset = start;
+    z->prims = (tc_zde_prim *)tc_calloc(n ? n : 1, sizeof(tc_zde_prim));
+    if (!z->prims) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
+    for (i = 0; i < z->zone_count && !r->error; i++) {
+        uint16_t c = rd_u16(r);
+        (void)rd_u16(r);
+        z->zones[i].first = z->prim_count;
+        z->zones[i].count = c;
+        for (k = 0; k < c; k++) {
+            tc_zde_prim *p = &z->prims[z->prim_count++];
+            p->kind = (uint8_t)rd_u32(r);
+            p->a.x = rd_f32(r), p->a.y = rd_f32(r), p->a.z = rd_f32(r);
+            p->b.x = rd_f32(r), p->b.y = rd_f32(r), p->b.z = rd_f32(r);
+            p->type = rd_u16(r);
+            (void)rd_u16(r);
+        }
+    }
+    z->active = (uint32_t *)rd_array(r, z->state_count, 4, 4);
+    if (!z->active) z->state_count = 0;
+    for (i = 0; i < z->state_count; i++) z->active[i] = rd_u32(r);
+}
+
+void tc_zde_set_free(tc_zde_set *z) {
+    if (!z) return;
+    tc_free(z->zones);
+    tc_free(z->prims);
+    tc_free(z->active);
+    memset(z, 0, sizeof(*z));
+}
+
 /* .ttlv CMEC (tools/ttre/cast.py mech_chunk): after CAST. */
 static void read_cmec(tc_cast_data *c, reader *r) {
     uint32_t i, k, n_fam;
@@ -389,14 +446,131 @@ static void read_cmec(tc_cast_data *c, reader *r) {
         for (i = 0; i < n && !r->error; i++) {
             float rad = rd_f32(r);
             uint8_t prio = rd_u8(r), meets = rd_u8(r);
-            (void)rd_u16(r);
+            uint16_t ftype = rd_u16(r); /* older files: 0 there */
             if (i < c->count) {
                 c->entries[i].own_radius = rad;
                 c->entries[i].own_priority = prio;
                 c->entries[i].own_meets = meets;
+                c->entries[i].family_type = ftype;
             }
         }
     }
+    if (r->offset < r->size) { /* the walkers: root motion and ZDM bodies per family (tools/ttre/cast.py walk_block) */
+        uint16_t n = rd_u16(r);
+        (void)rd_u16(r);
+        for (i = 0; i < n && !r->error; i++) {
+            tc_cast_family scratch, *f = i < c->family_count ? &c->families[i] : &scratch;
+            uint32_t rows = rd_u32(r), j;
+            memset(&scratch, 0, sizeof(scratch));
+            if (f == &scratch) return; /* more families than CAST's: a mismatch, stop */
+            f->root = (tc_vec3 *)rd_array(r, rows, sizeof(tc_vec3), 12);
+            if (rows && !f->root) return;
+            f->root_count = rows;
+            for (j = 0; j < rows; j++) {
+                f->root[j].x = rd_f32(r);
+                f->root[j].y = rd_f32(r);
+                f->root[j].z = rd_f32(r);
+            }
+            f->root_first = (uint32_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint32_t));
+            f->root_rows = (uint16_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint16_t));
+            f->body = (uint16_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint16_t));
+            if (!f->root_first || !f->root_rows || !f->body) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
+            for (j = 0; j < f->state_count; j++) {
+                f->root_first[j] = rd_u32(r);
+                f->root_rows[j] = rd_u16(r);
+                f->body[j] = rd_u16(r);
+                if ((uint64_t)f->root_first[j] + f->root_rows[j] > rows) f->root_rows[j] = 0;
+            }
+            f->body_count = rd_u16(r);
+            (void)rd_u16(r);
+            f->bodies = (tc_ai_sphere_set *)rd_array(r, f->body_count, sizeof(tc_ai_sphere_set), 4);
+            if (!f->bodies) f->body_count = 0;
+            for (j = 0; j < f->body_count && !r->error; j++) {
+                tc_ai_sphere_set *b = &f->bodies[j];
+                uint16_t m = rd_u16(r), q;
+                (void)rd_u16(r);
+                for (q = 0; q < m; q++) {
+                    tc_ai_sphere sp;
+                    memset(&sp, 0, sizeof(sp));
+                    sp.center.x = rd_f32(r);
+                    sp.center.y = rd_f32(r);
+                    sp.center.z = rd_f32(r);
+                    sp.radius = rd_f32(r);
+                    sp.flags = rd_u16(r);
+                    sp.point = rd_u16(r) == 5;
+                    sp.rebound = rd_f32(r);
+                    sp.grip = rd_f32(r);
+                    if (b->count < TC_AI_MAX_SPHERES) b->spheres[b->count++] = sp;
+                }
+            }
+            for (j = 0; j < f->state_count; j++)
+                if (f->body[j] != 0xFFFF && f->body[j] >= f->body_count) f->body[j] = 0xFFFF;
+        }
+    }
+    if (r->offset < r->size) { /* the ZDE zones per family (ai.py zde_block) */
+        uint16_t n = rd_u16(r);
+        (void)rd_u16(r);
+        for (i = 0; i < n && !r->error; i++) {
+            tc_zde_set z;
+            tc_zde_set_read(&z, r);
+            if (i < c->family_count && z.state_count == c->families[i].state_count) c->families[i].zde = z;
+            else tc_zde_set_free(&z);
+        }
+    }
+}
+
+/* .ttlv WAYS (tools/ttre/ai.py ways_chunk). */
+static void read_ways(tc_ways *w, reader *r) {
+    uint32_t i, k, nw, np;
+    nw = rd_u16(r);
+    np = rd_u16(r);
+    w->waypoints = (tc_waypoint *)rd_array(r, nw, sizeof(tc_waypoint), 20);
+    if (w->waypoints) w->waypoint_count = (uint16_t)nw;
+    for (i = 0; i < w->waypoint_count && !r->error; i++) {
+        tc_waypoint *p = &w->waypoints[i];
+        p->position.x = rd_f32(r);
+        p->position.y = rd_f32(r);
+        p->position.z = rd_f32(r);
+        p->radius = rd_f32(r);
+        p->father = rd_u16(r);
+        (void)rd_u16(r);
+    }
+    w->persos = (tc_perso_ways *)rd_array(r, np, sizeof(tc_perso_ways), 4);
+    if (!w->persos) return;
+    w->perso_count = (uint16_t)np;
+    { /* every way and every point takes 2 bytes at least: the rest of the chunk bounds both */
+        size_t left = r->size > r->offset ? (r->size - r->offset) / 2 + 1 : 1;
+        w->ways = (tc_way *)tc_calloc(left, sizeof(tc_way));
+        w->points = (uint16_t *)tc_calloc(left, sizeof(uint16_t));
+        if (!w->ways || !w->points) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
+    }
+    for (i = 0; i < np && !r->error; i++) {
+        tc_perso_ways *p = &w->persos[i];
+        size_t start = r->offset;
+        p->perso = rd_u16(r);
+        p->count = rd_u16(r);
+        p->first = w->way_count;
+        for (k = 0; k < p->count && !r->error; k++) {
+            uint16_t n = rd_u16(r), j;
+            if (!have(r, (size_t)n * 2)) { r->error = TC_ERR_TRUNCATED; return; }
+            w->ways[w->way_count].first = w->point_count;
+            w->ways[w->way_count].count = n;
+            for (j = 0; j < n; j++) {
+                uint16_t q = rd_u16(r);
+                w->points[w->point_count++] = q <= w->waypoint_count ? q : 0;
+            }
+            w->way_count++;
+        }
+        if ((r->offset - start) % 4) r->offset += 4 - (r->offset - start) % 4;
+        if (r->offset > r->size) r->error = TC_ERR_TRUNCATED;
+    }
+}
+
+const tc_perso_ways *tc_ways_of(const tc_ways *w, int32_t perso) {
+    uint16_t i;
+    for (i = 0; w && i < w->perso_count; i++)
+        if ((int32_t)w->persos[i].perso == perso) return &w->persos[i];
+    return NULL;
 }
 
 /* .ttlv PCOL (tools/ttre/ttlv.py perso_collision). */
@@ -659,6 +833,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 
     if (chunk_need(&cs, "PCOL", r)) { /* optional: older files have the persos' collision in COLL */
         read_pcol(&level->pcol, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "WAYS", r)) { /* optional: the waypoints and ways (absent: the way primitives do nothing) */
+        read_ways(&level->ways, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 

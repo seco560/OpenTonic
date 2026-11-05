@@ -13,6 +13,64 @@ static tc_ai_perso *cast_find(void *user, int32_t id) {
     return &c->actors[c->by_id[id]].ai;
 }
 
+/* The live persos one by one (the ZDE conditions): the active actors (not frozen), then the main actor. */
+static tc_ai_perso *cast_each(void *user, uint32_t k) {
+    tc_cast *c = (tc_cast *)user;
+    uint32_t i;
+    for (i = 0; i < c->count; i++) {
+        tc_ai_perso *p = &c->actors[i].ai;
+        if (!p->model || !p->active || p->frozen) continue;
+        if (k-- == 0) return p;
+    }
+    return k == 0 ? c->main : NULL;
+}
+
+static tc_vec3 rotate_z(float heading, tc_vec3 v) {
+    float co = cosf(heading), si = sinf(heading);
+    return tc_v3(co * v.x - si * v.y, si * v.x + co * v.y, v.z);
+}
+
+static tc_result start_actor(tc_cast *c, tc_cast_actor *a);
+
+/* Port: where the main actor's shots start, in his axes (front = -Y): at his mouth, below his head sphere (1.95 up). */
+#define TC_CAST_SHOT_HEIGHT 1.7f
+#define TC_CAST_SHOT_FRONT -0.5f
+
+/* META 11's instancing (GAM_Always_004259a0): the template's actor (TC_CAST_SPAWN). While its last instance is still out,
+ * that one again, where it is (the generator's +0x30 object: META_SpawnInState_0049f190 reuses it); else it starts
+ * afresh at the generator's place and heading, in its sector. Port: one instance per template, and the launch vector
+ * becomes its velocity too (its scripts read Velocity at once: the bee's B2 aims its wall probe along it; how the exe
+ * makes it so, GAM_Always, is not read). */
+static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc_vec3 launch) {
+    tc_cast *c = (tc_cast *)user;
+    tc_cast_actor *a;
+    int32_t k;
+    if (id <= 0 || (uint32_t)id >= c->id_count || (k = c->by_id[id]) < 0 || (uint32_t)k >= c->count) return NULL;
+    a = &c->actors[k];
+    if (!(a->entry->flags & TC_CAST_SPAWN) || !a->ai.model) return NULL;
+    if (a->ai.active && !a->ai.frozen) return &a->ai;
+    tc_ai_free(&a->ai);
+    if (start_actor(c, a) != TC_OK) { memset(&a->ai, 0, sizeof(a->ai)); return NULL; }
+    a->ai.active = true;
+    a->ai.position = by->position;
+    if (by == c->main) /* port: from his mouth (the exe's instance starts at his matrix, his feet; offset not found) */
+        a->ai.position = tc_v3_add(by->position, rotate_z(by->heading, tc_v3(0, TC_CAST_SHOT_FRONT, TC_CAST_SHOT_HEIGHT)));
+    a->ai.heading = by->heading;
+    a->position_prev = a->ai.position;
+    a->rot_prev = tc_v3(0, 0, by->heading);
+    a->dyn.velocity = rotate_z(by->heading, launch);
+    a->ai.velocity = a->dyn.velocity;
+    a->sector.sector = c->main_sector;
+    a->sector.position = a->ai.position;
+    if (by != c->main) { /* another generator: its sector */
+        uint32_t i;
+        for (i = 0; i < c->count; i++)
+            if (&c->actors[i].ai == by) { a->sector.sector = c->actors[i].sector.sector; break; }
+    }
+    c->spawned++;
+    return &a->ai;
+}
+
 /* A family's states as tc_ai states (no mechanics, no root motion, no bodies: the cast does not move). */
 static bool family_states(tc_cast *c, uint32_t k) {
     const tc_cast_family *f = &c->level->cast.families[k];
@@ -34,6 +92,11 @@ static bool family_states(tc_cast *c, uint32_t k) {
         d->repeats = s->repeats;
         d->anim = s->anim;
         d->card = d->spheres = d->water_points = TC_AI_NONE16;
+        if (f->body) { /* CMEC's walker part: the family's ZDM bodies and root motion (the actors' models borrow them) */
+            d->spheres = f->body[i];
+            d->root_first = f->root_first[i];
+            d->root_count = f->root_rows[i];
+        }
         d->sound_first = n;
         d->sound_count = s->sound_count;
         for (j = 0; j < s->sound_count; j++, n++) {
@@ -58,8 +121,13 @@ static bool family_states(tc_cast *c, uint32_t k) {
 }
 
 static void detach(tc_ai_model *m) { /* the borrowed family arrays, before tc_ai_model_free */
+    memset(&m->zde, 0, sizeof(m->zde));
     m->states = NULL;
     m->state_count = 0;
+    m->root = NULL;
+    m->root_count = 0;
+    m->sphere_sets = NULL;
+    m->sphere_set_count = 0;
     m->sounds = NULL;
     m->sound_count = 0;
 }
@@ -77,12 +145,17 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->globals = &c->globals;
     p->level_name = c->main ? c->main->level_name : NULL; /* LevelIs (COND 62): the level, as for the main actor */
     p->world_id = c->level->cast.world;
-    p->active = e->active != 0;
+    p->ways = c->level->ways.waypoint_count ? &c->level->ways : NULL;
+    p->own_ways = tc_ways_of(&c->level->ways, e->id);
+    p->each = cast_each;
+    p->spawn = cast_spawn;
+    p->family_type = e->family_type;
+    p->active = e->active != 0 && !(e->flags & TC_CAST_SPAWN); /* a template: out until instanced (cast_spawn) */
     p->dead = e->dead != 0;
     p->reinit = e->reinit != 0;
     p->keep_off_main = !(e->flags & TC_CAST_MAY_FORCE_MAIN);
     p->zones_of = e;
-    p->removal_guard = !(e->flags & TC_CAST_SCENE); /* a scene's actors take themselves out wherever Ed is */
+    p->removal_guard = !(e->flags & (TC_CAST_SCENE | TC_CAST_SPAWN)); /* a scene's actors, the spawned: wherever Ed is */
     p->run_mechanics = e->mechanics;
     p->run_animation = e->animation;
     p->radius2 = e->radius2;
@@ -114,6 +187,10 @@ static void link_main(tc_cast *c, tc_ai_perso *main) {
     main->self_id = c->main_id;
     main->globals = &c->globals;
     main->world_id = l->cast.world;
+    main->ways = l->ways.waypoint_count ? &l->ways : NULL;
+    main->own_ways = tc_ways_of(&l->ways, c->main_id);
+    main->each = cast_each;
+    main->spawn = cast_spawn;
     if (l->cast.main_zones.zone_count) {
         main->zones_of = &l->cast.main_zones;
         main->zones_follow = true;
@@ -138,6 +215,10 @@ void tc_cast_detach_main(tc_cast *c) {
         c->main->find = NULL;
         c->main->find_user = NULL;
         c->main->globals = NULL;
+        c->main->ways = NULL;
+        c->main->own_ways = NULL;
+        c->main->each = NULL;
+        c->main->spawn = NULL;
         c->main->zones_of = NULL;
         c->main->zones_follow = false;
     }
@@ -211,6 +292,11 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
             continue;
         }
         a->model.states = c->states[e->family];
+        a->model.root = c->level->cast.families[e->family].root;
+        a->model.root_count = c->level->cast.families[e->family].root_count;
+        a->model.sphere_sets = c->level->cast.families[e->family].bodies;
+        a->model.zde = c->level->cast.families[e->family].zde;
+        a->model.sphere_set_count = c->level->cast.families[e->family].body_count;
         a->model.state_count = f->state_count;
         a->model.initial_state = e->initial_state < f->state_count ? e->initial_state : 0;
         a->model.sounds = c->sounds[e->family];
@@ -299,6 +385,10 @@ void tc_cast_free(tc_cast *c) {
         c->main->find = NULL;
         c->main->find_user = NULL;
         c->main->globals = NULL;
+        c->main->ways = NULL;
+        c->main->own_ways = NULL;
+        c->main->each = NULL;
+        c->main->spawn = NULL;
         c->main->zones_of = NULL;
         c->main->zones_follow = false;
     }
@@ -340,6 +430,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         p->main_distance2 = d2;
         p->time_ms = c->main ? c->main->time_ms : p->time_ms + (uint32_t)(dt * 1000 + 0.5f);
         if (d2 <= TC_CAST_NEAR * TC_CAST_NEAR) p->near_main_ms = p->time_ms ? p->time_ms : 1;
+        p->world = c->world; /* FUNC 162's probe: the static world */
         think = (p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
         animate = p->run_mechanics || p->run_animation;
         was_active = p->active && !p->frozen;
@@ -418,6 +509,7 @@ static void step_pass(tc_cast *c, bool first, float dt, const tc_sectors *s, uin
  * the list's order, then the tree's). tc_viewer steps the main actor between the two (tc_cast_step_first, his step,
  * tc_cast_step_rest), so what he stands on has moved first; tc_cast_step runs both passes. */
 void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
+    c->main_sector = main_sector;
     begin_step(c);
     step_pass(c, true, dt, s, main_sector);
 }

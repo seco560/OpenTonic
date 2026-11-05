@@ -141,11 +141,49 @@ typedef struct tc_cast_anim {
 /* A mechanics ID card (MEC hidcard): type 0-12 picks the engine's handler pair; words = the card after its type
  * word, raw (mostly f32; see docs/NOTES.md "Ed's mechanics ID cards" and "MEC physics"). */
 typedef struct tc_ai_card { uint32_t type; uint32_t word_count; uint32_t words[19]; } tc_ai_card;
+/* A state's mechanics collision body (the collide set's ZDM zones active in it): spheres in the perso's axes. */
+#define TC_AI_MAX_SPHERES 12
+/* One part of the mechanics body: a sphere, or a point (point = 1, radius 0: collide element type 5, e.g. Ed's hand
+ * point 1.3 ahead and 2.0 up that catches ledges). flags: its collide material identifier (GameMaterial +0xC -> u16
+ * +2; a point's from its vertex's material; ZDMF chunk): 0x10 = no collision, 8 = floors only (a separate sweep),
+ * 1 = may step up (zone type 1). The material conditions (GroundMaterialIs ...) test the flags of the part that made
+ * the contact. See tc_mec_sweep. */
+typedef struct tc_ai_sphere {
+    tc_vec3 center;
+    float radius;
+    uint16_t flags;
+    uint8_t point;
+    float rebound, grip; /* its own mechanics material ([1], [2]; none: 1, 1), times the obstacle's in the responses */
+} tc_ai_sphere;
+typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX_SPHERES]; } tc_ai_sphere_set;
+/* A perso's ZDE zones (the hit zones: COND 18-29, CollectNearby; tools/ttre/ai.py zde_block): spheres (kind 7: a centre,
+ * b.x radius) and boxes (8: a min, b max) in its axes, each with its type (the collide material flags the conditions
+ * mask), and per state which zones are active (bit k: zone k, the scripts' zone k + 1). */
+typedef struct tc_zde_prim { uint8_t kind; uint16_t type; tc_vec3 a, b; } tc_zde_prim;
+typedef struct tc_zde_zone { uint32_t first; uint16_t count; } tc_zde_zone;       /* prims[first .. first + count) */
+typedef struct tc_zde_set {
+    uint16_t zone_count, state_count;
+    tc_zde_zone *zones;
+    uint32_t prim_count;
+    tc_zde_prim *prims;
+    uint32_t *active;            /* per state */
+} tc_zde_set;
+void tc_zde_set_free(tc_zde_set *z);
+
 typedef struct tc_cast_family {
     uint16_t state_count, anim_count;
     tc_cast_state *states;
     tc_cast_anim *anims;
     uint16_t *cards;             /* .ttlv CMEC: per state, its ID card (tc_cast_data.cards), 0xFFFF none; NULL: none */
+    /* CMEC's walker part (tools/ttre/cast.py walk_block, as a .ttai BODY + ZDMF): root motion rows (units per animation
+     * frame in its axes), per state its rows and its ZDM body (0xFFFF none); NULL: none. */
+    uint32_t root_count;
+    tc_vec3 *root;
+    uint32_t *root_first;
+    uint16_t *root_rows, *body;
+    uint16_t body_count;
+    tc_ai_sphere_set *bodies;
+    tc_zde_set zde;              /* CMEC's ZDE part (none: no zones) */
 } tc_cast_family;
 /* A ZDD zone of a cast perso (COND 13): spheres (kind 7: a centre, b.x radius) and boxes (8: a min, b max) in its axes. */
 #define TC_CAST_ZONE_PRIMS 8
@@ -170,6 +208,7 @@ typedef struct tc_cast_entry {
      * +0x30 / 2; 0 none) and the set's priority (+0x34) and +0x35 (it meets persos) */
     float own_radius;
     uint8_t own_priority, own_meets;
+    uint16_t family_type;        /* CMEC: its family's index (std game +0; what T22 nodes hold), 0xFFFF unknown */
 } tc_cast_entry;
 #define TC_CAST_MAY_FORCE_MAIN 1u /* its PROC 237 / 238 may set the main actor's behaviours (tools/ttre/cast.py) */
 #define TC_CAST_SAVE_POINT 2u     /* a save point: when it takes itself out, the main actor's checkpoint is where he is */
@@ -179,6 +218,7 @@ typedef struct tc_cast_entry {
                                      platforms, lifts, crates: what others stand on or push) */
 #define TC_CAST_SCENE 16u         /* port: a scene's actor (the Special Edition's outro, cast.py SE_CAST_LEVELS): its
                                      removals and deactivations take wherever the main actor is (no removal guard) */
+#define TC_CAST_SPAWN 64u         /* a spawnable template (LevelData.spawnables): out until a script instances it (META 11) */
 #define TC_CAST_TABLES 32u        /* the entry carries its scripts' strings and constant vectors (tables_size, tables) */
 typedef struct tc_cast_data {
     uint16_t main_actor;         /* the player's perso id */
@@ -254,6 +294,29 @@ typedef struct tc_light {
     float color[4];
 } tc_light;
 
+/* .ttlv WAYS (tools/ttre/ai.py ways_chunk; docs/ENGINE.md "Ways and waypoints"): the level's waypoints, numbered from 1
+ * as the scripts hold them (node type 29, waypoint dsgvars; 0 none), and the persos' ways (perso +0x1C, the MS_Way:
+ * GoOverWay's routes), each a list of waypoint numbers. */
+typedef struct tc_waypoint {
+    tc_vec3 position;            /* world, or in the father's axes */
+    float radius;                /* +0x10: where the GoTo meta-actions arrive */
+    uint16_t father;             /* the perso it moves with (perso id), 0 none */
+} tc_waypoint;
+typedef struct tc_way { uint32_t first; uint16_t count; } tc_way;              /* points[first .. first + count) */
+typedef struct tc_perso_ways { uint16_t perso, count; uint32_t first; } tc_perso_ways; /* ways[first .. first + count) */
+typedef struct tc_ways {
+    uint16_t waypoint_count;
+    tc_waypoint *waypoints;      /* number k is waypoints[k - 1] */
+    uint16_t perso_count;
+    tc_perso_ways *persos;
+    uint32_t way_count;
+    tc_way *ways;
+    uint32_t point_count;
+    uint16_t *points;            /* waypoint numbers */
+} tc_ways;
+/* The ways of a perso (by id), or NULL. */
+const tc_perso_ways *tc_ways_of(const tc_ways *w, int32_t perso);
+
 typedef struct tc_level {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
     uint32_t light_set_count;    /* baked sets per vertex, 1-3 */
@@ -277,6 +340,7 @@ typedef struct tc_level {
     tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
     tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
     tc_pcol pcol;                /* .ttlv PCOL (count 0: none; older files baked the persos' collision into COLL) */
+    tc_ways ways;                /* .ttlv WAYS (none: no waypoints; the way primitives then do nothing) */
     uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
     int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
     uint32_t light_count;        /* centres (without it only the port's old lighting works) */

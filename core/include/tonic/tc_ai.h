@@ -79,21 +79,7 @@ typedef struct tc_ai_other { uint16_t id; uint8_t role; tc_ai_dsg_def dsg; } tc_
  * stays as a prop (frozen). */
 #define TC_AI_PROC_FREEZE 0x8101u
 /* tc_ai_card (a mechanics ID card): tc_level.h, which the cast's cards (.ttlv CMEC) use too. */
-/* A state's mechanics collision body (the collide set's ZDM zones active in it): spheres in the perso's axes. */
-#define TC_AI_MAX_SPHERES 12
-/* One part of the mechanics body: a sphere, or a point (point = 1, radius 0: collide element type 5, e.g. Ed's hand
- * point 1.3 ahead and 2.0 up that catches ledges). flags: its collide material identifier (GameMaterial +0xC -> u16
- * +2; a point's from its vertex's material; ZDMF chunk): 0x10 = no collision, 8 = floors only (a separate sweep),
- * 1 = may step up (zone type 1). The material conditions (GroundMaterialIs ...) test the flags of the part that made
- * the contact. See tc_mec_sweep. */
-typedef struct tc_ai_sphere {
-    tc_vec3 center;
-    float radius;
-    uint16_t flags;
-    uint8_t point;
-    float rebound, grip; /* its own mechanics material ([1], [2]; none: 1, 1), times the obstacle's in the responses */
-} tc_ai_sphere;
-typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX_SPHERES]; } tc_ai_sphere_set;
+/* tc_ai_sphere / tc_ai_sphere_set (a state's mechanics body): tc_level.h, which the cast's bodies (.ttlv CMEC) use too. */
 /* TRIG: another perso's effect on this one, extracted from its script (ai.proximity_triggers): while this perso is within
  * radius of position (3D, origins) and the guard dsgvar of this perso is 0, its normal behaviour becomes behaviour;
  * then the trigger sleeps sleep_ms (0: until this perso has left the radius). Totalski's trees, cacti and standing
@@ -242,6 +228,7 @@ typedef struct tc_ai_model {
     tc_ai_mech_event *mech_events;
     uint16_t water_point_set_count;
     tc_ai_water_points *water_point_sets;
+    tc_zde_set zde;              /* ZDES (Ed) / the cast family's (borrowed): the hit zones, tc_zde.h */
     /* per collision triangle (the .ttlv's order, tc_tri.source) its floor's sound type (GameMaterial +8; 0xFF
      * none): the footstep switch picks step sound 0x390002 + it (docs/NOTES.md "Footsteps"). */
     uint32_t floor_sound_count;
@@ -341,6 +328,13 @@ typedef struct tc_ai_globals {
     uint32_t vignette_serial;
 } tc_ai_globals;
 
+#define TC_AI_MAX_WAYS 8 /* ways per perso (the 21 retail levels: 3 at most) */
+/* A perso list dsgvar (type 11: byte 0 its count, byte 1 its capacity, then the persos; CollectNearby fills one): the
+ * port keeps the persos here, by dsgvar, and writes the count into byte 0. */
+#define TC_AI_MAX_LISTS 4
+#define TC_AI_LIST_CAP 8
+typedef struct tc_ai_list { uint32_t dsg; uint8_t count; int32_t ids[TC_AI_LIST_CAP]; } tc_ai_list;
+
 typedef struct tc_ai_perso tc_ai_perso;
 struct tc_ai_perso {
     const tc_ai_model *model;
@@ -423,6 +417,20 @@ struct tc_ai_perso {
                                     (GAM_0042a680, DAT_008bc744; COND 61) */
     tc_ai_globals *globals;
     tc_ai_globals own_globals;
+    /* Ways and waypoints (host-fed; docs/ENGINE.md "Ways and waypoints"): the level's waypoints (.ttlv WAYS; NULL none)
+     * and this perso's own ways (perso +0x1C; NULL none). Per way its cursor, the MS_Way node's +0x10..+0x13: the
+     * waypoint it heads for, the link step, the waypoint it came from (0xFF none), the saved link step; tc_ai_init
+     * starts them as the snapshots hold them (0, 0, 0xFF, 0xFF). */
+    const tc_ways *ways;
+    const tc_perso_ways *own_ways;
+    uint8_t way_cursor[TC_AI_MAX_WAYS][4];
+    /* Hits and spawning (host-fed, the cast; docs/ENGINE.md "Shooting"): its family's index (T22 nodes), its perso
+     * lists, the live persos one by one (each(user, k) for k = 0, 1, ... until NULL: whose ZDE zones the conditions
+     * test), and META 11's instancing of a spawnable template (spawn: the instance's AI, placed at `by`, or NULL). */
+    uint16_t family_type;
+    tc_ai_list lists[TC_AI_MAX_LISTS];
+    tc_ai_perso *(*each)(void *user, uint32_t k);
+    tc_ai_perso *(*spawn)(void *user, int32_t template_id, const tc_ai_perso *by, tc_vec3 launch);
     /* The std game's activity (host-run, GAM_00428070 / GAM_PersoFrame_0042b520): the AI runs while active and the main
      * actor is within the radius (radius2 < 0: always); the animation plays with run_mechanics or run_animation. PROC 5
      * / 6 (de)activate, PROC 17-22 set the rest, PROC 257 takes the perso out: inactive, then dead (PROC 5 cannot wake

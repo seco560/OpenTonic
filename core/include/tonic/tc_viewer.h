@@ -109,7 +109,10 @@ typedef struct tc_view_frame {
 #define TC_VIEWER_LOADING_SECONDS 3
 /* PICTURE: a picture the level's scripts show (PROC 210 DisplayVignetteDuring: the SE outro's credits), the game held
  * meanwhile, over black; laid out as the loading screen's vignette (4:3, centred), without the bar. */
-typedef enum tc_view_overlay_kind { TC_VO_NONE, TC_VO_MASK, TC_VO_LOGO, TC_VO_BLACK, TC_VO_LOADING, TC_VO_PICTURE } tc_view_overlay_kind;
+/* SPRITE: the texture's own colours and alpha on the quad (corners, uv): the gunsight (tc_viewer_crosshair). */
+typedef enum tc_view_overlay_kind {
+    TC_VO_NONE, TC_VO_MASK, TC_VO_LOGO, TC_VO_BLACK, TC_VO_LOADING, TC_VO_PICTURE, TC_VO_SPRITE
+} tc_view_overlay_kind;
 typedef struct tc_view_overlay {
     tc_view_overlay_kind kind;
     int32_t texture;          /* MASK / LOGO: tc_viewer_effect_texture index */
@@ -237,6 +240,8 @@ typedef struct tc_viewer {
     uint32_t rng;
     const char **effects;     /* distinct effect texture paths (relative to the level folder) */
     uint32_t effect_count;
+    int32_t crosshair_effect; /* the gunsight's index among the effects (TC_VIEWER_CROSSHAIR_TEXTURE), -1 none */
+    uint8_t *spawn_prso;      /* per level perso: 1 = a spawnable template's (TC_CAST_SPAWN): drawn only as an instance */
     tc_viewer_carry *carry;   /* the level change in progress (LOADING / PENDING) */
     int walk_in;              /* simple controller at a portal: 1 the step-in clip, 2 the cover and the portal firing */
     int walk_clip;            /* the step-in clip (state 228's animation), -1 none */
@@ -418,6 +423,14 @@ const struct tc_ed_ai *tc_viewer_driver(const tc_viewer *v);
 /* The level persos running their own AI while playing (tc_cast.h), or NULL (no CAST chunk, no Ed AI). */
 struct tc_cast;
 const struct tc_cast *tc_viewer_cast(const tc_viewer *v);
+/* The gunsight in first person while Ed is in a shooting behaviour (one whose scripts fire with META 11,
+ * Action_ExecuteActionAndGenerateObject: his stick mode B29, B69, flying B45 ...): a TC_VO_SPRITE quad in the middle of
+ * the viewport (aspect = width / height), drawn over the frame after tc_viewer_overlay's. False: none this frame. The
+ * original's stick mode shows text 7 of its 3D font FontFix3D (Ed's B29 rule 2, Proc_DisplayString) whose glyph is
+ * this texture, gen_viseur (inferred: the font is not read); the port draws the texture itself. */
+#define TC_VIEWER_CROSSHAIR_TEXTURE "../Textures/gen_viseur/gen_viseur_nz.png"
+#define TC_VIEWER_CROSSHAIR_SIZE 0.09f /* its height, a share of the viewport's (port) */
+bool tc_viewer_crosshair(const tc_viewer *v, float aspect, tc_view_overlay *out);
 
 /* The adjustable settings both title bars show (UTF-8):
  * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]

@@ -253,13 +253,14 @@ vertex OverlayOut overlay_vertex(uint vid [[vertex_id]], constant OverlayVertex 
 }
 
 // mode 0: black where the mask's alpha <= threshold (effect A: Direct3D alpha test LESSEQUAL); 1: black with the
-// texture's alpha (effect B, the spinning logo); 2: solid black.
+// texture's alpha (effect B, the spinning logo); 2: solid black; 3: the texture itself (the gunsight, TC_VO_SPRITE).
 struct OverlayParams { uint mode; float threshold; };
 
 fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant OverlayParams &p [[buffer(0)]],
                                  texture2d<float> tex [[texture(0)]]) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     if (p.mode == 2) return float4(0, 0, 0, 1);
+    if (p.mode == 3) return tex.sample(s, in.uv);
     float a = tex.sample(s, in.uv).a;
     if (p.mode == 0) {
         if (a > p.threshold) discard_fragment();

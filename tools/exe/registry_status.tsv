@@ -91,3 +91,26 @@
 004acb49	DNM_IntegrateType7	partial	5 ms substeps with 0x20000; the own sweep only with the collide set's single sphere
 004c32f6	DNM_CarriedLoad	partial	the riders' mass and the first rider's position: the main actor only
 004a6870	FIELD_3_NormSpeed	implemented	|Velocity|
+0048c0b0	PROC_ReInitWay_InitWayWithWp	implemented	PROC 251 / 252 / 253 (docs/ENGINE.md "Ways and waypoints")
+0048d540	WAY_ReInit	implemented	at 0, from none (tc_ai.c way_reinit)
+0048d5a0	WAY_ReInitBack	implemented	at n - 1 (way_reinit_back)
+0048d390	WAY_Next	partial	straight links only (every retail link is type 0)
+0048d460	WAY_Back	partial	straight links only
+0048cd90	WAY_Advance	implemented	inside way_next
+0048cec0	WAY_Retreat	implemented	inside way_back
+0048dcf0	WP_AbsolutePosition	partial	father: its live position and heading (port)
+00491990	WP_Distance	implemented	FUNC 11
+0049a5f0	FUNC_12_CloserWP	implemented	waypoints 0 .. n - 2
+0049f580	AI_GoToPoint	implemented	tc_ai.c go_to: mode 12 dropped, mode 0x14 queued
+0049f4e0	AI_GoToPointFromMe	implemented	go_to
+0049fc50	METACONT_21_GoToWP	implemented	
+0049fe10	METACONT_22_GoOverWay	implemented	
+004ae392	DNM_RequestWalk_004ae392	partial	modes 12 and 0x14 (tc_mec_walk_request_world); 3 / 4 / 5 / 0x12 turns as Ed's
+004a9d20	DNM_IntegrateType12	partial	tc_cast_mec.c glide_step: grounded from the start (no collision)
+0049f190	META_11_GenerateObject	partial	one instance per template (tc_cast.c cast_spawn)
+00497ef0	COND_18Etc_ZDE	partial	tc_ai.c ZDE section: the intersection tests are the port's
+0049c690	FUNC_162_Probe	partial	world-axes hit point; the static world's raycast up to 1000 (the exe's reach not read)
+004adfc3	DNM_IntegrateType10	partial	tc_cast_mec.c projectile_step: velocity kept; gravity x factor (port)
+004b252e	DNM_RequestType10	implemented	modes 0x13 / 0x15 / 0x16
+0041fa70	GAM_CollectNearby	partial	mode 0 (the perso's zones); modules as the perso's own
+0048fe40	AI_ListKeepFamily	implemented	PROC 94 Proc_ListSortByFamily (a filter)

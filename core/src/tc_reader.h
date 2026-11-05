@@ -140,6 +140,8 @@ static inline uint32_t tc_crc32(const uint8_t *p, size_t n) {
     return ~c;
 }
 /* tc_sector.c: the .ttlv SECT chunk, after MESH and PRSO (its ranges and perso sectors follow their counts). */
+/* tc_level.c: a ZDE set (tools/ttre/ai.py zde_block), for the .ttlv CMEC and the .ttai ZDES. */
+void tc_zde_set_read(tc_zde_set *z, reader *r);
 tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint32_t mesh_count, uint32_t perso_count,
                           uint32_t collision_count);
 void tc_sectors_free(tc_sectors *s);

@@ -100,6 +100,8 @@ typedef struct tc_cast {
     struct tc_collision *world;  /* host-fed: the static world (and its obstacles) the actors' own sweeps meet, NULL none */
     const tc_sectors *sectors;   /* the step's (tc_cast_step*): an actor sweeps its own sector's collide list */
     int32_t main_carrier;        /* host-fed: the perso the main actor rides (tc_mec_walk.carrier), -1 none */
+    uint16_t main_sector;        /* the main actor's sector, as the last step got it (a spawn by him starts there) */
+    uint32_t spawned;            /* diagnostics: META 11's instances */
     float main_mass;             /* host-fed: his mass (his card's +4): what he weighs on what he rides (FUN_004c32f6) */
 } tc_cast;
 
@@ -121,8 +123,9 @@ void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_secto
 void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
 void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
 /* The actor's mechanics for this tick, after its AI (GAM_MecFrame_0042b2b0: the queued requests through the state's
- * card type's request handler, then its integrator). Card types 6 (MoveLift) and 7 (pushed and floating things) are
- * ported (docs/ENGINE.md "Moving collision, read"); with another card, or none, it turns in place as before (port).
+ * card type's request handler, then its integrator). Card types 6 (MoveLift), 7 (pushed and floating things), the
+ * walkers 0 / 4 / 12 and the projectiles 10 are ported (docs/ENGINE.md "Moving collision, read", "Walkers",
+ * "Shooting"); with another card, or none, it turns in place as before (port).
  * Returns whether it ran a card type's mechanics. */
 bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt);
 /* The perso obstacles (tc_obstacle.h) its actors pose where they are after each step; NULL: none. Poses them now. */

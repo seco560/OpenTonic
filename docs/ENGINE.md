@@ -87,8 +87,13 @@ the hook for it.
 - **Perso collision (2026-11-05):** each perso's collision is its own (.ttlv PCOL, tc_obstacle.h), no longer baked
   into the static world. Cast actors pose theirs after each step (state animation, position, tilt); the others stand
   at their frame-0 pose. Ed's sweeps meet them by the exe's rules and tests (below); `FUNC 54` and riding work.
-- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift) and 7 (pushed and floating things)
-  run; other card types still turn in place (**port**, the biggest gap left: 0 / 4 walkers, 9, 10, 3, 8, 12).
+- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift), 7 (pushed and floating things), and
+  since 2026-11-05 (evening) the walkers 0 / 4 / 12 (below, "Walkers"). Types 9, 10, 3, 8 still turn in place (**port**).
+- **Activity (read, ported):** a perso's AI runs only while the main actor is within its activation radius (std game
+  +0x2C squared, -1 always: `GAM_PersoFrame_0042b520` compares it with DAT_008bc744, the squared distance
+  `GAM_0042a680` sets), and only in an awake sector (the marks above). Its **mechanics run whatever the radius**
+  (`GAM_MecFrame_0042b2b0` after the AI, gated by +0x2A only): a perso out of range keeps what its animation's root
+  motion does. tc_cast step_actor: `think` = the radius test, mechanics after it.
 - Left out of the cast (**port**): the camera and its directors, the cheat-code reader, the arches, the persos the
   exporter reduced to data (portals and walk-in passages: .ttai PORT; Totalski's obstacles: TRIG; the light managers:
   LAIS). Each is a stopgap to fold back into the cast, one subsystem at a time (docs/DIRECTION.md).
@@ -234,3 +239,93 @@ in the cast.
   - `MEC_004bd689`'s inverted steep flag (above) is kept as read.
 - **Next:** the cast's walkers (types 0 / 4 with their ZDM sets and root motion), types 9 / 10 (the rolling rocks),
   the ZDE zones (COND 18-29), the ZDR-against-ZDR test, persos' obstacles for the camera's sight.
+
+## Ways and waypoints (2026-11-05 evening; all **read** unless marked)
+**Data.** A waypoint is 0x1C bytes: u32, f32 position[3] (in its father's axes when it has one), f32 radius (+0x10: where
+the GoTo meta-actions arrive), u32, ptr father SuperObject (+0x14) (`AI_0048dcf0` gives its world position). Scripts
+hold them as node type 29 and dsgvars of type 8. A perso's ways hang off perso **+0x1C** (the MS_Way): a list of nodes
+{next, prev, list, way, u8 at (+0x10), u8 link step (+0x11), u8 from (+0x12, 0xFF none), u8 saved step (+0x13)}; the
+scripts' way number (node type 23) is the n-th node (`GAM_004257f0`). A way = {ptr waypoints[n], ptr links[n - 1], u8 n,
+u8 at, u8 from}. A link (0x50) has its type at +0x38 (0 straight, 1, 2 Bezier, 3 circle arc) and speed type +0x3C;
+**every link of the 21 retail levels is type 0**, so the port exports no links.
+**Primitives** (PROC 251-253 `PROC_251Etc_0048c0b0`, META 21-26, FUNC 3 / 11 / 12, COND 66):
+- Proc_ReInitWay (`AI_0048d540`): at 0, from none, step 0, saved none. ReInitWayBack (`AI_0048d5a0`): at n - 1.
+  InitWayWithWp(way, wp) (`AI_0048d620`): at the first match among waypoints 0 .. n - 2 (the last is never matched).
+- **The go-to core** (`FUN_0049f580` via `FUN_0049f4e0`): this frame's mode 12 requests are dropped (`FUN_0047a4a0`);
+  within the radius (`FUN_0049f530`, <=) it is there (4); else the unit direction goes into proposal [7..9] and mode
+  0x14 is queued (the speed [10] stays the script's: SetSpeed / SetMoveDirection).
+- Action_GoToWP (META 21, `0x49fc50`): to the waypoint, its own radius. Action_GoOverWay (22) / GoOverWayBack (24) /
+  GoToNextWPOfWay (25, 26 back) (`0x49fd40(perso, go_on, back)`): to the way's current waypoint; there, `AI_0048d390`
+  (on: from = at, at + 1; at the end back to the start and done) or `AI_0048d460` (back: down to 0, then to the end
+  and done); 22 / 24 go on, 25 / 26 stop at the next waypoint. GoOverWay3D (23, `0x49fe90`) is not read and unused.
+- Func_GetWPAbsolutePosition = FUNC 3 (the port had it as a perso's position before), Func_DistanceToWP = FUNC 11
+  (from OP 24's perso), Func_CloserWP = FUNC 12 (the nearest of waypoints 0 .. n - 2), Cond_IsValidWayPoint = COND 66.
+- **Mode 0x14** for types 0 / 12 (`DNM_RequestWalk_004ae392`): the direction's horizontal part times its own length
+  (as read: the sqrt multiplies) times the capped speed, and a turn towards it (`FUN_004ae280`) within the card's
+  min / max turn. Type 7's (`DNM_RequestType7_004b17d1`) was already ported.
+**Port:** .ttlv **WAYS** (tools/ttre/ai.py `ways_chunk`, `waypoints`: one table per level, numbered from 1 in a fixed
+order so the .ttlv and the .ttai agree; dsgvars of type 8 hold the number); tc_level.h `tc_ways`; tc_ai.c (`go_to`,
+`go_over_way`, the cursor in tc_ai_perso.way_cursor). A father-relative waypoint uses its live father's position and
+heading (**port**: the exe's straight link keeps a copy of its end point; 4 such waypoints in the 21 levels).
+Check: viewcheck `guide_scenario` (cavedoc's ruby BNE_PFGuide: all 10 waypoints in order, 37 s at speed 12, Ed riding).
+Uses: 1143 waypoint nodes, 273 GoToWP, 59 GoOverWay (the rubies, north's boat and drakkar, the see-saw platforms, the
+guards' patrols, Suzy, the mummies, the haricot).
+
+## Walkers: card types 0, 4, 12 for the cast (2026-11-05 evening)
+- **Data:** CMEC's last part (tools/ttre/cast.py `walk_block`): per family, from its first cast perso, its root motion
+  and ZDM bodies, as Ed's .ttai BODY + ZDMF. A collide set with +0x36 and radius 0 (north's guards) sweeps **a point**
+  at its origin (`MEC_SweepSphere_0043d480` with r = 0: **read**); ai.zdm_sets exported nothing for those before.
+- **Types 0 / 4** (tc_cast_mec.c `walk_step`) run as Ed's walk (tc_ed_ai.c `walk`): riding, the requests (mode 12, mode
+  0x14, the air modes) or the animation's root motion, then `tc_mec_walk_step`.
+- **Type 12** (`DNM_IntegrateType12_004a9d20`, **read**): it collides only while its report has no ground, and its forces
+  (`FUN_004c3e50`) cancel gravity and the old velocity on a grippy ground: a grounded type 12 perso goes where its
+  requests take it, at its height, through walls. **A perf shortcut of the original** (NPCs walking without collision
+  tests). Port: `glide_step` (no collision at all: the snapshot's report is not exported, so it starts grounded), also
+  the stand-in for a type 0 / 4 state without a body. Suzy and the skating fridge guards (cock01) are type 12.
+- Measured (a scratch probe: Ed put 4 away from each walker, 4 s): north's guard walks 9, sud0's boxing mushrooms 4-11,
+  pyramide's dentures chase (53 in 4 s), cock01's skaters skate 30-54, Totalski's stalactite traps fall and shatter.
+  Not yet seen in the app.
+
+## Shooting (2026-11-05 night; all **read** unless marked)
+**Ed's shot: META 11 `Action_ExecuteActionAndGenerateObject`(perso P, state S, vector V)** (`META_SpawnInState_0049f190`,
+continuation 0x49ef70 = ChangeStateAndWait's). Ed fires in B29 (stick mode), B45 (flying), B69 (the blowgun out: Action
+sets his dsg27), B74, B105, while Shoot is held, his inventory counts some P, and FUNC 162's wall ahead is further than
+3.2 (FUNC 13 > 10). When Ed may go to S (`GAM_00437600`), P's model is instanced from the engine's **spawnable list**
+(gpt after num_always: {head, tail, n} of {next, prev, list, u32 count, ptr template perso}; `GAM_Always_004259a0`) at
+Ed's matrix; while the last instance is out it is reused (Ed's perso +0x30); Ed goes to S; the instance's
+ProposalVecA := V (`AI_00488070`). Ed's projectile is `LOL_Actor1` (gen_abeille, the bees): V = (0, -dsg32, 0), 60 u/s.
+- **The bee:** card type 10 (+8 gravity factor 0; `DNM_IntegrateType10_004adfc3`: no request -> the forces
+  `FUN_004c709a` keep the velocity). B2 probes the wall along its velocity (FUNC 162), B0 ends it at that wall, after
+  dsg0 ms, or on a ZDE hit (COND 28: its zone 1, type 2, meets a type 1 zone that is not Ed's, COND 24); state 1, gone
+  300 ms later. PROC 287-289 are empty in retail.
+- **The hits are ZDE zones** (COND 18-29 `COND_18Etc_00497ef0`; `GAM_CollectNearby_0041fa70`): a perso's collide set
+  +4 (list 2), active per state (+0x14); a zone's type = its elements' collide material flags (`GAM_0041f060`,
+  `CPA_004493d0`: flags & mask == mask). Ed: zone 5 his body (type 1) in nearly every state, type 2 attack boxes in front
+  of him in his stick swings. The guards (R0): `CollectNearby(list, 1, type 2)`, `Proc_ListSortByFamily` (a filter:
+  `AI_0048fe40`), then hurt (FUNC 36 `Func_SubAndGetHitPoints`) or downed (B6).
+- **FUNC 162 / FUNC 13** (`FUNC_162_0049c690`, `FUNC_GetPositionEtc_0049a140` case 0xd): the probe starts at the perso's
+  origin + the offset (world axes), goes along the direction in its axes, and returns the hit **in world axes**; FUNC 13
+  is the **squared** distance from the perso to a point. The port had both wrong (a local point, a length), which hid
+  each other in Ed's uses (B29 fired with the wall further than 10 instead of 3.2, B82 climbed within 2.25 instead of 1.5)
+  and broke the bee's wall test. Fixed; north / cavedoc / Land's hang runs are unchanged.
+**Port** (tools/ttre: `LevelData.spawnables`, `perso_ids`, ai.py `zde_block`; core: tc_ai.c ZDE section, tc_cast.c
+`cast_spawn` / `cast_each`, tc_cast_mec.c `projectile_step`):
+- The templates are cast entries with flag SPAWN (64), ids after the level's persos (the scripts' perso nodes name them:
+  Ed's PERSO@0x9379a was unresolved before), out until instanced, never drawn where the data places them.
+- **One instance per template** (**port**; the list's count, e.g. 16 for the pink balls, is not used): Ed reuses his bee
+  as the exe does; other generators share it.
+- Ed's shots start at his mouth, (0, -0.5, 1.7) in his axes (**port**, the user saw them leave his feet: the exe
+  instances at his matrix, whose origin is his feet, and the template's own matrix is the identity; the offset the
+  original uses, if any, is not found).
+- The launch vector becomes the instance's velocity at once (**inferred**: its scripts read Velocity right away;
+  `GAM_Always` is not read). Type 10's ballistic forces with thrust are not ported (gravity x the factor instead), nor its
+  own collide-and-move (the bee's scripts end it at its probed wall).
+- ZDE tests (**port**: the exe's `FUN_004631c0` is not read): spheres exact, sphere / box by the nearest point of the box
+  in its axes, box / box by their bounds in each other's axes; zones on animated channels ("modules", COND 19-21 / 23 /
+  29, PROC 85) are taken as the perso's own; PROC 86 not ported. A list dsgvar keeps up to 8 persos (tc_ai_list).
+- **The inventory is a stub** (the user's choice): Ed always has one of everything (FUNC 95 1, FUNC 96 / 97 give it
+  without taking it), so he shoots as often as his scripts let him; others hold nothing, as before. The exe's inventory is
+  the save values by the object model's slot (perso +0x34 -> u16 +2: the bee's is slot 0; FRB_MoreBees refills it).
+- Checks: viewcheck `shoot_scenario` (north: the blowgun out, two bees, guard 46 downed, B6). Scratch probes: Ed fires
+  every 0.67 s holding Shoot, the bee bursts at the wall 8 ahead. Not checked: the stick's hits (a probe at a guard: the
+  guard struck first and knocked Ed back, B102), the bees' damage to other enemies, how the bee looks.
