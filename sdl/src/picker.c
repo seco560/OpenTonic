@@ -124,7 +124,7 @@ void picker_close(picker *p) {
     SDL_zerop(p);
 }
 
-/* Layout, as LevelPicker.relayout: 256x192 tiles with a caption line, centred columns; each section starts on a new
+/* Layout (LevelPicker.relayout fits the window instead): 256x192 tiles with a caption line, centred columns; each section starts on a new
  * row under a heading line, the editions in the panes' fixed height. */
 typedef struct layout { float tile_w, tile_h, caption, pad, cell_w, cell_h, left, heading, intro, pane_h, inset; int cols; } layout;
 

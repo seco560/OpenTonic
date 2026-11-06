@@ -488,6 +488,8 @@ old look for comparing (title: "old lighting").
   converted). The level select has a big "Play Intro Video" button at the top (and V), Controls top right.
 - **Which ski slope (2026-11-06, user):** a port choice, not the original's: a coin toss between retail and Special
   Edition Totalski, the other when one isn't converted. The loading screen shows that edition's vignette.
+- **Level select layout (2026-11-06, user):** the Swift build fits the window: cutscenes and imports scroll in the bottom
+  third (at least a row, at most what they fill), the level panes get the rest. SDL keeps its two-row panes and scrolling page.
 - Disc and installed copies are byte-identical.
 - FFmpeg decodes it natively. TonicTroubleFix ships an Indeo-free intro path, worth checking how it handles sound.
 - Upscaling plan:

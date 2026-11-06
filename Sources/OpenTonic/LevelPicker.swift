@@ -6,10 +6,11 @@ import TonicCore
 /// its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
 /// available (matched case-insensitively).
 /// Four sections: "Retail Edition" and "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) are two panes side
-/// by side, one showing at a time: fixed height, each scrolling inside itself, slid left and right with the arrows at
-/// their top (retail is the left one; side by side because portals will link the two). Under them the page goes on with
-/// the game's cutscene-only levels (`tc_level_is_cutscene`) and "Imported": models brought in with
-/// tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a question mark as their picture.
+/// by side, one showing at a time: each scrolling inside itself, slid left and right with the arrows at their top
+/// (retail is the left one; side by side because portals will link the two). Under them, in the bottom third of the
+/// window and scrolling inside itself too: the game's cutscene-only levels (`tc_level_is_cutscene`) and "Imported":
+/// models brought in with tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a question
+/// mark as their picture. The page itself only scrolls in a window too short for a row of each.
 final class LevelPicker: NSView {
     struct Entry { let name: String; let url: URL; let image: NSImage?; let section: Int }
     private struct Pane { let section: Int; let scroll: NSScrollView; let grid: NSView }
@@ -37,6 +38,8 @@ final class LevelPicker: NSView {
     private let viewport = FlippedView(), strip = FlippedView()
     private var panes: [Pane] = []
     private var pane = 0  // the one showing, in `panes`
+    /// Under the panes: the cutscenes and the imported levels, headings and all.
+    private let lower = PaneScrollView(), lowerGrid = FlippedView()
     private let headings = LevelPicker.titles.map { NSTextField(labelWithString: $0) }
     private let rules = LevelPicker.titles.map { _ in NSBox() }
     private let headingHeight: CGFloat = 40
@@ -94,14 +97,12 @@ final class LevelPicker: NSView {
         addSubview(viewport)
         for k in 0..<LevelPicker.editions where entries.contains(where: { $0.section == k }) {
             let scroll = PaneScrollView(), grid = FlippedView()
-            scroll.hasVerticalScroller = true
-            scroll.drawsBackground = false
-            scroll.automaticallyAdjustsContentInsets = false
-            scroll.verticalScrollElasticity = .none
-            scroll.documentView = grid
+            scroll.hold(grid)
             strip.addSubview(scroll)
             panes.append(Pane(section: k, scroll: scroll, grid: grid))
         }
+        lower.hold(lowerGrid)
+        addSubview(lower)
         pane = panes.firstIndex { $0.section == LevelPicker.specialEdition && showSpecial } ?? 0
         for (i, e) in entries.enumerated() {
             let b = NSButton(title: e.name, image: e.image ?? NSImage(size: tile), target: self, action: #selector(pick(_:)))
@@ -112,7 +113,7 @@ final class LevelPicker: NSView {
             b.attributedTitle = NSAttributedString(string: e.name, attributes: [
                 .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.white, .shadow: shadow])
             b.toolTip = e.url.path
-            let parent: NSView = panes.first { $0.section == e.section }?.grid ?? self
+            let parent: NSView = panes.first { $0.section == e.section }?.grid ?? lowerGrid
             parent.addSubview(b)
             tiles.append(b)
         }
@@ -136,7 +137,7 @@ final class LevelPicker: NSView {
             heading.font = .systemFont(ofSize: 17, weight: .bold)
             heading.textColor = NSColor(white: 0.92, alpha: 1)
             rule.boxType = .separator
-            let parent: NSView = k < LevelPicker.editions ? strip : self  // the editions': riding with their panes
+            let parent: NSView = k < LevelPicker.editions ? strip : lowerGrid  // the editions': riding with their panes
             parent.addSubview(heading)
             parent.addSubview(rule)
         }
@@ -180,8 +181,9 @@ final class LevelPicker: NSView {
         }
     }
 
-    /// Lay the tiles out for the given width and size self to fit (we live in a scroll view).
-    func relayout(width: CGFloat) {
+    /// Lay the tiles out for the given window size and size self to fit (we live in a scroll view).
+    func relayout(size: NSSize) {
+        let width = size.width
         let cellW = tile.width + pad, cellH = tile.height + caption + pad
         let cols = max(1, Int((width - pad) / cellW))
         let left = max(pad, (width - CGFloat(cols) * cellW + pad) / 2)
@@ -198,10 +200,25 @@ final class LevelPicker: NSView {
             }
             return CGFloat((members.count + cols - 1) / cols) * cellH
         }
-        var y = pad + introHeight
-        // The panes: two rows high, whatever they hold; their headings centred between the arrows.
+        // The rest: each section starts on a new row, under its heading; empty sections take no space.
+        var lowerRows: CGFloat = 0
+        for (k, (heading, rule)) in zip(headings, rules).enumerated() where k >= LevelPicker.editions {
+            let members = entries.indices.filter { entries[$0].section == k }
+            guard !members.isEmpty else { continue }
+            heading.sizeToFit()
+            heading.frame.origin = NSPoint(x: left, y: lowerRows + 4)
+            rule.frame = NSRect(x: left, y: lowerRows + headingHeight - 10, width: rowWidth, height: 1)
+            lowerRows += headingHeight
+            lowerRows += place(members, top: lowerRows)
+        }
+        // The window's bottom third for them, or a row if that's more, or just what they fill; the panes get what's left.
+        let top = pad + introHeight, oneRow = headingHeight + cellH
+        let lowerHeight = panes.isEmpty ? max(size.height - top, oneRow)
+            : min(lowerRows, max((size.height / 3).rounded(.down), oneRow))
+        var y = top
+        // The panes; their headings centred between the arrows.
         if !panes.isEmpty {
-            let paneHeight = 2 * cellH, height = headingHeight + paneHeight
+            let height = max(size.height - top - lowerHeight, oneRow), paneHeight = height - headingHeight
             viewport.frame = NSRect(x: 0, y: y, width: width, height: height)
             strip.frame = NSRect(x: 0, y: 0, width: CGFloat(panes.count) * width, height: height)
             strip.setFrameOrigin(stripOrigin)
@@ -220,17 +237,9 @@ final class LevelPicker: NSView {
             y += height
         }
         updateArrows()
-        // The rest: each section starts on a new row, under its heading; empty sections take no space.
-        for (k, (heading, rule)) in zip(headings, rules).enumerated() where k >= LevelPicker.editions {
-            let members = entries.indices.filter { entries[$0].section == k }
-            guard !members.isEmpty else { continue }
-            heading.sizeToFit()
-            heading.frame.origin = NSPoint(x: left, y: y + 4)
-            rule.frame = NSRect(x: left, y: y + headingHeight - 10, width: rowWidth, height: 1)
-            y += headingHeight
-            y += place(members, top: y)
-        }
-        setFrameSize(NSSize(width: width, height: y))
+        lower.frame = NSRect(x: 0, y: y, width: width, height: lowerHeight)
+        lowerGrid.setFrameSize(NSSize(width: lower.contentSize.width, height: max(lowerRows, lowerHeight)))
+        setFrameSize(NSSize(width: width, height: y + lowerHeight))
     }
 
     @objc private func pick(_ sender: NSButton) { onPick(entries[sender.tag].url) }
@@ -245,8 +254,18 @@ private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// A pane's scroll view: at its top or bottom the wheel goes on to the page, which scrolls on to the cutscenes.
+/// A pane's scroll view: at its top or bottom the wheel goes on to the page (which scrolls if the window is too short).
 private final class PaneScrollView: NSScrollView {
+    /// Set up to scroll `grid`, on the screen's own background.
+    func hold(_ grid: NSView) {
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        drawsBackground = false
+        automaticallyAdjustsContentInsets = false
+        verticalScrollElasticity = .none
+        documentView = grid
+    }
+
     override func scrollWheel(with event: NSEvent) {
         let view = contentView.bounds, dy = event.scrollingDeltaY
         let atEnd = dy > 0 ? view.minY <= 0 : dy < 0 && view.maxY >= (documentView?.frame.height ?? 0) - 1

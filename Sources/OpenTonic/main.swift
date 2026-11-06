@@ -599,16 +599,17 @@ final class GameView: MTKView {
         }
         let scroll = NSScrollView(frame: window.contentLayoutRect)
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.verticalScrollElasticity = .none  // the page fits the window: the wheel at a pane's end mustn't bounce it
         scroll.drawsBackground = true
         scroll.backgroundColor = NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.14, alpha: 1)
         scroll.documentView = picker
         scroll.contentView.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main) { [weak picker, weak scroll] _ in
             MainActor.assumeIsolated {  // queue: .main
-                if let picker, let scroll { picker.relayout(width: scroll.contentView.bounds.width) }
+                if let picker, let scroll { picker.relayout(size: scroll.contentView.bounds.size) }
             }
         }
-        picker.relayout(width: scroll.contentView.bounds.width)
         // Container so the Controls button floats in the top-right corner above the scrolling grid; it also takes V (intro).
         let container = PickerContainer(frame: window.contentLayoutRect)
         container.appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
@@ -618,6 +619,7 @@ final class GameView: MTKView {
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
+        picker.relayout(size: scroll.contentView.bounds.size)
         let help = NSButton(title: "Controls", target: self, action: #selector(showControls))
         help.bezelStyle = .rounded
         help.toolTip = "Keyboard and mouse controls (F1, Cmd-/)"
