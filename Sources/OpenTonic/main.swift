@@ -614,7 +614,6 @@ final class GameView: MTKView {
         let container = PickerContainer(frame: window.contentLayoutRect)
         container.appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
         container.onIntro = { [weak self] in self?.playIntro() }
-        container.onReplays = { [weak self] in self?.showReplays() }
         container.onSlide = { [weak picker] dir in picker?.slide(dir) }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]

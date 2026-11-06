@@ -75,7 +75,6 @@ final class IntroView: NSView {
 /// Retail / Special Edition panes.
 final class PickerContainer: NSView {
     var onIntro: (() -> Void)?
-    var onReplays: (() -> Void)?
     var onSlide: ((Int) -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
@@ -88,7 +87,6 @@ final class PickerContainer: NSView {
         }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "v" where plain: onIntro?()
-        case "r" where plain: onReplays?()
         default: super.keyDown(with: event)
         }
     }

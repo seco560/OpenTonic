@@ -20,12 +20,14 @@ final class LevelPicker: NSView {
     private static let editions = 2  // sections 0 and 1 are the panes
     private let entries: [Entry]
     private let onPick: (URL) -> Void
-    /// The two big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original) and
-    /// "Replays" (the recordings: ReplaysScreen).
+    /// The big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original), "Random Stage"
+    /// (pickRandom) and "Replays" (the recordings: ReplaysScreen).
     var onIntro: (() -> Void)?
     var onReplays: (() -> Void)?
     private let introButton = PickerButton(title: "▶  Play Intro Video", colors: (NSColor(calibratedRed: 0.95, green: 0.45, blue: 0.2, alpha: 1),
                                                                          NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.45, alpha: 1)))
+    private let randomButton = PickerButton(title: "⚄  Random Stage", colors: (NSColor(calibratedRed: 0.45, green: 0.8, blue: 0.3, alpha: 1),
+                                                                   NSColor(calibratedRed: 0.1, green: 0.55, blue: 0.4, alpha: 1)))
     private let replaysButton = PickerButton(title: "✦  Replays", colors: (NSColor(calibratedRed: 0.2, green: 0.75, blue: 0.85, alpha: 1),
                                                                NSColor(calibratedRed: 0.25, green: 0.3, blue: 0.85, alpha: 1)))
     private let leftArrow = PickerButton(title: "◀", colors: LevelPicker.arrowColors)
@@ -120,9 +122,12 @@ final class LevelPicker: NSView {
         introButton.target = self
         introButton.action = #selector(intro)
         introButton.toolTip = "The game's intro movie (V)"
+        randomButton.target = self
+        randomButton.action = #selector(random)
+        randomButton.toolTip = "A stage of either edition, at random"
         replaysButton.target = self
         replaysButton.action = #selector(replays)
-        replaysButton.toolTip = "Your recorded sessions: play or delete them (R)"
+        replaysButton.toolTip = "Your recorded sessions: play or delete them"
         leftArrow.target = self
         leftArrow.action = #selector(slideLeft)
         leftArrow.toolTip = "Retail Edition (left arrow key)"
@@ -130,6 +135,7 @@ final class LevelPicker: NSView {
         rightArrow.action = #selector(slideRight)
         rightArrow.toolTip = "Special Edition (right arrow key)"
         addSubview(introButton)
+        addSubview(randomButton)
         addSubview(replaysButton)
         addSubview(leftArrow)
         addSubview(rightArrow)
@@ -146,6 +152,13 @@ final class LevelPicker: NSView {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     var isEmpty: Bool { entries.isEmpty }
+
+    /// Opens a stage of either edition at random. Not the cutscenes, which the Special Edition's pane has one of (its
+    /// outro), nor the imported models.
+    func pickRandom() {
+        let stages = entries.filter { $0.section < LevelPicker.editions && tc_level_is_cutscene($0.name) == 0 }
+        if let stage = stages.randomElement() { onPick(stage.url) }
+    }
 
     /// Slide to the pane on that side (-1 left, 1 right), if there is one.
     func slide(_ dir: Int) {
@@ -188,10 +201,13 @@ final class LevelPicker: NSView {
         let cols = max(1, Int((width - pad) / cellW))
         let left = max(pad, (width - CGFloat(cols) * cellW + pad) / 2)
         let rowWidth = CGFloat(cols) * cellW - pad
-        let bw: CGFloat = 280, bh: CGFloat = 54, gap: CGFloat = 24
-        let bx = (width - 2 * bw - gap) / 2, by = pad + (introHeight - bh) / 2 - 8
-        introButton.frame = NSRect(x: bx, y: by, width: bw, height: bh)
-        replaysButton.frame = NSRect(x: bx + bw + gap, y: by, width: bw, height: bh)
+        // Centred, clear of the Controls button in the corner on both sides.
+        let bh: CGFloat = 54, gap: CGFloat = 24, controls: CGFloat = 120
+        let bw = min(280, (width - 2 * controls - 2 * gap) / 3)
+        let bx = (width - 3 * bw - 2 * gap) / 2, by = pad + (introHeight - bh) / 2 - 8
+        for (i, button) in [introButton, randomButton, replaysButton].enumerated() {
+            button.frame = NSRect(x: bx + CGFloat(i) * (bw + gap), y: by, width: bw, height: bh)
+        }
         /// The tiles from `top` in their parent; the height they take.
         func place(_ members: [Int], top: CGFloat) -> CGFloat {
             for (j, i) in members.enumerated() {
@@ -244,6 +260,7 @@ final class LevelPicker: NSView {
 
     @objc private func pick(_ sender: NSButton) { onPick(entries[sender.tag].url) }
     @objc private func intro() { onIntro?() }
+    @objc private func random() { pickRandom() }
     @objc private func replays() { onReplays?() }
     @objc private func slideLeft() { slide(-1) }
     @objc private func slideRight() { slide(1) }
@@ -323,8 +340,13 @@ final class PickerButton: NSButton {
         shadow.shadowColor = NSColor(white: 0, alpha: 0.6)
         shadow.shadowOffset = NSSize(width: 0, height: -1)
         shadow.shadowBlurRadius = 2
-        let text = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 20, weight: .bold), .foregroundColor: NSColor.white, .shadow: shadow])
+        func label(_ points: CGFloat) -> NSAttributedString {
+            NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: points, weight: .bold), .foregroundColor: NSColor.white, .shadow: shadow])
+        }
+        var text = label(20)
+        let room = r.width - 16
+        if text.size().width > room { text = label(20 * room / text.size().width) }  // a narrow window
         let size = text.size()
         text.draw(at: NSPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2))
     }

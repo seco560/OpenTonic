@@ -97,8 +97,9 @@ void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, 
         if (p->first[s] < p->first[s + 1])
             p->heading[s] = gpu_text(g, section_titles[s], text_scale, &p->heading_w[s], &p->heading_h[s]);
     if (p->first[SECTION_IMPORTED] < p->count) p->unknown = gpu_text(g, "?", 1, &p->unknown_w, &p->unknown_h);
-    p->intro_text = gpu_text(g, "Play Intro Video", text_scale + 1, &p->intro_w, &p->intro_h);
-    p->replays_text = gpu_text(g, "Replays", text_scale + 1, &p->replays_w, &p->replays_h);
+    p->intro_text = gpu_text(g, "Play Intro Video", text_scale, &p->intro_w, &p->intro_h);
+    p->random_text = gpu_text(g, "Random Stage", text_scale, &p->random_w, &p->random_h);
+    p->replays_text = gpu_text(g, "Replays", text_scale, &p->replays_w, &p->replays_h);
     p->controls_text = gpu_text(g, "Controls (F1)", text_scale, &p->controls_w, &p->controls_h);
     p->left_text = gpu_text(g, "<", text_scale + 1, &p->left_w, &p->left_h);
     p->right_text = gpu_text(g, ">", text_scale + 1, &p->right_w, &p->right_h);
@@ -116,6 +117,7 @@ void picker_close(picker *p) {
         if (p->heading[k]) SDL_ReleaseGPUTexture(p->g->device, p->heading[k]);
     if (p->unknown) SDL_ReleaseGPUTexture(p->g->device, p->unknown);
     if (p->intro_text) SDL_ReleaseGPUTexture(p->g->device, p->intro_text);
+    if (p->random_text) SDL_ReleaseGPUTexture(p->g->device, p->random_text);
     if (p->replays_text) SDL_ReleaseGPUTexture(p->g->device, p->replays_text);
     if (p->controls_text) SDL_ReleaseGPUTexture(p->g->device, p->controls_text);
     if (p->left_text) SDL_ReleaseGPUTexture(p->g->device, p->left_text);
@@ -138,7 +140,7 @@ static layout layout_for(const picker *p, float width) {
     l.cell_w = l.tile_w + l.pad;
     l.cell_h = l.tile_h + l.caption + l.pad;
     l.heading = 40 * s;
-    l.intro = 84 * s;  /* the band of the "Play Intro Video" and "Replays" buttons, above the first heading */
+    l.intro = 68 * s;  /* the band of the big buttons, above the first heading */
     l.inset = 8 * s;  /* above a pane's first row: room for the selection's glow */
     l.pane_h = 2 * l.cell_h + l.inset;  /* two rows */
     l.cols = SDL_max(1, (int)((width - l.pad) / l.cell_w));
@@ -192,22 +194,33 @@ static float max_scroll(const picker *p, const layout *l) {
     return SDL_max(0.0f, heading_y(p, l, PICKER_SECTIONS) - p->height);
 }
 
-/* The buttons, in target pixels: the intro and the replays side by side, centred at the top (they scroll with the grid),
- * Controls top right. */
-static SDL_FRect big_rect(const picker *p, const layout *l, int k) {
-    float w = SDL_max((float)p->intro_w + 60 * p->scale, 300 * p->scale), h = (float)p->intro_h + 32 * p->scale;
-    float gap = 24 * p->scale, x = SDL_roundf((p->width - 2 * w - gap) / 2) + (float)k * (w + gap);
-    SDL_FRect r = {x, l->pad + 4 * p->scale - p->scroll, w, h};
-    return r;
-}
-static SDL_FRect intro_rect(const picker *p, const layout *l) { return big_rect(p, l, 0); }
-static SDL_FRect replays_rect(const picker *p, const layout *l) { return big_rect(p, l, 1); }
-
+/* The buttons, in target pixels: Controls top right, the big ones in a row at the top (they scroll with the grid). */
 static SDL_FRect controls_rect(const picker *p) {
     float w = (float)p->controls_w + 24 * p->scale, h = (float)p->controls_h + 16 * p->scale;
     SDL_FRect r = {p->width - w - 16 * p->scale, 12 * p->scale, w, h};
     return r;
 }
+
+/* Big button k: each as wide as its label needs, the row centred, or as near as it gets without reaching Controls; a
+ * window too narrow for that narrows them (draw_big_button fits the labels in). */
+#define BIG_BUTTONS 3
+static SDL_FRect big_rect(const picker *p, const layout *l, int k) {
+    const int labels[BIG_BUTTONS] = {p->intro_w, p->random_w, p->replays_w};
+    float s = p->scale, gap = 16 * s, stop = controls_rect(p).x - gap, w[BIG_BUTTONS], widths = 0;
+    for (int i = 0; i < BIG_BUTTONS; i++) {
+        w[i] = SDL_max((float)labels[i] + 40 * s, 200 * s);
+        widths += w[i];
+    }
+    float gaps = (BIG_BUTTONS - 1) * gap, room = stop - l->pad - gaps;
+    float fit = widths > room ? SDL_max(room, widths * 0.1f) / widths : 1, row = widths * fit + gaps;
+    float x = SDL_max(l->pad, SDL_min(SDL_roundf((p->width - row) / 2), stop - row));
+    for (int i = 0; i < k; i++) x += w[i] * fit + gap;
+    SDL_FRect r = {SDL_roundf(x), l->pad + 4 * s - p->scroll, SDL_roundf(w[k] * fit), (float)p->intro_h + 28 * s};
+    return r;
+}
+static SDL_FRect intro_rect(const picker *p, const layout *l) { return big_rect(p, l, 0); }
+static SDL_FRect random_rect(const picker *p, const layout *l) { return big_rect(p, l, 1); }
+static SDL_FRect replays_rect(const picker *p, const layout *l) { return big_rect(p, l, 2); }
 
 /* Is there a pane on that side of the one showing? */
 static bool pane_exists(const picker *p, int dir) {
@@ -228,6 +241,7 @@ int picker_hit(picker *p, float x, float y) {
     layout l = layout_for(p, p->width);
     if (inside(controls_rect(p), x, y)) return PICKER_CONTROLS;
     if (inside(intro_rect(p, &l), x, y)) return PICKER_INTRO;
+    if (inside(random_rect(p, &l), x, y)) return PICKER_RANDOM;
     if (inside(replays_rect(p, &l), x, y)) return PICKER_REPLAYS;
     if (pane_exists(p, -1) && inside(arrow_rect(p, &l, -1), x, y)) return PICKER_PANE_LEFT;
     if (pane_exists(p, 1) && inside(arrow_rect(p, &l, 1), x, y)) return PICKER_PANE_RIGHT;
@@ -238,6 +252,13 @@ int picker_hit(picker *p, float x, float y) {
 }
 
 void picker_set_hover(picker *p, float x, float y) { p->hover = picker_hit(p, x, y); }
+
+int picker_random(const picker *p) {
+    int found = 0, pick = -1;
+    for (int i = 0; i < p->first[PICKER_EDITIONS]; i++)
+        if (!tc_level_is_cutscene(p->entries[i].name) && SDL_rand(++found) == 0) pick = i;
+    return pick;
+}
 
 void picker_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh, bool hot,
                    float scale) {
@@ -267,7 +288,8 @@ static void draw_big_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_F
     gpu_quad(g, f, pass, NULL, in, NULL, body);
     gpu_quad(g, f, pass, NULL, (SDL_FRect){in.x, in.y, in.w, SDL_roundf(in.h / 2)}, NULL, (SDL_FColor){1, 1, 1, 0.16f});
     if (!label) return;
-    SDL_FRect t = {SDL_roundf(r.x + (r.w - (float)lw) / 2), SDL_roundf(r.y + (r.h - (float)lh) / 2 + 2 * scale), (float)lw, (float)lh};
+    float fit = SDL_min(1.0f, (r.w - 12 * scale) / (float)lw), w = (float)lw * fit, h = (float)lh * fit;  /* a narrow window */
+    SDL_FRect t = {SDL_roundf(r.x + (r.w - w) / 2), SDL_roundf(r.y + (r.h - h) / 2 + 2 * scale), w, h};
     picker_label(g, f, pass, label, t, NULL, scale, (SDL_FColor){1, 1, 1, 1});
 }
 
@@ -415,10 +437,12 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
     p->scroll = SDL_clamp(p->scroll, 0.0f, max_scroll(p, &l));
     for (int s = 0; s < PICKER_EDITIONS; s++) p->pane_scroll[s] = SDL_clamp(p->pane_scroll[s], 0.0f, pane_max_scroll(p, &l, s));
     ease_slide(p);
-    SDL_FRect ir = intro_rect(p, &l), dr = replays_rect(p, &l);
+    SDL_FRect ir = intro_rect(p, &l), nr = random_rect(p, &l), dr = replays_rect(p, &l);
     if (ir.y + ir.h > 0) {
         draw_big_button(g, f, pass, ir, p->intro_text, p->intro_w, p->intro_h, p->hover == PICKER_INTRO, p->scale,
                         (SDL_FColor){0.88f, 0.32f, 0.3f, 1});
+        draw_big_button(g, f, pass, nr, p->random_text, p->random_w, p->random_h, p->hover == PICKER_RANDOM, p->scale,
+                        (SDL_FColor){0.25f, 0.65f, 0.38f, 1});
         draw_big_button(g, f, pass, dr, p->replays_text, p->replays_w, p->replays_h, p->hover == PICKER_REPLAYS, p->scale,
                         (SDL_FColor){0.2f, 0.55f, 0.85f, 1});
     }

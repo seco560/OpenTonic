@@ -33,8 +33,8 @@ typedef struct picker {
     int heading_w[PICKER_SECTIONS], heading_h[PICKER_SECTIONS];
     SDL_GPUTexture *unknown;  /* "?": the picture of an imported level */
     int unknown_w, unknown_h;
-    SDL_GPUTexture *intro_text, *replays_text, *controls_text, *left_text, *right_text;  /* the buttons' labels */
-    int intro_w, intro_h, replays_w, replays_h, controls_w, controls_h, left_w, left_h, right_w, right_h;
+    SDL_GPUTexture *intro_text, *random_text, *replays_text, *controls_text, *left_text, *right_text;  /* the buttons' labels */
+    int intro_w, intro_h, random_w, random_h, replays_w, replays_h, controls_w, controls_h, left_w, left_h, right_w, right_h;
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* the page's, pixels */
     int pane;                 /* the edition showing: a selected tile of an edition is always in it */
@@ -54,11 +54,15 @@ void picker_close(picker *p);
 /* Tile under the point (target pixels), one of the PICKER_ button values, or -1. */
 #define PICKER_INTRO (-2)     /* the big "Play Intro Video" button at the top */
 #define PICKER_CONTROLS (-3)  /* "Controls (F1)", top right */
-#define PICKER_REPLAYS (-4)   /* "Replays", beside the intro's: the recordings (replays.h) */
+#define PICKER_REPLAYS (-4)   /* "Replays", in the same row: the recordings (replays.h) */
 #define PICKER_PANE_LEFT (-5) /* the panes' arrows (only the ones with a pane that way) */
 #define PICKER_PANE_RIGHT (-6)
+#define PICKER_RANDOM (-7)    /* "Random Stage", between the intro's and the replays' */
 int picker_hit(picker *p, float x, float y);
 void picker_set_hover(picker *p, float x, float y);
+/* A stage of either edition at random, -1 if none. Not the cutscenes, which the Special Edition's pane has one of (its
+ * outro), nor the imported models. */
+int picker_random(const picker *p);
 void picker_scroll(picker *p, float pixels);
 /* The pane showing, and the page with what it can't take (the end of the pane). */
 void picker_scroll_pane(picker *p, float pixels);

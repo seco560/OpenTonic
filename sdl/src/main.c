@@ -48,7 +48,7 @@ static const char *controls_text =
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special)  -  Ctrl+L from a level  -  V intro  -  R replays\n"
+    "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special)  -  Ctrl+L from a level  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
     "Replays:  Enter plays, Delete deletes, Esc back  -  Pad: Cross plays, Square deletes, Circle back\n"
@@ -60,7 +60,7 @@ static const char *controls_text =
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
     "  R2:  fly faster  -  L2:  recentre the camera  -  L3 (click):  first person\n"
     "  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
-    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro, Square the replays  -  Intro:  Cross, Circle or Start skip\n"
+    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
 
@@ -114,7 +114,7 @@ typedef struct app {
     uint32_t replay_segment;
     float replay_clock;          /* seconds of real time the recording is behind */
     bool replay_paused;          /* P, Cross: the frames wait, the camera turns round Ed (tc_replay_pause) */
-    /* The Replays menu (R, Square), over the level select. */
+    /* The Replays menu, over the level select. */
     bool replays_on;
     replays rp;
     char title_base[512];
@@ -590,14 +590,20 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     if (action >= 0) tc_viewer_set_action(v, (tc_view_action)action, true);
 }
 
-/* The level select's selected level (Enter, Cross). */
-static void open_selected(app *a) {
+/* The level select's entry i (-1: none). */
+static void open_entry(app *a, int i) {
     picker *p = &a->picker;
-    if (p->selected < 0 || p->selected >= p->count) return;
-    char *path = SDL_strdup(p->entries[p->selected].path);  /* opening closes the picker */
+    if (i < 0 || i >= p->count) return;
+    char *path = SDL_strdup(p->entries[i].path);  /* opening closes the picker */
     if (path) open_level(a, path, NULL);
     SDL_free(path);
 }
+
+/* The selected level (Enter, Cross). */
+static void open_selected(app *a) { open_entry(a, a->picker.selected); }
+
+/* A stage at random (its button). */
+static void open_random(app *a) { open_entry(a, picker_random(&a->picker)); }
 
 static void picker_key(app *a, const SDL_KeyboardEvent *k) {
     picker *p = &a->picker;
@@ -611,9 +617,6 @@ static void picker_key(app *a, const SDL_KeyboardEvent *k) {
         break;
     case SDL_SCANCODE_V:  /* V: the intro movie */
         if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) play_intro(a);
-        break;
-    case SDL_SCANCODE_R:  /* R: the replays */
-        if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) show_replays(a);
         break;
     default: break;
     }
@@ -835,7 +838,6 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: picker_move(&a->picker, 0, 1); break;
     case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_START: open_selected(a); break;
     case SDL_GAMEPAD_BUTTON_NORTH: play_intro(a); break;  /* Triangle: the intro (V) */
-    case SDL_GAMEPAD_BUTTON_WEST: show_replays(a); break;  /* Square: the replays (R) */
     default: break;
     }
 }
@@ -974,15 +976,12 @@ static void handle(app *a, const SDL_Event *e) {
         else if (a->picker_open) {
             int i = picker_hit(&a->picker, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
             if (i == PICKER_INTRO) play_intro(a);
+            else if (i == PICKER_RANDOM) open_random(a);
             else if (i == PICKER_REPLAYS) show_replays(a);
             else if (i == PICKER_CONTROLS) a->help = true;
             else if (i == PICKER_PANE_LEFT) picker_pane(&a->picker, -1);
             else if (i == PICKER_PANE_RIGHT) picker_pane(&a->picker, 1);
-            else if (i >= 0) {
-                char *path = SDL_strdup(a->picker.entries[i].path);  /* opening closes the picker */
-                if (path) open_level(a, path, NULL);
-                SDL_free(path);
-            }
+            else open_entry(a, i);
         }
         break;
     case SDL_EVENT_MOUSE_MOTION:
