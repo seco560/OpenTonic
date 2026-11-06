@@ -2,7 +2,9 @@
 #include <SDL3/SDL.h>
 #include "util.h"
 
-typedef enum sfx_kind { SFX_NONE, SFX_PLAY, SFX_LOOP, SFX_STOP } sfx_kind;
+typedef enum sfx_kind { SFX_NONE, SFX_PLAY, SFX_LOOP, SFX_STOP, SFX_VOICE } sfx_kind;
+#define VOICE_STOP 8191 /* the core's TC_AI_VOICE_STOP: a line was dismissed */
+#define SPEECH_VOICE (-2) /* sfx_voice.loop: a character's line */
 
 /* A WAV, read once. Heap-allocated so its address stays put: a loop's audio thread callback reads it. */
 typedef struct sfx_sound {
@@ -153,7 +155,7 @@ void sfx_load(const char *audio_dir) {
         sfx_event *e = &sfx.events[k];
         SDL_free(e->file);
         e->kind = SDL_strcmp(cols[1], "play") == 0 ? SFX_PLAY : SDL_strcmp(cols[1], "loop") == 0 ? SFX_LOOP
-                : SDL_strcmp(cols[1], "stop") == 0 ? SFX_STOP : SFX_NONE;
+                : SDL_strcmp(cols[1], "stop") == 0 ? SFX_STOP : SDL_strcmp(cols[1], "voice") == 0 ? SFX_VOICE : SFX_NONE;
         e->file = cols[2][0] ? SDL_strdup(cols[2]) : NULL;
         e->volume = (float)SDL_strtod(cols[3], &end);
         if (end == cols[3]) e->volume = 1;
@@ -162,11 +164,18 @@ void sfx_load(const char *audio_dir) {
     SDL_free(table);
 }
 
+static void stop_speech(void) {
+    for (int v = sfx.voice_count - 1; v >= 0; v--)
+        if (sfx.voices[v].loop == SPEECH_VOICE) free_voice(v);
+}
+
 void sfx_play(const uint16_t *events, uint32_t count) {
     for (uint32_t i = 0; i < count; i++) {
         int k = events[i];
+        if (k == VOICE_STOP) { stop_speech(); continue; }
         if (k >= sfx.event_count || sfx.events[k].kind == SFX_NONE) continue;
         const sfx_event *e = &sfx.events[k];
+        if (e->kind == SFX_VOICE) stop_speech();
         if (e->kind == SFX_STOP) {
             for (int v = 0; e->stops >= 0 && v < sfx.voice_count; v++)
                 if (sfx.voices[v].loop == e->stops) { free_voice(v); break; }
@@ -193,7 +202,7 @@ void sfx_play(const uint16_t *events, uint32_t count) {
             SDL_DestroyAudioStream(stream);
             continue;
         }
-        sfx.voices[sfx.voice_count++] = (sfx_voice){stream, e->kind == SFX_LOOP ? k : -1, e->volume};
+        sfx.voices[sfx.voice_count++] = (sfx_voice){stream, e->kind == SFX_LOOP ? k : e->kind == SFX_VOICE ? SPEECH_VOICE : -1, e->volume};
     }
 }
 

@@ -67,9 +67,22 @@ static void free_mesh(tc_mesh *m) {
     tc_free(m->indices);
 }
 
+static void free_speech(tc_speech_data *s) {
+    uint32_t i;
+    for (i = 0; i < s->dialogue_count; i++) {
+        tc_free(s->dialogues[i].phonemes);
+        tc_free(s->dialogues[i].text);
+        tc_free(s->dialogues[i].events);
+    }
+    tc_free(s->dialogues);
+    tc_free(s->glyphs);
+    tc_free(s->atlas);
+}
+
 void tc_level_free(tc_level *level) {
     uint32_t i, k;
     if (!level) return;
+    free_speech(&level->speech);
     for (i = 0; i < level->texture_count; i++) tc_free(level->textures[i]);
     tc_free(level->textures);
     for (i = 0; i < level->mesh_count; i++) free_mesh(&level->meshes[i]);
@@ -535,6 +548,63 @@ static void read_cmec(tc_cast_data *c, reader *r) {
     }
 }
 
+/* .ttlv SPCH (tools/ttre/speech.py). */
+static void read_speech(tc_speech_data *s, reader *r) {
+    uint32_t i, k, nd, ng;
+    size_t atlas;
+    nd = rd_u32(r);
+    ng = rd_u32(r);
+    s->spacing = rd_f32(r);
+    s->atlas_w = rd_u16(r);
+    s->atlas_h = rd_u16(r);
+    for (k = 0; k < 4; k++) s->panel[k] = rd_u8(r);
+    s->has_arrival = rd_u32(r) != 0;
+    s->arrival.x = rd_f32(r), s->arrival.y = rd_f32(r), s->arrival.z = rd_f32(r);
+    atlas = (size_t)s->atlas_w * s->atlas_h * 4;
+    s->atlas = (uint8_t *)rd_array(r, (uint32_t)atlas, 1, 1);
+    for (i = 0; s->atlas && i < atlas; i++) s->atlas[i] = rd_u8(r);
+    s->glyphs = (tc_glyph *)rd_array(r, ng, sizeof(tc_glyph), 40);
+    if (s->glyphs) s->glyph_count = ng;
+    for (i = 0; i < s->glyph_count && !r->error; i++) {
+        tc_glyph *g = &s->glyphs[i];
+        g->code = rd_u16(r);
+        (void)rd_u16(r);
+        g->step = rd_f32(r), g->advance = rd_f32(r), g->shift = rd_f32(r);
+        g->half_w = rd_f32(r), g->half_h = rd_f32(r);
+        g->u0 = rd_f32(r), g->v0 = rd_f32(r), g->u1 = rd_f32(r), g->v1 = rd_f32(r);
+    }
+    s->dialogues = (tc_dialogue *)rd_array(r, nd, sizeof(tc_dialogue), 38);
+    if (s->dialogues) s->dialogue_count = nd;
+    for (i = 0; i < s->dialogue_count && !r->error; i++) {
+        tc_dialogue *d = &s->dialogues[i];
+        uint32_t text;
+        uint8_t flags;
+        d->frames = rd_u16(r);
+        d->rate = rd_u16(r);
+        d->voice = rd_u16(r);
+        flags = rd_u8(r);
+        d->channel_count = rd_u8(r);
+        for (k = 0; k < TC_DIALOGUE_CHANNELS; k++) d->channels[k] = rd_u8(r);
+        text = rd_u16(r);
+        d->event_count = rd_u16(r);
+        for (k = 0; k < 4; k++) d->window[k] = rd_u32(r);
+        d->phonemes = (uint8_t *)rd_array(r, (uint32_t)d->frames * 3, 1, 1);
+        for (k = 0; d->phonemes && k < (uint32_t)d->frames * 3; k++) d->phonemes[k] = rd_u8(r);
+        if (text) {
+            if (!have(r, text)) { r->error = TC_ERR_TRUNCATED; return; }
+            d->text = (char *)tc_calloc(text + 1u, 1);
+            if (!d->text) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
+            for (k = 0; k < text; k++) d->text[k] = (char)rd_u8(r);
+        }
+        (void)flags;
+        d->events = (tc_dialogue_event *)rd_array(r, d->event_count, sizeof(tc_dialogue_event), 8);
+        for (k = 0; d->events && k < d->event_count; k++) {
+            d->events[k].frame = rd_u32(r);
+            d->events[k].state = rd_u32(r);
+        }
+    }
+}
+
 /* .ttlv WAYS (tools/ttre/ai.py ways_chunk). */
 static void read_ways(tc_ways *w, reader *r) {
     uint32_t i, k, nw, np;
@@ -855,6 +925,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 
     if (chunk_need(&cs, "WAYS", r)) { /* optional: the waypoints and ways (absent: the way primitives do nothing) */
         read_ways(&level->ways, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "SPCH", r)) { /* optional: what the characters say (absent: their lines end at once) */
+        read_speech(&level->speech, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 

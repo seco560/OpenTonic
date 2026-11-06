@@ -106,6 +106,19 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         tc_result r = tc_cast_init(&p->cast, l, &p->driver.ai);
         p->has_cast = r == TC_OK;
         if (r != TC_OK) v->ai_result = r;
+        p->cast.globals.speech_host = l->speech.dialogue_count != 0; /* update_speech */
+        if (l->speech.has_arrival) { /* a hint scene: where its own Ed would stand, turned to its speaker */
+            uint32_t i;
+            float h = p->player.heading;
+            for (i = 0; i < p->cast.count; i++)
+                if (p->cast.actors[i].entry->flags & TC_CAST_TALK) {
+                    tc_vec3 to = tc_v3_sub(p->cast.actors[i].ai.position, l->speech.arrival);
+                    h = atan2f(to.x, -to.y);
+                }
+            tc_player_teleport(&p->player, tc_v3_add(l->speech.arrival, tc_v3(0, 0, 0.3f)), h);
+            p->player.start_position = l->speech.arrival; /* and back here after a death */
+            p->player.start_heading = h;
+        }
     }
     /* The persos' own collision (docs/ENGINE.md "Moving collision, read"): Ed's sweeps meet it where each perso is now
      * (the cast poses its actors' every tick), as his collide set says (the player's +0x34 / +0x35) */
@@ -382,12 +395,13 @@ static void update_portals(tc_viewer *v, float dt) {
         tc_viewer_carry *c = v->carry ? v->carry : (tc_viewer_carry *)tc_calloc(1, sizeof(*c));
         if (c) {
             const tc_ai_model *m = e->ai.model;
-            const char *after = tc_level_after_cutscene(ev->level);
-            /* Cutscenes don't play yet: a portal into a cutscene level goes on to the level it hands over to, Ed at
-             * its start. */
+            /* A hint scene (docs/ENGINE.md "Walkable scenes"): Ed walks in himself, at his start there; its speaker's script
+             * hands over to the main level. Without SPCH (an old export) it is passed by, as before. */
+            const char *after = v->level->speech.dialogue_count ? NULL : tc_level_after_cutscene(ev->level);
+            bool scene = tc_level_after_cutscene(ev->level) != NULL;
             copy_text(c->level, sizeof(c->level), after ? after : ev->level);
-            copy_text(c->place, sizeof(c->place), after ? NULL : ev->place);
-            copy_text(c->camera_place, sizeof(c->camera_place), after ? NULL : ev->camera_place);
+            copy_text(c->place, sizeof(c->place), scene ? NULL : ev->place);
+            copy_text(c->camera_place, sizeof(c->camera_place), scene ? NULL : ev->camera_place);
             c->dsg_size = m->dsg.size <= TC_VIEWER_CARRY_DSG && e->ai.dsg ? m->dsg.size : 0;
             if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
             c->vertical_fov = v->camera.vertical_fov;
@@ -945,6 +959,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     v->ed_clip = ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
+    tc_speech_init(&v->speech, &l->speech);
     {
         bool oom;
         v->light = light_create(v, l, &oom);
@@ -989,6 +1004,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
 void tc_viewer_free(tc_viewer *v) {
     uint32_t i;
     if (v->rec) tc_rec_end(v->rec, v);
+    tc_speech_free(&v->speech);
     play_destroy(v->play);
     light_destroy(v->light);
     tc_free((void *)v->effects);
@@ -1364,7 +1380,8 @@ static void step_ai(tc_viewer *v, float dt) {
         p->tick_time -= TC_ED_AI_TICK;
         if (++ticks > 8) { p->tick_time = 0; break; } /* a long stall: drop the backlog */
         p->pose_prev = p->pose_cur, p->clip_prev = p->clip_cur, p->phase_prev = p->phase_cur;
-        bool still = v->cam.first_person || v->director; /* the director's shot: Ed waits, as the SE parks its Ed */
+        bool held_back = v->director || v->speech_held;
+        bool still = v->cam.first_person || held_back; /* the director's shot: Ed waits, as the SE parks its Ed */
         play_mode_zones(v);
         if (!p->has_driver) break;
         /* the exe's frame (docs/ENGINE.md): the run-first persos (platforms, lifts) move before the rest, so Ed rides
@@ -1372,13 +1389,15 @@ static void step_ai(tc_viewer *v, float dt) {
         if (p->has_cast) {
             const tc_ai_state *st = &p->driver.ai.model->states[p->driver.ai.state];
             p->cast.main_carrier = p->driver.walk.carrier;
+            p->cast.talk_press = v->talk_press;
+            v->talk_press = false;
             p->cast.main_mass = st->card != TC_AI_NONE16 ? tc_ai_card_f32(&p->driver.ai.model->cards[st->card], 4) : 0;
             tc_cast_step_first(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
         }
         /* port: in first person Ed faces where the player looks (the original's stick mode turns him with the stick, B29),
          * so what he shoots goes where the gunsight is */
         if (v->cam.first_person && !v->director) p->player.heading = TC_PI - v->camera.yaw;
-        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, v->director ? 0 : ai_inputs(v), still ? 0 : v->move_x,
+        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, held_back ? 0 : ai_inputs(v), still ? 0 : v->move_x,
                       still ? 0 : v->move_y, v->camera.position);
         if (p->driver.events.restarted) {
             p->driver.events.restarted = false;
@@ -1391,6 +1410,15 @@ static void step_ai(tc_viewer *v, float dt) {
             tc_cast_step_rest(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
             for (n = 0; n < p->cast.sounds_out_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
                 v->sounds[v->sound_count++] = p->cast.sounds_out[n];
+        }
+        if (p->has_cast && p->cast.talk_cover) { /* a speaker's way out (docs/ENGINE.md "Walkable scenes") */
+            p->cast.talk_cover = false;
+            p->driver.events.cover = true;
+            p->driver.screen_covered = false;
+        }
+        if (p->has_cast && p->cast.talk_level) {
+            p->driver.events.level = p->cast.talk_level;
+            p->cast.talk_level = NULL;
         }
         capture_pose(v);
         if (p->has_cast && take_picture(v)) { /* the game holds while it shows (0x40fa20 waits in the main loop) */
@@ -1575,6 +1603,109 @@ void tc_viewer_paused_look(tc_viewer *v, float dt) {
     if (v->playing && v->play) update_camera(v, dt, false);
 }
 
+/* The line on show (GAM_0042cce0's game mode 2, GAM_00417a10): it starts when a perso's META 7 says so, its voice plays
+ * and its text moves on; a fresh Jump, Action or Shoot ends it (the exe's own key, DAT_008bc3bc), whenever: with text on,
+ * only the key does. Port: a line without text ends with its voice, and held Up / Down scroll the text once it is out
+ * (DAT_008bc3b4, DAT_008bc3b8). */
+static void update_speech(tc_viewer *v, float dt, bool fresh) {
+    tc_viewer_play *p = v->play;
+    tc_speech *s = &v->speech;
+    tc_ai_globals *g;
+    if (!p->has_cast) return;
+    g = &p->cast.globals;
+    if (!s->dialogue && g->speech) {
+        if (g->speech > v->level->speech.dialogue_count) { tc_ai_speech_end(g); return; }
+        tc_speech_start(s, &v->level->speech.dialogues[g->speech - 1]);
+        v->speech_event = 0;
+        v->speech_held = true;
+        if (s->dialogue->voice != TC_DIALOGUE_VOICE_NONE && v->sound_count < TC_AI_MAX_SOUNDS)
+            v->sounds[v->sound_count++] = s->dialogue->voice;
+        fresh = false; /* the press that set it off is not the one that ends it */
+    }
+    if (!s->dialogue) {
+        if (v->speech_held && !(v->held & ((1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT))))
+            v->speech_held = false;
+        return;
+    }
+    {
+        const tc_dialogue *d = s->dialogue;
+        float length = d->rate ? (float)d->frames / (float)d->rate : 0;
+        int scroll = (held(v, TC_VA_BACK) ? 1 : 0) - (held(v, TC_VA_FORWARD) ? 1 : 0);
+        bool gone = !g->speaker || !g->speaker->active || g->speaker->frozen || g->speech_stop;
+        g->speech_stop = false;
+        tc_speech_step(s, dt, scroll);
+        while (!gone && v->speech_event < d->event_count &&
+               (float)d->events[v->speech_event].frame <= s->time * (float)d->rate)
+            tc_ai_set_state(g->speaker, d->events[v->speech_event++].state);
+        if (fresh || gone || (!d->text && s->time >= length)) {
+            if (v->sound_count < TC_AI_MAX_SOUNDS) v->sounds[v->sound_count++] = TC_AI_VOICE_STOP;
+            tc_speech_end(s);
+            tc_ai_speech_end(g);
+            v->scene_said = v->level->speech.has_arrival;
+        }
+    }
+}
+
+/* Port: a hint scene whose speaker is left in an empty behaviour after its line waits for the scene's Ed, who is gone, to
+ * force it on (SpyCarota's B9): nothing will, so the cover and the level it would have gone to. */
+static void update_scene(tc_viewer *v) {
+    tc_viewer_play *p = v->play;
+    uint32_t i;
+    if (!v->scene_said || !p->has_cast) return;
+    if (v->scene_leaving) {
+        if (p->driver.screen_covered && !p->driver.events.level) p->driver.events.level = tc_level_after_cutscene(p->level_name);
+        return;
+    }
+    for (i = 0; i < p->cast.count; i++) {
+        const tc_cast_actor *a = &p->cast.actors[i];
+        const tc_ai_behaviour *b;
+        if (!(a->entry->flags & TC_CAST_TALK) || !a->talking) continue;
+        b = &a->ai.model->behaviours[a->ai.normal.behaviour];
+        if (b->script_count == 0 && b->schedule < 0 && tc_level_after_cutscene(p->level_name)) {
+            v->scene_leaving = true;
+            p->driver.events.cover = true;
+            p->driver.screen_covered = false;
+        }
+    }
+}
+
+const tc_dialogue *tc_viewer_speech(const tc_viewer *v) { return v->speech.dialogue; }
+
+bool tc_viewer_talk_prompt(const tc_viewer *v) {
+    const tc_viewer_play *p = v->play;
+    uint32_t i;
+    if (!p || !p->has_cast || !p->cast.main || v->phase != TC_VP_PLAY || v->speech.dialogue || v->director) return false;
+    for (i = 0; i < p->cast.count; i++) {
+        const tc_cast_actor *a = &p->cast.actors[i];
+        float dx, dy;
+        if (!(a->entry->flags & TC_CAST_TALK) || a->talking || !a->ai.active) continue;
+        dx = a->ai.position.x - p->cast.main->position.x, dy = a->ai.position.y - p->cast.main->position.y;
+        if (dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH) return true;
+    }
+    return false;
+}
+
+bool tc_viewer_speech_panel(tc_viewer *v, float aspect, tc_view_speech_panel *out) {
+    const tc_speech_data *sd = &v->level->speech;
+    const tc_dialogue *d = v->speech.dialogue;
+    float box, x;
+    if (d ? !tc_speech_render(&v->speech)
+          : !sd->dialogue_count || !tc_viewer_talk_prompt(v) || !tc_speech_render_prompt(&v->speech, "Press Action to talk"))
+        return false;
+    if (!d) d = &sd->dialogues[0]; /* the prompt: the same window */
+    box = aspect > 4.0f / 3 ? 4.0f / 3 / aspect : 1; /* the window is the 4:3 frame's: its text keeps its shape */
+    x = 0.5f - box / 2;
+    out->rgba = v->speech.pixels;
+    out->width = TC_SPEECH_PANEL_W;
+    out->height = TC_SPEECH_PANEL_H;
+    out->version = v->speech.version;
+    out->rect[0] = x + box * (float)d->window[2] / 100;
+    out->rect[1] = (float)d->window[0] / 100;
+    out->rect[2] = x + box * (float)d->window[3] / 100;
+    out->rect[3] = (float)d->window[1] / 100;
+    return true;
+}
+
 static void update_play(tc_viewer *v, float dt, bool fresh) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
@@ -1584,6 +1715,10 @@ static void update_play(tc_viewer *v, float dt, bool fresh) {
     look(v, dt);
     if (p->use_ai) {
         step_ai(v, v->paused ? 0 : dt); /* Ed's own scripts, at the game's tick */
+        if (!v->paused) {
+            update_speech(v, dt, fresh);
+            update_scene(v);
+        }
     } else {
         tc_player_input in;
         bool walking_in = v->walk_in != 0;
@@ -1648,6 +1783,7 @@ uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
 static void update_frame(tc_viewer *v, float dt) {
     const uint32_t skip_mask = (1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT);
     bool fresh = (v->held & skip_mask & ~v->skip_held) != 0;
+    if (v->held & (1u << TC_VA_ACTION) & ~v->skip_held) v->talk_press = true;
     v->skip_held = v->held & skip_mask;
     v->sound_count = 0;
     if (v->picture_left > 0) { /* a scripted picture: the game holds (port: a fresh press skips it) */

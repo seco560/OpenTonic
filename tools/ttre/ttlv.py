@@ -41,6 +41,7 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
         ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
   CMEC* the cast's mechanics: its families' states' ID cards (cast.mech_chunk has the layout)
+  SPCH* what the characters say: dialogues, their text, the font (speech.py has the layout)
   PCOL* the persos' own collision, in their objects' axes (perso_collision has the layout); COLL no longer holds it
         (2026-11-05): the core poses it where each perso is, every tick (docs/ENGINE.md "Moving collision, read").
   WAYS* the level's waypoints and the persos' ways (ai.ways_chunk has the layout; retail only): script nodes of type 29
@@ -398,6 +399,8 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
             cast.load_cast_objects(data, p, family_cache[fam][1])
     spawned = [t for t in data.spawnables() if t.loc in cast_locs] if persos else []  # drawn when instanced (cast SPAWN)
     for p in data.persos() + spawned if persos else ():
+        if data.perso_names(p.loc)[1] == cast.SCENE_ED:  # the real Ed plays the scene: this one is neither drawn nor met
+            continue
         a = p.anim
         if not a or not p.objects or (p.loc == fix_ed and ed_loc != fix_ed):
             continue  # (the fix Ed is left out where another perso is the player: unplaced there)
@@ -502,6 +505,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
                                               donor_head=cast_body[:8] if cast_body else None)  # se.donor_cast's ids
         with open(os.path.splitext(path)[0] + '_cast.txt', 'w', encoding='utf-8') as f:
             f.write(f'{len(cast_list)} persos run their AI; left out: {cast_skipped}\n' + '\n'.join(listing) + '\n')
+    spch = data.speech().chunk() if persos else None
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
     mesh = struct.pack('<I', len(meshes)) + b''.join(fitted_surface(m) + geometry(m) for m in meshes.values())
@@ -515,6 +519,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('CMEC', cmec) if cmec else None,
            ('PCOL', pcol) if pcol else None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
+           ('SPCH', spch) if spch else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
                          donor_lite)),
@@ -558,6 +563,8 @@ def perso_collision(data, cast_locs, prso_index, skip_decals=False):
     player = data.player()
     fix_ed = data.perso_in_fix[0][0] if data.perso_in_fix else None
     for k, p in enumerate(data.persos()):
+        if data.perso_names(p.loc)[1] == cast.SCENE_ED:
+            continue
         if not p.collides or not p.anim or p.loc == player or (p.loc == fix_ed and player != fix_ed):
             continue
         pose0 = {o: m for o, m in p.anim.pose(0) if o is not None}

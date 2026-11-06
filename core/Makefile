@@ -10,6 +10,7 @@
 #   make sectorcheck -> every level's sectors against the game's own data (tc_sector.h)
 #   make camcheck   -> the play camera (tc_cam.h) on hand-made geometry, then a walk's line of sight on a few levels
 #   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
+#   make movecheck  -> what each level perso does with Ed near it: rows to diff between builds (docs/ENGINE.md "Perso motion")
 #   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
 #   make replay     -> build/replay: a recording's info, timeline, csv, check
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
@@ -24,7 +25,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/replaycheck $(BUILD)/replay
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/replay
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -61,6 +62,9 @@ $(BUILD)/sectorcheck: tests/sectorcheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/camcheck: tests/camcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 $(BUILD)/castcheck: tests/castcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
+$(BUILD)/movecheck: tests/movecheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/replaycheck: tests/replaycheck.c $(BUILD)/libtoniccore.a
@@ -102,6 +106,9 @@ camcheck: $(BUILD)/camcheck
 castcheck: $(BUILD)/castcheck
 	$(BUILD)/castcheck ../files/out/ttlv
 
+movecheck: $(BUILD)/movecheck
+	$(BUILD)/movecheck ../files/out/ttlv
+
 replay: $(BUILD)/replay
 
 RECORDINGS := $(wildcard ../files/recordings/*.ttrec)
@@ -114,4 +121,4 @@ endif
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck replaycheck replay clean
+.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck replay clean

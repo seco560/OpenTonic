@@ -95,6 +95,10 @@ typedef struct app {
     char picture_name[64];       /* the level scripts' picture shown (TC_VO_PICTURE), "" none */
     SDL_GPUTexture *picture;
     int picture_w, picture_h;
+    SDL_GPUTexture *speech;      /* what a character is saying (tc_viewer_speech_panel), remade when it changes */
+    uint32_t speech_version;
+    bool speech_on;
+    float speech_rect[4];
     Uint64 loading_start_ns;     /* when the level last changed: the bar's animation clock */
     SDL_GPUTexture *loading_bar; /* the bar's rainbow pool (Textures/Sud0/o_zarbi_auntxy.png), loaded once */
     bool loading_bar_tried;
@@ -179,6 +183,9 @@ static void loading_free(app *a) {
     if (a->picture) SDL_ReleaseGPUTexture(a->g.device, a->picture);
     a->picture = NULL;
     a->picture_name[0] = 0;
+    if (a->speech) SDL_ReleaseGPUTexture(a->g.device, a->speech);
+    a->speech = NULL;
+    a->speech_on = false;
 }
 
 static void close_level(app *a) {
@@ -1112,6 +1119,33 @@ static void picture_prepare(app *a, const char *name) {
     SDL_free(dir);
 }
 
+/* The core's picture of the text window, uploaded when it changes (before the frame: uploads). */
+static void speech_prepare(app *a) {
+    tc_view_speech_panel p;
+    int w = 1, h = 1;
+    SDL_GetWindowSizeInPixels(a->window, &w, &h);
+    a->speech_on = tc_viewer_speech_panel(&a->view->viewer, h ? (float)w / (float)h : 1, &p);
+    if (!a->speech_on) return;
+    SDL_memcpy(a->speech_rect, p.rect, sizeof(a->speech_rect));
+    if (a->speech && p.version == a->speech_version) return;
+    SDL_Surface *s = SDL_CreateSurfaceFrom((int)p.width, (int)p.height, SDL_PIXELFORMAT_RGBA32, (void *)p.rgba, (int)p.width * 4);
+    gpu_upload u;
+    if (s && gpu_upload_begin(&a->g, &u)) {
+        if (a->speech) SDL_ReleaseGPUTexture(a->g.device, a->speech);
+        a->speech = gpu_upload_surface(&a->g, &u, s, false);
+        a->speech_version = p.version;
+        gpu_upload_end(&a->g, &u);
+    }
+    SDL_DestroySurface(s);
+}
+
+static void draw_speech(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
+    float W = (float)f->width, H = (float)f->height;
+    const float *r = a->speech_rect;
+    gpu_quad(&a->g, f, pass, a->speech, (SDL_FRect){r[0] * W, r[1] * H, (r[2] - r[0]) * W, (r[3] - r[1]) * H}, NULL,
+             (SDL_FColor){1, 1, 1, 1});
+}
+
 /* Over the overlay's black, as main.swift's PictureScreen: the picture in the largest 4:3 box, centred. */
 static void draw_picture(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
     float W = (float)f->width, H = (float)f->height, w = SDL_min(W, H * 4 / 3), h = w * 3 / 4;
@@ -1146,6 +1180,7 @@ static void draw(app *a) {
         tc_viewer_overlay(&a->view->viewer, &o);
         if (o.kind == TC_VO_LOADING) loading_prepare(a, o.level);
         if (o.kind == TC_VO_PICTURE) picture_prepare(a, o.picture);
+        speech_prepare(a);
     } else if (a->next_level) {
         loading_prepare(a, a->next_name);
     }
@@ -1164,11 +1199,13 @@ static void draw(app *a) {
     } else if (a->view) {
         view_draw_frame(a->view, &f);
         bool sight = view_draw_crosshair(a->view, &f, NULL);
-        if (o.kind != TC_VO_NONE || a->help || sight) {  /* screen transition or loading screen, the gunsight, the controls */
+        bool speech = a->speech_on && a->speech;
+        if (o.kind != TC_VO_NONE || a->help || sight || speech) {  /* screen transition or loading screen, the gunsight, the controls */
             SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, false, (SDL_FColor){0, 0, 0, 1});
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
                 if (sight) view_draw_crosshair(a->view, &f, pass);
+                if (speech) draw_speech(a, &f, pass);
                 if (o.kind == TC_VO_LOADING) draw_loading(a, &f, pass, o.progress);
                 if (o.kind == TC_VO_PICTURE) draw_picture(a, &f, pass);
                 if (a->help) draw_help(a, &f, pass);

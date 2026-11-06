@@ -14,6 +14,7 @@
 #include "tc_level.h"
 #include "tc_player.h"
 #include "tc_transition.h"
+#include "tc_speech.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -131,6 +132,14 @@ typedef struct tc_view_overlay {
     const char *picture;      /* PICTURE: Vignette/<picture>.png, next to the level's folder ("Credits/Credit06": the
                                  script's name with '/' and no extension; match the case loosely) */
 } tc_view_overlay;
+
+/* The text window of the line a character is saying (tc_speech.h): `rgba`, TC_SPEECH_PANEL_W x _H, straight alpha, over the
+ * frame in rect (x0, y0, x1, y1: viewport units, y down). version changes when the picture does. */
+typedef struct tc_view_speech_panel {
+    const uint8_t *rgba;
+    uint32_t width, height, version;
+    float rect[4];
+} tc_view_speech_panel;
 
 /* A level change through a portal: what the next level's viewer needs (tc_viewer_desc.carry). Ed lives in the fix,
  * so his dsgvars survive (B63's arrival branch reads them: dsg134 = 2 -> heading dsg136, the step-out). */
@@ -260,6 +269,14 @@ typedef struct tc_viewer {
     float picture_left;       /* seconds; 0: none */
     uint32_t picture_serial, director_serial;
     uint32_t skip_held;       /* last frame's Jump / Action / Shoot, for the fresh presses above */
+    /* What a character is saying (docs/ENGINE.md "Speech"). Port: Ed's inputs are held back meanwhile, until the keys that
+     * ended it are let go: the scripts' own hold (ForceBehaviour(Ed, ...)) is refused for most characters. */
+    tc_speech speech;
+    uint32_t speech_event;    /* its dialogue's next event */
+    bool speech_held;
+    bool talk_press;          /* a fresh Action since the last tick (TC_CAST_TALK) */
+    bool scene_said;          /* a hint scene's line is over */
+    bool scene_leaving;       /* its speaker was left waiting for the scene's Ed: the port covers and goes on */
     bool director;            /* the shot is on */
     bool director_released;   /* the player ended it (until the next camera write) */
     tc_vec3 director_eye;
@@ -416,6 +433,12 @@ const tc_player *tc_viewer_player(const tc_viewer *v);
 unsigned tc_viewer_play_mode(const tc_viewer *v);
 /* Ed's AI driver in play (its behaviour, state, portal progress), for headless checks; NULL without one. */
 const struct tc_ed_ai *tc_viewer_driver(const tc_viewer *v);
+/* The text window this frame, or a hint scene's prompt, for a viewport of this aspect (width / height). False: none. */
+bool tc_viewer_speech_panel(tc_viewer *v, float aspect, tc_view_speech_panel *out);
+/* Ed is within reach of a hint scene's speaker who is waiting for him: Action talks (the panel shows the prompt). */
+bool tc_viewer_talk_prompt(const tc_viewer *v);
+/* The line on show, or NULL. */
+const tc_dialogue *tc_viewer_speech(const tc_viewer *v);
 /* The level persos running their own AI while playing (tc_cast.h), or NULL (no CAST chunk, no Ed AI). */
 struct tc_cast;
 const struct tc_cast *tc_viewer_cast(const tc_viewer *v);

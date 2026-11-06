@@ -87,8 +87,9 @@ the hook for it.
 - **Perso collision (2026-11-05):** each perso's collision is its own (.ttlv PCOL, tc_obstacle.h), no longer baked
   into the static world. Cast actors pose theirs after each step (state animation, position, tilt); the others stand
   at their frame-0 pose. Ed's sweeps meet them by the exe's rules and tests (below); `FUNC 54` and riding work.
-- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift), 7 (pushed and floating things), and
-  since 2026-11-05 (evening) the walkers 0 / 4 / 12 (below, "Walkers"). Types 9, 10, 3, 8 still turn in place (**port**).
+- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift), 7 (pushed and floating things), the
+  walkers 0 / 4 / 12 (below, "Walkers") and the projectiles 10 ("Perso motion"). Types 8 and 9 still only turn in place
+  (**port**); 3 is the camera, outside the cast.
 - **Activity (read, ported):** a perso's AI runs only while the main actor is within its activation radius (std game
   +0x2C squared, -1 always: `GAM_PersoFrame_0042b520` compares it with DAT_008bc744, the squared distance
   `GAM_0042a680` sets), and only in an awake sector (the marks above). Its **mechanics run whatever the radius**
@@ -227,8 +228,7 @@ in the cast.
   - Leaving keeps 2/3 of the carried velocity always (the exe skips that when the carrier's std game +0x26 is 3;
     not exported).
   - The type 7 forces take g = 9.81 (every level's air) instead of looking the environment up.
-  - Type 7 mode 0x17 (orbit) is not ported. Card types 0 / 4 / 9 / 10 / 3 / 8 / 12 for the cast still turn in
-    place (the rolling rocks, the doors with card 0, the guards).
+  - Type 7 mode 0x17 (orbit) is not ported.
   - The type 7 sweep body is the collide set's single sphere only (the crate). Its contacts push it out 0.01 each
     and nothing pulls it down (gravity factor 0), so it creeps up a little where the floor is uneven: the exe's own
     algorithm, kept.
@@ -318,8 +318,8 @@ ProposalVecA := V (`AI_00488070`). Ed's projectile is `LOL_Actor1` (gen_abeille,
   instances at his matrix, whose origin is his feet, and the template's own matrix is the identity; the offset the
   original uses, if any, is not found).
 - The launch vector becomes the instance's velocity at once (**inferred**: its scripts read Velocity right away;
-  `GAM_Always` is not read). Type 10's ballistic forces with thrust are not ported (gravity x the factor instead), nor its
-  own collide-and-move (the bee's scripts end it at its probed wall).
+  `GAM_Always` is not read). Type 10 itself: "Perso motion" below. The bee (gravity factor 0) has no sweep of its own:
+  its scripts end it at its probed wall.
 - ZDE tests (**port**: the exe's `FUN_004631c0` is not read): spheres exact, sphere / box by the nearest point of the box
   in its axes, box / box by their bounds in each other's axes; zones on animated channels ("modules", COND 19-21 / 23 /
   29, PROC 85) are taken as the perso's own; PROC 86 not ported. A list dsgvar keeps up to 8 persos (tc_ai_list).
@@ -329,3 +329,142 @@ ProposalVecA := V (`AI_00488070`). Ed's projectile is `LOL_Actor1` (gen_abeille,
 - Checks: viewcheck `shoot_scenario` (north: the blowgun out, two bees, guard 46 downed, B6). Scratch probes: Ed fires
   every 0.67 s holding Shoot, the bee bursts at the wall 8 ahead. Not checked: the stick's hits (a probe at a guard: the
   guard struck first and knocked Ed back, B102), the bees' damage to other enemies, how the bee looks.
+
+## Perso motion (2026-11-06; all **read** unless marked)
+What moves a perso, top down. A script does not move anything itself: it fills the **proposal** and queues **requests**,
+and the state's card type turns those into motion.
+
+**Before the AI, the animation (`GAM_0042a8d0`, from `GAM_PlayAnim_Update_00415c00`).** A playing animation with root
+motion this frame writes the proposal's direction [7..9] (unit) and speed [10] (its length, units per second:
+`GAM_004170d0` scales the frame's displacement by 1 / (ms x 0.001)) and queues mode 12. That is the default way a perso
+walks. A zero row writes nothing and queues nothing, so the old speed stays.
+
+**The go-to core (`FUN_0049f580`) keeps that speed.** It drops this frame's mode 12, overwrites only the direction, and
+queues 0x14. So a chaser goes at its run cycle's pace and **the scripts set no speed** (sud0's boxer: no SetSpeed anywhere).
+The port had never fed [10] for the cast: every Pursuit had speed 0, and turned on the spot. `root_to_proposal` (tc_cast.c,
+before `tc_ai_step_parts`); Ed keeps his own path.
+
+**Meta-actions** (`META_2Etc_0048f4c0` evaluates the arguments once into per-slot storage by the packed signature; the
+continuation then runs every frame). Until now these fell to `default:` and finished at once, so the scripts ran on as if
+the action had happened: a perso "pursued" and stood still.
+| META | name (SE exe) | start | every frame |
+|---|---|---|---|
+| 0 | IncrementalTurn2(deg, ms) | rate = deg x pi / 180 / (\|ms\| x 0.001) | until elapsed >= ms: mode 3 at the rate |
+| 1 | IncrementalTurn(deg, frames) | rate = deg / frames x pi / 180 (as read: per frame, used as rad/s) | frames left: mode 3 |
+| 2 / 3 | Pursuit(perso, r), DeltaPursuit(perso, r, x, y, z) | | go-to the perso / the point in its axes |
+| 14 / 20 | RunAway(perso, r), RunAwayWP(wp, r) | | go-to reversed (`0x49fac0`), done at distance >= r (`0x49fa10`) |
+| 27 | GoToPosition(point, r) | | go-to |
+| 5 / 6 | WaitEndOfAction / WaitEndOfAnim | | until 3dData +0x161 (ended: last repeat, no next state) / +0x162 (end reached this advance, cleared each advance) |
+| 15-17 | IncrementalTurnPosition / DeltaTurnPerso2 / TurnPerso2 (.., ms) | delta = the short way to the target; rate = delta / \|ms\| | ms left: angle += rate x ms, mode 5 |
+| 18 / 19 | IncrementalDeltaTurnPerso / TurnPerso (.., frames) | rate = delta / frames | frames left: angle += rate, mode 5 |
+Mode 3 is a turn rate through the card's max turn (`DNM_RequestWalk_004ae392`; type 4's air request takes it as it is); mode
+5 is an absolute angle at once, unclamped ((angle - position's angle) / dt). PROC 247 / 248 (`PROC_TurnTowardPointEtc_0048be20`)
+are mode 5 to a point in a perso's axes / to a perso; FUNC 1 the signed degrees from its front to a perso.
+**Bugs on the way:** `heading_set` was never applied on any card with mechanics (a walker told to face something did
+not), and `perso_frame` knows only portals, so META 19 and PROC 247 did nothing against a cast perso (`perso_point`:
+portals first, as a ghost's heading says nothing, then the live perso).
+
+**Also:** COND 15 (`GAM_AnyZoneHolds_004202c0`: any ZDD zone of a holds b's origin; the most-skipped primitive, 43,000
+in 5 s across the levels; **port**: all exported zones count, active or not, and zones on channel objects are not exported),
+COND 51 (`COND_50Etc_00498820`, walkers only), FUNC 44 (`FUNC_GetTimeEtc_0049b040`), PROC 16 (`GAM_00428ea0`: back to the
+dynamic world; the port clears the carrier, so a contact can take it again next frame, as in the exe).
+
+**Type 10** (`DNM_RequestType10_004b252e`, `FUN_004c709a`). The port read modes 0x13 / 0x16 as a velocity. They are not:
+ProposalVecA is a **target point**, [0] the apex height of 0x13 and the speed of 0x16. pyramide's cat paw lobbed by its
+position flew 776 units in 5 s.
+- **0x13, the lob** (handler 3): g = card +8 x the environment's; x, y = the target along the ground and up; h = max([0], y).
+  h > 0: vy = sqrt(2 g h), t = 1 - y / h, vx = g x / vy (t <= 0) or g x / ((sqrt t + 1) vy). h <= 0, y < 0: vy = 0,
+  vx = sqrt(g) x / sqrt(-2 y). g = 0 or [0] < 0: no velocity.
+- **0x15** (0xb): the velocity = ProposalVecA in its axes, with one frame's gravity.
+- **0x16, homing** (0xc): straight at the target the first frame, then the velocity turns 0.2 of the angle a frame, at speed [0].
+- **None:** the velocity kept, with gravity when the factor is set.
+- **Port:** g = 9.81 x the factor (every level's air). With a gravity factor it sweeps its own sphere (`own_sweep`) and stops
+  on the ground; no factor (the bee) no sweep. **Not ported:** card +0xC (turning it to its velocity), +0x10 (the velocity
+  turning towards gravity over time), `FUN_004c8860`.
+
+**Measured** (`make movecheck`: Ed 3 away from each of about 520 drawn persos with mechanics, 5 s, 12 levels; before ->
+after): moved 37 -> 52, turned 10 -> 47. Most of the rest are meant to stand (pickups, spikes, crates) or are behind an
+activation radius or a trigger: this counts motion, not correctness. Scenarios in movecheck: sud0's boxer (perso 7) runs Ed
+down at top speed 8.6 and strikes, then goes home by its way; pyramide's paw lobs onto him (within 1.5) and stays within 16 of
+its start. Special Edition levels: castcheck passes on all 11, but movecheck visits none there (their persos do not run
+mechanics), so this barely reaches them. **Nothing here has been seen in the app.** viewcheck's shoot_scenario: guard 46
+used to walk away from Ed with its back turned; it now turns and closes 6 -> 2.8 in 0.5 s, so the test fires after 0.1 s
+(a change in the test's timing; the assertions are the same).
+
+**Next for motion:** card types 8 (pyr_dentier, patcat2; `DNM_RequestType8_004af04e` read, forces not) and 9 (the rolling
+stones, gen_pierres), PROC 12-15 (a perso parented to a perso), PROC 116 / 117 / 109 (**moved sectors** over time: read as far
+as `GAM_0042a350` / `GAM_0042a270`; these are probably what opens the story gates that `GATES_OPEN` removes at export).
+
+## Speech (2026-11-06; all **read** unless marked)
+The exe's `GAM_LipsSync.c`. A character's line is one object carrying its voice, its mouth shapes, its text and cues.
+**Data.** Per level, encrypted as the snapshots: `.lsy` {name[255], u32 address}: a dialogue's name and the **param of the
+script's type 21 node** that names it (`SNA_snasyn_0045c910` writes the object's pointer there); `.bls` the objects
+(`SNA_snasyn_0045ca20`): frames, rate, sound, channels (+0x18, n +0x22), phonemes (3 bytes a frame, +8), flags text (+0x4C) and
+voice (+0x4D), lines (+0x24 / +0x28 / +0x2C), the window (+0x30..+0x3C, percent: top, bottom, left, right; 75, 95, 5, 95), the
+backdrop (LIPSYNC.TGA, 8x8, blue at 53 %), events {frame, state} (+0x5C / +0x60). 246 objects in 21 levels, each file read to
+its last byte. `game.dsb` holds the text ("NewString" records, 539 strings); 245 of 246 are found (`grogh001` has a voice only).
+**Font.** FontLips in fix.sna (the record 0x2C before its name): +0x14 flags, +0x18 n (126), +0x1C the list of {u16 code, f32
+baseline shift, ptr glyph}, +0x20 spacing 0.015; a glyph {ptr quad, f32 step, f32 advance}, the quad's UVs in
+`MotorTxt/typo2DCnz.tga`. Tools: tools/ttre/speech.py, .ttlv SPCH.
+**Voices.** The value's high half is the bank (0x540000 = English/Bnk_84). The low half no longer matches the bank's order in 96
+dialogues; the resource's file name carries the dialogue's number (TXTDIA139 = A_G0139.apm), which decides (`voice_of`). All 246
+resolve, 163 files: events.tsv kind `voice`, VOICE_SOUND (8192) + rank. The frontends decode one when it is said (**port**:
+everything else is decoded at load) and stop it on TC_AI_VOICE_STOP (8191).
+**Running.** META 7 (`META_7_0049efc0`): not speaking, `GAM_004180a0` sets 3dData +0x1A0, the speaker (`DAT_004ec6bc`), game mode 2
+(`DAT_008bd079`); the continuation waits for +0x1A0 to clear. Mode 2 (`GAM_0042cce0`) only swaps the debug and pause keys for the
+line's. **The game runs on meanwhile.** With text on, **only the key ends a line** (`DAT_008bc3bc`); it stays when voice and text
+are done. Held `DAT_008bc3b4` / `b8` scroll, once the text is out (`DAT_004ec6c0`). PROC 104 Proc_StopSpeech ends one.
+**Text.** `GAM_00417e90`: every `^` to a space, greedy lines of width <= 8.2 (`FON_004ce110`) broken at spaces, the first at 0.8, 0.3
+apart. More than five lines start at -0.75 and rise 0.007 a frame to -0.7 + 0.3 n: a credit roll. `FON_004cdd10`: centred.
+**Port** (core/src/tc_speech.c, tc_viewer.c `update_speech`): the core lays the text out and draws it on the CPU, the game's font
+at 1152 x 192 (`tc_viewer_speech_panel`), which the frontends show as one quad; so the panel can be checked headless as a picture.
+- The window is the 4:3 frame's, centred on wider screens. The window's scale (2 font units high, isotropic) is **inferred**: five
+  lines fit it; `FON_004cd680`'s camera is not read.
+- Dismiss: a fresh Jump, Action or Shoot; scroll: held Back / Forward. A line with no text ends with its voice. The exe's key's binding
+  is not read.
+- **Ed is held while a line is on** (`speech_held`, until the key is let go). The exe's scripts hold him (`ForceBehaviour(Ed, B15)`), which
+  the cast may not do (MAY_FORCE_MAIN: he could be parked for good), so he stands, without the scripts' listening pose.
+- A line waits for the one on show (the exe would leave the first speaker waiting for ever).
+- Lines heard unprompted (40 s standing, no story flags): BigBoss's taunt, cavedoc's Agent, cock01's guard, Transit's flight lesson, the
+  outro. **Not done:** the mouth shapes (`GAM_00417a10`, called from `GAM_PlayAnim_00415500`: the phonemes pick the nearest entry of
+  the 3D data's table, `GAM_cineinfo_00426f10`, by their three bytes, for the listed channels; needs that table exported and a channel's
+  object swapped in the draw). Special Edition speech (its levels have no SPCH: lines end at once).
+
+## Walkable scenes (2026-11-06; the user's plan of 2026-11-02, part built; **port** unless marked)
+Six levels are hint scenes ("Astuce"): bar, mammyon, pharmmap, pyr_fou, SpyCarota, spynorth. **Read:** a speaker (PAT_Barman_Astuce01 ...)
+drives it: camera shots, one line (Speak, chosen by its dsg2), GameAction2, then `ChangeLevel`; PAT_Ed_Map_Astuce is **the scene's own Ed**,
+acted on by forces, and the real Ed is switched off (the "double Ed"); NBD_Appui...Start skips it on Start.
+- **The double Ed is gone:** cast.py SCENE_ED: neither drawn (PRSO) nor met (PCOL). The speaker's references to it fall on a ghost.
+- **Arrival:** where the scene's Ed stood, facing the speaker (SPCH `arrival`), and back there after a death. Ed's own place in the data
+  is not meant for it (mammyon: 70 from the speaker). It holds him in all six.
+- **The speaker** joins the cast (cast.py SCENE_SPEAKERS, TC_CAST_TALK) and sleeps until a fresh Action within TC_CAST_TALK_REACH (7, along
+  the ground: the bar's counter keeps Ed 5.8 off, the mammoth stands 23 above him). Its META 29 waits are cut to 250 ms (`brisk`):
+  they pace camera shots the port does not play. Its cover and level change go through Ed's events.
+- **The arches now lead into the scene** (tc_viewer.c; an export without SPCH passes them by, as before). The Start selector stays out.
+- A speaker left in an empty behaviour after its line waits for the scene's Ed to force it on (SpyCarota's B9): `update_scene` covers and goes
+  to the level it would have (tc_level_after_cutscene).
+- **Checks:** viewcheck scene_scenario (bar, whole flow). A scratch steering probe took all six through it: walk to within reach, Action, the
+  line and voice, Jump, the next level; Ed lost no hit points (in mammyon he drops to z -25 on the way). mammyon's first line comes 18 s after
+  Action: the mammoth walks in along its waypoint, then turns to where the scene's Ed stood.
+- **The prompt** "Press Action to talk" (`tc_viewer_talk_prompt`, `tc_speech_render_prompt`): the game's font in a small box in the text window's
+  place, within TC_CAST_TALK_REACH of a waiting speaker. It is the same panel, so the frontends needed nothing. The text is English and names the
+  action, not the key.
+- **Open:** the exit place (the user's plan has Ed walk out; here the cover follows the line), the scenes' camera
+  shots (`SetCameraTarget`, dsg writes: refused by read_only_for_cast), Ed's own side of the conversation. `dsg2` restarts each visit: the same
+  hint every time. The arrival is against a wall in pyr_fou and spynorth, so the camera swings to the open side and faces Ed.
+
+## Audio and UI triggers met in the scripts (2026-11-06)
+Counts over the cast's scripts, all retail levels. **Works:** the sound requests (PROC 145-148: 1,585 uses, 64 families,
+flat, within TC_CAST_HEARING), animation sound events, DisplayVignetteDuring (PROC 210), transparency (PROC 203-205), speech
+(META 7, above).
+| primitive | uses | what it is | status |
+|---|---|---|---|
+| PROC 142 AddObjectInInventory | 344 | the inventory (`0x419310`) | **no-op**, with FUNC 95's stub (Ed has one of everything) |
+| PROC 153 / 154 / 155 Display / Show / EraseString | 133 / 0 / 72 | HUD text slots (20, `DAT_008a36c0`), font text | **skipped** |
+| PROC 149-152 DisplayChrono etc. | 47 | boss life bars (`GAM_00418c00`: "FixHitPoints"), the chrono | **skipped**; 152 runs every frame |
+| PROC 201 / 202 (and COND 90 TestPower, 82 uses, which the interpreter has) | 21 | Ed's powers | PROC 201 / 202 **skipped** |
+| PROC 118 SaveGame | 21 | | **skipped** |
+| PROC 126-128 PersoLight | 77 | a light carried by a perso (lightning, glows) | **skipped**, purely visual |
+| PROC 212-214 particles | 8 | | **skipped**, purely visual |
+| PROC 165 / 173 / 182 / 192 / 199 | 134 | camera speed, angle, shake, orientation | **skipped** (the camera is the port's own) |
+| PROC 241 (c2boxer) | 2 | under a distance, something on a channel (`0x48b7d0`, not read): 750 hits in 5 s | **skipped**, not understood |

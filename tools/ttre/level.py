@@ -526,6 +526,19 @@ def mat_apply(m, v):
             m[8] * x + m[9] * y + m[10] * z + m[11])
 
 
+class _NoSpeech:
+    @staticmethod
+    def at(loc):
+        return 0
+
+    @staticmethod
+    def chunk():
+        return None
+
+
+_NO_SPEECH = _NoSpeech()
+
+
 class LevelData:
     def __init__(self, lv):
         self.lv = lv
@@ -548,6 +561,13 @@ class LevelData:
         self.mark_sky()
         self.mark_gates()
         self.dynamic = self.read_so(self.dynamic_world, IDENTITY)
+
+    def speech(self):
+        """The level's dialogues (speech.py), read once; the Special Edition's are not read."""
+        if not hasattr(self, '_speech'):
+            from . import speech
+            self._speech = speech.Table(self.lv) if not self.se else None
+        return self._speech or _NO_SPEECH
 
     def un(self, fmt, loc, off=0):
         return struct.unpack_from('<' + fmt, loc[0].data, loc[1] + off)

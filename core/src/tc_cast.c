@@ -155,7 +155,8 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->reinit = e->reinit != 0;
     p->keep_off_main = !(e->flags & TC_CAST_MAY_FORCE_MAIN);
     p->zones_of = e;
-    p->removal_guard = !(e->flags & (TC_CAST_SCENE | TC_CAST_SPAWN)); /* a scene's actors, the spawned: wherever Ed is */
+    p->brisk = (e->flags & TC_CAST_TALK) != 0;
+    p->removal_guard = !(e->flags & (TC_CAST_SCENE | TC_CAST_SPAWN | TC_CAST_TALK)); /* a scene's actors, the spawned: wherever Ed is */
     p->run_mechanics = e->mechanics;
     p->run_animation = e->animation;
     p->radius2 = e->radius2;
@@ -401,6 +402,22 @@ void tc_cast_free(tc_cast *c) {
     memset(c, 0, sizeof(*c));
 }
 
+/* GAM_0042a8d0 from GAM_PlayAnim_Update_00415c00, before the AI: a playing animation with root motion this frame writes its
+ * direction and length into the proposal ([7..9], [10]). The go-to meta-actions (Pursuit, RunAway, GoToWP ...) drop the
+ * direction and keep that speed, so a perso chases at its run cycle's pace: the scripts set no speed of their own. A zero
+ * row leaves the proposal as it was. */
+static void root_to_proposal(tc_ai_perso *p) {
+    const tc_ai_state *st = &p->model->states[p->state];
+    float *pr = p->motion.proposal, len;
+    tc_vec3 row;
+    if (!st->root_count) return;
+    row = p->model->root[st->root_first + (p->state_frame > 0 ? (uint32_t)p->state_frame % st->root_count : 0)];
+    row = tc_v3_scale(row, (float)p->frame_rate); /* units per animation frame -> per second, as ground_wanted */
+    if ((len = tc_v3_length(row)) == 0) return;
+    pr[7] = row.x / len, pr[8] = row.y / len, pr[9] = row.z / len;
+    pr[10] = len;
+}
+
 /* One perso's frame (GAM_00428070 for a marked perso): awake when the main character's sector or its activity list
  * (+0x64) holds it (GAM_00428490), or it is on the engine's always-awake list (0x8c172c, marked every frame by the
  * main loop at 0x428a8f); then its AI within the activation radius, its animation (docs/ENGINE.md). */
@@ -432,14 +449,28 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         if (d2 <= TC_CAST_NEAR * TC_CAST_NEAR) p->near_main_ms = p->time_ms ? p->time_ms : 1;
         p->world = c->world; /* FUNC 162's probe: the static world */
         think = (p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
+        if ((a->entry->flags & TC_CAST_TALK) && !a->talking) { /* port: its scene waits for him */
+            float dx = p->position.x - main_pos.x, dy = p->position.y - main_pos.y;
+            a->talking = c->talk_press && dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH;
+            think = think && a->talking;
+        }
         animate = p->run_mechanics || p->run_animation;
         was_active = p->active && !p->frozen;
+        if (p->run_mechanics && p->model->state_count) root_to_proposal(p);
         tc_ai_step_parts(p, dt, think, animate);
         /* saved: here (it took itself out, or the removal guard kept it: a save point's radius may exceed TC_CAST_NEAR) */
         if (was_active && (!p->active || p->frozen) && (a->entry->flags & TC_CAST_SAVE_POINT) && c->main) {
             c->globals.has_checkpoint = true;
             c->globals.checkpoint = c->main->position;
             c->globals.checkpoint_heading = c->main->heading;
+        }
+        if (a->entry->flags & TC_CAST_TALK) { /* its scene's way out is the main actor's: the cover, then the level */
+            if (p->cover_requested) p->cover_requested = false, c->talk_cover = true;
+            if (c->main) p->screen_covered = c->main->screen_covered;
+            if (p->change_level >= 0) {
+                if ((uint32_t)p->change_level < p->model->string_count) c->talk_level = p->model->strings[p->change_level];
+                p->change_level = -1;
+            }
         }
         a->thought = think;
         c->thinking += think;

@@ -27,6 +27,7 @@ static uint8_t *read_file(const char *path, size_t *size) {
 }
 
 static int failures, bad_frames;
+static uint32_t lines_heard;
 static uint32_t cast_draws;
 
 static void check(int ok, const char *what) {
@@ -78,6 +79,14 @@ static void frame(tc_viewer *v) {
     uint32_t count, opaque, i, k;
     const tc_view_draw *d;
     const tc_cast *c;
+    { /* the player takes each line away (Jump), as he must: a character's line holds Ed (docs/ENGINE.md "Speech") */
+        static int tapped;
+        if (tc_viewer_speech(v) || tapped) {
+            tapped = !tapped && tc_viewer_speech(v);
+            lines_heard += tapped;
+            tc_viewer_set_action(v, TC_VA_JUMP, tapped);
+        }
+    }
     tc_viewer_update(v, 1.0f / 60);
     if ((c = tc_viewer_cast(v)) != NULL) cast_sounds += c->sounds_out_count; /* the last tick's (a frame has 0-1 ticks) */
     d = tc_viewer_draws(v, &count, &opaque);
@@ -112,11 +121,13 @@ static void ed_parts(tc_viewer *v, uint32_t *bits) {
 static float best_run(tc_viewer *v) {
     float best = 0;
     int k;
-    for (k = 0; k < 2 && best <= 2; k++) {
+    static const tc_view_action ways[] = {TC_VA_FORWARD, TC_VA_BACK, TC_VA_LEFT, TC_VA_RIGHT}; /* a wall may be on any side */
+    for (k = 0; k < 4 && best <= 2; k++) {
         tc_vec3 a = tc_viewer_player(v)->position, b;
-        run(v, 2, 1u << (k ? TC_VA_BACK : TC_VA_FORWARD));
+        run(v, 2, 1u << ways[k]);
         b = tc_viewer_player(v)->position;
         best = fmaxf(best, sqrtf((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)));
+        if (tc_viewer_driver(v) && tc_viewer_driver(v)->portal >= 0) break; /* an arch took him: no more ways to try */
     }
     return best;
 }
@@ -245,6 +256,7 @@ static void level(const char *dir, const char *name) {
     printf("  after 10 s standing: up to %u awake, %u thinking, %u asleep behind a radius, %u out of the world; "
            "%u perso parts drawn\n", most_awake, c->thinking, sleepers, before_inactive, cast_draws);
     skipped(c);
+    printf("  lines dismissed so far: %u\n", lines_heard);
     printf("  Ed: behaviour %u, reflex %u, state %u, last forced by perso %d\n", (unsigned)c->main->normal.behaviour,
            (unsigned)c->main->reflex.behaviour, (unsigned)c->main->state, (int)c->main->forced_by);
     { /* a scripted picture or the director's shot holds Ed (tc_viewer.picture_left / director): the player taps Jump to
@@ -260,9 +272,7 @@ static void level(const char *dir, const char *name) {
         for (k = 0; taps && k < 120; k++) frame(&v); /* landed again */
     }
     start = tc_viewer_player(&v)->position;
-    run(&v, 2, 1u << TC_VA_FORWARD);
-    end = tc_viewer_player(&v)->position;
-    moved = sqrtf((end.x - start.x) * (end.x - start.x) + (end.y - start.y) * (end.y - start.y));
+    moved = best_run(&v);
     printf("  Ed ran %.1f in 2 s\n", (double)moved);
     check(moved > 2, "Ed runs with the cast awake");
     { /* Dying: Ed's hit points to 0; his scripts (death, the cover, GameAction0 or the 'death' level) and the port's

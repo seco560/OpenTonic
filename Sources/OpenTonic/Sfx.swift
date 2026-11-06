@@ -12,6 +12,7 @@ private final class Mixer: @unchecked Sendable {
         var at = 0
         var volume: Float = 0
         var loop = -1  // the loop event it plays, -1 = a one-shot sound
+        var speech = false  // a character's line: dismissing it stops it
     }
 
     private static let capacity = 32  // a long run peaked at 7
@@ -36,7 +37,7 @@ private final class Mixer: @unchecked Sendable {
     }
 
     /// A free voice plays `sound`; all busy, it isn't played. loop: its event, whose voice goes on if it already plays.
-    func start(_ sound: UnsafeBufferPointer<Float>, volume: Float, loop: Int?) {
+    func start(_ sound: UnsafeBufferPointer<Float>, volume: Float, loop: Int?, speech: Bool = false) {
         guard let samples = sound.baseAddress, !sound.isEmpty else { return }
         locked {
             var free: Int?
@@ -47,7 +48,7 @@ private final class Mixer: @unchecked Sendable {
                     return
                 }
             }
-            if let free { voices[free] = Voice(samples: samples, count: sound.count, volume: volume, loop: loop ?? -1) }
+            if let free { voices[free] = Voice(samples: samples, count: sound.count, volume: volume, loop: loop ?? -1, speech: speech) }
         }
     }
 
@@ -55,6 +56,10 @@ private final class Mixer: @unchecked Sendable {
         locked {
             for i in 0..<Self.capacity where voices[i].samples != nil && voices[i].loop == event { voices[i].samples = nil }
         }
+    }
+
+    func stopSpeech() {
+        locked { for i in 0..<Self.capacity where voices[i].speech { voices[i].samples = nil } }
     }
 
     func stopAll() {
@@ -107,7 +112,9 @@ final class Sfx {
     /// to the device's.
     private static let sampleRate = 44100.0
 
-    private struct Event { var what: String; var sound: UnsafeBufferPointer<Float>?; var volume: Float; var stops: Int? }
+    private static let voiceStop = 8191  // the core's TC_AI_VOICE_STOP: a line was dismissed
+    private var speech: UnsafeBufferPointer<Float>?  // the line being said: the voices are decoded when said (163 of them)
+    private struct Event { var file = ""; var what: String; var sound: UnsafeBufferPointer<Float>?; var volume: Float; var stops: Int? }
     private var events: [Int: Event] = [:]
     private var sounds: [String: UnsafeBufferPointer<Float>] = [:]  // file -> its decoded samples
     private let mixer = Mixer()
@@ -125,6 +132,8 @@ final class Sfx {
         folder = dir
         mixer.stopAll()  // no voice reads the old samples from here on
         sounds.values.forEach { $0.deallocate() }
+        speech?.deallocate()
+        speech = nil
         sounds = [:]
         events = [:]
         guard let table = try? String(contentsOf: dir.appendingPathComponent("events.tsv"), encoding: .utf8) else { return }
@@ -132,7 +141,7 @@ final class Sfx {
             .map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
             .filter { $0.count >= 4 && Int($0[0]) != nil }
         // On all the cores, as the good resampler takes over a second on one and this holds up the first level.
-        let files = Array(Set(rows.map { $0[2] }.filter { !$0.isEmpty }))
+        let files = Array(Set(rows.filter { $0[1] != "voice" }.map { $0[2] }.filter { !$0.isEmpty }))
         var decoded = [UnsafeBufferPointer<Float>?](repeating: nil, count: files.count)
         decoded.withUnsafeMutableBufferPointer { out in
             nonisolated(unsafe) let out = out  // each iteration writes its own element
@@ -140,7 +149,7 @@ final class Sfx {
         }
         for (file, sound) in zip(files, decoded) { sounds[file] = sound }
         for c in rows {
-            events[Int(c[0])!] = Event(what: c[1], sound: sounds[c[2]], volume: Float(c[3]) ?? 1, stops: c.count > 4 ? Int(c[4]) : nil)
+            events[Int(c[0])!] = Event(file: c[2], what: c[1], sound: sounds[c[2]], volume: Float(c[3]) ?? 1, stops: c.count > 4 ? Int(c[4]) : nil)
         }
         startEngine()
     }
@@ -207,8 +216,14 @@ final class Sfx {
     func play(_ indices: [UInt16]) {
         for i in indices {
             let k = Int(i)
+            if k == Self.voiceStop { mixer.stopSpeech(); continue }
             guard let e = events[k] else { continue }
-            if e.what == "stop" {
+            if e.what == "voice" {
+                mixer.stopSpeech()  // no voice reads the old samples from here on
+                speech?.deallocate()
+                speech = folder.flatMap { e.file.isEmpty ? nil : Sfx.decode($0.appendingPathComponent(e.file)) }
+                if let speech { mixer.start(speech, volume: e.volume, loop: nil, speech: true) }
+            } else if e.what == "stop" {
                 if let target = e.stops { mixer.stopLoop(target) }
             } else if let sound = e.sound {
                 mixer.start(sound, volume: e.volume, loop: e.what == "loop" ? k : nil)

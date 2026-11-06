@@ -80,6 +80,13 @@ SE_ITEM_FAMILIES = {'gen_icon_argen', 'gen_icon_or', 'gen_icon3', 'gen_ruche_j',
                     'doc_plum', 'doc_ressor', 'doc_kyou', 'World'}
 SE_SAVE_MODELS = {'ARG_Sauvegarde', 'JOB_Sauvegarde', 'POC_POC'}  # genplainenord: Proc_SaveGame within dsg0, then out
 SCENE = 16  # entry flag: core tc_level.h TC_CAST_SCENE
+TALK = 128  # entry flag (TC_CAST_TALK): a hint scene's speaker: asleep until Ed talks to it
+# The hint scenes (docs/ENGINE.md "Walkable scenes"): a level of one speaker who tells the scene's own Ed a hint, then hands
+# over to the main level. Port: Ed walks in himself, so the speaker runs (its ChangeLevel is the way out), and the scene's
+# Ed is left out altogether.
+SCENE_SPEAKERS = {'PAT_BarmanAstuce', 'PAT_EspionSpynorth', 'PAT_Fou_Grille', 'PAT_Mammouth_Astuce', 'PAT_Pharmacien_Astuce',
+                  'PAT_EspionJournal'}
+SCENE_ED = 'PAT_Ed_Map_Astuce'
 SPAWN = 64  # entry flag (TC_CAST_SPAWN): a spawnable template (LevelData.spawnables), out until META 11 instances it
 TABLES = 32  # entry flag (TC_CAST_TABLES): its scripts' strings and constant vectors follow them (the STRS and VECS
              # bodies of a .ttai), which the cast had none of before 2026-11-05 (every string and vector read as nothing)
@@ -139,7 +146,7 @@ def select(d):
             reason = 'trigger (TRIG)'
         elif a is not None and k + 1 in gates:
             reason = 'portal (PORT)'
-        elif a is not None and _calls(a, handled, frozenset(fix)):
+        elif a is not None and names[1] not in SCENE_SPEAKERS and _calls(a, handled, frozenset(fix)):
             reason = 'portal / level / light (PORT, LAIS)'
         if reason:
             skipped[reason] = skipped.get(reason, 0) + 1
@@ -359,6 +366,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         world = by_loc[loc].world
         names = d.perso_names(loc)
         flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
+        if names[1] in SCENE_SPEAKERS:
+            flags |= TALK
         if d.se:  # SE_CAST_LEVELS: a scene; elsewhere the items, and the save points as retail's DFM_Save
             flags = SCENE if d.lv.name.lower() in SE_CAST_LEVELS else 2 if names[1] in SE_SAVE_MODELS else 0
         if names[0] in SAVE_POINTS:

@@ -157,6 +157,7 @@ typedef struct tc_ai_sound { uint16_t frame, event; uint8_t first, period; } tc_
 typedef struct tc_ai_mech_event { uint16_t frame, mode; uint8_t first, period; } tc_ai_mech_event;
 #define TC_AI_MAX_STATE_EVENTS 32 /* counters kept per playing state; events beyond fire every time */
 #define TC_AI_MAX_SOUNDS 16
+#define TC_AI_VOICE_STOP 8191u /* a sound event of the host's: the voice playing stops (a line dismissed); voices are 8192 on */
 /* The footstep switch (Bnk_0 event 49, id 0x390000) and the step sounds by floor sound type v (1..23): the sound events
  * the core reports for them are TC_AI_STEP_SOUND + v (tools/ttre/sfx.py writes those rows into events.tsv). */
 #define TC_AI_FOOTSTEP_EVENT 49
@@ -276,6 +277,7 @@ typedef struct tc_ai_motion {
     tc_vec3 axes[3];             /* DynAxis0..2 written by the script */
     tc_vec3 jump_vector;         /* JumpBallistic(vector, height) */
     float jump_height;
+    bool detach;                 /* PROC 16 (GAM_00428ea0): back to the dynamic world, off whatever carries it */
     bool heading_set;            /* face `heading` now: PROC_242, ChangeStateByDirection, TurnTowardOverFrames */
     float heading;
     bool teleport_set;           /* SetPositionFrom (PROC_27) on this perso: move it to `teleport` (feet) */
@@ -327,6 +329,13 @@ typedef struct tc_ai_globals {
     char vignette[64];
     uint32_t vignette_ms;
     uint32_t vignette_serial;
+    /* META 7 Action_SpeakAndWaitEnd (docs/ENGINE.md "Speech"): the line on show (1-based, the level's dialogues; 0 none) and
+     * who says it (DAT_004ec6bc). The host runs it and ends it (tc_ai_speech_end). speech_host: it does; else a line ends
+     * at once. */
+    uint32_t speech;
+    struct tc_ai_perso *speaker;
+    bool speech_host;
+    bool speech_stop;            /* PROC 104 Proc_StopSpeech (GAM_00418790): the host ends the line */
 } tc_ai_globals;
 
 #define TC_AI_MAX_WAYS 8 /* ways per perso (the 21 retail levels: 3 at most) */
@@ -399,6 +408,10 @@ struct tc_ai_perso {
     bool restart_requested;      /* GameAction0 (GAM_Objinit_00419e50 -> engine state 9: back from the last save); the
                                     host clears it (tc_ed_ai: the port's respawn) */
     /* Sound events started this step (animation events passed, PlaySound3D): global event indices; reset each step. */
+    bool brisk;                  /* port: its META 29 waits are cut short: a scene's camera pauses, with no camera to wait for */
+    uint32_t speaking;           /* 3dData +0x1A0: the line this perso is saying, 0 none */
+    bool env_water;              /* host-fed: its environment is water (COND 51, dynamics +0x23C) */
+    bool anim_end_reached;       /* 3dData +0x162: the animation reached its end this advance (WaitEndOfAnim) */
     uint16_t sounds[TC_AI_MAX_SOUNDS];
     uint8_t sound_count;
     tc_ai_light_call light_calls[TC_AI_MAX_LIGHT_CALLS]; /* SetLightSet calls this step; reset each step */
@@ -478,6 +491,10 @@ void tc_ai_step_parts(tc_ai_perso *p, float dt, bool think, bool animate);
 /* Another perso sets this one's normal behaviour (PROC_237): it starts from its beginning on the next step. */
 void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t behaviour);
 /* The same for the reflex (PROC_238); reflex = index among the reflexes. */
+/* The line is over (GAM_004182c0): its speaker's meta-action goes on. */
+void tc_ai_speech_end(tc_ai_globals *g);
+/* GAM_00437260: this perso into a state, as the scripts' ChangeState: false when it may not. */
+bool tc_ai_set_state(tc_ai_perso *p, uint32_t state);
 void tc_ai_force_reflex(tc_ai_perso *p, uint16_t reflex);
 
 /* Raw dsgvar access for tests/debug UIs: value of dsgvar i of the perso as float (ints converted). */

@@ -210,7 +210,8 @@ viewcheck's north demo stays seed-sensitive (with the cast: 8 of seeds 1-12 pass
 
 **Walkable cutscene levels (user, 2026-11-02): the first "remastered" feature.** bar, spynorth, pyr_fou ... become
 places Ed walks around in: he arrives at one spot, talks to / interacts with the scene's character to start the
-scene, then walks out at another spot and goes on to the main level (tc_level_after_cutscene). Needs: the scene's
+scene, then walks out at another spot and goes on to the main level (tc_level_after_cutscene). **Part built 2026-11-06:
+docs/ENGINE.md "Walkable scenes".** Needed: the scene's
 director persos (now excluded: they end in a level change) and the camera perso's AI, the actors' movement, an
 "interact to start" trigger, and the arrival / exit places (the user: "we'll get to that").
 

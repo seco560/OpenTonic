@@ -17,7 +17,7 @@ The levels' own sounds (2026-11-02): each level's .snd (encrypted) lists { u32 e
 memory holding a sound reference (script T34 nodes, animation sound events); the ids are unique over all banks, so the
 event's bank follows. The core reports them as LEVEL_SOUND + the event's rank (level_events); files <bank>_<name>.wav.
 Output: files/out/audio/sfx/<name>.wav (vgmstream-cli; bnm stream names carry the resource index) and events.tsv:
-  index <tab> play|loop|stop <tab> file (relative to sfx/, "" = silent) <tab> volume 0..1 <tab> stop: the event it stops
+  index <tab> play|loop|stop|voice <tab> file (relative to sfx/, "" = silent) <tab> volume 0..1 <tab> stop: the event it stops
 Usage: python3 -m tools.ttre.sfx [out_dir]
 """
 import os
@@ -204,6 +204,22 @@ def main(out_dir='files/out/audio/sfx'):
             rows.append((index, 'loop' if k in loops_b else 'play', file, (res[2] if res else 127) / 127, ''))
             level_rows += 1
     print(f'levels\' own sounds: {level_rows} events from {len(banks)} banks')
+    # The voices (speech.py): event VOICE_SOUND + rank; the frontends decode one when it is said, and stop it when the
+    # line is dismissed (the core's TC_AI_VOICE_STOP).
+    from . import speech
+    banks_of, voice_streams = speech._banks(), {}
+    for (bank, index), (event, name) in sorted(speech.voices().items()):
+        path = banks_of[bank][0]
+        if bank not in voice_streams:
+            voice_streams[bank] = stream_index(path)
+        file = ''
+        if index in voice_streams[bank]:
+            file = f'{bank}_' + os.path.splitext(name.lower())[0] + '.wav'
+            if file not in extracted:
+                subprocess.run(['vgmstream-cli', '-s', str(voice_streams[bank][index]), '-o', os.path.join(out_dir, file), path],
+                               check=True, capture_output=True)
+                extracted[file] = True
+        rows.append((event, 'voice', file, 1.0, ''))
     with open(os.path.join(out_dir, 'events.tsv'), 'w') as f:
         f.write('# index\tplay|loop|stop\tfile\tvolume\tstops  (tools/ttre/sfx.py: Bnk_0 events = the global sound events)\n')
         for k, what, file, vol, stops in rows:

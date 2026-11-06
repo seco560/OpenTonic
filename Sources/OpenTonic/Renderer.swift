@@ -502,6 +502,7 @@ import TonicCore
         for i in Int(opaque)..<Int(count) { drawMesh(draws[i]) }
         drawOverlay(enc, viewer!)
         drawCrosshair(enc, v, Float(size.width / max(size.height, 1)))
+        drawSpeech(enc, v, Float(size.width / max(size.height, 1)))
         enc.endEncoding()
         if let scaled {  // supersampled: filter it down into the drawable
             let p = MTLRenderPassDescriptor()
@@ -565,6 +566,40 @@ import TonicCore
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
     }
     private struct OverlayParams { var mode: UInt32; var threshold: Float }
+
+    /// What a character is saying (tc_viewer_speech_panel): the core's picture of the text window, over the frame. Three
+    /// textures in turn: a frame still in flight may be reading the last one while the text scrolls.
+    private var speechTextures: [MTLTexture] = []
+    private var speechTurn = 0
+    private var speechVersion: UInt32 = 0
+    private func drawSpeech(_ enc: MTLRenderCommandEncoder, _ v: UnsafeMutablePointer<tc_viewer>, _ aspect: Float) {
+        var p = tc_view_speech_panel()
+        guard tc_viewer_speech_panel(v, aspect, &p), let rgba = p.rgba else { return }
+        if speechTextures.isEmpty {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: Int(p.width), height: Int(p.height),
+                                                             mipmapped: false)
+            speechTextures = (0..<3).compactMap { _ in device.makeTexture(descriptor: d) }
+            speechVersion = p.version &- 1
+        }
+        guard speechTextures.count == 3 else { return }
+        if p.version != speechVersion {
+            speechVersion = p.version
+            speechTurn = (speechTurn + 1) % 3
+            speechTextures[speechTurn].replace(region: MTLRegionMake2D(0, 0, Int(p.width), Int(p.height)), mipmapLevel: 0,
+                                               withBytes: rgba, bytesPerRow: Int(p.width) * 4)
+        }
+        let r = withUnsafeBytes(of: p.rect) { Array($0.bindMemory(to: Float.self)) }
+        var verts = [OverlayVertex(position: [r[0], r[1]], uv: [0, 0]), OverlayVertex(position: [r[2], r[1]], uv: [1, 0]),
+                     OverlayVertex(position: [r[0], r[3]], uv: [0, 1]), OverlayVertex(position: [r[2], r[1]], uv: [1, 0]),
+                     OverlayVertex(position: [r[2], r[3]], uv: [1, 1]), OverlayVertex(position: [r[0], r[3]], uv: [0, 1])]
+        var params = OverlayParams(mode: 3, threshold: 0)
+        enc.setRenderPipelineState(overlayPipeline)
+        enc.setDepthStencilState(overlayDepthState)
+        enc.setVertexBytes(&verts, length: MemoryLayout<OverlayVertex>.stride * verts.count, index: 0)
+        enc.setFragmentBytes(&params, length: MemoryLayout<OverlayParams>.stride, index: 0)
+        enc.setFragmentTexture(speechTextures[speechTurn], index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+    }
 
     /// The screen transition (mask wipe or spinning logo), black, or the loading screen's black backdrop.
     private func drawOverlay(_ enc: MTLRenderCommandEncoder, _ viewer: Viewer) {

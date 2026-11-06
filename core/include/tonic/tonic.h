@@ -13,6 +13,7 @@
 #include "tc_cast.h"
 #include "tc_transition.h"
 #include "tc_cam.h"
+#include "tc_speech.h"
 #include "tc_viewer.h"
 #include "tc_rec.h"
 #include "tc_mec.h"

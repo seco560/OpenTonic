@@ -194,8 +194,8 @@ static void light_scenario(const char *dir, const char *name) {
 }
 
 /* Portals through the viewer (docs/PORTALS.md): Ed walks into sud0's Cocktail arch; the overlay must go cover ->
- * black -> loading screen, then the level change is pending: the arch leads to the cutscene level bar, so cock01
- * (tc_level_after_cutscene). bar's viewer, started with the carry, reveals and Ed steps out (state 229). */
+ * black -> loading screen, then the level change is pending: the arch leads to the hint scene bar (cock01 from an export
+ * without SPCH: tc_level_after_cutscene). bar's viewer, started with the carry, reveals and Ed steps out (state 229). */
 /* The sector modes (K) on sud0, playing: everything (the statics' triangles all drawn), the game's (the camera's
  * sector and its list: fewer), Ed's alone (fewer still); the title names the sector. Then Ed runs a while (sud0's start
  * sector is the long river stretch behind the gate: he may stay in it; aicheck's wander counts his crossings), the
@@ -385,7 +385,8 @@ static void portal_scenario(const char *dir) {
     }
     printf("  sud0 -> %s after %.1f s; overlays: mask %d, logo %d, black %d, loading %d\n", pending ? pending->level : "-",
            (double)i / 60, seen[TC_VO_MASK], seen[TC_VO_LOGO], seen[TC_VO_BLACK], seen[TC_VO_LOADING]);
-    check(pending && strcmp(pending->level, "cock01") == 0, "sud0 Cocktail arch: bar is a cutscene, cock01 pending");
+    check(pending && strcmp(pending->level, sud0.speech.dialogue_count ? "bar" : "cock01") == 0,
+          "sud0 Cocktail arch: Ed goes on into the bar's scene");
     check((seen[TC_VO_MASK] || seen[TC_VO_LOGO]) && seen[TC_VO_BLACK] && seen[TC_VO_LOADING], "overlays: cover, black, loading");
     /* The step-in (state 228) ends with every part hidden and holds that frame: no Ed left at the arch (BUGS.md). */
     check(ed_under_cover == 0, "sud0: Ed stays gone after stepping in (none of him drawn under the cover)");
@@ -709,7 +710,8 @@ static void shoot_scenario(const char *dir) {
     p->velocity = tc_v3(0, 0, 0);
     p->heading = 0; /* facing -Y: the guard */
     p->placed++;
-    run(&v, 0.5f, 0);
+    run(&v, 0.1f, 0); /* no longer: the guard turns and comes for him (2.8 away after 0.5 s: the bee would start inside its
+                       * zone), and further back Ed stands off the platform's edge */
     spawned = c->spawned;
     for (i = 0; i < 60; i++) {
         tc_vec3 a = bee->ai.position;
@@ -721,6 +723,92 @@ static void shoot_scenario(const char *dir) {
     snprintf(what, sizeof(what), "Ed shoots: %u bees instanced, %.1f flown; the guard hit (behaviour %u, reflex %u)",
              c->spawned - spawned, flew, guard->ai.normal.behaviour, guard->ai.reflex.behaviour);
     check(c->spawned > spawned && flew > 3 && guard->ai.normal.behaviour == 6, what);
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
+/* A hint scene (docs/ENGINE.md "Walkable scenes", "Speech"): Ed stands where the scene's own Ed would and walks; the speaker
+ * waits for him; Action within reach starts it; its line shows, in the game's font, Ed held; a fresh Jump dismisses it;
+ * its script covers the screen and hands over to the main level. */
+static void scene_scenario(const char *dir) {
+    char path[1024], what[200];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tc_cast *c;
+    const tc_cast_actor *speaker = NULL;
+    const tc_viewer_carry *pending = NULL;
+    tc_view_speech_panel panel;
+    uint32_t i, k, lit = 0, lines = 0;
+    float widest = 0;
+    tc_vec3 at;
+    snprintf(path, sizeof(path), "%s/bar.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); return; }
+    free(data);
+    if (!level.speech.dialogue_count) { printf("  (bar has no SPCH, an older export: scene skipped)\n"); tc_level_free(&level); return; }
+    snprintf(path, sizeof(path), "%s/bar.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.level_name = "bar";
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.seed = 7;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "bar viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+    c = tc_viewer_cast(&v);
+    for (i = 0; c && i < c->count; i++)
+        if (c->actors[i].entry->flags & TC_CAST_TALK) speaker = &c->actors[i];
+    check(speaker != NULL, "bar: the barman is in the cast, a speaker");
+    if (!speaker) { tc_viewer_free(&v); tc_level_free(&level); return; }
+    run(&v, 1, 0);
+    check(tc_v3_distance(tc_viewer_player(&v)->position, level.speech.arrival) < 1, "bar: Ed arrives where the scene's Ed stood");
+    run(&v, 3, 0);
+    check(!tc_viewer_speech(&v) && !speaker->talking, "bar: the barman waits for Ed");
+    check(!tc_viewer_talk_prompt(&v) && !tc_viewer_speech_panel(&v, 4.0f / 3, &panel), "bar: no prompt out of his reach");
+    for (i = 0; i < level.speech.dialogue_count; i++) {
+        tc_speech s;
+        tc_speech_init(&s, &level.speech);
+        tc_speech_start(&s, &level.speech.dialogues[i]);
+        for (k = 0; s.text[k]; k++)
+            if (k == 0 || s.text[k - 1] == '^') widest = fmaxf(widest, tc_speech_line_width(&level.speech, s.text, k));
+        lines += s.lines;
+        tc_speech_free(&s);
+    }
+    snprintf(what, sizeof(what), "bar: every line wrapped to the window (%u lines, widest %.2f of 8.2)", lines, (double)widest);
+    check(widest > 4 && widest <= 8.2f, what);
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(speaker->ai.position, tc_v3(0, -6, 0.5f)), 0);
+    run(&v, 1, 0);
+    lit = 0;
+    if (tc_viewer_talk_prompt(&v) && tc_viewer_speech_panel(&v, 4.0f / 3, &panel))
+        for (i = 0; i < panel.width * panel.height; i++) lit += panel.rgba[i * 4 + 1] > 128;
+    snprintf(what, sizeof(what), "bar: within reach the prompt shows (%u text pixels)", lit);
+    check(lit > 500, what);
+    lit = 0;
+    run(&v, 0.1f, BIT(TC_VA_ACTION));
+    check(speaker->talking, "bar: Action within reach starts the scene");
+    check(!tc_viewer_talk_prompt(&v), "bar: the prompt goes when he talks");
+    for (i = 0; i < 60 * 15 && !tc_viewer_speech(&v); i++) frame(&v, 1.0f / 60);
+    check(tc_viewer_speech(&v) != NULL, "bar: the barman speaks");
+    run(&v, 6, 0); /* more than five lines rise from below: by now they show */
+    if (tc_viewer_speech_panel(&v, 16.0f / 9, &panel)) {
+        for (i = 0; i < panel.width * panel.height; i++) lit += panel.rgba[i * 4 + 1] > 128;
+        snprintf(what, sizeof(what), "bar: the text window (%u text pixels, x %.2f .. %.2f at 16:9)", lit, (double)panel.rect[0], (double)panel.rect[2]);
+        check(lit > 1000 && panel.rect[0] > 0.15f && panel.rect[2] < 0.85f && panel.rect[1] == 0.75f, what);
+    } else check(0, "bar: the text window");
+    at = tc_viewer_player(&v)->position;
+    run(&v, 1, BIT(TC_VA_FORWARD));
+    check(tc_v3_distance(at, tc_viewer_player(&v)->position) < 0.05f, "bar: Ed waits while he listens");
+    run(&v, 0.1f, BIT(TC_VA_JUMP));
+    check(!tc_viewer_speech(&v) && speaker->ai.speaking == 0, "bar: a fresh Jump dismisses the line");
+    for (i = 0; i < 60 * 30 && !pending; i++) {
+        frame(&v, 1.0f / 60);
+        pending = tc_viewer_pending_level(&v);
+    }
+    check(pending && strcmp(pending->level, "cock01") == 0, "bar: the barman's script hands over to cock01");
     tc_viewer_free(&v);
     tc_level_free(&level);
 }
@@ -785,6 +873,8 @@ int main(int argc, char **argv) {
     tc_viewer_free(&v);
     if (tc_viewer_init(&v, &desc) != TC_OK) { fprintf(stderr, "tc_viewer_init failed\n"); return 1; }
     free(ai);  /* the model is a copy */
+    if (level.speech.has_arrival) /* a scene's arrival is against a wall, which the camera swings away from: the open floor */
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3(level.ed.start.m[3], level.ed.start.m[7], level.ed.start.m[11] + 0.3f), tc_heading_of(&level.ed.start));
     run(&v, 1, 0);
     a = ed(&v);
     b.x = run_stick(&v, 0.5f, 0, 0.1f);
@@ -896,6 +986,7 @@ done:
     ride_scenario(dir);
     guide_scenario(dir);
     shoot_scenario(dir);
+    scene_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
     check(bad_frames == 0, "every frame's draw list is valid");

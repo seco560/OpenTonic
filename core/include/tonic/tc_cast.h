@@ -8,10 +8,10 @@
  *   - thinks (runs its AI) while its activation radius holds: std game +0x2C -1, or above the squared distance between
  *     its origin and the main actor's (PROC 17-22 set it; the pickups and most props sleep until Ed comes close);
  *   - plays its state's animation while its mechanics or animation flag is set (+0x2A / +0x2B).
- * Their mechanics run for card types 6 and 7 (tc_cast_mec.c: lifts, pushed and floating things; docs/ENGINE.md "Moving
- * collision, read"), and their own collision (tc_obstacle.h) is posed where they are after each step.
- * Port choices, not the exe: with other card types the persos with the mechanics flag turn in place by the AI's turn
- * requests; only sounds within TC_CAST_HEARING of the main actor are reported (the frontends play them flat). */
+ * Their mechanics run for card types 0, 4, 6, 7, 10, 12 (tc_cast_mec.c; docs/ENGINE.md "Moving collision, read", "Walkers",
+ * "Perso motion"), and their own collision (tc_obstacle.h) is posed where they are after each step.
+ * Port choices, not the exe: with other card types (8, 9) the persos with the mechanics flag turn in place by the AI's
+ * turn requests; only sounds within TC_CAST_HEARING of the main actor are reported (the frontends play them flat). */
 #ifndef TONIC_TC_CAST_H
 #define TONIC_TC_CAST_H
 #include "tc_ai.h"
@@ -29,6 +29,8 @@ extern "C" {
                                       not again within TC_CAST_SOUND_GAP_MS (a script that replays one every tick must
                                       not flood the mixer) */
 #define TC_CAST_SOUND_GAP_MS 250u
+#define TC_CAST_TALK_REACH 7.0f    /* port: how near a speaker Action talks to it, along the ground: the bar's counter keeps Ed
+                                      5.8 off the barman, SpyCarota's ledge 6, and the mammoth towers 23 above him */
 
 /* An actor's mechanics (the exe's dynamics, for the card types the cast runs: tc_cast_mec.c). */
 typedef struct tc_cast_dyn {
@@ -63,6 +65,7 @@ typedef struct tc_cast_actor {
                                     portals every frame); placed at its snapshot sector */
     tc_vec3 position_prev;       /* the tick before: for drawing between ticks */
     tc_vec3 rot_prev;
+    bool talking;                /* TC_CAST_TALK: the main actor spoke to it: its scripts run */
 } tc_cast_actor;
 
 
@@ -102,6 +105,9 @@ typedef struct tc_cast {
     int32_t main_carrier;        /* host-fed: the perso the main actor rides (tc_mec_walk.carrier), -1 none */
     uint16_t main_sector;        /* the main actor's sector, as the last step got it (a spawn by him starts there) */
     uint32_t spawned;            /* diagnostics: META 11's instances */
+    bool talk_press;             /* host-fed: a fresh Action this tick (TC_CAST_TALK) */
+    bool talk_cover;             /* a speaker's GameAction2: the host starts the cover */
+    const char *talk_level;      /* a speaker's ChangeLevel: the host goes there, NULL none */
     float main_mass;             /* host-fed: his mass (his card's +4): what he weighs on what he rides (FUN_004c32f6) */
 } tc_cast;
 

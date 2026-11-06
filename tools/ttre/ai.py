@@ -1343,6 +1343,8 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
     def resolve(n):
         nonlocal btn
         t, ref = n.type, n.ref
+        if t == 21:  # a dialogue (Action_SpeakAndWaitEnd): its 1-based index in the level's SPCH, by the node's address
+            return d.speech().at(n.loc)
         if t == 34:  # a sound event: snapshot pointer -> global event index
             from .sfx import event_index
             if n.event is not None:

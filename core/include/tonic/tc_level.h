@@ -216,6 +216,8 @@ typedef struct tc_cast_entry {
                                      character is in (World, HEG_Inventaire, the bee counters) */
 #define TC_CAST_RUN_FIRST 8u      /* on the engine's run-first list (gpt -> 0x8c1738): stepped before the others (the
                                      platforms, lifts, crates: what others stand on or push) */
+#define TC_CAST_TALK 128u         /* port: a hint scene's speaker (cast.py SCENE_SPEAKERS): asleep until the main actor
+                                     talks to it, then its scripts run, briskly (docs/ENGINE.md "Walkable scenes") */
 #define TC_CAST_SCENE 16u         /* port: a scene's actor (the Special Edition's outro, cast.py SE_CAST_LEVELS): its
                                      removals and deactivations take wherever the main actor is (no removal guard) */
 #define TC_CAST_SPAWN 64u         /* a spawnable template (LevelData.spawnables): out until a script instances it (META 11) */
@@ -233,6 +235,38 @@ typedef struct tc_cast_data {
     uint16_t card_count;         /* .ttlv CMEC: the families' states' ID cards (the cast's mechanics, tc_cast_mec.c) */
     tc_ai_card *cards;
 } tc_cast_data;
+
+/* .ttlv SPCH (tools/ttre/speech.py; docs/ENGINE.md "Speech"): the level's dialogues and the engine's font FontLips. */
+typedef struct tc_glyph {
+    uint16_t code;
+    float step, advance, shift;  /* glyph +4, +8; its table entry's +4 */
+    float half_w, half_h;        /* its quad, font units */
+    float u0, v0, u1, v1;
+} tc_glyph;
+typedef struct tc_dialogue_event { uint32_t frame, state; } tc_dialogue_event;
+#define TC_DIALOGUE_VOICE_NONE 0xFFFFu
+#define TC_DIALOGUE_CHANNELS 10
+typedef struct tc_dialogue {
+    uint16_t frames, rate;       /* the lip table's: frames / rate is how long the line is */
+    uint16_t voice;              /* its sound event, TC_DIALOGUE_VOICE_NONE none */
+    uint8_t channel_count, channels[TC_DIALOGUE_CHANNELS]; /* the channels the mouth shapes go on (0xFF any) */
+    uint16_t event_count;
+    uint32_t window[4];          /* top, bottom, left, right, percent of the frame */
+    uint8_t *phonemes;           /* frames x 3 */
+    char *text;                  /* the game's 8-bit codes, NUL-terminated; NULL none */
+    tc_dialogue_event *events;   /* the speaker goes to `state` at `frame` (GAM_00437260) */
+} tc_dialogue;
+typedef struct tc_speech_data {
+    uint32_t dialogue_count, glyph_count;
+    tc_dialogue *dialogues;
+    tc_glyph *glyphs;
+    float spacing;
+    uint16_t atlas_w, atlas_h;
+    uint8_t panel[4];            /* the window's backdrop */
+    bool has_arrival;            /* a hint scene (docs/ENGINE.md "Walkable scenes"): Ed starts where its own Ed stands */
+    tc_vec3 arrival;
+    uint8_t *atlas;              /* rgba, rows top first */
+} tc_speech_data;
 
 /* .ttlv PCOL (tools/ttre/ttlv.py perso_collision; docs/ENGINE.md "Moving collision, read"): each perso's own collision,
  * in its objects' axes (the object-list scale applied), posed where the perso is by the core (tc_obstacle.h). Kinds are
@@ -341,7 +375,8 @@ typedef struct tc_level {
     tc_sectors sectors;          /* .ttlv SECT (count 0: none, e.g. a level made by another tool) */
     tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
     tc_pcol pcol;                /* .ttlv PCOL (count 0: none; older files baked the persos' collision into COLL) */
-    tc_ways ways;                /* .ttlv WAYS (none: no waypoints; the way primitives then do nothing) */
+    tc_ways ways;
+    tc_speech_data speech;       /* .ttlv SPCH (optional) */                /* .ttlv WAYS (none: no waypoints; the way primitives then do nothing) */
     uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
     int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
     uint32_t light_count;        /* centres (without it only the port's old lighting works) */

@@ -155,7 +155,8 @@ core runs Ed and sequences everything, the frontends draw.
    main.swift's `LoadingScreen` (AppKit views over the Metal view) and `openPortalLevel`.
 5. Docs: this file -> done, NOTES "Level portals" corrected, core/README backend notes.
 
-## Cutscene levels are skipped (2026-10-25)
+## Cutscene levels: no longer skipped (2026-11-06; docs/ENGINE.md "Walkable scenes")
+Ed now walks into the scene and its speaker's script hands over; an export without SPCH still passes it by. Before:
 Six of sud0's red arches lead to a cutscene level whose character then changes level (`tc_level_after_cutscene`: bar ->
 cock01, mammyon -> lecanyon, pharmmap -> marmite, pyr_fou -> pyramide, SpyCarota -> carota, spynorth -> north). Until
 cutscenes play (cameras, text, voices), `tc_viewer` sends the portal straight on to that level, Ed at its start. The

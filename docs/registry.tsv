@@ -592,10 +592,10 @@ addr	name	module	status	basis	size	port	docs	note
 00415020	GAM_00415020	GAM	unknown	none	1046			
 00415440	GAM_00415440	GAM	unknown	none	113			
 004154c0	GAM_004154c0	GAM	unknown	none	58			
-00415500	GAM_PlayAnim_00415500	GAM	known	doc-cite	1712		NOTES.md	
+00415500	GAM_PlayAnim_00415500	GAM	known	doc-cite	1712		ENGINE.md, NOTES.md	
 00415bb0	GAM_PlayAnim_00415bb0	GAM	known	doc-cite	74		ENGINE.md	
-00415c00	GAM_PlayAnim_Update_00415c00	GAM	known	doc-cite	934		DECOMP.md, ENGINE.md, EXE.md, NOTES.md	
-00415fb0	GAM_PlayAnim_Advance_00415fb0	GAM	implemented?	core-cite	501	core/src/tc_ai.c:1023	ENGINE.md, NOTES.md	
+00415c00	GAM_PlayAnim_Update_00415c00	GAM	implemented?	core-cite	934	core/src/tc_cast.c:405	DECOMP.md, ENGINE.md, EXE.md, NOTES.md	
+00415fb0	GAM_PlayAnim_Advance_00415fb0	GAM	implemented?	core-cite	501	core/src/tc_ai.c:1045, core/src/tc_ai.c:1049	ENGINE.md, NOTES.md	
 004161b0	GAM_PlayAnim_004161b0	GAM	known	doc-cite	89		ENGINE.md	
 00416210	GAM_PlayAnim_00416210	GAM	named	name	34			
 00416240	GAM_PlayAnim_00416240	GAM	named	name	22			
@@ -610,13 +610,13 @@ addr	name	module	status	basis	size	port	docs	note
 00416ee0	GAM_00416ee0	GAM	unknown	none	30			
 00416f00	GAM_00416f00	GAM	unknown	none	141			
 00416f90	GAM_00416f90	GAM	unknown	none	314			
-004170d0	GAM_004170d0	GAM	known	doc-cite	760		DECOMP.md	
+004170d0	GAM_004170d0	GAM	known	doc-cite	760		DECOMP.md, ENGINE.md	
 004173d0	GAM_004173d0	GAM	unknown	none	605			
 00417630	GAM_00417630	GAM	unknown	none	470			
 00417810	GAM_00417810	GAM	known	doc-cite	130		ENGINE.md	
 004178a0	GAM_004178a0	GAM	unknown	none	8			
 004178b0	GAM_004178b0	GAM	unknown	none	8			
-004178c0	GAM_004178c0	GAM	unknown	none	71			
+004178c0	GAM_004178c0	GAM	implemented?	core-cite	71	core/src/tc_speech.c:111		
 00417910	GAM_00417910	GAM	unknown	none	11			
 00417920	GAM_00417920	GAM	unknown	none	18			
 00417940	GAM_00417940	GAM	unknown	none	27			
@@ -625,11 +625,11 @@ addr	name	module	status	basis	size	port	docs	note
 004179a0	GAM_004179a0	GAM	unknown	none	25			
 004179c0	GAM_004179c0	GAM	unknown	none	49			
 00417a00	GAM_00417a00	GAM	unknown	none	8			
-00417a10	GAM_00417a10	GAM	unknown	none	1140			
+00417a10	GAM_00417a10	GAM	implemented?	core-cite	1140	core/src/tc_viewer.c:1606	ENGINE.md	
 00418230	GAM_00418230	GAM	unknown	none	132			
-004182c0	GAM_004182c0	GAM	unknown	none	64			
+004182c0	GAM_004182c0	GAM	implemented?	core-cite	64	core/include/tonic/tc_ai.h:494		
 00418570	GAM_LipsSync_00418570	GAM	named	name	543			
-00418790	GAM_00418790	GAM	unknown	none	150			
+00418790	GAM_00418790	GAM	implemented?	core-cite	150	core/include/tonic/tc_ai.h:338		
 00418830	GAM_00418830	GAM	unknown	none	60			
 00418870	GAM_00418870	GAM	unknown	none	41			
 004188a0	GAM_004188a0	GAM	unknown	none	54			
@@ -638,7 +638,7 @@ addr	name	module	status	basis	size	port	docs	note
 004189e0	GAM_004189e0	GAM	unknown	none	147			
 00418a80	GAM_00418a80	GAM	unknown	none	127			
 00418b00	GAM_00418b00	GAM	unknown	none	245			
-00418c00	GAM_00418c00	GAM	unknown	none	163			
+00418c00	GAM_00418c00	GAM	known	doc-cite	163		ENGINE.md	
 00418cb0	GAM_00418cb0	GAM	unknown	none	84			
 00418d50	GAM_00418d50	GAM	unknown	none	28			
 00418d70	GAM_00418d70	GAM	unknown	none	757			
@@ -651,13 +651,13 @@ addr	name	module	status	basis	size	port	docs	note
 00419270	GAM_00419270	GAM	unknown	none	25			
 00419290	GAM_00419290	GAM	unknown	none	73			
 004192e0	GAM_004192e0	GAM	unknown	none	42			
-004193d0	GAM_004193d0	GAM	implemented?	core-cite	101	core/src/tc_ai.c:1508		
-00419440	GAM_00419440	GAM	implemented?	core-cite	71	core/src/tc_ai.c:1508		
-00419490	GAM_00419490	GAM	implemented?	core-cite	73	core/src/tc_ai.c:1461		
+004193d0	GAM_004193d0	GAM	implemented?	core-cite	101	core/src/tc_ai.c:1544		
+00419440	GAM_00419440	GAM	implemented?	core-cite	71	core/src/tc_ai.c:1544		
+00419490	GAM_00419490	GAM	implemented?	core-cite	73	core/src/tc_ai.c:1497		
 004194e0	GAM_004194e0	GAM	unknown	none	78			
 00419530	GAM_00419530	GAM	unknown	none	181			
-004195f0	GAM_004195f0	GAM	implemented?	core-cite	35	core/src/tc_ai.c:1503, core/include/tonic/tc_ai.h:305		
-00419620	GAM_00419620	GAM	implemented?	core-cite	35	core/src/tc_ai.c:1837, core/include/tonic/tc_ai.h:305		
+004195f0	GAM_004195f0	GAM	implemented?	core-cite	35	core/src/tc_ai.c:1539, core/include/tonic/tc_ai.h:308		
+00419620	GAM_00419620	GAM	implemented?	core-cite	35	core/src/tc_ai.c:1902, core/include/tonic/tc_ai.h:308		
 00419650	GAM_00419650	GAM	unknown	none	14			
 00419670	GAM_00419670	GAM	unknown	none	15			
 004196a0	GAM_004196a0	GAM	unknown	none	81			
@@ -666,17 +666,17 @@ addr	name	module	status	basis	size	port	docs	note
 004197c0	GAM_Objinit_004197c0	GAM	named	name	219			
 004198a0	GAM_Objinit_004198a0	GAM	named	name	202			
 00419970	GAM_Objinit_00419970	GAM	named	name	121			
-004199f0	GAM_Objinit_004199f0	GAM	implemented?	core-cite	32	core/src/tc_ai.c:1850		
-00419a10	GAM_Objinit_00419a10	GAM	implemented?	core-cite	112	core/src/tc_ai.c:1850		
-00419a80	GAM_Objinit_00419a80	GAM	implemented?	core-cite	220	core/src/tc_ai.c:1879		
-00419b60	GAM_Objinit_00419b60	GAM	implemented?	core-cite	170	core/src/tc_ai.c:1878	NOTES.md	
+004199f0	GAM_Objinit_004199f0	GAM	implemented?	core-cite	32	core/src/tc_ai.c:1915		
+00419a10	GAM_Objinit_00419a10	GAM	implemented?	core-cite	112	core/src/tc_ai.c:1915		
+00419a80	GAM_Objinit_00419a80	GAM	implemented?	core-cite	220	core/src/tc_ai.c:1944		
+00419b60	GAM_Objinit_00419b60	GAM	implemented?	core-cite	170	core/src/tc_ai.c:1943	NOTES.md	
 00419c10	GAM_Objinit_00419c10	GAM	named	name	86			
 00419c70	GAM_Objinit_00419c70	GAM	named	name	23			
 00419c90	GAM_Objinit_00419c90	GAM	named	name	62			
 00419cd0	GAM_Objinit_00419cd0	GAM	named	name	32			
 00419cf0	GAM_Objinit_00419cf0	GAM	named	name	294			
 00419e20	GAM_Objinit_00419e20	GAM	named	name	36			
-00419e50	GAM_Objinit_00419e50	GAM	implemented?	core-cite	45	core/include/tonic/tc_ai.h:398	NOTES.md	
+00419e50	GAM_Objinit_00419e50	GAM	implemented?	core-cite	45	core/include/tonic/tc_ai.h:408	NOTES.md	
 00419e80	GAM_Objinit_00419e80	GAM	named	name	58			
 00419ec0	GAM_Objinit_00419ec0	GAM	named	name	63			
 00419f00	GAM_Objinit_00419f00	GAM	named	name	32			
@@ -775,7 +775,7 @@ addr	name	module	status	basis	size	port	docs	note
 0041ec40	GAM_0041ec40	GAM	unknown	none	10			
 0041ec60	GAM_0041ec60	GAM	unknown	none	17			
 0041ec80	GAM_0041ec80	GAM	unknown	none	15			
-0041ec90	GAM_0041ec90	GAM	implemented?	core-cite	33	core/src/tc_ai.c:1699	NOTES.md	
+0041ec90	GAM_0041ec90	GAM	implemented?	core-cite	33	core/src/tc_ai.c:1764	NOTES.md	
 0041ecc0	GAM_0041ecc0	GAM	unknown	none	11			
 0041ecd0	GAM_0041ecd0	GAM	unknown	none	15			
 0041ece0	GAM_0041ece0	GAM	unknown	none	15			
@@ -804,9 +804,9 @@ addr	name	module	status	basis	size	port	docs	note
 0041efa0	GAM_0041efa0	GAM	unknown	none	33			
 0041efd0	GAM_0041efd0	GAM	unknown	none	15			
 0041efe0	GAM_Zone_0041efe0	GAM	known	doc-cite	122		NOTES.md	
-0041f060	GAM_0041f060	GAM	implemented?	core-cite	384	core/src/tc_ai.c:846	ENGINE.md	
+0041f060	GAM_0041f060	GAM	implemented?	core-cite	384	core/src/tc_ai.c:868	ENGINE.md	
 0041f210	GAM_ZoneContains_0041f210	GAM	known	doc-cite	100		NOTES.md	
-0041f280	GAM_PersoActiveZones_0041f280	GAM	implemented?	core-cite	32	core/src/tc_ai.c:839		
+0041f280	GAM_PersoActiveZones_0041f280	GAM	implemented?	core-cite	32	core/src/tc_ai.c:861		
 0041f2a0	GAM_0041f2a0	GAM	known	doc-cite	231		ENGINE.md	
 0041f390	GAM_ZdxStuff_0041f390	GAM	named	name	499			
 0041f590	GAM_ZoneIndex_0041f590	GAM	named	name	9			
@@ -817,7 +817,7 @@ addr	name	module	status	basis	size	port	docs	note
 0041f960	GAM_ZdxStuff_0041f960	GAM	named	name	208			
 0041fa30	GAM_ZdxStuff_0041fa30	GAM	named	name	19			
 0041fa50	GAM_ZdxStuff_0041fa50	GAM	known	doc-cite	22		DECOMP.md	
-0041fa70	GAM_CollectNearby	GAM	partial	hand	144	core/src/tc_ai.c:919, core/src/tc_ai.c:1768	ENGINE.md, NOTES.md	mode 0 (the perso's zones); modules as the perso's own
+0041fa70	GAM_CollectNearby	GAM	partial	hand	144	core/src/tc_ai.c:941, core/src/tc_ai.c:1833	ENGINE.md, NOTES.md	mode 0 (the perso's zones); modules as the perso's own
 0041fb00	GAM_ZdxStuff_0041fb00	GAM	known	doc-cite	350		NOTES.md	
 0041fc60	GAM_ZdxStuff_0041fc60	GAM	named	name	154			
 0041fd00	GAM_ZdxStuff_0041fd00	GAM	named	name	341			
@@ -825,8 +825,8 @@ addr	name	module	status	basis	size	port	docs	note
 0041ff30	GAM_ZdxStuff_0041ff30	GAM	named	name	62			
 0041ff70	GAM_ZdxStuff_0041ff70	GAM	named	name	115			
 00420170	GAM_ZdxStuff_00420170	GAM	named	name	265			
-00420280	GAM_ZoneHolds_00420280	GAM	implemented?	core-cite	57	core/src/tc_ai.c:1328	NOTES.md	
-004202c0	GAM_AnyZoneHolds_004202c0	GAM	known	doc-cite	207		NOTES.md	
+00420280	GAM_ZoneHolds_00420280	GAM	implemented?	core-cite	57	core/src/tc_ai.c:1360	NOTES.md	
+004202c0	GAM_AnyZoneHolds_004202c0	GAM	implemented?	core-cite	207	core/src/tc_ai.c:1361	ENGINE.md, NOTES.md	
 00420390	GAM_ZdxStuff_00420390	GAM	named	name	138			
 00420420	GAM_ZdxStuff_00420420	GAM	named	name	344			
 00420580	GAM_ZdxStuff_00420580	GAM	named	name	134			
@@ -898,7 +898,7 @@ addr	name	module	status	basis	size	port	docs	note
 00422e10	GAM_00422e10	GAM	unknown	none	219			
 00422ef0	GAM_00422ef0	GAM	unknown	none	10			
 00422f00	GAM_00422f00	GAM	unknown	none	382			
-00423080	GAM_00423080	GAM	unknown	none	138			
+00423080	GAM_00423080	GAM	known	doc-cite	138		SE.md	
 00423110	GAM_00423110	GAM	unknown	none	61			
 00423150	GAM_00423150	GAM	unknown	none	28			
 00423170	GAM_00423170	GAM	unknown	none	16			
@@ -933,7 +933,7 @@ addr	name	module	status	basis	size	port	docs	note
 00423af0	GAM_00423af0	GAM	unknown	none	106			
 00423b60	GAM_00423b60	GAM	unknown	none	145			
 00423c00	GAM_00423c00	GAM	unknown	none	22			
-00423c20	GAM_00423c20	GAM	implemented?	core-cite	22	core/src/tc_ai.c:1819		
+00423c20	GAM_00423c20	GAM	implemented?	core-cite	22	core/src/tc_ai.c:1884		
 00423c70	GAM_00423c70	GAM	unknown	none	30			
 00423c90	GAM_00423c90	GAM	unknown	none	8			
 00423ca0	GAM_00423ca0	GAM	unknown	none	12			
@@ -958,10 +958,10 @@ addr	name	module	status	basis	size	port	docs	note
 00424250	GAM_00424250	GAM	unknown	none	8			
 00424260	GAM_00424260	GAM	unknown	none	8			
 00424270	GAM_00424270	GAM	unknown	none	8			
-00424280	GAM_00424280	GAM	implemented?	core-cite	33	core/src/tc_ai.c:1858	NOTES.md	
+00424280	GAM_00424280	GAM	implemented?	core-cite	33	core/src/tc_ai.c:1923	NOTES.md	
 004242b0	GAM_004242b0	GAM	unknown	none	8			
 004242c0	GAM_004242c0	GAM	unknown	none	8			
-004242d0	GAM_004242d0	GAM	implemented?	core-cite	41	core/src/tc_ai.c:1859	NOTES.md	
+004242d0	GAM_004242d0	GAM	implemented?	core-cite	41	core/src/tc_ai.c:1924	NOTES.md	
 00424300	GAM_00424300	GAM	unknown	none	8			
 00424310	GAM_00424310	GAM	unknown	none	8			
 00424320	GAM_00424320	GAM	unknown	none	18			
@@ -995,7 +995,7 @@ addr	name	module	status	basis	size	port	docs	note
 00425670	GAM_MSWay_00425670	GAM	named	name	144			
 00425700	GAM_MSWay_00425700	GAM	named	name	144			
 004257c0	GAM_004257c0	GAM	unknown	none	41			
-004257f0	GAM_004257f0	GAM	implemented?	core-cite	27	core/src/tc_ai.c:793	ENGINE.md	
+004257f0	GAM_004257f0	GAM	implemented?	core-cite	27	core/src/tc_ai.c:815	ENGINE.md	
 00425810	GAM_00425810	GAM	unknown	none	27			
 00425830	GAM_00425830	GAM	unknown	none	32			
 00425850	GAM_00425850	GAM	unknown	none	27			
@@ -1006,7 +1006,7 @@ addr	name	module	status	basis	size	port	docs	note
 004258f0	GAM_004258f0	GAM	unknown	none	32			
 00425910	GAM_00425910	GAM	unknown	none	38			
 00425940	GAM_00425940	GAM	unknown	none	96			
-004259a0	GAM_Always_004259a0	GAM	implemented?	core-cite	681	core/src/tc_ai.c:2071, core/src/tc_cast.c:35	ENGINE.md	
+004259a0	GAM_Always_004259a0	GAM	implemented?	core-cite	681	core/src/tc_ai.c:2212, core/src/tc_cast.c:39	ENGINE.md	
 00425c50	GAM_Always_00425c50	GAM	named	name	401			
 00425df0	GAM_00425df0	GAM	unknown	none	67			
 00425e40	GAM_00425e40	GAM	unknown	none	54			
@@ -1088,7 +1088,7 @@ addr	name	module	status	basis	size	port	docs	note
 00426ee0	GAM_cineinfo_00426ee0	GAM	named	name	15			
 00426ef0	GAM_cineinfo_00426ef0	GAM	named	name	11			
 00426f00	GAM_cineinfo_00426f00	GAM	named	name	15			
-00426f10	GAM_cineinfo_00426f10	GAM	named	name	8			
+00426f10	GAM_cineinfo_00426f10	GAM	known	doc-cite	8		ENGINE.md	
 00426f20	GAM_cineinfo_00426f20	GAM	named	name	56			
 00426f60	GAM_cineinfo_00426f60	GAM	named	name	8			
 00426f70	GAM_cineinfo_00426f70	GAM	named	name	56			
@@ -1150,24 +1150,24 @@ addr	name	module	status	basis	size	port	docs	note
 00427950	GAM_00427950	GAM	unknown	none	85			
 004279b0	GAM_004279b0	GAM	known	doc-cite	285		NOTES.md	
 00427ad0	GAM_00427ad0	GAM	unknown	none	169			
-00427b80	GAM_00427b80	GAM	implemented?	core-cite	1168	core/include/tonic/tc_sector.h:131	NOTES.md	
+00427b80	GAM_00427b80	GAM	implemented?	core-cite	1168	core/include/tonic/tc_sector.h:134	NOTES.md	
 00428010	GAM_00428010	GAM	known	doc-cite	25		ENGINE.md	
 00428030	GAM_00428030	GAM	unknown	none	57			
-00428070	GAM_00428070	GAM	implemented?	core-cite	902	core/src/tc_cast.c:398, core/include/tonic/tc_ai.h:434, core/include/tonic/tc_cast.h:6	DIRECTION.md, ENGINE.md, NOTES.md	
+00428070	GAM_00428070	GAM	implemented?	core-cite	902	core/src/tc_cast.c:421, core/include/tonic/tc_ai.h:448, core/include/tonic/tc_cast.h:6	DIRECTION.md, ENGINE.md, NOTES.md	
 00428400	GAM_00428400	GAM	known	doc-cite	140		ENGINE.md, NOTES.md	
-00428490	GAM_00428490	GAM	implemented?	core-cite	190	core/src/tc_cast.c:399, core/include/tonic/tc_sector.h:52, core/include/tonic/tc_sector.h:120	ENGINE.md, NOTES.md	
-00428550	GAM_00428550	GAM	implemented?	core-cite	606	core/src/tc_cast.c:502	ENGINE.md, NOTES.md	
-004287b0	GAM_004287b0	GAM	implemented?	core-cite	229	core/src/tc_cast.c:501	ENGINE.md, NOTES.md	
+00428490	GAM_00428490	GAM	implemented?	core-cite	190	core/src/tc_cast.c:422, core/include/tonic/tc_sector.h:52, core/include/tonic/tc_sector.h:123	ENGINE.md, NOTES.md	
+00428550	GAM_00428550	GAM	implemented?	core-cite	606	core/src/tc_cast.c:539	ENGINE.md, NOTES.md	
+004287b0	GAM_004287b0	GAM	implemented?	core-cite	229	core/src/tc_cast.c:538	ENGINE.md, NOTES.md	
 004288a0	GAM_004288a0	GAM	unknown	none	220			
 00428980	GAM_00428980	GAM	unknown	none	19			
-00428ea0	GAM_00428ea0	GAM	unknown	none	20			
+00428ea0	GAM_00428ea0	GAM	implemented?	core-cite	20	core/src/tc_ai.c:2061, core/include/tonic/tc_ai.h:280	ENGINE.md	
 00428ec0	GAM_00428ec0	GAM	unknown	none	18			
 00428ee0	GAM_00428ee0	GAM	unknown	none	82			
 00428f40	GAM_00428f40	GAM	unknown	none	15			
 00429010	GAM_00429010	GAM	known	doc-cite	44		PORTALS.md	
 00429040	GAM_00429040	GAM	known	doc-cite	34		PORTALS.md	
-00429070	GAM_00429070	GAM	implemented?	core-cite	44	core/src/tc_ai.c:1944	NOTES.md, PORTALS.md	
-004290a0	GAM_004290a0	GAM	implemented?	core-cite	6	core/src/tc_ai.c:1377	PORTALS.md	
+00429070	GAM_00429070	GAM	implemented?	core-cite	44	core/src/tc_ai.c:2005	NOTES.md, PORTALS.md	
+004290a0	GAM_004290a0	GAM	implemented?	core-cite	6	core/src/tc_ai.c:1413	PORTALS.md	
 004290b0	GAM_004290b0	GAM	known	doc-cite	121		PORTALS.md	
 00429130	GAM_00429130	GAM	unknown	none	6			
 00429140	GAM_00429140	GAM	unknown	none	9			
@@ -1202,14 +1202,14 @@ addr	name	module	status	basis	size	port	docs	note
 0042a0b0	GAM_0042a0b0	GAM	unknown	none	74			
 0042a100	GAM_0042a100	GAM	unknown	none	179			
 0042a1c0	GAM_0042a1c0	GAM	unknown	none	174			
-0042a270	GAM_0042a270	GAM	unknown	none	222			
-0042a350	GAM_0042a350	GAM	unknown	none	179			
+0042a270	GAM_0042a270	GAM	known	doc-cite	222		ENGINE.md	
+0042a350	GAM_0042a350	GAM	known	doc-cite	179		ENGINE.md	
 0042a410	GAM_0042a410	GAM	unknown	none	109			
-0042a680	GAM_0042a680	GAM	implemented?	core-cite	160	core/include/tonic/tc_ai.h:417	ENGINE.md, NOTES.md	
+0042a680	GAM_0042a680	GAM	implemented?	core-cite	160	core/include/tonic/tc_ai.h:431	ENGINE.md, NOTES.md	
 0042a720	GAM_0042a720	GAM	known	doc-cite	182		NOTES.md	
 0042a7e0	GAM_0042a7e0	GAM	implemented?	core-cite	183	core/include/tonic/tc_mec.h:6	NOTES.md	
 0042a8a0	GAM_PlayingCard_0042a8a0	GAM	known	doc-cite	33		NOTES.md	
-0042a8d0	GAM_0042a8d0	GAM	implemented?	core-cite	542	core/src/tc_cast_mec.c:215, core/src/tc_ed_ai.c:317	DECOMP.md	
+0042a8d0	GAM_0042a8d0	GAM	implemented?	core-cite	542	core/src/tc_cast.c:405, core/src/tc_cast_mec.c:215, core/src/tc_ed_ai.c:317	DECOMP.md, ENGINE.md	
 0042aaf0	GAM_0042aaf0	GAM	known	doc-cite	33		ENGINE.md	
 0042ab20	GAM_MecCardSwitch_0042ab20	GAM	implemented?	core-cite	693	core/src/tc_ed_ai.c:614, core/include/tonic/tc_mec.h:57, core/include/tonic/tc_mec.h:87	NOTES.md	
 0042ade0	GAM_HistoryInit	GAM	partial	hand	248			the history filled with the current position when empty
@@ -1219,8 +1219,8 @@ addr	name	module	status	basis	size	port	docs	note
 0042aff0	GAM_MecRequest_0042aff0	GAM	known	doc-cite	234		NOTES.md	
 0042b0e0	GAM_MecIntegrate_0042b0e0	GAM	implemented?	core-cite	377	core/src/tc_ed_ai.c:781	NOTES.md	
 0042b260	GAM_RunAI_0042b260	GAM	known	doc-cite	75		NOTES.md	
-0042b2b0	GAM_MecFrame_0042b2b0	GAM	implemented?	core-cite	611	core/include/tonic/tc_cast.h:125	ENGINE.md, NOTES.md	
-0042b520	GAM_PersoFrame_0042b520	GAM	implemented?	core-cite	129	core/src/tc_cast.c:428, core/include/tonic/tc_ai.h:434, core/include/tonic/tc_cast.h:6	DECOMP.md, ENGINE.md, NOTES.md	
+0042b2b0	GAM_MecFrame_0042b2b0	GAM	implemented?	core-cite	611	core/include/tonic/tc_cast.h:131	ENGINE.md, NOTES.md	
+0042b520	GAM_PersoFrame_0042b520	GAM	implemented?	core-cite	129	core/src/tc_cast.c:451, core/include/tonic/tc_ai.h:448, core/include/tonic/tc_cast.h:6	DECOMP.md, ENGINE.md, NOTES.md	
 0042b5b0	GAM_AverageVelocity	GAM	partial	hand	376		CAMERA.md, NOTES.md	port: from the position history
 0042b730	GAM_AveragePosition	GAM	implemented	hand	363		CAMERA.md	time-weighted mean of the history (<= 8 samples, window DAT_00521344 = 0.4 s)
 0042b89b	GAM_AveragePositionPredict	GAM	known	hand	805		CAMERA.md	the same plus a least-squares slope (flag 2 on +0x94); not used by the follow
@@ -1255,13 +1255,13 @@ addr	name	module	status	basis	size	port	docs	note
 0042c760	GAM_0042c760	GAM	unknown	none	22			
 0042c780	GAM_0042c780	GAM	unknown	none	74			
 0042c7d0	GAM_0042c7d0	GAM	unknown	none	55			
-0042c810	GAM_0042c810	GAM	implemented?	core-cite	223	core/src/tc_cast.c:447, core/src/tc_ed_ai.c:478, core/include/tonic/tc_cast.h:62	DECOMP.md, ENGINE.md, NOTES.md	
+0042c810	GAM_0042c810	GAM	implemented?	core-cite	223	core/src/tc_cast.c:484, core/src/tc_ed_ai.c:478, core/include/tonic/tc_cast.h:64	DECOMP.md, ENGINE.md, NOTES.md	
 0042c8f0	GAM_0042c8f0	GAM	unknown	none	20			
 0042c910	GAM_0042c910	GAM	unknown	none	47			
 0042c940	GAM_0042c940	GAM	unknown	none	47			
 0042c970	GAM_0042c970	GAM	unknown	none	15			
 0042c980	GAM_0042c980	GAM	unknown	none	853			
-0042cce0	GAM_0042cce0	GAM	unknown	none	1			
+0042cce0	GAM_0042cce0	GAM	implemented?	core-cite	1	core/src/tc_viewer.c:1606	ENGINE.md	
 0042cdc0	GAM_0042cdc0	GAM	unknown	none	245			
 0042cec0	GAM_0042cec0	GAM	unknown	none	50			
 0042cf70	GAM_0042cf70	GAM	unknown	none	222			
@@ -1422,7 +1422,7 @@ addr	name	module	status	basis	size	port	docs	note
 004311c0	GAM_004311c0	GAM	unknown	none	8			
 004311d0	GAM_004311d0	GAM	unknown	none	12			
 004311e0	GAM_004311e0	GAM	unknown	none	8			
-004311f0	GAM_004311f0	GAM	known	core-cite	12	core/src/tc_ai.c:1963		
+004311f0	GAM_004311f0	GAM	known	core-cite	12	core/src/tc_ai.c:2024		
 00431200	GAM_00431200	GAM	unknown	none	6			
 00431210	GAM_CollSet_00431210	GAM	named	name	152			
 004312b0	GAM_CollSet_004312b0	GAM	named	name	59			
@@ -1523,18 +1523,18 @@ addr	name	module	status	basis	size	port	docs	note
 004363c0	GAM_004363c0	GAM	unknown	none	242			
 004364c0	GAM_004364c0	GAM	unknown	none	79			
 00436510	GAM_00436510	GAM	unknown	none	74			
-00436560	GAM_00436560	GAM	implemented?	core-cite	147	core/src/tc_ai.c:954, core/include/tonic/tc_ai.h:152	DECOMP.md	
-00436600	GAM_00436600	GAM	implemented?	core-cite	183	core/src/tc_ai.c:954, core/src/tc_ai.c:955, core/include/tonic/tc_ai.h:153	DECOMP.md	
-004366c0	GAM_004366c0	GAM	implemented?	core-cite	345	core/src/tc_ai.c:947, core/include/tonic/tc_ai.h:153	DECOMP.md	
+00436560	GAM_00436560	GAM	implemented?	core-cite	147	core/src/tc_ai.c:976, core/include/tonic/tc_ai.h:152	DECOMP.md	
+00436600	GAM_00436600	GAM	implemented?	core-cite	183	core/src/tc_ai.c:976, core/src/tc_ai.c:977, core/include/tonic/tc_ai.h:153	DECOMP.md	
+004366c0	GAM_004366c0	GAM	implemented?	core-cite	345	core/src/tc_ai.c:969, core/include/tonic/tc_ai.h:153	DECOMP.md	
 00436820	GAM_00436820	GAM	implemented?	core-cite	239	core/include/tonic/tc_ai.h:153	DECOMP.md	
-00436910	GAM_00436910	GAM	implemented?	core-cite	1730	core/src/tc_ai.c:1001, core/include/tonic/tc_ai.h:156	DECOMP.md	
+00436910	GAM_00436910	GAM	implemented?	core-cite	1730	core/src/tc_ai.c:1023, core/include/tonic/tc_ai.h:156	DECOMP.md	
 00437010	GAM_00437010	GAM	unknown	none	350			
 00437170	GAM_00437170	GAM	known	doc-cite	122		NOTES.md	
 004371f0	GAM_004371f0	GAM	unknown	none	112			
-00437260	GAM_00437260	GAM	implemented?	core-cite	300	core/src/tc_ai.c:931	NOTES.md	
+00437260	GAM_00437260	GAM	implemented?	core-cite	300	core/src/tc_ai.c:953, core/include/tonic/tc_ai.h:496, core/include/tonic/tc_level.h:257	NOTES.md	
 00437390	GAM_00437390	GAM	unknown	none	386			
 00437520	GAM_00437520	GAM	unknown	none	224			
-00437600	GAM_00437600	GAM	implemented?	core-cite	128	core/src/tc_ai.c:2070	ENGINE.md	
+00437600	GAM_00437600	GAM	implemented?	core-cite	128	core/src/tc_ai.c:2211	ENGINE.md	
 00437680	GAM_00437680	GAM	unknown	none	39			
 004376b0	GAM_004376b0	GAM	unknown	none	43			
 004376e0	GAM_004376e0	GAM	unknown	none	40			
@@ -1544,9 +1544,9 @@ addr	name	module	status	basis	size	port	docs	note
 00437830	GAM_00437830	GAM	unknown	none	51			
 00437870	GAM_00437870	GAM	unknown	none	36			
 004378a0	GAM_ZoneValue_004378a0	GAM	named	name	94			
-00437900	GAM_UpdateWaterZones_00437900	GAM	implemented?	core-cite	194	core/src/tc_ed_ai.c:445, core/include/tonic/tc_ai.h:180, core/include/tonic/tc_ai.h:361	NOTES.md	
+00437900	GAM_UpdateWaterZones_00437900	GAM	implemented?	core-cite	194	core/src/tc_ed_ai.c:445, core/include/tonic/tc_ai.h:181, core/include/tonic/tc_ai.h:371	NOTES.md	
 004379d0	GAM_004379d0	GAM	unknown	none	19			
-00437a00	GAM_00437a00	GAM	implemented?	core-cite	13	core/src/tc_ai.c:1843		
+00437a00	GAM_00437a00	GAM	implemented?	core-cite	13	core/src/tc_ai.c:1908		
 00437a40	GAM_00437a40	GAM	unknown	none	147			
 00437ae0	GAM_00437ae0	GAM	unknown	none	38			
 00437b10	GAM_00437b10	GAM	unknown	none	91			
@@ -1592,7 +1592,7 @@ addr	name	module	status	basis	size	port	docs	note
 0043bfd0	FUN_0043bfd0		unknown	none	20			
 0043bff0	MEC_SweepZones_0043bff0	MEC	implemented?	core-cite	1051	core/src/tc_mec_walk.c:41, core/src/tc_mec_walk.c:388, core/include/tonic/tc_mec.h:200	CAMERA.md, DECOMP.md, ENGINE.md, NOTES.md	
 0043c410	FUN_0043c410		known	doc-cite	553		DECOMP.md, ENGINE.md, NOTES.md	
-0043c640	MEC_SweepPerso		implemented	hand	289	core/src/tc_cast.c:464, core/src/tc_mec_walk.c:319, core/include/tonic/tc_obstacle.h:3	ENGINE.md, NOTES.md	active, not dead, collide set +0x35 both sides, priority +0x34; the bounding-volume pretest is the port's
+0043c640	MEC_SweepPerso		implemented	hand	289	core/src/tc_cast.c:501, core/src/tc_mec_walk.c:319, core/include/tonic/tc_obstacle.h:3	ENGINE.md, NOTES.md	active, not dead, collide set +0x35 both sides, priority +0x34; the bounding-volume pretest is the port's
 0043c770	MEC_SweepPersoChannel		implemented	hand	91		ENGINE.md	each channel's physical object ZDR collide object at its matrix (.ttlv PCOL)
 0043c7d0	MEC_SweepPersoZdr		known	hand	81		ENGINE.md	the mover's ZDR against the other's ZDR (Ed has none): not ported
 0043c830	MEC_SweepPass	MEC	implemented	hand	431	core/src/tc_ed_ai.c:768, core/src/tc_mec_walk.c:368, core/include/tonic/tc_collision.h:45	DECOMP.md, ENGINE.md, NOTES.md	the persos of the mover's sector and its collide list first (tc_mec_walk.c sweep_obstacles), then the static trees
@@ -1758,7 +1758,7 @@ addr	name	module	status	basis	size	port	docs	note
 00442ac0	GLIGLOU_00442ac0	GLIGLOU	unknown	none	8			
 00442ad0	GLIGLOU_00442ad0	GLIGLOU	unknown	none	8			
 00442ae0	GLIGLOU_00442ae0	GLIGLOU	known	doc-cite	512		NOTES.md	
-00442ce0	GLIGLOU_00442ce0	GLIGLOU	implemented?	core-cite	185	core/include/tonic/tc_viewer.h:41	NOTES.md	
+00442ce0	GLIGLOU_00442ce0	GLIGLOU	implemented?	core-cite	185	core/include/tonic/tc_viewer.h:42	NOTES.md	
 00442da0	GLIGLOU_00442da0	GLIGLOU	known	doc-cite	658		NOTES.md	
 00443040	GLIGLOU_00443040	GLIGLOU	unknown	none	511			
 00443240	GLIGLOU_00443240	GLIGLOU	unknown	none	49			
@@ -1808,7 +1808,7 @@ addr	name	module	status	basis	size	port	docs	note
 00445750	FUN_00445750		unknown	none	45			
 00445780	FUN_00445780		unknown	none	42			
 004457b0	FUN_004457b0		unknown	none	27			
-004457d0	FUN_004457d0		known	doc-cite	474		NOTES.md	
+004457d0	FUN_004457d0		known	doc-cite	474		NOTES.md, SE.md	
 004459b0	FUN_004459b0		unknown	none	12			
 004459c0	FUN_004459c0		unknown	none	12			
 004459d0	FUN_004459d0		unknown	none	43			
@@ -1878,7 +1878,7 @@ addr	name	module	status	basis	size	port	docs	note
 004497c0	FUN_004497c0		known	doc-cite	27		DECOMP.md	
 004497e0	FUN_004497e0		unknown	none	10			
 004497f0	FUN_004497f0		unknown	none	105			
-00449860	FUN_00449860		implemented?	core-cite	606	core/src/tc_viewer.c:204, core/include/tonic/tc_viewer.h:89	DECOMP.md	
+00449860	FUN_00449860		implemented?	core-cite	606	core/src/tc_viewer.c:223, core/include/tonic/tc_viewer.h:96	DECOMP.md	
 00449ac0	FUN_00449ac0		unknown	none	6			
 00449c20	IPT_IPT_Main_00449c20	IPT	named	name	102			
 00449c90	IPT_IPT_Main_00449c90	IPT	named	name	410			
@@ -2025,7 +2025,7 @@ addr	name	module	status	basis	size	port	docs	note
 0044fee0	FUN_0044fee0		unknown	none	108			
 0044ff50	FUN_0044ff50		known	doc-cite	129		DECOMP.md	
 0044ffe0	FUN_0044ffe0		known	doc-cite	137		DECOMP.md	
-00450070	FUN_00450070		implemented?	core-cite	76	core/src/tc_ai.c:1437	DECOMP.md, PORTALS.md	
+00450070	FUN_00450070		implemented?	core-cite	76	core/src/tc_ai.c:1473	DECOMP.md, PORTALS.md	
 004500c0	FUN_004500c0		unknown	none	92			
 00450120	FUN_00450120		unknown	none	215			
 00450200	SCR_SCR_Mem_00450200	SCR	named	name	178			
@@ -2051,8 +2051,8 @@ addr	name	module	status	basis	size	port	docs	note
 004511b0	FUN_004511b0		unknown	none	61			
 004511f0	FUN_004511f0		unknown	none	46			
 00451220	FUN_00451220		unknown	none	17			
-00451240	FUN_00451240		implemented?	core-cite	1062	core/src/tc_ed_ai.c:480, core/include/tonic/tc_sector.h:3, core/include/tonic/tc_sector.h:94	BUGS.md, DECOMP.md, NOTES.md	
-00451670	FUN_00451670		implemented?	core-cite	262	core/include/tonic/tc_sector.h:4, core/include/tonic/tc_sector.h:97	BUGS.md, DECOMP.md, NOTES.md	
+00451240	FUN_00451240		implemented?	core-cite	1062	core/src/tc_ed_ai.c:480, core/include/tonic/tc_sector.h:3, core/include/tonic/tc_sector.h:97	BUGS.md, DECOMP.md, NOTES.md	
+00451670	FUN_00451670		implemented?	core-cite	262	core/include/tonic/tc_sector.h:4, core/include/tonic/tc_sector.h:100	BUGS.md, DECOMP.md, NOTES.md	
 00451780	GEN_Get0_00451780	GEN	known	doc-cite	7		DECOMP.md	
 00451790	GEN_Get4_00451790	GEN	known	doc-cite	8		DECOMP.md	
 004517a0	FUN_004517a0		unknown	none	17			
@@ -2068,9 +2068,9 @@ addr	name	module	status	basis	size	port	docs	note
 00451990	FUN_00451990		unknown	none	204			
 00451a60	FUN_00451a60		unknown	none	84			
 00451ac0	FUN_00451ac0		unknown	none	204			
-00451b90	MEC_EnvLookup_00451b90	MEC	implemented?	core-cite	136	core/include/tonic/tc_mec.h:28, core/include/tonic/tc_sector.h:6, core/include/tonic/tc_sector.h:101	NOTES.md	
+00451b90	MEC_EnvLookup_00451b90	MEC	implemented?	core-cite	136	core/include/tonic/tc_mec.h:28, core/include/tonic/tc_sector.h:6, core/include/tonic/tc_sector.h:104	NOTES.md	
 00451c20	FUN_00451c20		known	doc-cite	29		NOTES.md	
-00451c40	FUN_00451c40		implemented?	core-cite	116	core/src/tc_viewer.c:690, core/include/tonic/tc_sector.h:106	NOTES.md	
+00451c40	FUN_00451c40		implemented?	core-cite	116	core/src/tc_viewer.c:716, core/include/tonic/tc_sector.h:109	NOTES.md	
 00451cc0	FUN_00451cc0		unknown	none	16			
 00451cd0	FUN_00451cd0		known	doc-cite	20		NOTES.md	
 00451cf0	FUN_00451cf0		unknown	none	24			
@@ -2078,9 +2078,9 @@ addr	name	module	status	basis	size	port	docs	note
 00451d40	FUN_00451d40		unknown	none	20			
 00451d60	FUN_00451d60		unknown	none	11			
 00451d70	FUN_00451d70		known	doc-cite	10		DECOMP.md	
-00451d80	FUN_00451d80		implemented?	core-cite	244	core/src/tc_viewer.c:689, core/src/tc_viewer.c:2161, core/include/tonic/tc_sector.h:7	BUGS.md, DECOMP.md, NOTES.md	
-00451e80	FUN_00451e80		implemented?	core-cite	804	core/src/tc_viewer.c:690, core/src/tc_viewer.c:2124, core/include/tonic/tc_viewer.h:47	DECOMP.md, NOTES.md	
-004521b0	FUN_004521b0		implemented?	core-cite	607	core/include/tonic/tc_sector.h:109	DECOMP.md, NOTES.md	
+00451d80	FUN_00451d80		implemented?	core-cite	244	core/src/tc_viewer.c:715, core/src/tc_viewer.c:2139, core/include/tonic/tc_sector.h:7	BUGS.md, DECOMP.md, NOTES.md	
+00451e80	FUN_00451e80		implemented?	core-cite	804	core/src/tc_viewer.c:716, core/src/tc_viewer.c:2102, core/include/tonic/tc_viewer.h:52	DECOMP.md, NOTES.md	
+004521b0	FUN_004521b0		implemented?	core-cite	607	core/include/tonic/tc_sector.h:112	DECOMP.md, NOTES.md	
 00452410	FUN_00452410		known	doc-cite	65		DECOMP.md	
 00452460	FUN_00452460		unknown	none	58			
 004524a0	FUN_004524a0		unknown	none	56			
@@ -2193,8 +2193,8 @@ addr	name	module	status	basis	size	port	docs	note
 0045c6b0	SNA_snasyn_0045c6b0	SNA	named	name	120			
 0045c730	SNA_snasyn_0045c730	SNA	named	name	441			
 0045c8f0	SNA_snasyn_0045c8f0	SNA	named	name	20			
-0045c910	SNA_snasyn_0045c910	SNA	named	name	271			
-0045ca20	SNA_snasyn_0045ca20	SNA	named	name	1360			
+0045c910	SNA_snasyn_0045c910	SNA	known	doc-cite	271		ENGINE.md	
+0045ca20	SNA_snasyn_0045ca20	SNA	known	doc-cite	1360		ENGINE.md	
 0045cf70	SNA_0045cf70	SNA	unknown	none	135			
 0045d000	SNA_0045d000	SNA	unknown	none	114			
 0045d080	SNA_0045d080	SNA	unknown	none	108			
@@ -2329,7 +2329,7 @@ addr	name	module	status	basis	size	port	docs	note
 00462c70	FUN_00462c70		unknown	none	391			
 00462e00	FUN_00462e00		unknown	none	345			
 00462f60	GEO_PointInZone_00462f60	GEO	known	doc-cite	557		NOTES.md	
-004631c0	FUN_004631c0		implemented?	core-cite	1759	core/src/tc_ai.c:876	ENGINE.md	
+004631c0	FUN_004631c0		implemented?	core-cite	1759	core/src/tc_ai.c:898	ENGINE.md	
 004638a0	FUN_004638a0		unknown	none	157			
 00463940	FUN_00463940		known	core-cite	2301	core/src/tc_ed_ai.c:261	DECOMP.md	
 00464240	COL_ObstacleAxes		implemented	hand	510	core/src/tc_mec_walk.c:255, core/include/tonic/tc_obstacle.h:4, core/include/tonic/tc_obstacle.h:24	DECOMP.md, ENGINE.md	the mover into the obstacle's axes, a uniform scale (tc_obstacle_part inv / scale)
@@ -2642,9 +2642,9 @@ addr	name	module	status	basis	size	port	docs	note
 0047a2e0	FUN_0047a2e0		unknown	none	46			
 0047a310	FUN_0047a310		unknown	none	23			
 0047a330	FUN_0047a330		unknown	none	63			
-0047a370	REQ_Push_0047a370	REQ	implemented?	core-cite	81	core/src/tc_ai.c:1000, core/src/tc_ai.c:1668		
+0047a370	REQ_Push_0047a370	REQ	implemented?	core-cite	81	core/src/tc_ai.c:1022, core/src/tc_ai.c:1714		
 0047a3d0	FUN_0047a3d0		unknown	none	207			
-0047a4a0	FUN_0047a4a0		implemented?	core-cite	131	core/src/tc_ai.c:2008	ENGINE.md	
+0047a4a0	FUN_0047a4a0		implemented?	core-cite	131	core/src/tc_ai.c:2071	ENGINE.md	
 0047a5a0	FUN_0047a5a0		unknown	none	120			
 0047a620	FUN_0047a620		unknown	none	88			
 0047a680	FUN_0047a680		unknown	none	144			
@@ -2664,8 +2664,8 @@ addr	name	module	status	basis	size	port	docs	note
 0047aff0	FUN_0047aff0		unknown	none	37			
 0047b020	FUN_0047b020		unknown	none	91			
 0047b080	FUN_0047b080		unknown	none	74			
-0047b2f0	FUN_0047b2f0		implemented?	core-cite	214	core/src/tc_ai.c:1532	NOTES.md	
-0047b3d0	FUN_0047b3d0		implemented?	core-cite	189	core/src/tc_ai.c:1540		
+0047b2f0	FUN_0047b2f0		implemented?	core-cite	214	core/src/tc_ai.c:765, core/src/tc_ai.c:1578	NOTES.md	
+0047b3d0	FUN_0047b3d0		implemented?	core-cite	189	core/src/tc_ai.c:1586		
 0047b490	FUN_0047b490		unknown	none	148			
 0047b530	FUN_0047b530		known	doc-cite	328		NOTES.md	
 0047b680	FUN_0047b680		unknown	none	500			
@@ -2843,9 +2843,9 @@ addr	name	module	status	basis	size	port	docs	note
 00483d70	FUN_00483d70		unknown	none	71			
 00483dc0	FUN_00483dc0		known	doc-cite	721		NOTES.md	
 004840a0	FUN_004840a0		unknown	none	142			
-00484130	FUN_00484130		implemented?	core-cite	165	core/src/tc_ai.c:1540, core/src/tc_mec.c:347	NOTES.md	
+00484130	FUN_00484130		implemented?	core-cite	165	core/src/tc_ai.c:1586, core/src/tc_mec.c:347	NOTES.md	
 004841e0	FUN_004841e0		unknown	none	45			
-00484210	SPO_SegmentVsObject		partial	hand	593	core/src/tc_viewer.c:1615, core/include/tonic/tc_cam.h:173	CAMERA.md	segment vs a SuperObject's visual geometry (GLIGLOU_004427d0), recursive; port: drawn persos only
+00484210	SPO_SegmentVsObject		partial	hand	593	core/src/tc_viewer.c:1450, core/include/tonic/tc_cam.h:173	CAMERA.md	segment vs a SuperObject's visual geometry (GLIGLOU_004427d0), recursive; port: drawn persos only
 00484470	CPA_cpastr_00484470	CPA	named	name	303			
 004845a0	TMP_TmpMain_004845a0	TMP	named	name	110			
 00484610	TMP_00484610	TMP	unknown	none	13			
@@ -2926,27 +2926,27 @@ addr	name	module	status	basis	size	port	docs	note
 00487f60	AI_00487f60	AI	unknown	none	6			
 00487fa0	AI_00487fa0	AI	unknown	none	59			
 00487fe0	AI_00487fe0	AI	unknown	none	34			
-00488010	AI_00488010	AI	implemented?	core-cite	90	core/src/tc_ai.c:1954		
-00488070	AI_00488070	AI	implemented?	core-cite	87	core/src/tc_ai.c:1743, core/src/tc_ai.c:2083	DECOMP.md, ENGINE.md, NOTES.md	
+00488010	AI_00488010	AI	implemented?	core-cite	90	core/src/tc_ai.c:2015		
+00488070	AI_00488070	AI	implemented?	core-cite	87	core/src/tc_ai.c:1808, core/src/tc_ai.c:2224	DECOMP.md, ENGINE.md, NOTES.md	
 004880d0	AI_004880d0	AI	unknown	none	255			
-004881d0	AI_004881d0	AI	implemented?	core-cite	363	core/src/tc_ai.c:1718	DECOMP.md, NOTES.md	
+004881d0	AI_004881d0	AI	implemented?	core-cite	363	core/src/tc_ai.c:1783	DECOMP.md, NOTES.md	
 00488340	PROC_12Etc_00488340	PROC	named	name	71			
 00488530	PROC_GameAction0Etc_00488530	PROC	named	name	56			
 00488580	PROC_4Etc_00488580	PROC	known	doc-cite	72		NOTES.md	
 00488aa0	PROC_SetPositionFromEtc_00488aa0	PROC	named	name	77			
 00488c30	AI_00488c30	AI	unknown	none	150			
-00488cd0	PROC_DynamicsOnEtc_00488cd0	PROC	implemented?	core-cite	86	core/src/tc_ai.c:1706	DECOMP.md	
+00488cd0	PROC_DynamicsOnEtc_00488cd0	PROC	implemented?	core-cite	86	core/src/tc_ai.c:1771	DECOMP.md	
 00488f20	PROC_SetMechMode23Etc_00488f20	PROC	named	name	105			
-004891a0	AI_004891a0	AI	implemented?	core-cite	108	core/src/tc_ai.c:1734	NOTES.md	
+004891a0	AI_004891a0	AI	implemented?	core-cite	108	core/src/tc_ai.c:1799	NOTES.md	
 00489210	PROC_SetMoveVectorAndExtraEtc_00489210	PROC	named	name	840			
-00489590	PROC_SetCounter66Etc_00489590	PROC	implemented?	core-cite	62	core/src/tc_ai.c:1808		
+00489590	PROC_SetCounter66Etc_00489590	PROC	implemented?	core-cite	62	core/src/tc_ai.c:1873		
 00489670	AI_00489670	AI	unknown	none	82			
 004896d0	AI_004896d0	AI	unknown	none	82			
 00489730	AI_00489730	AI	unknown	none	82			
 00489790	AI_00489790	AI	unknown	none	82			
 004897f0	PROC_72Etc_004897f0	PROC	named	name	58			
 004898b0	AI_004898b0	AI	unknown	none	82			
-00489910	AI_00489910	AI	implemented?	core-cite	103	core/src/tc_ai.c:1820		
+00489910	AI_00489910	AI	implemented?	core-cite	103	core/src/tc_ai.c:1885		
 00489980	AI_00489980	AI	unknown	none	82			
 004899e0	PROC_77Etc_004899e0	PROC	named	name	137			
 00489a70	PROC_CollectInZone80Etc_00489a70	PROC	named	name	303			
@@ -2970,16 +2970,16 @@ addr	name	module	status	basis	size	port	docs	note
 0048b080	PROC_200Etc_0048b080	PROC	named	name	111			
 0048b0f0	PROC_212Etc_0048b0f0	PROC	named	name	90			
 0048b6d0	PROC_234Etc_0048b6d0	PROC	named	name	87			
-0048b730	PROC_ForceBehaviour_0048b730	PROC	implemented?	core-cite	160	core/src/tc_ai.c:1888	NOTES.md	
-0048b800	PROC_ForceReflex_0048b800	PROC	implemented?	core-cite	160	core/src/tc_ai.c:1888	NOTES.md	
+0048b730	PROC_ForceBehaviour_0048b730	PROC	implemented?	core-cite	160	core/src/tc_ai.c:1953	NOTES.md	
+0048b800	PROC_ForceReflex_0048b800	PROC	implemented?	core-cite	160	core/src/tc_ai.c:1953	NOTES.md	
 0048b8a0	PROC_ChangeBehaviour_0048b8a0	PROC	named	name	89			
 0048b900	PROC_ChangeReflex_0048b900	PROC	named	name	82			
 0048b960	PROC_241_0048b960	PROC	named	name	148			
-0048ba00	PROC_SetHeading_0048ba00	PROC	implemented?	core-cite	255	core/src/tc_ai.c:1945	PORTALS.md	
+0048ba00	PROC_SetHeading_0048ba00	PROC	implemented?	core-cite	255	core/src/tc_ai.c:2006	PORTALS.md	
 0048bb00	PROC_243_0048bb00	PROC	named	name	217			
 0048bbe0	PROC_JumpBallistic_0048bbe0	PROC	named	name	355			
 0048bd50	PROC_TurnByEtc_0048bd50	PROC	named	name	194			
-0048be20	PROC_TurnTowardPointEtc_0048be20	PROC	implemented?	core-cite	490	core/src/tc_ai.c:1931		
+0048be20	PROC_TurnTowardPointEtc_0048be20	PROC	implemented?	core-cite	490	core/src/tc_ai.c:1996	ENGINE.md	
 0048c010	PROC_ChangeState_0048c010	PROC	named	name	66			
 0048c060	PROC_250_0048c060	PROC	named	name	66			
 0048c0b0	PROC_ReInitWay_InitWayWithWp	PROC	implemented	hand	259			PROC 251 / 252 / 253 (docs/ENGINE.md "Ways and waypoints")
@@ -2998,18 +2998,18 @@ addr	name	module	status	basis	size	port	docs	note
 0048cb80	PROC_290_0048cb80	PROC	named	name	113			
 0048cc00	PROC_293_0048cc00	PROC	known	doc-cite	17		DECOMP.md	
 0048cc20	PROC_Mode291Etc_0048cc20	PROC	named	name	260			
-0048cd90	WAY_Advance	AI	implemented	hand	302	core/src/tc_ai.c:819		inside way_next
-0048cec0	WAY_Retreat	AI	implemented	hand	405	core/src/tc_ai.c:830		inside way_back
-0048d060	AI_0048d060	AI	implemented?	core-cite	167	core/src/tc_ai.c:2027		
+0048cd90	WAY_Advance	AI	implemented	hand	302	core/src/tc_ai.c:841		inside way_next
+0048cec0	WAY_Retreat	AI	implemented	hand	405	core/src/tc_ai.c:852		inside way_back
+0048d060	AI_0048d060	AI	implemented?	core-cite	167	core/src/tc_ai.c:2115		
 0048d110	AI_0048d110	AI	unknown	none	56			
 0048d148	AI_0048d148	AI	unknown	none	195			
 0048d210	AI_0048d210	AI	unknown	none	107			
 0048d280	AI_0048d280	AI	unknown	none	53			
 0048d2b5	AI_0048d2b5	AI	unknown	none	204			
-0048d390	WAY_Next	AI	partial	hand	194	core/src/tc_ai.c:811	ENGINE.md	straight links only (every retail link is type 0)
-0048d460	WAY_Back	AI	partial	hand	215	core/src/tc_ai.c:826	ENGINE.md	straight links only
-0048d540	WAY_ReInit	AI	implemented	hand	93	core/src/tc_ai.c:806	ENGINE.md	at 0, from none (tc_ai.c way_reinit)
-0048d5a0	WAY_ReInitBack	AI	implemented	hand	122	core/src/tc_ai.c:807	ENGINE.md	at n - 1 (way_reinit_back)
+0048d390	WAY_Next	AI	partial	hand	194	core/src/tc_ai.c:833	ENGINE.md	straight links only (every retail link is type 0)
+0048d460	WAY_Back	AI	partial	hand	215	core/src/tc_ai.c:848	ENGINE.md	straight links only
+0048d540	WAY_ReInit	AI	implemented	hand	93	core/src/tc_ai.c:828	ENGINE.md	at 0, from none (tc_ai.c way_reinit)
+0048d5a0	WAY_ReInitBack	AI	implemented	hand	122	core/src/tc_ai.c:829	ENGINE.md	at n - 1 (way_reinit_back)
 0048d6a0	AI_0048d6a0	AI	unknown	none	84			
 0048d700	AI_0048d700	AI	unknown	none	156			
 0048d7a0	AI_0048d7a0	AI	unknown	none	43			
@@ -3020,7 +3020,7 @@ addr	name	module	status	basis	size	port	docs	note
 0048d8a0	AI_0048d8a0	AI	unknown	none	169			
 0048d950	AI_0048d950	AI	unknown	none	882			
 0048dcd0	AI_0048dcd0	AI	unknown	none	28			
-0048dcf0	WP_AbsolutePosition	AI	partial	hand	98	core/src/tc_ai.c:779, core/src/tc_ai.c:1403	ENGINE.md	father: its live position and heading (port)
+0048dcf0	WP_AbsolutePosition	AI	partial	hand	98	core/src/tc_ai.c:801, core/src/tc_ai.c:1439	ENGINE.md	father: its live position and heading (port)
 0048dd60	AI_0048dd60	AI	unknown	none	36			
 0048ddb0	AI_0048ddb0	AI	unknown	none	35			
 0048dde0	AI_0048dde0	AI	unknown	none	34			
@@ -3079,13 +3079,13 @@ addr	name	module	status	basis	size	port	docs	note
 0048e730	AI_SkipNode_0048e730	AI	named	name	37			
 0048e760	AI_MetaStart_0048e760	AI	named	name	70			
 0048e7b0	AI_MetaContinue_0048e7b0	AI	named	name	24			
-0048e7d0	NODE_MetaAction_0048e7d0	NODE	implemented?	core-cite	338	core/src/tc_ai.c:2039		
+0048e7d0	NODE_MetaAction_0048e7d0	NODE	implemented?	core-cite	338	core/src/tc_ai.c:2127		
 0048e930	AI_EvalNode_0048e930	AI	known	doc-cite	31		NOTES.md	
 0048e950	AI_0048e950	AI	unknown	none	19			
-0048e970	AI_0048e970	AI	implemented?	core-cite	317	core/src/tc_ai.c:583	NOTES.md	
-0048eab0	AI_0048eab0	AI	implemented?	core-cite	107	core/src/tc_ai.c:583, core/src/tc_ai.c:2193		
-0048eb20	AI_RunIntelligence_0048eb20	AI	implemented?	core-cite	125	core/src/tc_ai.c:2229	NOTES.md	
-0048eba0	AI_0048eba0	AI	implemented?	core-cite	181	core/src/tc_ai.c:2217		
+0048e970	AI_0048e970	AI	implemented?	core-cite	317	core/src/tc_ai.c:584	NOTES.md	
+0048eab0	AI_0048eab0	AI	implemented?	core-cite	107	core/src/tc_ai.c:584, core/src/tc_ai.c:2372		
+0048eb20	AI_RunIntelligence_0048eb20	AI	implemented?	core-cite	125	core/src/tc_ai.c:2408	NOTES.md	
+0048eba0	AI_0048eba0	AI	implemented?	core-cite	181	core/src/tc_ai.c:2396		
 0048ec60	AI_RunSchedule_0048ec60	AI	known	doc-cite	147		NOTES.md	
 0048ed00	AI_0048ed00	AI	unknown	none	52			
 0048ed40	CD_fn_cGetDriveLetter	CD	known	doc-cite	6		EXE.md	
@@ -3119,9 +3119,9 @@ addr	name	module	status	basis	size	port	docs	note
 0048fca0	AI_0048fca0	AI	unknown	none	47			
 0048fcd0	AI_0048fcd0	AI	unknown	none	128			
 0048fdb0	AI_0048fdb0	AI	unknown	none	132			
-0048fe40	AI_ListKeepFamily	AI	implemented	hand	162	core/src/tc_ai.c:1778	ENGINE.md	PROC 94 Proc_ListSortByFamily (a filter)
+0048fe40	AI_ListKeepFamily	AI	implemented	hand	162	core/src/tc_ai.c:1843	ENGINE.md	PROC 94 Proc_ListSortByFamily (a filter)
 00490250	AI_00490250	AI	known	doc-cite	54		NOTES.md	
-00490290	AI_00490290	AI	implemented?	core-cite	59	core/src/tc_ai.c:1276		
+00490290	AI_00490290	AI	implemented?	core-cite	59	core/src/tc_ai.c:1308		
 00490310	AI_00490310	AI	unknown	none	158			
 004903b0	AI_004903b0	AI	unknown	none	525			
 004905c0	AI_004905c0	AI	unknown	none	15			
@@ -3142,7 +3142,7 @@ addr	name	module	status	basis	size	port	docs	note
 004912e0	AI_004912e0	AI	unknown	none	40			
 00491310	AI_00491310	AI	unknown	none	53			
 00491350	AI_00491350	AI	unknown	none	43			
-00491380	AI_00491380	AI	implemented?	core-cite	23	core/src/tc_ai.c:601, core/src/tc_ai.c:1606	NOTES.md	
+00491380	AI_00491380	AI	implemented?	core-cite	23	core/src/tc_ai.c:602, core/src/tc_ai.c:1652	NOTES.md	
 004913a0	AI_004913a0	AI	unknown	none	44			
 004913d0	OP_24_004913d0	OP	named	name	59			
 00491410	OP_25_00491410	OP	named	name	121			
@@ -3160,11 +3160,11 @@ addr	name	module	status	basis	size	port	docs	note
 00491860	AI_00491860	AI	unknown	none	79			
 004918b0	AI_004918b0	AI	unknown	none	69			
 00491910	AI_00491910	AI	unknown	none	6			
-00491920	AI_00491920	AI	known	core-cite	100	core/src/tc_ai.c:1468		
-00491990	WP_Distance	AI	implemented	hand	130	core/src/tc_ai.c:1407		FUNC 11
+00491920	AI_00491920	AI	known	core-cite	100	core/src/tc_ai.c:1504		
+00491990	WP_Distance	AI	implemented	hand	130	core/src/tc_ai.c:1443		FUNC 11
 00491a20	AI_00491a20	AI	unknown	none	139			
-00491ab0	AI_00491ab0	AI	implemented?	core-cite	208	core/src/tc_ai.c:1467	NOTES.md	
-00491ba0	AI_00491ba0	AI	implemented?	core-cite	217	core/src/tc_ai.c:1466	NOTES.md	
+00491ab0	AI_00491ab0	AI	implemented?	core-cite	208	core/src/tc_ai.c:1503	NOTES.md	
+00491ba0	AI_00491ba0	AI	implemented?	core-cite	217	core/src/tc_ai.c:1502	NOTES.md	
 00491c80	AI_00491c80	AI	unknown	none	168			
 00491d30	AI_00491d30	AI	unknown	none	135			
 00491dc0	AI_00491dc0	AI	unknown	none	61			
@@ -3179,14 +3179,14 @@ addr	name	module	status	basis	size	port	docs	note
 004920a0	AI_QueueMechRequest_004920a0	AI	known	doc-cite	48		NOTES.md	
 004920d0	AI_004920d0	AI	unknown	none	34			
 00492100	AI_00492100	AI	unknown	none	56			
-00492140	AI_00492140	AI	implemented?	core-cite	129	core/src/tc_ai.c:1927	NOTES.md	
+00492140	AI_00492140	AI	implemented?	core-cite	129	core/src/tc_ai.c:1728, core/src/tc_ai.c:1992	NOTES.md	
 004921d0	AI_004921d0	AI	unknown	none	315			
 00492310	AI_00492310	AI	unknown	none	86			
 00492370	AI_00492370	AI	unknown	none	39			
 004923a0	AI_004923a0	AI	known	doc-cite	12		NOTES.md	
 004923b0	AI_ProcedureFn_004923b0	AI	named	name	12			
 004923c0	AI_004923c0	AI	unknown	none	12			
-004923d0	AI_004923d0	AI	implemented?	core-cite	64	core/src/tc_ai.c:812		
+004923d0	AI_004923d0	AI	implemented?	core-cite	64	core/src/tc_ai.c:834		
 00492410	AI_00492410	AI	unknown	none	42			
 00492440	AI_00492440	AI	unknown	none	104			
 004924c0	AI_004924c0	AI	unknown	none	41			
@@ -3278,13 +3278,13 @@ addr	name	module	status	basis	size	port	docs	note
 004973c0	FUN_004973c0		unknown	none	53			
 00497400	KW_If_00497400	KW	named	name	85			
 00497460	KW_3_00497460	KW	named	name	547			
-00497690	AI_IsFalling_00497690	AI	implemented?	core-cite	94	core/src/tc_ai.c:1371		
-004976f0	AI_InWater_004976f0	AI	implemented?	core-cite	127	core/src/tc_ai.c:1257, core/src/tc_ai.c:1364		
+00497690	AI_IsFalling_00497690	AI	implemented?	core-cite	94	core/src/tc_ai.c:1407		
+004976f0	AI_InWater_004976f0	AI	implemented?	core-cite	127	core/src/tc_ai.c:1289, core/src/tc_ai.c:1399		
 00497770	AI_HeadOut_00497770	AI	named	name	55			
 004977b0	AI_Submerged_004977b0	AI	named	name	58			
-004977f0	AI_ZoneTest_004977f0	AI	implemented?	core-cite	72	core/src/tc_ai.c:1365		
+004977f0	AI_ZoneTest_004977f0	AI	implemented?	core-cite	72	core/src/tc_ai.c:1400		
 00497840	AI_NotInAnyZone_00497840	AI	named	name	72			
-00497890	FUN_00497890		implemented?	core-cite	64	core/src/tc_ai.c:1378, core/include/tonic/tc_ai.h:353	DECOMP.md, NOTES.md	
+00497890	FUN_00497890		implemented?	core-cite	64	core/src/tc_ai.c:1414, core/include/tonic/tc_ai.h:363	DECOMP.md, NOTES.md	
 004978d0	FUN_004978d0		unknown	none	153			
 00497970	COND_EqualEtc_00497970	COND	named	name	102			
 00497bf0	COND_AndEtc_00497bf0	COND	named	name	152			
@@ -3292,15 +3292,15 @@ addr	name	module	status	basis	size	port	docs	note
 00497d70	COND_13Etc_00497d70	COND	named	name	109			
 00497ef0	COND_18Etc_ZDE	COND	partial	hand	61			tc_ai.c ZDE section: the intersection tests are the port's
 004982e0	COND_PathBlocked_004982e0	COND	named	name	131			
-00498370	COND_OnGroundEtc_00498370	COND	implemented?	core-cite	95	core/src/tc_ai.c:1389		
+00498370	COND_OnGroundEtc_00498370	COND	implemented?	core-cite	95	core/src/tc_ai.c:1425		
 004984a0	COND_39Etc_004984a0	COND	named	name	191			
-004985e0	COND_GroundMaterialIsEtc_004985e0	COND	implemented?	core-cite	128	core/src/tc_ai.c:1378	DECOMP.md, NOTES.md	
+004985e0	COND_GroundMaterialIsEtc_004985e0	COND	implemented?	core-cite	128	core/src/tc_ai.c:1414	DECOMP.md, NOTES.md	
 00498820	COND_50Etc_00498820	COND	named	name	157			
 004988c0	COND_ModelNameIsEtc_004988c0	COND	named	name	163			
 00498970	COND_TimeElapsed_00498970	COND	named	name	102			
 004989e0	COND_PersoStatus69Etc_004989e0	COND	named	name	70			
-00498af0	COND_IsValidEtc_00498af0	COND	implemented?	core-cite	85	core/src/tc_ai.c:1363		
-00498bb0	COND_InBehaviourEtc_00498bb0	COND	implemented?	core-cite	51	core/src/tc_ai.c:1354		
+00498af0	COND_IsValidEtc_00498af0	COND	implemented?	core-cite	85	core/src/tc_ai.c:1398		
+00498bb0	COND_InBehaviourEtc_00498bb0	COND	implemented?	core-cite	51	core/src/tc_ai.c:1389		
 00498eb0	COND_75_00498eb0	COND	named	name	81			
 00498f10	FUN_00498f10		unknown	none	265			
 00499020	COND_76Etc_00499020	COND	named	name	229			
@@ -3321,13 +3321,13 @@ addr	name	module	status	basis	size	port	docs	note
 00499d50	COND_81Etc_00499d50	COND	named	name	249			
 00499e50	COND_85_00499e50	COND	named	name	208			
 00499f20	COND_86Etc_00499f20	COND	named	name	537			
-0049a140	FUNC_GetPositionEtc_0049a140	FUNC	implemented?	core-cite	1120	core/src/tc_ai.c:1403, core/src/tc_ai.c:1466, core/src/tc_ai.c:1534	ENGINE.md	
+0049a140	FUNC_GetPositionEtc_0049a140	FUNC	implemented?	core-cite	1120	core/src/tc_ai.c:1439, core/src/tc_ai.c:1502, core/src/tc_ai.c:1559	ENGINE.md	
 0049a5f0	FUNC_12_CloserWP	FUNC	implemented	hand	374			waypoints 0 .. n - 2
 0049a770	FUNC_ToRealEtc_0049a770	FUNC	named	name	71			
-0049ab10	FUNC_VecLengthEtc_0049ab10	FUNC	implemented?	core-cite	517	core/src/tc_ai.c:1532	NOTES.md	
-0049ad30	FUNC_Counter34Etc_0049ad30	FUNC	implemented?	core-cite	76	core/src/tc_ai.c:1447, core/src/tc_ai.c:1457		
+0049ab10	FUNC_VecLengthEtc_0049ab10	FUNC	implemented?	core-cite	517	core/src/tc_ai.c:1578	NOTES.md	
+0049ad30	FUNC_Counter34Etc_0049ad30	FUNC	implemented?	core-cite	76	core/src/tc_ai.c:1483, core/src/tc_ai.c:1493		
 0049aff0	FUNC_40Etc_0049aff0	FUNC	named	name	77			
-0049b040	FUNC_GetTimeEtc_0049b040	FUNC	named	name	47			
+0049b040	FUNC_GetTimeEtc_0049b040	FUNC	implemented?	core-cite	47	core/src/tc_ai.c:1566	ENGINE.md	
 0049b130	FUNC_47Etc_0049b130	FUNC	named	name	194			
 0049b200	FUNC_ButtonAnalog_0049b200	FUNC	named	name	52			
 0049b240	FUNC_54_GetFather	FUNC	implemented	hand	267			tc_ai_perso.standing_on (report_seen & 0x30000 and the carrier)
@@ -3387,18 +3387,18 @@ addr	name	module	status	basis	size	port	docs	note
 0049ee00	META_0_0049ee00	META	named	name	167			
 0049eeb0	META_0Cont_0049eeb0	META	named	name	103			
 0049ef20	META_ChangeStateAndWait_0049ef20	META	named	name	76			
-0049ef70	META_ChangeStateAndWaitEtcCont_0049ef70	META	implemented?	core-cite	78	core/src/tc_ai.c:2072	ENGINE.md	
+0049ef70	META_ChangeStateAndWaitEtcCont_0049ef70	META	implemented?	core-cite	78	core/src/tc_ai.c:2213	ENGINE.md	
 0049efc0	META_7_0049efc0	META	named	name	61			
 0049f000	META_7Cont_0049f000	META	named	name	22			
 0049f020	META_5Cont_0049f020	META	named	name	22			
 0049f040	META_6Cont_0049f040	META	named	name	22			
 0049f060	META_8Etc_0049f060	META	named	name	130			
 0049f0f0	META_10_0049f0f0	META	named	name	152			
-0049f190	META_11_GenerateObject	META	partial	hand	372	core/src/tc_ai.c:2069, core/src/tc_cast.c:36	ENGINE.md	one instance per template (tc_cast.c cast_spawn)
+0049f190	META_11_GenerateObject	META	partial	hand	372	core/src/tc_ai.c:2210, core/src/tc_cast.c:40	ENGINE.md	one instance per template (tc_cast.c cast_spawn)
 0049f310	META_ChangeStateByDirection_0049f310	META	named	name	266			
 0049f420	META_ChangeStateByDirectionCont_0049f420	META	named	name	188			
-0049f4e0	AI_GoToPointFromMe		implemented	hand	65	core/src/tc_ai.c:2007	ENGINE.md	go_to
-0049f580	AI_GoToPoint		implemented	hand	318	core/src/tc_ai.c:2007	ENGINE.md	tc_ai.c go_to: mode 12 dropped, mode 0x14 queued
+0049f4e0	AI_GoToPointFromMe		implemented	hand	65	core/src/tc_ai.c:2070	ENGINE.md	go_to
+0049f580	AI_GoToPoint		implemented	hand	318	core/src/tc_ai.c:2070	ENGINE.md	tc_ai.c go_to: mode 12 dropped, mode 0x14 queued
 0049f750	META_ChangeStateBySpeed_0049f750	META	named	name	201			
 0049f820	META_ChangeStateBySpeedCont_0049f820	META	named	name	411			
 0049f9c0	FUN_0049f9c0		unknown	none	65			
@@ -3406,7 +3406,7 @@ addr	name	module	status	basis	size	port	docs	note
 0049fb10	META_20Cont_0049fb10	META	named	name	72			
 0049fb60	META_2Cont_0049fb60	META	named	name	85			
 0049fbc0	META_3Cont_0049fbc0	META	named	name	135			
-0049fc50	METACONT_21_GoToWP	META	implemented	hand	74	core/src/tc_ai.c:2134	ENGINE.md	
+0049fc50	METACONT_21_GoToWP	META	implemented	hand	74	core/src/tc_ai.c:2275	ENGINE.md	
 0049fd00	META_22Etc_0049fd00	META	named	name	21			
 0049fd20	META_24Etc_0049fd20	META	named	name	21			
 0049fe10	METACONT_22_GoOverWay	META	implemented	hand	18			
@@ -3424,8 +3424,8 @@ addr	name	module	status	basis	size	port	docs	note
 004a0960	META_27Cont_004a0960	META	named	name	43			
 004a0990	META_28_MoveLift	META	implemented	hand	40			tc_ai.c meta_action case 28 (arguments once, mode 14 then 15 until stopped)
 004a09c0	META_28Cont_004a09c0	META	named	name	308			
-004a0b00	META_29_004a0b00	META	implemented?	core-cite	44	core/src/tc_ai.c:2056	NOTES.md	
-004a0b30	META_29Cont_004a0b30	META	implemented?	core-cite	51	core/src/tc_ai.c:2096	NOTES.md	
+004a0b00	META_29_004a0b00	META	implemented?	core-cite	44	core/src/tc_ai.c:2192	NOTES.md	
+004a0b30	META_29Cont_004a0b30	META	implemented?	core-cite	51	core/src/tc_ai.c:2237	NOTES.md	
 004a0b70	FUN_004a0b70		known	doc-cite	118		CAMERA.md	
 004a0bf0	CAM_TargetMoving		known	hand	112			the target's averaged speed > 0.01
 004a0d70	FUN_004a0d70		unknown	none	363			
@@ -3453,10 +3453,10 @@ addr	name	module	status	basis	size	port	docs	note
 004a2bb0	CAM_StopOnReversal		known	hand	199			zeroes the move when the camera's velocity and the move differ by > pi/4
 004a2c80	CAM_IdealPosition		known	hand	413		CAMERA.md	the follow with zero tolerances: "dead behind"; not used by the port
 004a2e20	CAM_SlopeTilt		known	hand	771		CAMERA.md	flag 0x800: elevation follows the slope, 0.01 rad per frame (DAT_00521320); not ported
-004a3130	CAM_Modes		partial	hand	1435	core/include/tonic/tc_ai.h:316	CAMERA.md, SE.md	mode 0 (follow); mode 6 (stay, turn to the target) for the cast's scripts (tc_viewer director's shot); modes 1-5, 0x65, 0x68, 0x69 not ported
+004a3130	CAM_Modes		partial	hand	1435	core/include/tonic/tc_ai.h:319	CAMERA.md, SE.md	mode 0 (follow); mode 6 (stay, turn to the target) for the cast's scripts (tc_viewer director's shot); modes 1-5, 0x65, 0x68, 0x69 not ported
 004a3760	CAM_AngleTable		implemented	hand	358		CAMERA.md	cos / sin of k x base (pi/4 normal, pi/8 failure), mirrored to a full circle
 004a38d0	FUN_004a38d0		unknown	none	68			
-004a3920	CAM_RayPersos		partial	hand	218	core/src/tc_viewer.c:1615, core/include/tonic/tc_cam.h:173	CAMERA.md	persos of a sector on the ray (drawn geometry); port: every drawn perso (camera_sight in tc_viewer.c)
+004a3920	CAM_RayPersos		partial	hand	218	core/src/tc_viewer.c:1450, core/include/tonic/tc_cam.h:173	CAMERA.md	persos of a sector on the ray (drawn geometry); port: every drawn perso (camera_sight in tc_viewer.c)
 004a3a00	CAM_RayThroughSectors		partial	hand	655	core/include/tonic/tc_cam.h:172	CAMERA.md	the camera's, the target's and the listed sectors' geometry; port: the level collision
 004a3c90	FUN_004a3c90		unknown	none	655			
 004a3f20	CAM_RaysAround		known	hand	732			n rays round the segment, rotated 2 pi / n
@@ -3501,7 +3501,7 @@ addr	name	module	status	basis	size	port	docs	note
 004a731a	FUN_004a731a		unknown	none	46			
 004a7348	FUN_004a7348		unknown	none	46			
 004a7376	FUN_004a7376		unknown	none	227			
-004a7459	DNM_CardTypeInit_004a7459	DNM	implemented?	core-cite	1088	core/src/tc_cast_mec.c:376	NOTES.md	
+004a7459	DNM_CardTypeInit_004a7459	DNM	implemented?	core-cite	1088	core/src/tc_cast_mec.c:438	NOTES.md	
 004a7899	FUN_004a7899		known	doc-cite	386		ENGINE.md	
 004a7a2b	FUN_004a7a2b		unknown	none	220			
 004a7b07	FUN_004a7b07		unknown	none	106			
@@ -3525,8 +3525,8 @@ addr	name	module	status	basis	size	port	docs	note
 004a9588	FUN_004a9588		implemented?	core-cite	792	core/src/tc_mec.c:63	NOTES.md	
 004a98a0	FUN_004a98a0		known	doc-cite	243		NOTES.md	
 004a9993	FUN_004a9993		implemented?	core-cite	903	core/src/tc_mec.c:63, core/include/tonic/tc_mec.h:50	NOTES.md	
-004a9d20	DNM_IntegrateType12	DNM	partial	hand	2447	core/src/tc_cast_mec.c:236	ENGINE.md	tc_cast_mec.c glide_step: grounded from the start (no collision)
-004aa6af	DNM_IntegrateWalk_004aa6af	DNM	implemented?	core-cite	4718	core/src/tc_cast_mec.c:256, core/src/tc_mec_walk.c:681, core/include/tonic/tc_ed_ai.h:3	ENGINE.md, NOTES.md, TYPES.md	
+004a9d20	DNM_IntegrateType12	DNM	partial	hand	2447	core/src/tc_cast_mec.c:245	ENGINE.md	tc_cast_mec.c glide_step: grounded from the start (no collision)
+004aa6af	DNM_IntegrateWalk_004aa6af	DNM	implemented?	core-cite	4718	core/src/tc_cast_mec.c:265, core/src/tc_mec_walk.c:681, core/include/tonic/tc_ed_ai.h:3	ENGINE.md, NOTES.md, TYPES.md	
 004ab91d	DNM_IntegrateSki_004ab91d	DNM	implemented?	core-cite	667	core/src/tc_ed_ai.c:372, core/include/tonic/tc_mec.h:10, core/include/tonic/tc_mec.h:128	NOTES.md	
 004abbb8	DNM_IntegrateSwim_004abbb8	DNM	implemented?	core-cite	1314	core/include/tonic/tc_mec.h:77	NOTES.md	
 004ac0da	DNM_IntegrateFly_004ac0da	DNM	implemented?	core-cite	1361	core/include/tonic/tc_mec.h:9, core/include/tonic/tc_mec.h:65	NOTES.md	
@@ -3535,18 +3535,18 @@ addr	name	module	status	basis	size	port	docs	note
 004acb49	DNM_IntegrateType7	DNM	partial	hand	2109	core/src/tc_cast_mec.c:58, core/src/tc_ed_ai.c:623	ENGINE.md	5 ms substeps with 0x20000; the own sweep only with the collide set's single sphere
 004ad386	DNM_IntegrateType9_004ad386	DNM	named	name	1991			
 004adb4d	DNM_IntegrateType11_004adb4d	DNM	implemented?	core-cite	1142	core/src/tc_ed_ai.c:255	DECOMP.md, NOTES.md	
-004adfc3	DNM_IntegrateType10	DNM	partial	hand	697	core/src/tc_cast_mec.c:321	ENGINE.md	tc_cast_mec.c projectile_step: velocity kept; gravity x factor (port)
+004adfc3	DNM_IntegrateType10	DNM	partial	hand	697	core/src/tc_cast_mec.c:332	ENGINE.md	tc_cast_mec.c projectile_step: velocity kept; gravity x factor (port)
 004ae280	FUN_004ae280		implemented?	core-cite	274	core/src/tc_cast_mec.c:81, core/src/tc_mec_walk.c:778, core/include/tonic/tc_mec.h:236	ENGINE.md	
-004ae392	DNM_RequestWalk_004ae392	DNM	partial	hand	1724	core/src/tc_cast_mec.c:213, core/src/tc_cast_mec.c:256, core/src/tc_ed_ai.c:316	ENGINE.md, NOTES.md	modes 12 and 0x14 (tc_mec_walk_request_world); 3 / 4 / 5 / 0x12 turns as Ed's
+004ae392	DNM_RequestWalk_004ae392	DNM	partial	hand	1724	core/src/tc_ai.c:1717, core/src/tc_cast_mec.c:213, core/src/tc_cast_mec.c:236	ENGINE.md, NOTES.md	modes 12 and 0x14 (tc_mec_walk_request_world); 3 / 4 / 5 / 0x12 turns as Ed's
 004aea7c	DNM_RequestFly_004aea7c	DNM	implemented?	core-cite	1441	core/src/tc_mec.c:63, core/include/tonic/tc_mec.h:8, core/include/tonic/tc_mec.h:60	NOTES.md	
-004af04e	DNM_RequestType8_004af04e	DNM	implemented?	core-cite	2168	core/src/tc_ed_ai.c:288	DECOMP.md	
+004af04e	DNM_RequestType8_004af04e	DNM	implemented?	core-cite	2168	core/src/tc_ed_ai.c:288	DECOMP.md, ENGINE.md	
 004af8f0	DNM_RequestSwim_004af8f0	DNM	implemented?	core-cite	1946	core/include/tonic/tc_mec.h:77	NOTES.md	
 004b00bf	DNM_RequestSki_004b00bf	DNM	implemented?	core-cite	3657	core/src/tc_ed_ai.c:714, core/include/tonic/tc_mec.h:10, core/include/tonic/tc_mec.h:123	NOTES.md	
-004b0f2a	DNM_RequestAir_004b0f2a	DNM	implemented?	core-cite	657	core/src/tc_cast_mec.c:256, core/src/tc_ed_ai.c:317, core/include/tonic/tc_mec.h:138	DECOMP.md, NOTES.md	
+004b0f2a	DNM_RequestAir_004b0f2a	DNM	implemented?	core-cite	657	core/src/tc_cast_mec.c:237, core/src/tc_cast_mec.c:265, core/src/tc_ed_ai.c:317	DECOMP.md, NOTES.md	
 004b11ea	DNM_RequestType6	DNM	implemented	hand	1511	core/src/tc_cast_mec.c:24	ENGINE.md	MoveLift's way: modes 14 / 15, the lag {x, rate, T/2, L} (tc_cast_mec.c lift_request)
 004b17d1	DNM_RequestType7	DNM	partial	hand	2962	core/src/tc_cast_mec.c:16, core/src/tc_cast_mec.c:58, core/src/tc_ed_ai.c:623	ENGINE.md, NOTES.md	modes 3 / 4 / 5 / 0x12 / 12 / 0x14 / 0x15; 0x17 (orbit) not ported
 004b239c	DNM_RequestType9_004b239c	DNM	named	name	402			
-004b252e	DNM_RequestType10	DNM	implemented	hand	368	core/src/tc_cast_mec.c:321		modes 0x13 / 0x15 / 0x16
+004b252e	DNM_RequestType10	DNM	implemented	hand	368	core/src/tc_cast_mec.c:332	ENGINE.md	modes 0x13 / 0x15 / 0x16
 004b269e	FUN_004b269e		unknown	none	45			
 004b26cb	FUN_004b26cb		implemented?	core-cite	200	core/src/tc_cast_mec.c:61		
 004b2793	DNM_RequestType11_004b2793	DNM	implemented?	core-cite	304	core/src/tc_ed_ai.c:255	NOTES.md	
@@ -3576,7 +3576,7 @@ addr	name	module	status	basis	size	port	docs	note
 004b6cd0	FUN_004b6cd0		unknown	none	46			
 004b6d00	FUN_004b6d00		unknown	none	70			
 004b6d50	FUN_004b6d50		known	doc-cite	977		NOTES.md	
-004b7121	FUN_004b7121		implemented?	core-cite	698	core/src/tc_mec.c:147		
+004b7121	FUN_004b7121		implemented?	core-cite	698	core/src/tc_cast_mec.c:356, core/src/tc_mec.c:147		
 004b73db	FUN_004b73db		implemented?	core-cite	488	core/src/tc_cast_mec.c:143	ENGINE.md	
 004b75c3	FUN_004b75c3		unknown	none	129			
 004b7644	FUN_004b7644		unknown	none	990			
@@ -3686,12 +3686,12 @@ addr	name	module	status	basis	size	port	docs	note
 004bdeee	MEC_004bdeee	MEC	known	doc-cite	390		NOTES.md	
 004be074	MEC_004be074	MEC	unknown	none	329			
 004be1bd	MEC_CollideMove_004be1bd	MEC	implemented?	core-cite	3097	core/src/tc_mec_walk.c:15, core/src/tc_mec_walk.c:607, core/include/tonic/tc_mec.h:139	ENGINE.md, EXE.md, NOTES.md, TYPES.md	
-004bedd6	MEC_CollideMoveNoTurn_004bedd6	MEC	implemented?	core-cite	3098	core/src/tc_cast_mec.c:150, core/src/tc_cast_mec.c:237, core/src/tc_ed_ai.c:292	NOTES.md	
+004bedd6	MEC_CollideMoveNoTurn_004bedd6	MEC	implemented?	core-cite	3098	core/src/tc_cast_mec.c:150, core/src/tc_cast_mec.c:246, core/src/tc_cast_mec.c:375	NOTES.md	
 004bf9f0	MEC_Resnap_004bf9f0	MEC	implemented?	core-cite	1240	core/src/tc_ed_ai.c:402, core/src/tc_mec_walk.c:629, core/include/tonic/tc_mec.h:141	NOTES.md	
 004bfec8	MEC_004bfec8	MEC	unknown	none	4179			
 004c0f20	MEC_004c0f20	MEC	unknown	none	95			
 004c0f7f	MEC_EnvAt_004c0f7f	MEC	named	name	54			
-004c0fb5	MEC_CombineZones_004c0fb5	MEC	implemented?	core-cite	172	core/src/tc_ed_ai.c:445, core/include/tonic/tc_ai.h:361	NOTES.md	
+004c0fb5	MEC_CombineZones_004c0fb5	MEC	implemented?	core-cite	172	core/src/tc_ed_ai.c:445, core/include/tonic/tc_ai.h:371	NOTES.md	
 004c1070	MEC_004c1070	MEC	unknown	none	8			
 004c1078	MEC_HMecEnvi_004c1078	MEC	named	name	367			
 004c11e7	MEC_HMecEnvi_004c11e7	MEC	known	doc-cite	239		NOTES.md	
@@ -3736,7 +3736,7 @@ addr	name	module	status	basis	size	port	docs	note
 004c2ba0	FUN_004c2ba0		implemented?	core-cite	710	core/src/tc_mec_walk.c:700	ENGINE.md	
 004c2e66	FUN_004c2e66		unknown	none	980			
 004c323a	FUN_004c323a		unknown	none	188			
-004c32f6	DNM_CarriedLoad		partial	hand	253	core/src/tc_cast_mec.c:113, core/src/tc_cast_mec.c:187, core/include/tonic/tc_cast.h:105	ENGINE.md, NOTES.md	the riders' mass and the first rider's position: the main actor only
+004c32f6	DNM_CarriedLoad		partial	hand	253	core/src/tc_cast_mec.c:113, core/src/tc_cast_mec.c:187, core/include/tonic/tc_cast.h:111	ENGINE.md, NOTES.md	the riders' mass and the first rider's position: the main actor only
 004c33f3	FUN_004c33f3		unknown	none	78			
 004c3441	FUN_004c3441		unknown	none	77			
 004c348e	FUN_004c348e		unknown	none	67			
@@ -3753,7 +3753,7 @@ addr	name	module	status	basis	size	port	docs	note
 004c3af0	DNM_SkiCapSpeed_004c3af0	DNM	implemented?	core-cite	369	core/src/tc_mec.c:389, core/include/tonic/tc_mec.h:11	NOTES.md	
 004c3c61	FUN_004c3c61		unknown	none	354			
 004c3dc3	FUN_004c3dc3		known	doc-cite	126		NOTES.md	
-004c3e50	FUN_004c3e50		implemented?	core-cite	885	core/src/tc_cast_mec.c:238	ENGINE.md	
+004c3e50	FUN_004c3e50		implemented?	core-cite	885	core/src/tc_cast_mec.c:247	ENGINE.md	
 004c41c5	DNM_WalkForces	DNM	partial	hand	1480	core/src/tc_mec_walk.c:800, core/src/tc_mec_walk.c:822, core/include/tonic/tc_mec.h:137	DECOMP.md, ENGINE.md, NOTES.md, TYPES.md	weight, grip, the ground press (-0.04 / dt) ported; the box-perso pull (0.05, out flag 0x40) not
 004c478d	DNM_FlyForces_004c478d	DNM	implemented?	core-cite	791	core/src/tc_mec.c:125, core/include/tonic/tc_mec.h:9	NOTES.md	
 004c4aa4	FUN_004c4aa4		implemented?	core-cite	76	core/src/tc_ed_ai.c:289	DECOMP.md	
@@ -3761,10 +3761,10 @@ addr	name	module	status	basis	size	port	docs	note
 004c4ecd	DNM_SkiForces_004c4ecd	DNM	implemented?	core-cite	3027	core/include/tonic/tc_mec.h:11	NOTES.md	
 004c5aa0	FUN_004c5aa0		known	doc-cite	3827		DECOMP.md	
 004c6993	FUN_004c6993		implemented?	core-cite	1799	core/src/tc_ed_ai.c:256, core/src/tc_ed_ai.c:261	DECOMP.md, NOTES.md	
-004c709a	FUN_004c709a		implemented?	core-cite	4736	core/src/tc_cast_mec.c:321	DECOMP.md, ENGINE.md	
+004c709a	FUN_004c709a		implemented?	core-cite	4736	core/src/tc_cast_mec.c:332, core/src/tc_cast_mec.c:337	DECOMP.md, ENGINE.md	
 004c831a	DNM_Type7Forces	DNM	implemented	hand	1298	core/src/tc_cast_mec.c:58, core/src/tc_cast_mec.c:112	ENGINE.md, NOTES.md	pending velocity, plane spring, the load spring, the tilt above mass 125; g = 9.81 taken
 004c8830	FUN_004c8830		unknown	none	48			
-004c8860	FUN_004c8860		known	doc-cite	1436		NOTES.md	
+004c8860	FUN_004c8860		known	doc-cite	1436		ENGINE.md, NOTES.md	
 004c8dfc	FUN_004c8dfc		implemented?	core-cite	982	core/src/tc_ed_ai.c:801, core/include/tonic/tc_mec.h:69	NOTES.md	
 004c91d2	FUN_004c91d2		implemented?	core-cite	763	core/include/tonic/tc_mec.h:97	NOTES.md	
 004c94cd	FUN_004c94cd		unknown	none	146			
@@ -3811,11 +3811,11 @@ addr	name	module	status	basis	size	port	docs	note
 004cace0	FUN_004cace0		unknown	none	8			
 004cacf0	FUN_004cacf0		unknown	none	66			
 004cad32	FUN_004cad32		unknown	none	510			
-004caf30	FUN_004caf30		unknown	none	613			
+004caf30	FUN_004caf30		implemented?	core-cite	613	core/src/tc_cast_mec.c:337		
 004cb195	FUN_004cb195		unknown	none	148			
 004cb229	FUN_004cb229		unknown	none	97			
 004cb28a	FUN_004cb28a		unknown	none	121			
-004cb303	FUN_004cb303		unknown	none	70			
+004cb303	FUN_004cb303		implemented?	core-cite	70	core/src/tc_cast_mec.c:338		
 004cb350	FUN_004cb350		known	doc-cite	16		PORTALS.md	
 004cb360	FUN_004cb360		unknown	none	18			
 004cb380	FUN_004cb380		implemented?	core-cite	113	core/src/tc_transition.c:14	PORTALS.md	
@@ -3877,11 +3877,11 @@ addr	name	module	status	basis	size	port	docs	note
 004cd4b0	FON_004cd4b0	FON	unknown	none	19			
 004cd4d0	FON_004cd4d0	FON	unknown	none	86			
 004cd530	FON_004cda10	FON	unknown	none	5			
-004cd540	FON_004cd540	FON	unknown	none	83			
+004cd540	FON_004cd540	FON	implemented?	core-cite	83	core/src/tc_speech.c:16		
 004cd5a0	FON_004cd5a0	FON	unknown	none	102			
 004cd610	FON_004cd610	FON	unknown	none	64			
 004cd650	FON_004cd650	FON	unknown	none	47			
-004cd680	FON_004cd680	FON	unknown	none	34			
+004cd680	FON_004cd680	FON	known	doc-cite	34		ENGINE.md	
 004cd6b0	FON_004cd6b0	FON	unknown	none	258			
 004cd7c0	FON_004cd7c0	FON	unknown	none	132			
 004cd850	FON_004cd850	FON	unknown	none	67			
@@ -3897,10 +3897,10 @@ addr	name	module	status	basis	size	port	docs	note
 004cdc60	FON_004cdc60	FON	unknown	none	52			
 004cdca0	FON_004cdca0	FON	unknown	none	55			
 004cdce0	FON_004cdce0	FON	unknown	none	36			
-004cdd10	FON_004cdd10	FON	known	doc-cite	842		NOTES.md	
+004cdd10	FON_004cdd10	FON	implemented?	core-cite	842	core/src/tc_speech.c:176, core/include/tonic/tc_speech.h:2	ENGINE.md, NOTES.md	
 004ce060	FON_004ce060	FON	unknown	none	146			
 004ce100	FON_004ce100	FON	unknown	none	14			
-004ce110	FON_004ce110	FON	unknown	none	211			
+004ce110	FON_004ce110	FON	implemented?	core-cite	211	core/include/tonic/tc_speech.h:34	ENGINE.md	
 004ce1f0	FON_004ce1f0	FON	unknown	none	30			
 004ce210	FON_004ce210	FON	unknown	none	65			
 004ce260	FON_004ce260	FON	unknown	none	250			
@@ -3922,15 +3922,15 @@ addr	name	module	status	basis	size	port	docs	note
 004ce830	FON_fonload_004ce830	FON	named	name	831			
 004ceb70	FUN_004ceb70		unknown	none	93			
 004cebd0	FUN_004cebd0		unknown	none	17			
-004cebf0	FUN_004cebf0		implemented?	core-cite	22	core/src/tc_ai.c:1808		
-004cec10	FUN_004cec10		implemented?	core-cite	32	core/src/tc_ai.c:1809		
-004cec30	FUN_004cec30		implemented?	core-cite	121	core/src/tc_ai.c:1447, core/src/tc_ai.c:1809		
-004cecb0	FUN_004cecb0		implemented?	core-cite	91	core/src/tc_ai.c:1448		
+004cebf0	FUN_004cebf0		implemented?	core-cite	22	core/src/tc_ai.c:1873		
+004cec10	FUN_004cec10		implemented?	core-cite	32	core/src/tc_ai.c:1874		
+004cec30	FUN_004cec30		implemented?	core-cite	121	core/src/tc_ai.c:1483, core/src/tc_ai.c:1874		
+004cecb0	FUN_004cecb0		implemented?	core-cite	91	core/src/tc_ai.c:1484		
 004ced10	FUN_004ced10		unknown	none	17			
-004ced30	FUN_004ced30		implemented?	core-cite	22	core/src/tc_ai.c:1819		
-004ced50	FUN_004ced50		implemented?	core-cite	32	core/src/tc_ai.c:1819		
+004ced30	FUN_004ced30		implemented?	core-cite	22	core/src/tc_ai.c:1884		
+004ced50	FUN_004ced50		implemented?	core-cite	32	core/src/tc_ai.c:1884		
 004ced70	FUN_004ced70		unknown	none	121			
-004cedf0	FUN_004cedf0		implemented?	core-cite	102	core/src/tc_ai.c:1821		
+004cedf0	FUN_004cedf0		implemented?	core-cite	102	core/src/tc_ai.c:1886		
 004cee60	FUN_004cee60		known	doc-cite	90		DECOMP.md	
 004ceec0	FUN_004ceec0		known	doc-cite	361		DECOMP.md	
 004cf030	FUN_004cf030		known	doc-cite	16		DECOMP.md	
@@ -3987,6 +3987,7 @@ COND 10	ButtonJustPressed	AI	implemented	ai		core/src/tc_ai.c		0x497c90 counter 
 COND 11	ButtonNotHeld	AI	implemented	ai		core/src/tc_ai.c		0x497c90 counter < 0
 COND 12	ButtonJustReleased	AI	implemented	ai		core/src/tc_ai.c		0x497c90 counter == -1
 COND 13	InZone	AI	implemented	ai		core/src/tc_ai.c		0x497d70 (a, k, b): b origin inside ZDD zone k of a (GAM_ZoneHolds_00420280); cast + portals
+COND 15	Cond_CollidePersoAllZDDWithPersoAllZDD	AI	implemented	ai		core/src/tc_ai.c		0x497d70 GAM_AnyZoneHolds_004202c0
 COND 18		AI	implemented	ai		core/src/tc_ai.c		
 COND 19		AI	implemented	ai		core/src/tc_ai.c		
 COND 20		AI	implemented	ai		core/src/tc_ai.c		
@@ -4012,6 +4013,7 @@ COND 44	GroundMaterialIs	AI	implemented	ai		core/src/tc_ai.c		0x4985e0 (mask) ag
 COND 45	WallMaterialIs	AI	implemented	ai		core/src/tc_ai.c		0x4985e0 (mask) against the wall contact (+0x108)
 COND 46	NoContactMaterialIs	AI	implemented	ai		core/src/tc_ai.c		0x4985e0
 COND 47	SlopeMaterialIs	AI	implemented	ai		core/src/tc_ai.c		0x4985e0
+COND 51	Cond_InEnvironmentWater	AI	implemented	ai		core/src/tc_ai.c		0x498820 dynamics +0x23C == 1
 COND 53	ModelNameIs?	AI	missing	ai				0x4988c0 0x35: func_0x0048fd50(string, perso model name)
 COND 54	IsEmpty?	AI	implemented	ai		core/src/tc_ai.c		0x4988c0 0x36: *arg == 0 (Ed: on dsgvars 93/97)
 COND 55	TimeElapsed	AI	implemented	ai		core/src/tc_ai.c		0x498970 (stored ms, duration): |now - stored| >= duration
@@ -4042,7 +4044,7 @@ FIELD 6	DynAxis2	AI	unknown	none				0x4a6980 GAM_00431e50
 FIELD 13	Float13	AI	unknown	none				0x4a6650 GAM_0041ed30(perso) (float)
 FIELD 14	Float14	AI	unknown	none				0x4a6690 GAM_0041ed60(perso) (float)
 FUNC 0	GetPosition	AI	implemented	ai		core/src/tc_ai.c		0x49a140 target perso's position (vector, value type 22)
-FUNC 1	AngleTo?	AI	missing	ai				0x49a140
+FUNC 1	Func_GetAngleAroundZToPerso	AI	implemented	ai		core/src/tc_ai.c		0x49a140 signed degrees from its front to the perso
 FUNC 2		AI	implemented	ai		core/src/tc_ai.c		
 FUNC 3	PositionOf?	AI	implemented	ai		core/src/tc_ai.c		0x49a140 (object) -> vector
 FUNC 4	DistanceTo	AI	implemented	ai		core/src/tc_ai.c		0x49a140 (perso): this (or OP 24 perso) to perso, 3D (AI_00491ba0 part 7)
@@ -4083,7 +4085,7 @@ FUNC 40	Lives	AI	implemented	ai		core/src/tc_ai.c		0x49aff0 byte at *DAT_008bc84
 FUNC 41		AI	implemented	ai		core/src/tc_ai.c		
 FUNC 42		AI	implemented	ai		core/src/tc_ai.c		
 FUNC 43	GetTime	AI	implemented	ai		core/src/tc_ai.c		0x49b040 ms clock DAT_008bd090
-FUNC 44	TimeSince?	AI	missing	ai				0x49b040
+FUNC 44	Func_ElapsedTime	AI	implemented	ai		core/src/tc_ai.c		0x49b040 |now - t|
 FUNC 49	ButtonAnalog	AI	implemented	ai		core/src/tc_ai.c		0x49b200 FUN_0044a6e0(button) -> float
 FUNC 50	FindPerso?	AI	implemented	ai		core/src/tc_ai.c		0x49b350 (perso, ...) via GAM_Always_004259a0
 FUNC 51	EnvHeight?	AI	implemented	ai		core/src/tc_ai.c		0x49b350 dynamics +0x2E0 (set from the mechanics environment lookup; water level?)
@@ -4109,17 +4111,31 @@ KW 0	If	AI	unknown	none				0x497400 evaluates the condition, skips the Then bran
 KW 1	Then	AI	unknown	none				0x497380
 KW 2	Else	AI	unknown	none				0x4973a0
 KW 4	Me	AI	unknown	none				0x497220 the perso itself (value type 0xC = perso)
+META 0	Action_IncrementalTurn2	AI	implemented	ai		core/src/tc_ai.c		0x49ee00 (deg, ms): mode 3
+META 1	Action_IncrementalTurn	AI	implemented	ai		core/src/tc_ai.c		0x49ed30 (deg, frames): mode 3
+META 2	Action_Pursuit	AI	implemented	ai		core/src/tc_ai.c		0x49fb60 (perso, radius): the go-to core
+META 3	Action_DeltaPursuit	AI	implemented	ai		core/src/tc_ai.c		0x49fbc0 (perso, radius, x, y, z)
 META 4	ChangeStateAndWait	AI	implemented	ai		core/src/tc_ai.c		0x49ef20 table 0x4E6CB0 = 16 bytes {start, per-frame continuation, packed signature, 0}; continuation 0x49ef70 returns 4 while running
+META 5	Action_WaitEndOfAction	AI	implemented	ai		core/src/tc_ai.c		0x49f020 3dData +0x161
+META 6	Action_WaitEndOfAnim	AI	implemented	ai		core/src/tc_ai.c		0x49f040 3dData +0x162
+META 7	Action_SpeakAndWaitEnd	AI	implemented	ai		core/src/tc_ai.c		0x49efc0 (dialogue, node type 21): docs/ENGINE.md "Speech"
 META 11	SpawnInState?	AI	implemented	ai		core/src/tc_ai.c		0x49f190 signature "PAV": spawn/attach an object and change its state
 META 12	ChangeStateByDirection	AI	implemented	ai		core/src/tc_ai.c		0x49f310 "PVAA": state 2 or 3 depending on the side of a vector
 META 13	ChangeStateBySpeed	AI	missing	ai				0x49f750 speed thresholds -> one of two states (not used by Ed)
-META 19	TurnTowardOverFrames	AI	implemented	ai		core/src/tc_ai.c		0x4a0460 "L": (target, frames)
+META 14	Action_RunAway	AI	implemented	ai		core/src/tc_ai.c		0x49fa60 (perso, radius)
+META 15	Action_IncrementalTurnPosition	AI	implemented	ai		core/src/tc_ai.c		0x4a0130 (point, ms): mode 5
+META 16	Action_IncrementalDeltaTurnPerso2	AI	implemented	ai		core/src/tc_ai.c		0x4a02a0 (perso, ms, x, y, z)
+META 17	Action_IncrementalTurnPerso2	AI	implemented	ai		core/src/tc_ai.c		0x4a06c0 (perso, ms)
+META 18	Action_IncrementalDeltaTurnPerso	AI	implemented	ai		core/src/tc_ai.c		0x49ff80 (perso, frames, x, y, z)
+META 19	Action_IncrementalTurnPerso	AI	implemented	ai		core/src/tc_ai.c		0x4a0460 (perso, frames): docs/ENGINE.md "Perso motion"
+META 20	Action_RunAwayWP	AI	implemented	ai		core/src/tc_ai.c		0x49fb10 (waypoint, radius)
 META 21	GoToWaypoint?	AI	implemented	ai		core/src/tc_ai.c		0x49fc50 "W"
 META 22		AI	implemented	ai		core/src/tc_ai.c		
 META 23		AI	implemented	ai		core/src/tc_ai.c		
 META 24		AI	implemented	ai		core/src/tc_ai.c		
 META 25		AI	implemented	ai		core/src/tc_ai.c		
 META 26		AI	implemented	ai		core/src/tc_ai.c		
+META 27	Action_GoToPosition	AI	implemented	ai		core/src/tc_ai.c		0x4a0960 (point, radius)
 META 28		AI	implemented	ai		core/src/tc_ai.c		
 META 29		AI	implemented	ai		core/src/tc_ai.c		
 META 40	RotateChannelToward	AI	implemented	ai		core/src/tc_ai.c		0x49d730 "MVV"
@@ -4173,6 +4189,7 @@ PROC 6	DeactivatePerso	AI	implemented	ai		core/src/tc_ai.c		0x488580 GAM_Objinit
 PROC 7	ChangeLevel	AI	implemented	ai		core/src/tc_ai.c		0x488580 GAM_Basic_004105f0(level name string)
 PROC 9	Proc9	AI	implemented	ai		core/src/tc_ai.c		0x488580 AI_0048f490(arg); AI_0048f4b0(1)
 PROC 10	Proc10	AI	implemented	ai		core/src/tc_ai.c		0x488580 GAM_0041ec90(perso object)
+PROC 16	DetachFromCarrier	AI	stub	ai		core/src/tc_ai.c		0x488340 GAM_00428ea0: back to the dynamic world
 PROC 17	SetActivity(0,0,always)	AI	implemented	ai		core/src/tc_ai.c		0x488580 GAM_00424280: +0x2A mechanics, +0x2B animation, +0x2C radius^2
 PROC 18	SetActivity(0,0,r)	AI	implemented	ai		core/src/tc_ai.c		0x488580
 PROC 19	SetActivity(0,1,always)	AI	implemented	ai		core/src/tc_ai.c		0x488580
@@ -4232,6 +4249,7 @@ PROC 84	CollectNearby	AI	implemented	ai		core/src/tc_ai.c		0x489a70 0x54: GAM_Zd
 PROC 85	CollectNearby85	AI	implemented	ai		core/src/tc_ai.c		0x489a70 0x55
 PROC 86	CollectNearby86	AI	implemented	ai		core/src/tc_ai.c		0x489a70 0x56: func_0x0041fff0
 PROC 94		AI	implemented	ai		core/src/tc_ai.c		
+PROC 104	Proc_StopSpeech	AI	stub	ai		core/src/tc_ai.c		GAM_00418790: the line on show ends
 PROC 105	ResetChannelTransform?	AI	stub	ai		core/src/tc_ai.c		0x48a0c0 0x69: clears channel overrides (FLT_MAX markers)
 PROC 106	ResetChannel?	AI	stub	ai		core/src/tc_ai.c		0x48a0c0 0x6a
 PROC 107	FreezeChannelPosition?	AI	stub	ai		core/src/tc_ai.c		0x48a0c0 0x6b
@@ -4282,7 +4300,7 @@ PROC 244	JumpBallistic	AI	implemented	ai		core/src/tc_ai.c		0x48bbe0 (vector, he
 PROC 245	TurnBy	AI	implemented	ai		core/src/tc_ai.c		0x48bd50 degrees (x DAT_004d2cdc)
 PROC 246	TurnBySpeed	AI	implemented	ai		core/src/tc_ai.c		0x48bd50 degrees per second (divided by the frame time)
 PROC 247	TurnTowardPoint	AI	implemented	ai		core/src/tc_ai.c		0x48be20 (perso, x, y, z)
-PROC 248	TurnTowardPerso?	AI	missing	ai				0x48be20
+PROC 248	Proc_TurnPerso	AI	implemented	ai		core/src/tc_ai.c		0x48be20 mode 5 towards the perso
 PROC 249	ChangeState	AI	implemented	ai		core/src/tc_ai.c		0x48c010 GAM_00437260: honours the family's transition (goes through its intermediate state) and prohibited lists, then plays the anim; on refusal AI_0048e690(2)
 PROC 251		AI	implemented	ai		core/src/tc_ai.c		
 PROC 252		AI	implemented	ai		core/src/tc_ai.c		

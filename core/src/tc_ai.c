@@ -762,6 +762,27 @@ static float heading_to(const tc_ai_perso *p, tc_vec3 target) {
     return dx * dx + dy * dy > 1e-8f ? atan2f(dx, -dy) : p->heading;
 }
 
+/* A perso's point at an offset in its axes (FUN_0047b2f0 on its world matrix): a portal's frame from the data, else a live
+ * perso's position and heading. Port: a live perso's axes are its turn about up only (tilted platforms are not asked
+ * for points). false: nobody by that id. */
+static bool perso_point(const tc_ai_perso *p, int32_t perso, tc_vec3 off, tc_vec3 *out) {
+    tc_ai_perso *q;
+    const float *m;
+    tc_vec3 pos;
+    if (perso_frame(p, perso, &pos, &m)) { /* first: a ghost's heading says nothing of where a portal faces */
+        *out = tc_v3_add(pos, tc_v3(m[0] * off.x + m[1] * off.y + m[2] * off.z, m[3] * off.x + m[4] * off.y + m[5] * off.z,
+                                    m[6] * off.x + m[7] * off.y + m[8] * off.z));
+        return true;
+    }
+    q = perso == 0 ? (tc_ai_perso *)p : p->find ? p->find(p->find_user, perso) : NULL;
+    if (!q) return false;
+    {
+        float co = cosf(q->heading), si = sinf(q->heading);
+        *out = tc_v3_add(q->position, tc_v3(co * off.x - si * off.y, si * off.x + co * off.y, off.z));
+    }
+    return true;
+}
+
 static tc_vec3 perso_position(const tc_ai_perso *p, int32_t perso) {
     int o = perso == 0 ? -1 : other_index(p, perso);
     tc_ai_perso *q = live(p, perso);
@@ -1025,6 +1046,7 @@ static void state_sounds(tc_ai_perso *p, const tc_ai_state *s, float from, float
  * the next state (the requested state, InState, stays); with no next state hold the last frame, "ended". */
 static void advance_state(tc_ai_perso *p, float dt) {
     int guard;
+    p->anim_end_reached = false; /* 3dData +0x162, cleared each advance (GAM_PlayAnim_Advance_00415fb0) */
     if (p->state_ended || !p->model->state_count) return;
     float frames = dt * p->frame_rate;
     for (guard = 0; guard < 8; guard++) {
@@ -1034,6 +1056,7 @@ static void advance_state(tc_ai_perso *p, float dt) {
         state_sounds(p, s, p->state_frame, fminf(length, p->state_frame + frames));
         if (p->state_frame + frames < length) { p->state_frame += frames; return; }
         frames -= length - p->state_frame;
+        p->anim_end_reached = true;
         if (p->repeats_left) { p->repeats_left--; p->state_frame = 0; continue; }
         if (s->next < 0) { p->state_frame = length; p->state_ended = true; return; }
         if ((uint32_t)s->next == p->state) { p->state_frame = 0; p->repeats_left = s->repeats; continue; }
@@ -1050,6 +1073,14 @@ static void set_behaviour(tc_ai_perso *p, tc_ai_intel *in, uint32_t b) {
     in->schedule_pos = TC_AI_NONE;
     for (k = 0; k <= p->model->max_rules; k++) in->slots[k].node = TC_AI_NONE;
 }
+
+void tc_ai_speech_end(tc_ai_globals *g) {
+    if (g->speaker) g->speaker->speaking = 0;
+    g->speaker = NULL;
+    g->speech = 0;
+}
+
+bool tc_ai_set_state(tc_ai_perso *p, uint32_t state) { return state < p->model->state_count && change_state(p, state); }
 
 void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t b) {
     if (b < p->model->normal_count && p->normal.behaviour != b) set_behaviour(p, &p->normal, b);
@@ -1326,15 +1357,18 @@ static bool condition(run *r, uint32_t i) {
                                        : q->normal.behaviour == b;
     }
     case 61: { float d = argf(r, i, 0); return d * d > p->main_distance2; }
-    case 13: { /* COND_13Etc_00497d70 -> GAM_ZoneHolds_00420280: b's origin inside ZDD zone k (1-based) of a */
-        value a = arg(r, i, 0), b = arg(r, i, 2);
-        int32_t k = as_int(arg(r, i, 1));
+    case 13: case 15: { /* COND_13Etc_00497d70: b's origin inside a's ZDD zone k, 1-based (13: GAM_ZoneHolds_00420280), or any
+                         * of them (15, Cond_CollidePersoAllZDDWithPersoAllZDD: GAM_AnyZoneHolds_004202c0). Port: all the
+                         * exported zones count, active in the state or not, and zones on channel objects are not exported */
+        bool c13 = c == 13;
+        value a = arg(r, i, 0), b = arg(r, i, c13 ? 2 : 1);
+        int32_t k = c13 ? as_int(arg(r, i, 1)) : -1;
         const tc_ai_perso *za = a.type == V_PERSO ? (a.i == 0 ? p : live(p, a.i)) : NULL;
         const tc_cast_entry *e = za ? za->zones_of : NULL;
         const float *m;
         tc_vec3 x, q;
         uint32_t z, j;
-        if (!e) { unknown(r, i); return false; }
+        if (!e) { if (c13) unknown(r, i); return false; }
         if (b.type != V_PERSO || b.i < 0) return false;
         x = b.i == 0 ? p->position : perso_position(p, b.i);
         m = e->zone_inverse;
@@ -1343,7 +1377,7 @@ static bool condition(run *r, uint32_t i) {
                        m[8] * x.x + m[9] * x.y + m[10] * x.z + m[11]);
         for (z = 0; z < e->zone_count; z++) {
             const tc_cast_zone *zn = &e->zones[z];
-            if ((int32_t)zn->index != k) continue;
+            if (c13 && (int32_t)zn->index != k) continue;
             for (j = 0; j < zn->count; j++) {
                 const tc_cast_zone_prim *c = &zn->prims[j];
                 if (c->kind == 7 && tc_v3_distance(q, c->a) <= c->b.x) return true;
@@ -1364,6 +1398,7 @@ static bool condition(run *r, uint32_t i) {
     case 66: return waypoint(r->p, as_int(arg(r, i, 0))) != NULL; /* Cond_IsValidWayPoint (COND_IsValidEtc_00498af0) */
     /* The water zones (docs/NOTES.md "Swimming"): FUN_004976f0 (70) in water: all sample points in it, or mixed with
      * point 3 or 4 in it; 71 the head (point 1) out; 72 point 1 in (or none); 73 FUN_004977f0; 74 no point in water. */
+    case 51: return p->env_water; /* Cond_InEnvironmentWater (COND_50Etc_00498820) */
     case 70: return in_water(p);
     case 71: return in_water(p) && p->zone[1] == 0;
     case 72: return in_water(p) && p->zone[1] != 0;
@@ -1521,7 +1556,17 @@ static value function(run *r, uint32_t i) {
         if (N(r, i)->param == 42) g->lives--;
         return v_int(g->lives);
     }
+    case 1: { /* FUNC_GetPositionEtc_0049a140: the turn from its front to the perso, degrees, the short way */
+        value who = arg(r, i, 0);
+        tc_vec3 at;
+        if (who.type != V_PERSO || !perso_point(p, who.i, tc_v3(0, 0, 0), &at)) return v_float(0);
+        return v_float(remainderf(heading_to(p, at) - p->heading, 2 * TC_PI) * 57.29578f);
+    }
     case 43: return v_int((int32_t)p->time_ms);
+    case 44: { /* FUNC_GetTimeEtc_0049b040: from a time got by FUNC 43, either side of now */
+        uint32_t t = (uint32_t)as_int(arg(r, i, 0)), now = p->time_ms;
+        return v_int((int32_t)(t > now ? t - now : now - t));
+    }
     case 49: return v_float(button_analog(p, arg_param(r, i, 0)));
     /* 88, 100, 101: as OP 24's perso when there is one (the exe runs the child as that perso: the cavedoc crate reads
      * InPersoContext(Ed, LocalToGlobalVec((0, -1, 0))), Ed's front) */
@@ -1667,6 +1712,25 @@ static tc_ai_perso *target(run *r, value who) {
 static void set_mech_mode(tc_ai_perso *p, int mode) {
     p->motion.mech_mode = mode;
     if (p->motion.mode_count < 8) p->motion.modes[p->motion.mode_count++] = (int8_t)mode; /* full: dropped, as FUN_0047a370 */
+}
+
+/* Mode 5 (the turn meta-actions, PROC 247 / 248): this angle now, whatever the card's turn limits (DNM_RequestWalk_004ae392
+ * case 5: (angle - position's angle) / dt). The exe's angle is in [0, 2 pi); the port's heading runs on, so it is taken the
+ * short way from where the perso faces, which also keeps the drawing between ticks from spinning. */
+static void request_heading(tc_ai_perso *p, float angle) {
+    float h = p->heading + remainderf(angle - p->heading, 2 * TC_PI);
+    p->motion.heading_set = true;
+    p->motion.heading = h;
+    p->motion.proposal[0xD] = h;
+    queue_mech_request(p, 5);
+}
+
+/* AI_00492140: mode 3 at this rate (rad/s; the card's max turn clamps it in the request), for this frame. */
+static void request_turn(tc_ai_perso *p, float rate) {
+    p->motion.turn_speed = rate;
+    p->motion.turning = true;
+    p->motion.proposal[0xD] = rate;
+    queue_mech_request(p, 3);
 }
 
 /* The perso list in dsgvar k (its count also into byte 0, which ListEmpty reads), made on first use. */
@@ -1929,16 +1993,12 @@ static uint32_t procedure(run *r, uint32_t i) {
         set_mech_mode(p, 3);
         return 0;
     }
-    case 247: { /* TurnTowardPoint(perso, x, y, z) (0x48be20): face the point at that offset in the perso's axes (at once,
-                 * as TurnTowardOverFrames; Ed's B75 / B98 walking through the sud0 passages, HEG_GenTransitionFade) */
+    case 247: case 248: { /* TurnTowardPoint(perso, x, y, z), Proc_TurnPerso(perso) (PROC_TurnTowardPointEtc_0048be20): mode 5
+                           * to the angle that faces that point in the perso's axes, or the perso itself (Ed's B75 / B98
+                           * walking through the sud0 passages, HEG_GenTransitionFade; the guards facing Ed) */
         value who = arg(r, i, 0);
-        tc_vec3 pos, off = tc_v3(argf(r, i, 1), argf(r, i, 2), argf(r, i, 3));
-        const float *m3;
-        if (who.type == V_PERSO && perso_frame(p, who.i, &pos, &m3)) {
-            p->motion.heading_set = true;
-            p->motion.heading = heading_to(p, tc_v3_add(pos, tc_v3(m3[0] * off.x + m3[1] * off.y + m3[2] * off.z,
-                                                                   m3[3] * off.x + m3[4] * off.y + m3[5] * off.z, 0)));
-        }
+        tc_vec3 off = c == 247 ? tc_v3(argf(r, i, 1), argf(r, i, 2), argf(r, i, 3)) : tc_v3(0, 0, 0), at;
+        if (who.type == V_PERSO && perso_point(p, who.i, off, &at)) request_heading(p, heading_to(p, at));
         return 0;
     }
     case 249: return change_state(p, arg_param(r, i, 0)) ? 0 : F_ABORT;
@@ -1997,6 +2057,8 @@ static uint32_t procedure(run *r, uint32_t i) {
         return 0;
     }
     case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */
+    case 104: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->speech_stop = true; return 0; }
+    case 16: p->motion.detach = true; return 0; /* PROC_12Etc_00488340 -> GAM_00428ea0: off its carrier */
     case 25: case 26: case 32: case 33: case 70: case 71: case 80:
     case 105: case 106: case 107: case 108:
     case 154: case 155: case 236: case 278: case 279: case 291: case 292:
@@ -2008,19 +2070,44 @@ static uint32_t procedure(run *r, uint32_t i) {
 /* FUN_0049f580 (by FUN_0049f4e0): towards a point, there within `radius` (FUN_0049f530). This frame's mode 12 requests
  * go (FUN_0047a4a0); unless there, the unit direction goes into the proposal [7..9] and mode 0x14 is asked for (the
  * speed [10] stays the script's: SetSpeed, SetMoveDirection). Returns F_META_DONE there, else F_STOP. */
-static uint32_t go_to(tc_ai_perso *p, tc_vec3 target, float radius) {
-    tc_vec3 d = tc_v3_sub(target, p->position);
+static uint32_t go_along(tc_ai_perso *p, tc_vec3 d, bool there) {
     float l = tc_v3_length(d);
     uint8_t k, n = 0;
     for (k = 0; k < p->motion.mode_count; k++)
         if (p->motion.modes[k] != 12) p->motion.modes[n++] = p->motion.modes[k];
     p->motion.mode_count = n;
-    if (l <= radius) return F_META_DONE;
+    if (there) return F_META_DONE;
     if (d.x != 0 || d.y != 0 || d.z != 0) d = tc_v3_scale(d, 1 / l);
     p->motion.proposal[7] = d.x, p->motion.proposal[8] = d.y, p->motion.proposal[9] = d.z;
     p->motion.direction_set = true;
     set_mech_mode(p, 20);
     return F_STOP;
+}
+
+static uint32_t go_to(tc_ai_perso *p, tc_vec3 target, float radius) {
+    tc_vec3 d = tc_v3_sub(target, p->position);
+    return go_along(p, d, tc_v3_length(d) <= radius); /* FUN_0049f530 */
+}
+
+/* The same away from a point (0x49fac0 swaps the two points), done once at least that far (0x49fa10). */
+static uint32_t run_away(tc_ai_perso *p, tc_vec3 from, float radius) {
+    tc_vec3 d = tc_v3_sub(p->position, from);
+    return go_along(p, d, tc_v3_length(d) >= radius);
+}
+
+/* META 15-19's start (META_15_004a0130, 16, 17, 18, TurnTowardOverFrames): the short way from its heading to the point,
+ * spread over `n` (frames, META 18 / 19: at least 1; else ms, the slot's per-ms rate over |n|). */
+static void turn_start(tc_ai_perso *p, tc_ai_slot *slot, tc_vec3 at, int32_t n, bool frames) {
+    float span = (float)n;
+    if (frames) {
+        if (n < 0) n = 1, span = 1;
+    } else {
+        if (span <= 0) span = -span;
+        if (span == 0) span = 1e-6f;
+    }
+    slot->a = n;
+    slot->v[0] = p->heading;
+    slot->v[1] = remainderf(heading_to(p, at) - p->heading, 2 * TC_PI) / span;
 }
 
 /* META 22 .. 26 (FUN_0049fd40(perso, go_on, back)): towards the way's current waypoint; there, on to the next one
@@ -2053,8 +2140,61 @@ static uint32_t meta_action(run *r, uint32_t i) {
             break;
         }
         case 12: slot->a = 0; slot->b = 0; break; /* ChangeStateByDirection: a = walking, b = frames */
-        case 19: break;
-        case 29: slot->a = (int32_t)(p->time_ms + (uint32_t)as_int(arg(r, i, 0))); break; /* Wait(ms): FUN_004a0b00 */
+        case 0: { /* IncrementalTurn2(degrees, ms) (META_0_0049ee00): a = ms, b = elapsed, the rate in rad/s */
+            float deg = argf(r, i, 0), ms;
+            slot->a = as_int(arg(r, i, 1));
+            slot->b = 0;
+            ms = (float)slot->a;
+            if (ms <= 0) ms = -ms;
+            if (ms == 0) ms = 1e-6f;
+            slot->v[0] = deg * 0.017453292f / (ms * 0.001f);
+            break;
+        }
+        case 1: { /* IncrementalTurn(degrees, frames) (META_1_0049ed30): a = frames left, the rate as read: degrees per frame
+                   * as rad/s */
+            int32_t n = as_int(arg(r, i, 1));
+            float deg = argf(r, i, 0);
+            if (n < 0) n = 1;
+            slot->a = n;
+            slot->v[0] = n ? deg / (float)n * 0.017453292f : 0;
+            break;
+        }
+        case 2: case 14: { /* Pursuit, RunAway(perso, radius): b = the perso */
+            value who = arg(r, i, 0);
+            slot->b = who.type == V_PERSO ? who.i : -1;
+            slot->v[0] = argf(r, i, 1);
+            break;
+        }
+        case 3: { /* DeltaPursuit(perso, radius, x, y, z): the point in the perso's axes */
+            value who = arg(r, i, 0);
+            slot->b = who.type == V_PERSO ? who.i : -1;
+            slot->v[0] = argf(r, i, 1);
+            slot->v[1] = argf(r, i, 2), slot->v[2] = argf(r, i, 3), slot->v[3] = argf(r, i, 4);
+            break;
+        }
+        case 20: slot->a = as_int(arg(r, i, 0)); slot->v[0] = argf(r, i, 1); break; /* RunAwayWP(waypoint, radius) */
+        case 27: { /* GoToPosition(point, radius) */
+            tc_vec3 v = argv3(r, i, 0);
+            slot->v[1] = v.x, slot->v[2] = v.y, slot->v[3] = v.z;
+            slot->v[0] = argf(r, i, 1);
+            break;
+        }
+        case 15: turn_start(p, slot, argv3(r, i, 0), as_int(arg(r, i, 1)), false); break; /* (point, ms) */
+        case 16: case 17: case 18: case 19: { /* (perso, ms or frames [, x, y, z]): 16 / 17 in ms, 18 / 19 in frames */
+            value who = arg(r, i, 0);
+            tc_vec3 at, off = m == 16 || m == 18 ? tc_v3(argf(r, i, 2), argf(r, i, 3), argf(r, i, 4)) : tc_v3(0, 0, 0);
+            if (who.type != V_PERSO || !perso_point(p, who.i, off, &at)) { slot->a = 0; slot->v[1] = 0; break; }
+            turn_start(p, slot, at, as_int(arg(r, i, 1)), m >= 18);
+            break;
+        }
+        case 5: case 6: break; /* WaitEndOfAction, WaitEndOfAnim: no arguments */
+        case 7: slot->a = (int32_t)arg_param(r, i, 0); break; /* SpeakAndWaitEnd(dialogue): 1-based, the level's */
+        case 29: { /* Wait(ms): FUN_004a0b00 */
+            int32_t ms = as_int(arg(r, i, 0));
+            if (p->brisk && ms > 250) ms = 250;
+            slot->a = (int32_t)(p->time_ms + (uint32_t)ms);
+            break;
+        }
         case 28: { /* Action_MoveLift(from, to, time): its arguments, once (META_28_004a0990); the first frame resets */
             tc_vec3 a = argv3(r, i, 0), b = argv3(r, i, 1);
             slot->v[0] = a.x, slot->v[1] = a.y, slot->v[2] = a.z;
@@ -2143,15 +2283,53 @@ static uint32_t meta_action(run *r, uint32_t i) {
     case 24: if (go_over_way(p, slot->a, 1, 1) == F_STOP) return F_STOP; break;
     case 25: if (go_over_way(p, slot->a, 0, 0) == F_STOP) return F_STOP; break;
     case 26: if (go_over_way(p, slot->a, 0, 1) == F_STOP) return F_STOP; break;
-    case 19: { /* TurnTowardOverFrames(perso, frames): face it (at once; the frame count is not modelled) */
-        value who = arg(r, i, 0);
-        tc_vec3 pos;
-        const float *m3;
-        if (who.type == V_PERSO && perso_frame(p, who.i, &pos, &m3)) {
-            p->motion.heading_set = true;
-            p->motion.heading = heading_to(p, pos);
-        }
+    case 0: /* META_0Cont_0049eeb0: elapsed against the ms */
+        if (slot->a <= slot->b) break;
+        slot->b += (int32_t)(p->dt * 1000 + 0.5f);
+        request_turn(p, slot->v[0]);
+        return F_STOP;
+    case 1: /* META_1Cont_0049eda0 */
+        if (slot->a < 1) break;
+        slot->a--;
+        request_turn(p, slot->v[0]);
+        return F_STOP;
+    case 2: if (go_to(p, perso_position(p, slot->b), slot->v[0]) == F_STOP) return F_STOP; break;
+    case 3: { /* META_3Cont_0049fbc0 */
+        tc_vec3 at;
+        if (perso_point(p, slot->b, tc_v3(slot->v[1], slot->v[2], slot->v[3]), &at) && go_to(p, at, slot->v[0]) == F_STOP)
+            return F_STOP;
         break;
+    }
+    case 7: { /* META_7_0049efc0, META_7Cont_0049f000: not speaking, it starts (GAM_004180a0), and waits for 3dData +0x1A0 to
+               * clear. Port: a line waits for the one on show (the exe's would leave that speaker waiting for ever) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        if (!g->speech_host) break;
+        if (slot->a > 0 && !p->speaking && !g->speech) {
+            g->speech = p->speaking = (uint32_t)slot->a;
+            g->speaker = p;
+            slot->a = 0;
+            return F_STOP;
+        }
+        if (p->speaking || slot->a > 0) return F_STOP;
+        break;
+    }
+    case 5: if (!p->state_ended) return F_STOP; break;                         /* 3dData +0x161 */
+    case 6: if (!p->anim_end_reached && !p->state_ended) return F_STOP; break; /* +0x162; held at the end, it stays reached */
+    case 14: if (run_away(p, perso_position(p, slot->b), slot->v[0]) == F_STOP) return F_STOP; break;
+    case 20: {
+        const tc_waypoint *wp = waypoint(p, slot->a);
+        if (wp && run_away(p, waypoint_position(p, slot->a), slot->v[0]) == F_STOP) return F_STOP;
+        break;
+    }
+    case 27: if (go_to(p, tc_v3(slot->v[1], slot->v[2], slot->v[3]), slot->v[0]) == F_STOP) return F_STOP; break;
+    case 15: case 16: case 17: /* META_15EtcCont_004a0850: ms left, the angle moves by rate x ms */
+    case 18: case 19: {        /* META_18EtcCont_004a05d0: frames left, the angle moves by the rate */
+        int32_t ms = (int32_t)(p->dt * 1000 + 0.5f);
+        if (slot->a < 1) break;
+        slot->a -= m >= 18 ? 1 : ms;
+        slot->v[0] += slot->v[1] * (m >= 18 ? 1 : (float)ms);
+        request_heading(p, slot->v[0]);
+        return F_STOP;
     }
     default: break;
     }

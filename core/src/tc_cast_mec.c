@@ -1,5 +1,5 @@
-/* The cast's mechanics: card types 6 and 7 (docs/ENGINE.md "Moving collision, read"). Read from the exe; the port's
- * choices are marked "port". */
+/* The cast's mechanics: card types 0, 4, 6, 7, 10, 12 (docs/ENGINE.md "Moving collision, read", "Walkers", "Perso motion").
+ * Read from the exe; the port's choices are marked "port". */
 #include "tc_internal.h"
 #include <string.h>
 #include "tonic/tc_cast.h"
@@ -233,6 +233,15 @@ static tc_vec3 ground_wanted(tc_ai_perso *p, const tc_ai_card *card, float dt) {
     return tc_v3(0, 0, 0);
 }
 
+/* Mode 3's rate through the walk card's max turn (DNM_RequestWalk_004ae392; type 12's field sits 4 bytes lower). Type 4's
+ * air request (FUN_004b0f2a) takes it as it is. */
+static float walker_turn(const tc_ai_card *card, float rate) {
+    float max_turn;
+    if (card->type == 4) return rate;
+    max_turn = tc_ai_card_f32(card, card->type == 12 ? 0x14 : 0x18);
+    return fabsf(rate) > max_turn ? (rate < 0 ? -max_turn : max_turn) : rate;
+}
+
 /* Type 12 (DNM_IntegrateType12_004a9d20), and the port's stand-in for a type 0 / 4 state without a body: it collides
  * only while its report has no ground (MEC_CollideMoveNoTurn_004bedd6 under (report & 3) == 0), and on a grippy ground
  * its forces (FUN_004c3e50: grip >= 1) cancel gravity and the old velocity: a grounded type 12 perso goes where its
@@ -243,7 +252,7 @@ static void glide_step(tc_cast_actor *a, const tc_ai_card *card, float dt) {
     tc_ai_perso *p = &a->ai;
     tc_cast_dyn *d = &a->dyn;
     tc_vec3 v = tc_v3(0, 0, 0);
-    if (p->motion.turning) p->heading += p->motion.turn_speed * dt;
+    if (p->motion.turning) p->heading += walker_turn(card, p->motion.turn_speed) * dt;
     if (!p->motion.stop) v = ground_wanted(p, card, dt);
     v.z = 0;
     p->position = tc_v3_add(p->position, tc_v3_scale(v, dt));
@@ -281,9 +290,11 @@ static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, floa
     w->self_priority = a->entry->own_priority;
     w->self_meets = a->entry->own_meets != 0;
     if (c->sectors && a->sector.sector != TC_SECTOR_NONE) tc_mec_env_at(c->sectors, a->sector.sector, p->position, &env);
+    p->env_water = env.water != 0;
+    if (m->detach) d->walk.carrier = -1;
     tc_mec_walk_carry(&d->walk, w, body, &p->heading, dt, &p->position);
     if (air) tc_mec_walk_air(&d->walk);
-    if (m->turning) p->heading += m->turn_speed * dt;
+    if (m->turning) p->heading += walker_turn(card, m->turn_speed) * dt;
     if (m->velocity_set) d->velocity = m->velocity;
     if (air) {
         for (k = 0; k < m->mode_count; k++) {
@@ -319,30 +330,80 @@ static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, floa
 }
 
 /* ---- Type 10: the projectiles (DNM_RequestType10_004b252e, DNM_IntegrateType10_004adfc3, forces FUN_004c709a) ----
- * Card +4 mass, +8 gravity factor. Requests: 0x13 / 0x16 ProposalVecA as the wanted velocity in world axes, 0x15 in its
- * own; none: the forces keep the velocity (+0x38) when the gravity factor is 0 (Ed's bees: they fly straight). Port:
- * with a gravity factor, gravity x it on the velocity (the exe's ballistic forces with thrust are not read), and no
- * collide-and-move of its own (the bee's scripts end it at the wall their probe found, or on a ZDE hit). */
-static void projectile_step(tc_cast_actor *a, const tc_ai_card *card, float dt) {
+ * Card +4 mass, +8 gravity factor. ProposalVecA is a target point for modes 0x13 / 0x16 and a velocity for 0x15; [0] is the
+ * apex height of 0x13 and the speed of 0x16. */
+
+/* Mode 0x13: the velocity that lobs it onto `target` under gravity g, topping out `apex` above where it stands (raised to
+ * the target's height when that is higher); FUN_004c709a in the vertical plane through the target (FUN_004caf30 / 004cb195:
+ * x along the ground towards it, y up; FUN_004cb303 back). */
+static tc_vec3 lob_velocity(tc_vec3 from, tc_vec3 target, float apex, float g) {
+    tc_vec3 d = tc_v3_sub(target, from);
+    float x = sqrtf(d.x * d.x + d.y * d.y), y = d.z, vx, vy = 0, h = apex;
+    if (g == 0 || apex < 0) return tc_v3(0, 0, 0);
+    if (h < y) h = y;
+    if (h <= 0) {
+        if (y >= 0) return tc_v3(0, 0, 0);
+        vx = sqrtf(g) * x / sqrtf(-(y * 2)); /* below it and no apex: thrown level */
+    } else {
+        float t = 1 - y / h;
+        vy = sqrtf(g * h * 2);
+        vx = t <= 0 ? g * x / vy : g * x / ((sqrtf(t) + 1) * vy);
+    }
+    if (x == 0) return tc_v3(0, 0, vy);
+    return tc_v3(d.x / x * vx, d.y / x * vx, vy);
+}
+
+/* Mode 0x16: towards `target` at `speed`, its velocity turning a fifth of the angle between them each frame (FUN_004b7121
+ * about their common normal), the first frame straight at it. */
+static tc_vec3 homing_velocity(tc_vec3 from, tc_vec3 target, tc_vec3 v, float speed) {
+    tc_vec3 d = tc_v3_sub(target, from), axis;
+    float vl = tc_v3_length(v), dl = tc_v3_length(d), c, angle, co, si;
+    if (dl == 0) return tc_v3(0, 0, 0);
+    if (vl == 0) return tc_v3_scale(d, speed / dl);
+    c = tc_v3_dot(v, d) / (vl * dl);
+    if (c >= 1) return v;
+    angle = (c <= -1 ? TC_PI : acosf(c)) * 0.2f;
+    axis = tc_v3_cross(v, d);
+    if (tc_v3_length_sq(axis) == 0) return v;
+    axis = tc_v3_scale(axis, 1 / tc_v3_length(axis));
+    co = cosf(angle), si = sinf(angle); /* Rodrigues; v is perpendicular to axis */
+    v = tc_v3_add(tc_v3_scale(v, co), tc_v3_scale(tc_v3_cross(axis, v), si));
+    return vl != speed ? tc_v3_scale(v, speed / vl) : v;
+}
+
+/* No request: the velocity as it is with no gravity factor (Ed's bees fly straight), else gravity on it. Port: the card's
+ * +0x10 (a turn of the velocity towards gravity over time) is not ported, and its own sweep (MEC_CollideMoveNoTurn_004bedd6)
+ * runs for what gravity pulls: the bees keep ending at the wall their scripts probed. */
+static void projectile_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, float dt) {
     tc_ai_perso *p = &a->ai;
     const tc_ai_motion *m = &p->motion;
     const float *pr = m->proposal;
     tc_cast_dyn *d = &a->dyn;
-    tc_vec3 v = d->velocity, va = tc_v3(pr[1], pr[2], pr[3]);
-    float g = tc_ai_card_f32(card, 0x08);
+    tc_vec3 v = d->velocity, va = tc_v3(pr[1], pr[2], pr[3]), start = p->position;
+    float g = tc_ai_card_f32(card, 0x08) * 9.81f; /* port: every level's air */
     uint8_t k;
     bool requested = false;
     if (m->velocity_set) v = m->velocity;
     for (k = 0; k < m->mode_count; k++) {
-        if (m->modes[k] == 0x13 || m->modes[k] == 0x16) v = va, requested = true;
-        else if (m->modes[k] == 0x15) v = local_to_global(p->heading, va), requested = true;
+        if (m->modes[k] == 0x13) v = lob_velocity(p->position, va, pr[0], g), requested = true;
+        else if (m->modes[k] == 0x16) v = homing_velocity(p->position, va, v, pr[0]), requested = true;
+        else if (m->modes[k] == 0x15) {
+            v = local_to_global(p->heading, va);
+            v.z -= g * dt;
+            requested = true;
+        }
     }
-    if (!requested && g != 0) v.z -= 9.81f * g * dt; /* port */
+    if (!requested) v.z -= g * dt;
     if (m->turning) p->heading += m->turn_speed * dt;
     p->position = tc_v3_add(p->position, tc_v3_scale(v, dt));
+    p->contacts = 0;
+    if (g != 0) {
+        own_sweep(c, a, start, dt);
+        p->contacts = tc_mec_walk_contacts(&d->walk) & 0x1F;
+        if (p->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) v = tc_v3(0, 0, 0); /* port: it lies where it fell */
+    }
     d->velocity = v;
     p->velocity = v;
-    p->contacts = 0;
     d->moving = tc_v3_length_sq(v) > 0;
 }
 
@@ -356,9 +417,10 @@ bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
     uint8_t k;
     if (!f->cards || p->state >= f->state_count || (ci = f->cards[p->state]) == 0xFFFF) return false;
     card = &c->level->cast.cards[ci];
+    if (m->heading_set) p->heading = m->heading; /* mode 5, on any card: the angle at once (the type's own rate is angle / dt) */
     if (card->type == 10) {
         d->card_type = 10;
-        projectile_step(a, card, dt);
+        projectile_step(c, a, card, dt);
         p->mech_moving = d->moving;
         return true;
     }
