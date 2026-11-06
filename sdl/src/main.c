@@ -48,7 +48,7 @@ static const char *controls_text =
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level  -  V intro  -  R replays\n"
+    "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special)  -  Ctrl+L from a level  -  V intro  -  R replays\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
     "Replays:  Enter plays, Delete deletes, Esc back  -  Pad: Cross plays, Square deletes, Circle back\n"
@@ -228,8 +228,10 @@ static void show_picker(app *a) {
         char *thumbs = vignette ? path_join(vignette, "Level") : NULL;
         char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
         char *se_vignette = se ? path_join(se, "Vignette") : NULL, *se_thumbs = se_vignette ? path_join(se_vignette, "Level") : NULL;
+        /* Back from a level: on the pane of its edition. */
+        bool from_se = se_levels && a->current_folder && SDL_strcmp(a->current_folder, se_levels) == 0;
         picker_open(&a->picker, &a->g, a->level_folder, thumbs ? thumbs : "", se_levels, se_thumbs,
-                    SDL_GetWindowDisplayScale(a->window));
+                    SDL_GetWindowDisplayScale(a->window), from_se ? 1 : 0);
         SDL_free(vignette);
         SDL_free(thumbs);
         SDL_free(se);
@@ -460,22 +462,37 @@ static void play_intro(app *a) {
     set_title(a, "Open Tonic \xe2\x80\x94 intro");
 }
 
-/* At the end, or skipped: the ski slope, as the original game starts it, after its loading screen (the level select if
- * it isn't converted). */
-static void finish_intro(app *a) {
-    if (!a->intro) return;
-    intro_close(a->intro);
-    a->intro = NULL;
+/* The folder's ski slope, for the loading screen after the intro: its .ttlv, with next_name set, or NULL. */
+static char *ski_slope(app *a, const char *folder) {
     int n = 0;
-    char **levels = SDL_GlobDirectory(a->level_folder, "totalski.ttlv", SDL_GLOB_CASEINSENSITIVE, &n);
-    char *path = levels && n > 0 ? path_join(a->level_folder, levels[0]) : NULL;
+    char **levels = folder ? SDL_GlobDirectory(folder, "totalski.ttlv", SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    char *path = levels && n > 0 ? path_join(folder, levels[0]) : NULL;
     if (path) {
         SDL_strlcpy(a->next_name, levels[0], sizeof a->next_name);
         char *dot = SDL_strrchr(a->next_name, '.');
         if (dot) *dot = 0;
     }
     SDL_free(levels);
+    return path;
+}
+
+/* At the end, or skipped: the ski slope, as the original game starts it, after its loading screen. Which one is a coin
+ * toss, retail or Special Edition (the user's, not the original's); the other when that one isn't converted, the level
+ * select when neither is. */
+static void finish_intro(app *a) {
+    if (!a->intro) return;
+    intro_close(a->intro);
+    a->intro = NULL;
+    char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
+    const char *folders[2] = {a->level_folder, se_levels};
+    int toss = SDL_rand(2);
+    char *path = ski_slope(a, folders[toss]);
+    if (!path) path = ski_slope(a, folders[1 - toss]);
+    SDL_free(se);
+    SDL_free(se_levels);
     if (!path) { show_picker(a); return; }
+    SDL_free(a->current_folder);
+    a->current_folder = path_dir(path);  /* the loading screen's vignette is the edition's */
     a->next_level = path;
     a->next_time = 0;
     set_title(a, "Open Tonic");
@@ -870,7 +887,7 @@ static void pad_update(app *a, float dt) {
         }
         if (SDL_fabsf(ry) > 0.2f) {
             if (a->replays_on) replays_scroll(&a->rp, -ry * 1500 * dt * a->rp.scale);
-            else picker_scroll(&a->picker, -ry * 1500 * dt * a->picker.scale);
+            else picker_scroll_pane(&a->picker, -ry * 1500 * dt * a->picker.scale);
         }
     }
 }
@@ -959,6 +976,8 @@ static void handle(app *a, const SDL_Event *e) {
             if (i == PICKER_INTRO) play_intro(a);
             else if (i == PICKER_REPLAYS) show_replays(a);
             else if (i == PICKER_CONTROLS) a->help = true;
+            else if (i == PICKER_PANE_LEFT) picker_pane(&a->picker, -1);
+            else if (i == PICKER_PANE_RIGHT) picker_pane(&a->picker, 1);
             else if (i >= 0) {
                 char *path = SDL_strdup(a->picker.entries[i].path);  /* opening closes the picker */
                 if (path) open_level(a, path, NULL);
@@ -983,7 +1002,7 @@ static void handle(app *a, const SDL_Event *e) {
         } else if (a->replays_on) {
             replays_scroll(&a->rp, -y * 80 * a->rp.scale);
         } else if (a->picker_open && !a->intro && !a->next_level) {
-            picker_scroll(&a->picker, -y * 80 * a->picker.scale);
+            picker_wheel(&a->picker, to_pixels(a, e->wheel.mouse_x), to_pixels(a, e->wheel.mouse_y), -y * 80 * a->picker.scale);
         }
         break;
     }

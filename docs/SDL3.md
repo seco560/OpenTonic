@@ -38,8 +38,8 @@ as in docs/BUILD.md: `ttlv/`, plus optional `Vignette/Level` (picker thumbnails,
 version do not load ("re-run the conversion"): `tools/convert_files.sh` re-exports exactly those (docs/BUILD.md "Formats").
 
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
-alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter,
-and V plays the intro movie (Esc, Space or Enter skip). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
+alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter
+(past the side of the Retail / Special panes, on to the other pane), and V plays the intro movie (Esc, Space or Enter skip). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
 MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 8). F3 cycles supersampling off / 1.5x / 2x (`TONIC_SCALE=100|150|200` sets where it
 starts, default off: on the Celeron J4125 it is too heavy): the level is drawn at that many times the window's pixels per axis, on top of the MSAA, into an
 offscreen target that a linear blit filters down into the window (at 2x a 2 x 2 box filter; overlays and menus still
@@ -130,8 +130,8 @@ sdl/
   scrolling and waving in 3-point strips, with a gloss and an outline. Once `tc_viewer_pending_level` is set (after
   a frame of the full bar), the main loop copies the carry and opens that level with it; mouse-look capture stays on
   across the change. A missing level: a message box, then the level select. After the intro (watched or skipped)
-  the same loading screen shows on black for `TC_VIEWER_LOADING_SECONDS` before Totalski opens (`app.next_level`;
-  only M, F11 and Ctrl+Q work meanwhile), as in the Swift app.
+  the same loading screen shows on black for `TC_VIEWER_LOADING_SECONDS` before a Totalski opens, retail or Special Edition by a coin toss
+  (`finish_intro`, `app.next_level`; only M, F11 and Ctrl+Q work meanwhile), as in the Swift app.
 - **Gamepad.** `SDL_Gamepad`: every pad is opened as it connects; the one last used (a button, or a stick pushed
   past ~40 %) drives the viewer. The sticks go to `tc_viewer_set_move_stick` / `_look_stick` each frame as they are
   (the dead zones are the core's, so the Swift app behaves the same); buttons by position (SOUTH = Cross / A):

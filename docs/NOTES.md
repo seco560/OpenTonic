@@ -486,6 +486,8 @@ old look for comparing (title: "old lighting").
 - **Intro -> Totalski (2026-10-24, user):** the original game goes from the intro, watched or skipped, straight into
   the ski slope; both frontends do the same (`startAfterIntro` / `finish_intro`; the level select when Totalski is not
   converted). The level select has a big "Play Intro Video" button at the top (and V), Controls top right.
+- **Which ski slope (2026-11-06, user):** a port choice, not the original's: a coin toss between retail and Special
+  Edition Totalski, the other when one isn't converted. The loading screen shows that edition's vignette.
 - Disc and installed copies are byte-identical.
 - FFmpeg decodes it natively. TonicTroubleFix ships an Indeo-free intro path, worth checking how it handles sound.
 - Upscaling plan:

@@ -84,9 +84,12 @@ final class LoadingScreen: NSView {
 
     init(frame: NSRect, vignettes: URL) {
         self.vignettes = vignettes
-        // out/Vignette/Level -> out/Textures/Sud0 (the same layout inside the app bundle)
-        bar = RainbowBar(texture: vignettes.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Textures/Sud0/o_zarbi_auntxy.png"))
+        // out/Vignette/Level -> out/Textures/Sud0 (the same layout inside the app bundle); the Special Edition's
+        // out/se/Vignette/Level has none in out/se/Textures and uses the retail one.
+        let out = vignettes.deletingLastPathComponent().deletingLastPathComponent(), pool = "Textures/Sud0/o_zarbi_auntxy.png"
+        let own = out.appendingPathComponent(pool)
+        bar = RainbowBar(texture: FileManager.default.fileExists(atPath: own.path) ? own
+            : out.deletingLastPathComponent().appendingPathComponent(pool))
         super.init(frame: frame)
         image.imageScaling = .scaleProportionallyUpOrDown
         for v in [image, bar] as [NSView] { addSubview(v) }
@@ -582,8 +585,11 @@ final class GameView: MTKView {
         // (tools/ttre/se.py): out/se/ttlv, their pictures out/se/Vignette/Level.
         let out = levelFolder.deletingLastPathComponent()
         let thumbs = out.appendingPathComponent("Vignette/Level")
-        let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs, seFolder: out.appendingPathComponent("se/ttlv"),
-                                 seThumbnails: out.appendingPathComponent("se/Vignette/Level")) { [weak self] url in
+        let seFolder = out.appendingPathComponent("se/ttlv")
+        // Back from a level: on the pane of its edition.
+        let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs, seFolder: seFolder,
+                                 seThumbnails: out.appendingPathComponent("se/Vignette/Level"),
+                                 showSpecial: currentLevelFolder?.standardizedFileURL == seFolder.standardizedFileURL) { [weak self] url in
             self?.openLevel(url)
         }
         picker.onIntro = { [weak self] in self?.playIntro() }
@@ -608,6 +614,7 @@ final class GameView: MTKView {
         container.appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
         container.onIntro = { [weak self] in self?.playIntro() }
         container.onReplays = { [weak self] in self?.showReplays() }
+        container.onSlide = { [weak picker] dir in picker?.slide(dir) }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
@@ -643,18 +650,26 @@ final class GameView: MTKView {
     }
 
     /// After the intro (watched or skipped): Totalski, as the original game, after its loading screen (as a red
-    /// portal's, on black); the level select if it isn't converted.
+    /// portal's, on black). Which one is a coin toss, retail or Special Edition (the user's, not the original's); the
+    /// other when that one isn't converted, the level select when neither is.
     func startAfterIntro() {
-        let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
-        guard let ski = files.first(where: { $0.lastPathComponent.lowercased() == "totalski.ttlv" }) else {
+        let out = levelFolder.deletingLastPathComponent()
+        let slopes = [levelFolder, out.appendingPathComponent("se/ttlv")].shuffled().compactMap { folder -> URL? in
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            return files.first { $0.lastPathComponent.lowercased() == "totalski.ttlv" }
+        }
+        guard let ski = slopes.first else {
             showPicker()
             return
         }
         let backdrop = LoadingBackdrop(frame: window.contentLayoutRect)
         backdrop.wantsLayer = true
         backdrop.layer?.backgroundColor = NSColor.black.cgColor
+        // The edition's vignette, as in openLevel.
+        let own = ski.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Vignette/Level")
         let screen = LoadingScreen(frame: backdrop.bounds,
-                                   vignettes: levelFolder.deletingLastPathComponent().appendingPathComponent("Vignette/Level"))
+                                   vignettes: FileManager.default.fileExists(atPath: own.path) ? own
+                                       : out.appendingPathComponent("Vignette/Level"))
         backdrop.addSubview(screen)
         screen.show(level: ski.deletingPathExtension().lastPathComponent, progress: 0)
         window.contentView = backdrop

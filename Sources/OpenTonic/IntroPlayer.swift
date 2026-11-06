@@ -71,15 +71,21 @@ final class IntroView: NSView {
     }
 }
 
-/// The level select screen's root view: V plays the intro, R opens the replays.
+/// The level select screen's root view: V plays the intro, R opens the replays, the left and right arrows slide the
+/// Retail / Special Edition panes.
 final class PickerContainer: NSView {
     var onIntro: (() -> Void)?
     var onReplays: (() -> Void)?
+    var onSlide: ((Int) -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
         let plain = event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        if plain, event.keyCode == 123 || event.keyCode == 124 {  // left, right
+            onSlide?(event.keyCode == 123 ? -1 : 1)
+            return
+        }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "v" where plain: onIntro?()
         case "r" where plain: onReplays?()

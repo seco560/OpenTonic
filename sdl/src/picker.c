@@ -59,7 +59,7 @@ static void load_thumb(gpu *g, gpu_upload *u, picker_entry *e, const char *thumb
 }
 
 void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, const char *se_folder,
-                 const char *se_thumbnails, float scale) {
+                 const char *se_thumbnails, float scale, int pane) {
     SDL_zerop(p);
     p->g = g;
     p->scale = scale > 0 ? scale : 1;
@@ -72,6 +72,9 @@ void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, 
         while (i < p->count && p->entries[i].section < s) i++;
         p->first[s] = s == PICKER_SECTIONS ? p->count : i;
     }
+    p->pane = p->first[pane + 1] > p->first[pane] ? pane : 1 - pane;
+    if (p->first[p->pane + 1] == p->first[p->pane]) p->pane = 0;  /* neither: no panes */
+    p->slide = (float)p->pane;
 
     int thumb_n = 0, se_thumb_n = 0;
     char **thumbs = SDL_GlobDirectory(thumbnails, "*.png", SDL_GLOB_CASEINSENSITIVE, &thumb_n);
@@ -97,6 +100,8 @@ void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, 
     p->intro_text = gpu_text(g, "Play Intro Video", text_scale + 1, &p->intro_w, &p->intro_h);
     p->replays_text = gpu_text(g, "Replays", text_scale + 1, &p->replays_w, &p->replays_h);
     p->controls_text = gpu_text(g, "Controls (F1)", text_scale, &p->controls_w, &p->controls_h);
+    p->left_text = gpu_text(g, "<", text_scale + 1, &p->left_w, &p->left_h);
+    p->right_text = gpu_text(g, ">", text_scale + 1, &p->right_w, &p->right_h);
 }
 
 void picker_close(picker *p) {
@@ -113,13 +118,15 @@ void picker_close(picker *p) {
     if (p->intro_text) SDL_ReleaseGPUTexture(p->g->device, p->intro_text);
     if (p->replays_text) SDL_ReleaseGPUTexture(p->g->device, p->replays_text);
     if (p->controls_text) SDL_ReleaseGPUTexture(p->g->device, p->controls_text);
+    if (p->left_text) SDL_ReleaseGPUTexture(p->g->device, p->left_text);
+    if (p->right_text) SDL_ReleaseGPUTexture(p->g->device, p->right_text);
     SDL_free(p->entries);
     SDL_zerop(p);
 }
 
 /* Layout, as LevelPicker.relayout: 256x192 tiles with a caption line, centred columns; each section starts on a new
- * row under a heading line. */
-typedef struct layout { float tile_w, tile_h, caption, pad, cell_w, cell_h, left, heading, intro; int cols; } layout;
+ * row under a heading line, the editions in the panes' fixed height. */
+typedef struct layout { float tile_w, tile_h, caption, pad, cell_w, cell_h, left, heading, intro, pane_h, inset; int cols; } layout;
 
 static layout layout_for(const picker *p, float width) {
     layout l;
@@ -132,6 +139,8 @@ static layout layout_for(const picker *p, float width) {
     l.cell_h = l.tile_h + l.caption + l.pad;
     l.heading = 40 * s;
     l.intro = 84 * s;  /* the band of the "Play Intro Video" and "Replays" buttons, above the first heading */
+    l.inset = 8 * s;  /* above a pane's first row: room for the selection's glow */
+    l.pane_h = 2 * l.cell_h + l.inset;  /* two rows */
     l.cols = SDL_max(1, (int)((width - l.pad) / l.cell_w));
     l.left = SDL_max(l.pad, (width - (float)l.cols * l.cell_w + l.pad) / 2);
     return l;
@@ -139,21 +148,43 @@ static layout layout_for(const picker *p, float width) {
 
 static int rows_of(int n, int cols) { return (n + cols - 1) / cols; }
 
-/* Top of section k's heading (content coordinates, before scrolling); k = PICKER_SECTIONS: the end. Empty sections take
- * no space. */
+static bool has_levels(const picker *p, int s) { return p->first[s + 1] > p->first[s]; }
+
+/* Top of section k's heading (content coordinates, before scrolling); k = PICKER_SECTIONS: the end. The editions share
+ * theirs, over the panes; empty sections take no space. */
 static float heading_y(const picker *p, const layout *l, int k) {
     float y = l->pad + l->intro;
-    for (int s = 0; s < k; s++)
+    if (k < PICKER_EDITIONS) return y;
+    if (p->first[PICKER_EDITIONS] > 0) y += l->heading + l->pane_h;
+    for (int s = PICKER_EDITIONS; s < k; s++)
         if (p->first[s + 1] > p->first[s]) y += l->heading + (float)rows_of(p->first[s + 1] - p->first[s], l->cols) * l->cell_h;
     return y;
 }
 
+/* The window onto the panes, in target pixels: the full width, so a pane leaves by the window's side. */
+static SDL_FRect pane_rect(const picker *p, const layout *l) {
+    SDL_FRect r = {0, heading_y(p, l, 0) + l->heading - p->scroll, p->width, l->pane_h};
+    return r;
+}
+
+/* Where edition s stands now, side by side with the other. */
+static float pane_x(const picker *p, int s) { return ((float)s - p->slide) * p->width; }
+
+static float pane_max_scroll(const picker *p, const layout *l, int s) {
+    return SDL_max(0.0f, (float)rows_of(p->first[s + 1] - p->first[s], l->cols) * l->cell_h + l->inset - l->pane_h);
+}
+
 static SDL_FRect tile_rect(const picker *p, const layout *l, int i) {
     int s = p->entries[i].section;
-    float top = heading_y(p, l, s) + l->heading;
     i -= p->first[s];
-    SDL_FRect r = {l->left + (float)(i % l->cols) * l->cell_w, top + (float)(i / l->cols) * l->cell_h - p->scroll,
-                   l->tile_w, l->tile_h + l->caption};
+    float x = l->left + (float)(i % l->cols) * l->cell_w, y = (float)(i / l->cols) * l->cell_h;
+    if (s < PICKER_EDITIONS) {
+        x += pane_x(p, s);
+        y += pane_rect(p, l).y + l->inset - p->pane_scroll[s];
+    } else {
+        y += heading_y(p, l, s) + l->heading - p->scroll;
+    }
+    SDL_FRect r = {x, y, l->tile_w, l->tile_h + l->caption};
     return r;
 }
 
@@ -178,6 +209,19 @@ static SDL_FRect controls_rect(const picker *p) {
     return r;
 }
 
+/* Is there a pane on that side of the one showing? */
+static bool pane_exists(const picker *p, int dir) {
+    int t = p->pane + dir;
+    return t >= 0 && t < PICKER_EDITIONS && has_levels(p, t);
+}
+
+/* The panes' arrows, at the ends of their heading line. */
+static SDL_FRect arrow_rect(const picker *p, const layout *l, int dir) {
+    float w = 56 * p->scale, h = 30 * p->scale, right = l->left + (float)l->cols * l->cell_w - l->pad;
+    SDL_FRect r = {dir < 0 ? l->left : right - w, SDL_roundf(heading_y(p, l, 0) + (l->heading - h) / 2 - 6 * p->scale - p->scroll), w, h};
+    return r;
+}
+
 static bool inside(SDL_FRect r, float x, float y) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; }
 
 int picker_hit(picker *p, float x, float y) {
@@ -185,10 +229,11 @@ int picker_hit(picker *p, float x, float y) {
     if (inside(controls_rect(p), x, y)) return PICKER_CONTROLS;
     if (inside(intro_rect(p, &l), x, y)) return PICKER_INTRO;
     if (inside(replays_rect(p, &l), x, y)) return PICKER_REPLAYS;
-    for (int i = 0; i < p->count; i++) {
-        SDL_FRect r = tile_rect(p, &l, i);
-        if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return i;
-    }
+    if (pane_exists(p, -1) && inside(arrow_rect(p, &l, -1), x, y)) return PICKER_PANE_LEFT;
+    if (pane_exists(p, 1) && inside(arrow_rect(p, &l, 1), x, y)) return PICKER_PANE_RIGHT;
+    bool in_panes = inside(pane_rect(p, &l), x, y);  /* a pane's tiles end at its edges */
+    for (int i = 0; i < p->count; i++)
+        if ((in_panes || p->entries[i].section >= PICKER_EDITIONS) && inside(tile_rect(p, &l, i), x, y)) return i;
     return -1;
 }
 
@@ -231,32 +276,134 @@ void picker_scroll(picker *p, float pixels) {
     p->scroll = SDL_clamp(p->scroll + pixels, 0.0f, max_scroll(p, &l));
 }
 
+void picker_scroll_pane(picker *p, float pixels) {
+    layout l = layout_for(p, p->width);
+    float *scroll = &p->pane_scroll[p->pane], was = *scroll;
+    *scroll = SDL_clamp(was + pixels, 0.0f, pane_max_scroll(p, &l, p->pane));
+    picker_scroll(p, pixels - (*scroll - was));
+}
+
+void picker_wheel(picker *p, float x, float y, float pixels) {
+    layout l = layout_for(p, p->width);
+    if (p->first[PICKER_EDITIONS] > 0 && inside(pane_rect(p, &l), x, y)) picker_scroll_pane(p, pixels);
+    else picker_scroll(p, pixels);
+}
+
+void picker_pane(picker *p, int dir) {
+    if (!pane_exists(p, dir)) return;
+    p->pane += dir;
+    if (p->selected >= 0 && p->entries[p->selected].section < PICKER_EDITIONS) p->selected = -1;
+}
+
 void picker_move(picker *p, int dx, int dy) {
     if (p->count == 0) return;
-    if (p->selected < 0) { p->selected = 0; }
+    if (p->selected < 0) { p->selected = p->first[PICKER_EDITIONS] > 0 ? p->first[p->pane] : 0; }
     else {
         int cols = SDL_max(1, p->columns), i = p->selected, s = p->entries[i].section;
         int first = p->first[s], n = p->first[s + 1] - first, col = (i - first) % cols;
         int j = i - first + dx + dy * cols;  /* position within the section */
-        if (j >= 0 && j < n) i = first + j;
+        bool at_side = dx < 0 ? col == 0 : dx > 0 && (col == cols - 1 || i == first + n - 1);
+        if (s < PICKER_EDITIONS && at_side && pane_exists(p, dx)) {  /* on to the same row of the pane there */
+            int t = s + dx, m = p->first[t + 1] - p->first[t];
+            int row = SDL_min((i - first) / cols, (m - 1) / cols);
+            i = p->first[t] + SDL_min(row * cols + (dx > 0 ? 0 : cols - 1), m - 1);
+            p->pane = t;
+        } else if (j >= 0 && j < n) i = first + j;
         else if (dy > 0) {  /* down from the last row: the first row of the next section with levels */
-            for (int t = s + 1; t < PICKER_SECTIONS; t++)
-                if (p->first[t + 1] > p->first[t]) { i = p->first[t] + SDL_min(col, p->first[t + 1] - p->first[t] - 1); break; }
-        } else if (dy < 0) {  /* up from the first row: the last row of the previous one */
-            for (int t = s - 1; t >= 0; t--)
-                if (p->first[t + 1] > p->first[t]) {
+            for (int t = SDL_max(s + 1, PICKER_EDITIONS); t < PICKER_SECTIONS; t++)
+                if (has_levels(p, t)) { i = p->first[t] + SDL_min(col, p->first[t + 1] - p->first[t] - 1); break; }
+        } else if (dy < 0 && s >= PICKER_EDITIONS) {  /* up from the first row: the last row of the previous one */
+            for (int k = s - 1; k >= 0; k--) {
+                int t = k < PICKER_EDITIONS ? p->pane : k;  /* the editions: the pane showing */
+                if (has_levels(p, t)) {
                     int last_row = p->first[t] + (p->first[t + 1] - p->first[t] - 1) / cols * cols;
                     i = SDL_min(last_row + col, p->first[t + 1] - 1);
                     break;
                 }
+            }
         }
         p->selected = i;
     }
-    /* Keep the selection on screen. */
+    /* Keep the selection on screen: first in its pane, then on the page. */
     layout l = layout_for(p, p->width);
     SDL_FRect r = tile_rect(p, &l, p->selected);
+    int s = p->entries[p->selected].section;
+    if (s < PICKER_EDITIONS) {
+        SDL_FRect v = pane_rect(p, &l);
+        float by = r.y < v.y + l.inset ? r.y - v.y - l.inset : r.y + r.h > v.y + v.h ? r.y + r.h - v.y - v.h : 0;
+        p->pane_scroll[s] = SDL_clamp(p->pane_scroll[s] + by, 0.0f, pane_max_scroll(p, &l, s));
+        r = tile_rect(p, &l, p->selected);
+    }
     if (r.y < l.pad) picker_scroll(p, r.y - l.pad);
     else if (r.y + r.h > p->height - l.pad) picker_scroll(p, r.y + r.h - p->height + l.pad);
+}
+
+/* One tile, a caption under its picture. */
+static void draw_tile(picker *p, gpu_frame *f, SDL_GPURenderPass *pass, const layout *l, int i) {
+    gpu *g = p->g;
+    const picker_entry *e = &p->entries[i];
+    SDL_FRect r = tile_rect(p, l, i);
+    bool hot = i == p->hover || i == p->selected;
+    if (hot) {
+        float o = 6 * p->scale;
+        SDL_FRect h = {r.x - o, r.y - o, r.w + 2 * o, r.h + 2 * o};
+        gpu_quad(g, f, pass, NULL, h, NULL, (SDL_FColor){0.25f, 0.3f, 0.45f, 1});
+    }
+    /* The image keeps its aspect inside the tile (scaleProportionallyUpOrDown), centred. */
+    SDL_FRect img = {r.x, r.y, l->tile_w, l->tile_h};
+    if (e->thumb && e->thumb_w > 0 && e->thumb_h > 0) {
+        float k = SDL_min(l->tile_w / (float)e->thumb_w, l->tile_h / (float)e->thumb_h);
+        float w = (float)e->thumb_w * k, h = (float)e->thumb_h * k;
+        SDL_FRect fit = {SDL_roundf(img.x + (l->tile_w - w) / 2), SDL_roundf(img.y + (l->tile_h - h) / 2), w, h};
+        gpu_quad(g, f, pass, e->thumb, fit, NULL, (SDL_FColor){1, 1, 1, 1});
+    } else {
+        gpu_quad(g, f, pass, NULL, img, NULL, (SDL_FColor){0.14f, 0.15f, 0.22f, 1});
+        if (e->section == SECTION_IMPORTED && p->unknown) {  /* imported: a big question mark (the 8x8 font, scaled up) */
+            float h = l->tile_h * 0.6f, w = h * (float)p->unknown_w / (float)SDL_max(1, p->unknown_h);
+            SDL_FRect q = {SDL_roundf(img.x + (l->tile_w - w) / 2), SDL_roundf(img.y + (l->tile_h - h) / 2), w, h};
+            gpu_quad_sampled(g, f, pass, p->unknown, g->nearest_sampler, q, NULL, (SDL_FColor){0.55f, 0.6f, 0.75f, 1});
+        }
+    }
+    if (e->caption) { /* (the Controls button is drawn after the tiles, over them) */
+        float cw = (float)e->caption_w, ch = (float)e->caption_h;
+        if (cw > l->tile_w) cw = l->tile_w;  /* very long names: cut at the tile edge */
+        SDL_FRect uv = {0, 0, cw / (float)e->caption_w, 1};
+        SDL_FRect cr = {SDL_roundf(r.x + (l->tile_w - cw) / 2), SDL_roundf(r.y + l->tile_h + (l->caption - ch) / 2 + 2 * p->scale),
+                        cw, ch};
+        picker_label(g, f, pass, e->caption, cr, &uv, p->scale, (SDL_FColor){1, 1, 1, 1});
+    }
+}
+
+/* The panes' slide, by the time since the last frame. */
+static void ease_slide(picker *p) {
+    Uint64 now = SDL_GetTicksNS();
+    float dt = p->slide_ns ? (float)(now - p->slide_ns) / 1e9f : 0, to = (float)p->pane;
+    p->slide_ns = now;
+    p->slide += (to - p->slide) * (1 - SDL_expf(-14 * dt));
+    if (SDL_fabsf(to - p->slide) < 0.001f) p->slide = to;
+}
+
+/* What the panes show now, cut at their top and bottom, with a scroll bar for those with more. */
+static void draw_panes(picker *p, gpu_frame *f, SDL_GPURenderPass *pass, const layout *l) {
+    SDL_FRect v = pane_rect(p, l);
+    int top = (int)SDL_max(0.0f, SDL_roundf(v.y)), bottom = (int)SDL_min(p->height, SDL_roundf(v.y + v.h));
+    if (bottom <= top) return;  /* scrolled off the page */
+    SDL_SetGPUScissor(pass, &(SDL_Rect){0, top, (int)p->width, bottom - top});
+    for (int s = 0; s < PICKER_EDITIONS; s++) {
+        float x = pane_x(p, s), most = pane_max_scroll(p, l, s);
+        if (!has_levels(p, s) || SDL_fabsf(x) >= p->width) continue;
+        for (int i = p->first[s]; i < p->first[s + 1]; i++) {
+            SDL_FRect r = tile_rect(p, l, i);
+            if (r.y + r.h >= v.y && r.y <= v.y + v.h) draw_tile(p, f, pass, l, i);
+        }
+        if (most > 0) {
+            float h = SDL_roundf(v.h * v.h / (v.h + most)), w = 4 * p->scale;
+            SDL_FRect bar = {x + l->left + (float)l->cols * l->cell_w - l->pad + 8 * p->scale,
+                             SDL_roundf(v.y + (v.h - h) * p->pane_scroll[s] / most), w, h};
+            gpu_quad(p->g, f, pass, NULL, bar, NULL, (SDL_FColor){0.45f, 0.48f, 0.6f, 1});
+        }
+    }
+    SDL_SetGPUScissor(pass, &(SDL_Rect){0, 0, (int)p->width, (int)p->height});
 }
 
 void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
@@ -266,6 +413,8 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
     layout l = layout_for(p, p->width);
     p->columns = l.cols;
     p->scroll = SDL_clamp(p->scroll, 0.0f, max_scroll(p, &l));
+    for (int s = 0; s < PICKER_EDITIONS; s++) p->pane_scroll[s] = SDL_clamp(p->pane_scroll[s], 0.0f, pane_max_scroll(p, &l, s));
+    ease_slide(p);
     SDL_FRect ir = intro_rect(p, &l), dr = replays_rect(p, &l);
     if (ir.y + ir.h > 0) {
         draw_big_button(g, f, pass, ir, p->intro_text, p->intro_w, p->intro_h, p->hover == PICKER_INTRO, p->scale,
@@ -275,46 +424,24 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
     }
     for (int k = 0; k < PICKER_SECTIONS; k++) {
         if (!p->heading[k]) continue;
-        float y = heading_y(p, &l, k) - p->scroll;
-        SDL_FRect line = {l.left, SDL_roundf(y + l.heading - 8 * p->scale), (float)l.cols * l.cell_w - l.pad, SDL_max(1.0f, p->scale)};
-        SDL_FRect hr = {l.left, SDL_roundf(y + (l.heading - (float)p->heading_h[k]) / 2 - 4 * p->scale),
+        /* The editions' headings ride with their panes, centred between the arrows. */
+        bool edition = k < PICKER_EDITIONS;
+        float y = heading_y(p, &l, k) - p->scroll, x = edition ? pane_x(p, k) : 0;
+        SDL_FRect line = {l.left + x, SDL_roundf(y + l.heading - 8 * p->scale), (float)l.cols * l.cell_w - l.pad, SDL_max(1.0f, p->scale)};
+        SDL_FRect hr = {edition ? SDL_roundf(x + (p->width - (float)p->heading_w[k]) / 2) : l.left,
+                        SDL_roundf(y + (l.heading - (float)p->heading_h[k]) / 2 - 4 * p->scale),
                         (float)p->heading_w[k], (float)p->heading_h[k]};
         picker_label(g, f, pass, p->heading[k], hr, NULL, p->scale, (SDL_FColor){0.92f, 0.93f, 0.97f, 1});
         gpu_quad(g, f, pass, NULL, line, NULL, (SDL_FColor){0.3f, 0.32f, 0.42f, 1});
     }
-    for (int i = 0; i < p->count; i++) {
-        const picker_entry *e = &p->entries[i];
+    if (pane_exists(p, -1))
+        picker_button(g, f, pass, arrow_rect(p, &l, -1), p->left_text, p->left_w, p->left_h, p->hover == PICKER_PANE_LEFT, p->scale);
+    if (pane_exists(p, 1))
+        picker_button(g, f, pass, arrow_rect(p, &l, 1), p->right_text, p->right_w, p->right_h, p->hover == PICKER_PANE_RIGHT, p->scale);
+    draw_panes(p, f, pass, &l);
+    for (int i = p->first[PICKER_EDITIONS]; i < p->count; i++) {
         SDL_FRect r = tile_rect(p, &l, i);
-        if (r.y + r.h < 0 || r.y > p->height) continue;
-        bool hot = i == p->hover || i == p->selected;
-        if (hot) {
-            float o = 6 * p->scale;
-            SDL_FRect h = {r.x - o, r.y - o, r.w + 2 * o, r.h + 2 * o};
-            gpu_quad(g, f, pass, NULL, h, NULL, (SDL_FColor){0.25f, 0.3f, 0.45f, 1});
-        }
-        /* The image keeps its aspect inside the tile (scaleProportionallyUpOrDown), centred. */
-        SDL_FRect img = {r.x, r.y, l.tile_w, l.tile_h};
-        if (e->thumb && e->thumb_w > 0 && e->thumb_h > 0) {
-            float k = SDL_min(l.tile_w / (float)e->thumb_w, l.tile_h / (float)e->thumb_h);
-            float w = (float)e->thumb_w * k, h = (float)e->thumb_h * k;
-            SDL_FRect fit = {SDL_roundf(img.x + (l.tile_w - w) / 2), SDL_roundf(img.y + (l.tile_h - h) / 2), w, h};
-            gpu_quad(g, f, pass, e->thumb, fit, NULL, (SDL_FColor){1, 1, 1, 1});
-        } else {
-            gpu_quad(g, f, pass, NULL, img, NULL, (SDL_FColor){0.14f, 0.15f, 0.22f, 1});
-            if (e->section == SECTION_IMPORTED && p->unknown) {  /* imported: a big question mark (the 8x8 font, scaled up) */
-                float h = l.tile_h * 0.6f, w = h * (float)p->unknown_w / (float)SDL_max(1, p->unknown_h);
-                SDL_FRect q = {SDL_roundf(img.x + (l.tile_w - w) / 2), SDL_roundf(img.y + (l.tile_h - h) / 2), w, h};
-                gpu_quad_sampled(g, f, pass, p->unknown, g->nearest_sampler, q, NULL, (SDL_FColor){0.55f, 0.6f, 0.75f, 1});
-            }
-        }
-        if (e->caption) { /* (the Controls button is drawn after the tiles, over them) */
-            float cw = (float)e->caption_w, ch = (float)e->caption_h;
-            if (cw > l.tile_w) cw = l.tile_w;  /* very long names: cut at the tile edge */
-            SDL_FRect uv = {0, 0, cw / (float)e->caption_w, 1};
-            SDL_FRect cr = {SDL_roundf(r.x + (l.tile_w - cw) / 2), SDL_roundf(r.y + l.tile_h + (l.caption - ch) / 2 + 2 * p->scale),
-                            cw, ch};
-            picker_label(g, f, pass, e->caption, cr, &uv, p->scale, (SDL_FColor){1, 1, 1, 1});
-        }
+        if (r.y + r.h >= 0 && r.y <= p->height) draw_tile(p, f, pass, &l, i);
     }
     picker_button(g, f, pass, controls_rect(p), p->controls_text, p->controls_w, p->controls_h, p->hover == PICKER_CONTROLS,
                 p->scale);

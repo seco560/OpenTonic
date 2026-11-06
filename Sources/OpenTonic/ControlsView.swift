@@ -68,7 +68,7 @@ final class ControlsView: NSView {
         "Cmd-L level select · Cmd-/ this help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 lighting variants (day / night levels), ⌥0 the level's own",
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
         "L: the original's lighting (the default: its formula, the lights and fog of Ed's sector) or the port's old one, to compare.",
-        "* V (or Play Intro Video) plays the intro movie from the level select screen; when it ends, or is skipped, the ski slope starts.",
+        "* V (or Play Intro Video) plays the intro movie from the level select screen; when it ends, or is skipped, a ski slope starts: retail or Special Edition, at random.",
         "R (or Replays) on the level select screen: your recorded sessions, to play or delete. Watching one, P pauses and Esc goes back.",
         "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
