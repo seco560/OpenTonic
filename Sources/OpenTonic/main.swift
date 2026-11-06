@@ -156,7 +156,7 @@ final class PictureScreen: NSView {
 }
 
 extension NSCursor {
-    /// A transparent cursor: the pointer is hidden over the intro, its loading screen and the demo (cursor rects, so it
+    /// A transparent cursor: the pointer is hidden over the intro, its loading screen and a playback (cursor rects, so it
     /// shows again over the title bar, the menu bar and other windows).
     @MainActor static let blank = NSCursor(image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
                                            hotSpot: .zero)
@@ -180,9 +180,12 @@ final class GameView: MTKView {
 
     private var loadingScreen: LoadingScreen?
     var vignettes: URL?
-    /// In the demo: a key (but M), a click or a pad button ends it.
-    var onDemoInput: (() -> Void)?
-    private var inDemo: Bool { viewer.map { tc_viewer_demo($0) } ?? false }
+    /// Playing a recording back: the game's inputs are the recording's; Esc goes back to the list, P pauses, and paused the
+    /// look inputs get through.
+    var onPlaybackBack: (() -> Void)?
+    var onPlaybackPause: (() -> Void)?
+    private var inPlayback: Bool { renderer?.playback != nil }
+    private var playbackPaused: Bool { renderer?.playback?.paused == true }
 
     private var pictureScreen: PictureScreen?
 
@@ -244,17 +247,17 @@ final class GameView: MTKView {
         }
     }
 
-    /// No pointer in the demo (in play, mouse-look capture hides it).
-    override func resetCursorRects() { if inDemo { addCursorRect(bounds, cursor: .blank) } }
+    /// No pointer in a playback (in play, mouse-look capture hides it).
+    override func resetCursorRects() { if inPlayback { addCursorRect(bounds, cursor: .blank) } }
 
     override func mouseDown(with event: NSEvent) {
-        if inDemo { onDemoInput?(); return }
+        if inPlayback && !playbackPaused { return }
         setCaptured(true)
     }
 
     /// The middle button: recentre the camera (X).
     override func otherMouseDown(with event: NSEvent) {
-        guard event.buttonNumber == 2, !inDemo, let v = viewer else { return super.otherMouseDown(with: event) }
+        guard event.buttonNumber == 2, !inPlayback, let v = viewer else { return super.otherMouseDown(with: event) }
         tc_viewer_recenter_camera(v)
         updateTitle()
     }
@@ -266,23 +269,33 @@ final class GameView: MTKView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard let v = viewer else { return }
+        guard !inPlayback || playbackPaused, let v = viewer else { return }
         // Play mode: camera zoom; free-fly: fly speed.
         tc_viewer_wheel(v, Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.1 : 1))
     }
 
     override func keyDown(with event: NSEvent) {
+        if inPlayback, event.keyCode != 46, event.keyCode != 122 {  // M mutes and F1 shows the controls, as everywhere
+            if event.keyCode == 53 {  // Esc
+                if !event.isARepeat { onPlaybackBack?() }
+            } else if event.keyCode == 35 {  // P
+                if !event.isARepeat { onPlaybackPause?() }
+            } else if playbackPaused, let v = viewer, let a = bindings.action(event.keyCode) {
+                tc_viewer_set_action(v, a, true)
+            }
+            return
+        }
         if event.keyCode == 53 { setCaptured(false); return }  // Esc
+        if event.keyCode == 101 {  // F9: mark this moment in the recording
+            if !event.isARepeat, Recording.shared.mark() { updateTitle() }
+            return
+        }
         if event.keyCode == 122 {  // F1: the controls (as Cmd-/ and the SDL build's F1)
             if !event.isARepeat { NSApp.sendAction(#selector(AppDelegate.showControls), to: nil, from: self) }
             return
         }
         if event.keyCode == 46, !event.isARepeat {  // M: mute/unmute music and sound effects
             Music.shared.muted.toggle()
-            return
-        }
-        if inDemo {
-            if !event.isARepeat { onDemoInput?() }
             return
         }
         guard let v = viewer else { super.keyDown(with: event); return }
@@ -371,7 +384,7 @@ final class GameView: MTKView {
             return
         }
         if event.keyCode == 35 {  // P: pause/resume animation
-            if !event.isARepeat { tc_viewer_toggle_pause(v) }
+            if !event.isARepeat { tc_viewer_toggle_pause(v); updateTitle() }
             return
         }
         if let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, true) } else { super.keyDown(with: event) }
@@ -384,7 +397,8 @@ final class GameView: MTKView {
         let aa = renderer.map {
             ($0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off") + ($0.scale > 100 ? ", SS \($0.scale >= 200 ? "2x" : "1.5x")" : "")
         } ?? ""
-        w.title = base + "  ·  " + viewer.status(extra: aa)
+        let marks = Recording.shared.marks > 0 ? ", \(Recording.shared.marks) marks" : ""
+        w.title = base + "  ·  " + viewer.status(extra: aa + marks + (playbackPaused ? ", paused" : ""))
     }
 
     override func keyUp(with event: NSEvent) {
@@ -408,11 +422,8 @@ final class GameView: MTKView {
     /// The loading screen after the intro: Totalski opens when its bar is full (shown full for a tick first, as a portal's).
     private var nextLevel: (url: URL, screen: LoadingScreen, start: CFTimeInterval, full: Bool)?
     private var nextLevelTimer: Timer?
-    /// The demo (the level select's Demo button, D): random main levels, Ed wandering by himself (tc_viewer_set_demo),
-    /// the next level every demoSeconds or through a red portal he walks into; a key, click or pad button ends it.
-    private var demo = false
-    private var demoTimer: Timer?
-    private let demoSeconds: TimeInterval = 60
+    /// Playing a recording back (the Replays menu, --replay [file]): Playback.
+    private var playback: Playback?
     /// Default data, first that exists: inside OpenTonic.app (Contents/Resources/data/ttlv, built by
     /// tools/install_macos.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
@@ -434,9 +445,19 @@ final class GameView: MTKView {
         window.collectionBehavior = [.fullScreenPrimary]
         window.center()
 
-        let args = CommandLine.arguments
+        // --replay [file]: plays a recording back (the newest without one); the rest as usual.
+        var args = CommandLine.arguments
+        var replay: URL?, wantReplay = false
+        if let i = args.firstIndex(of: "--replay") {
+            wantReplay = true
+            args.remove(at: i)
+            if i < args.count, args[i].contains(".\(TC_REC_EXTENSION)") { replay = URL(fileURLWithPath: args.remove(at: i)) }
+            replay = replay ?? Recording.latest()
+        }
         var isDir: ObjCBool = false
-        if args.count > 1, FileManager.default.fileExists(atPath: args[1], isDirectory: &isDir), !isDir.boolValue {
+        if wantReplay, args.count > 1 { levelFolder = URL(fileURLWithPath: args[1]) }
+        if wantReplay, startPlayback(replay) {
+        } else if args.count > 1, FileManager.default.fileExists(atPath: args[1], isDirectory: &isDir), !isDir.boolValue {
             let url = URL(fileURLWithPath: args[1])
             levelFolder = url.deletingLastPathComponent()
             openLevel(url)
@@ -455,16 +476,108 @@ final class GameView: MTKView {
         print("Controls: WASD move, arrow keys look, R/F up/down, Shift fast; click to capture mouse-look, Esc to release; scroll = fly speed / play-mode zoom; , / . field of view; P pause animation; starts as Ed when the level has him, Tab toggles free-fly (Space jump); ⌘L level select; ⌃⌘F fullscreen")
     }
 
-    @MainActor @objc func showPicker() {
-        demo = false
-        demoTimer?.invalidate()
-        demoTimer = nil
+    func applicationWillTerminate(_ note: Notification) { Recording.shared.stop() }
+
+    /// False (nothing opened) when the file can't be played.
+    private func startPlayback(_ url: URL?) -> Bool {
+        guard let url, let p = Playback(url: url) else {
+            print("Can't play \(url?.path ?? "(no recording)")")
+            let alert = NSAlert()
+            alert.messageText = "This recording can't be played"
+            alert.runModal()
+            return false
+        }
+        print("Playing back \(url.path): \(p.segmentCount) levels")
+        playback = p
+        return playbackLevel(0)
+    }
+
+    /// A playback's end, or Esc / Start in one: back to the list.
+    private func backToReplays(_ why: String) {
+        stopPlayback(why)
+        showReplays()
+    }
+
+    /// The Replays menu (the level select's button, R).
+    @MainActor @objc func showReplays() {
+        stopPlayback("the Replays menu")
+        leaveLevel()
+        let screen = ReplaysScreen(frame: window.contentLayoutRect, folder: Recording.folder)
+        screen.onBack = { [weak self] in self?.showPicker() }
+        screen.onPlay = { [weak self] url in _ = self?.startPlayback(url) }
+        window.contentView = screen
+        window.makeFirstResponder(screen)
+        window.title = "Open Tonic — Replays"
+    }
+
+    /// Out of the level on show, into the menu's music. The run ends here: what follows from a menu is another.
+    private func leaveLevel() {
+        Recording.shared.stop()
         Sfx.shared.stopAll()
         Music.shared.play(level: "menu", audioDir: levelFolder.deletingLastPathComponent().appendingPathComponent("audio"))
         gameView?.setCaptured(false)
         gameView?.isPaused = true
         gameView = nil
         renderer = nil
+    }
+
+    /// The level of segment i, as the recording's run opened it; false (the playback over) when it isn't here.
+    @discardableResult private func playbackLevel(_ i: UInt32) -> Bool {
+        guard let p = playback else { return false }
+        let s = p.info(i), name = cString(s.level).lowercased()
+        let folder = s.edition != 0 ? levelFolder.deletingLastPathComponent().appendingPathComponent("se/ttlv") : levelFolder
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        guard let url = files.first(where: { $0.pathExtension.lowercased() == "ttlv"
+                                             && $0.deletingPathExtension().lastPathComponent.lowercased() == name }) else {
+            noLevel(name)
+            return false
+        }
+        openLevel(url, carry: s.has_carry ? s.carry : nil, seed: s.seed)
+        guard let r = renderer, let v = r.viewer, v.level.url == url else {
+            noLevel(name)
+            return false
+        }
+        p.begin(i, v.raw)
+        r.playback = p
+        r.onPlaybackEnd = { [weak self] in
+            guard let self, let p = self.playback else { return }
+            if p.segment + 1 < p.segmentCount { self.playbackLevel(p.segment + 1) } else { self.backToReplays("the end of the recording") }
+        }
+        gameView?.onPlaybackBack = { [weak self] in self?.backToReplays("back to the list") }
+        gameView?.onPlaybackPause = { [weak self] in self?.togglePlaybackPause() }
+        if let view = gameView { window.invalidateCursorRects(for: view) }  // the pointer goes (resetCursorRects)
+        window.title = "Open Tonic — Playback — \(v.level.name)"
+        return true
+    }
+
+    /// P, Cross: the frames wait and the mouse looks, or the run goes on.
+    private func togglePlaybackPause() {
+        guard let p = playback else { return }
+        p.togglePause()
+        gameView?.setCaptured(p.paused)
+        gameView?.updateTitle()
+    }
+
+    /// The recording's next level can't be shown: the list again, saying why.
+    private func noLevel(_ name: String) {
+        backToReplays("no level \(name)")
+        let alert = NSAlert()
+        alert.messageText = "No level \(name)"
+        alert.informativeText = "This recording goes to \(name), which is not here or doesn't load."
+        alert.runModal()
+    }
+
+    private func stopPlayback(_ why: String) {
+        guard let p = playback else { return }
+        print("Playback ended: \(why)")
+        playback = nil
+        renderer?.playback = nil
+        p.close()
+    }
+
+    @MainActor @objc func showPicker() {
+        stopPlayback("the level select")
+        leaveLevel()
         // Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level. The Special Edition's levels
         // (tools/ttre/se.py): out/se/ttlv, their pictures out/se/Vignette/Level.
         let out = levelFolder.deletingLastPathComponent()
@@ -474,7 +587,7 @@ final class GameView: MTKView {
             self?.openLevel(url)
         }
         picker.onIntro = { [weak self] in self?.playIntro() }
-        picker.onDemo = { [weak self] in self?.startDemo() }
+        picker.onReplays = { [weak self] in self?.showReplays() }
         if picker.isEmpty {
             fail("No .ttlv levels in \(levelFolder.path). Please run your genuine installed Tonic Trouble files through the conversion step.")
         }
@@ -494,7 +607,7 @@ final class GameView: MTKView {
         let container = PickerContainer(frame: window.contentLayoutRect)
         container.appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
         container.onIntro = { [weak self] in self?.playIntro() }
-        container.onDemo = { [weak self] in self?.startDemo() }
+        container.onReplays = { [weak self] in self?.showReplays() }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
@@ -508,46 +621,6 @@ final class GameView: MTKView {
         window.contentView = container
         window.makeFirstResponder(container)
         window.title = "Open Tonic"
-    }
-
-    /// The levels the demo picks from: the game's main ones (no cutscenes, no imported models), with Ed's AI (.ttai),
-    /// from both editions (the Special Edition's in out/se/ttlv: those with a borrowed Ed).
-    private func demoLevels() -> [URL] {
-        let fm = FileManager.default
-        let imported = levelFolder.deletingLastPathComponent().appendingPathComponent("Imported")
-        let se = levelFolder.deletingLastPathComponent().appendingPathComponent("se/ttlv")
-        return [levelFolder, se].flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
-            .filter { url in
-                let name = url.deletingPathExtension().lastPathComponent
-                return url.pathExtension.lowercased() == "ttlv" && tc_level_is_cutscene(name) == 0
-                    && !fm.fileExists(atPath: imported.appendingPathComponent(name).path)
-                    && fm.fileExists(atPath: url.deletingPathExtension().appendingPathExtension("ttai").path)
-            }
-    }
-    /// The demo's level now (both editions use the same names, so it is told apart by its file).
-    private var demoCurrent: URL?
-
-    @MainActor func startDemo() {
-        demo = true
-        nextDemoLevel()
-    }
-
-    /// Another random main level (not the one shown), in the demo.
-    private func nextDemoLevel() {
-        guard demo else { return }
-        let all = demoLevels()
-        guard let url = all.filter({ $0.standardizedFileURL != demoCurrent?.standardizedFileURL }).randomElement()
-                ?? all.first else {
-            showPicker()
-            return
-        }
-        demoCurrent = url
-        openLevel(url)
-        guard renderer != nil else { showPicker(); return }  // it didn't load (openLevel showed why)
-        demoTimer?.invalidate()
-        demoTimer = Timer.scheduledTimer(withTimeInterval: demoSeconds, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.nextDemoLevel() }
-        }
     }
 
     /// The intro movie, from the level select screen (V). files/out/video/intro.mp4 next to the ttlv folder.
@@ -649,7 +722,7 @@ final class GameView: MTKView {
         openLevel(url, carry: carry)
     }
 
-    func openLevel(_ url: URL, carry: tc_viewer_carry? = nil) {
+    func openLevel(_ url: URL, carry: tc_viewer_carry? = nil, seed: UInt32 = 0) {
         currentLevelFolder = url.deletingLastPathComponent()
         // The old view may hold the mouse (cursor hidden and detached): release it, and capture again in the new view so
         // a portal's level change keeps playing (and Esc still releases it).
@@ -664,14 +737,25 @@ final class GameView: MTKView {
         let view = GameView(frame: window.contentLayoutRect, device: MTLCreateSystemDefaultDevice())
         do {
             let r = try Renderer(view: view)
-            let loaded = try Viewer(level: Level(url: url), carry: carry)
+            // No carry: from a menu, a new run; a portal's level goes on in this one. A playback isn't a run: the file is
+            // the record.
+            if carry == nil, playback == nil { Recording.shared.start() }
+            let loaded = try Viewer(level: Level(url: url), carry: carry, seed: seed,
+                                    recorder: playback == nil ? Recording.shared.recorder : nil)
             LookSettings.apply(loaded.raw)
             r.load(loaded)
             r.onLoading = { [weak view] in view?.showLoading($0) }
             r.onPicture = { [weak view] in view?.showPicture($0) }
             r.onPendingLevel = { [weak self] in self?.openPortalLevel($0) }
             r.onGamepad = { [weak self, weak view] command in
+                if self?.playback != nil {  // Start: back to the list, Cross: pause; the others are the recording's
+                    if command == .levelSelect { self?.backToReplays("back to the list") }
+                    if command == .pausePlayback { self?.togglePlaybackPause() }
+                    return
+                }
                 switch command {
+                case .mark:
+                    if Recording.shared.mark() { view?.updateTitle() }
                 case .levelSelect: self?.showPicker()
                 case .controls: self?.showControls()
                 case .togglePlay:
@@ -680,17 +764,16 @@ final class GameView: MTKView {
                         view?.updateTitle()
                     }
                 case .firstPerson:
-                    if let v = view?.renderer?.viewer?.raw, !tc_viewer_demo(v) {
+                    if let v = view?.renderer?.viewer?.raw {
                         tc_viewer_toggle_first_person(v)
                         view?.updateTitle()
                     }
                 case .recenter:
-                    if let v = view?.renderer?.viewer?.raw, !tc_viewer_demo(v) {
+                    if let v = view?.renderer?.viewer?.raw {
                         tc_viewer_recenter_camera(v)
                         view?.updateTitle()
                     }
-                case .press:
-                    if let v = view?.renderer?.viewer?.raw, tc_viewer_demo(v) { self?.showPicker() }
+                case .press, .pausePlayback: break
                 }
             }
             renderer = r
@@ -711,17 +794,11 @@ final class GameView: MTKView {
         gameView = view
         window.contentView = view
         window.makeFirstResponder(view)
-        // Mouse look from the start (not in the demo, and only while the app is in front: capturing detaches the
+        // Mouse look from the start (not in a playback, and only while the app is in front: capturing detaches the
         // pointer system-wide); Esc releases it, a click takes it again.
-        if (wasCaptured || NSApp.isActive) && !demo { view.setCaptured(true) }
+        if (wasCaptured || NSApp.isActive) && playback == nil { view.setCaptured(true) }
         let r = renderer!, viewer = r.viewer!, s = viewer.stats
         window.title = "Open Tonic — \(viewer.level.name)"
-        if demo {  // through a red portal too: still the demo
-            tc_viewer_set_demo(viewer.raw, true, UInt32.random(in: 1...UInt32.max))
-            window.title = "Open Tonic — Demo — \(viewer.level.name)"
-            view.onDemoInput = { [weak self] in self?.showPicker() }
-            window.invalidateCursorRects(for: view)  // the pointer goes (resetCursorRects)
-        }
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()
         titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in

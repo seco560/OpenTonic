@@ -126,6 +126,34 @@ static inline void chunk_stamp(const chunks *c, char *out, size_t out_size) {
     memcpy(out, r.data + r.offset, n);
     out[n] = 0;
 }
+/* A fast 64-bit hash (tc_rec.h: not stored outside recordings), going on from h. */
+static inline uint64_t tc_hash64(uint64_t h, const void *data, size_t n) {
+    const uint8_t *p = (const uint8_t *)data;
+    uint64_t w;
+    for (; n >= 8; p += 8, n -= 8) {
+        memcpy(&w, p, 8);
+        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+    }
+    w = 0;
+    if (n) memcpy(&w, p, n);
+    h = (h ^ w ^ ((uint64_t)n << 56)) * 0x9E3779B97F4A7C15ull;
+    return h ^ (h >> 32);
+}
+/* The file's content for telling data apart: every chunk but the converter's stamp (any exporter edit changes it) and
+ * the paths relative to the output folder (TEXS, TRAN). */
+static inline uint64_t chunks_hash(const chunks *c) {
+    size_t o = 8;
+    const uint8_t *t;
+    reader r;
+    uint64_t h = 1;
+    while (chunk_next(c, &o, &t, &r))
+        if (memcmp(t, "STMP", 4) && memcmp(t, "TEXS", 4) && memcmp(t, "TRAN", 4)) {
+            h = tc_hash64(h, t, 4);
+            h = tc_hash64(h, r.data, r.size);
+        }
+    return h;
+}
 /* CRC-32 as zlib's (the .ttai's LINK chunk holds the one of the .ttlv's COLL chunk). */
 static inline uint32_t tc_crc32(const uint8_t *p, size_t n) {
     static const uint32_t t[16] = {0x00000000, 0x1DB71064, 0x3B6E20C8, 0x26D930AC, 0x76DC4190, 0x6B6B51F4,

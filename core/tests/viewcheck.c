@@ -273,104 +273,58 @@ static void sector_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
-/* The demo (tc_viewer_set_demo): Ed wanders by himself for 60 s on a few levels, through frames as the frontends draw
- * them: he gets about, varies what he does (DEMO_* acts in tc_viewer.c), and the camera stays mostly behind him. North
- * (no red portal near Ed's start) is checked; the others print what happened. DEMO_TRACE=<level> prints its timeline. */
-static void demo_level(const char *dir, const char *name, bool checked) {
-    char path[1024], what[768];
-    size_t size, ai_size = 0;
+/* The Special Edition's perso parts stay their size: a misread compressed scale (type 0xF, a symmetric matrix: level.py
+ * se_matrix) drew them up to 256 times too big, shards across the screen. Every sector, 20 s, the largest scale of a perso
+ * part's model matrix; the data's largest is about 5 (the outro's stretches). */
+static void se_scale_level(const char *dir, const char *name) {
+    char path[512], what[160];
     uint8_t *data, *ai;
+    size_t size, ai_size = 0;
     tc_level level;
     tc_viewer v;
     tc_viewer_desc desc;
-    tc_vec3 last, p, start;
-    float travelled = 0, far_away = 0;
-    int i, k, jumps = 0, acts[16] = {0}, kinds = 0, flaps = 0, behind = 0, moving = 0, respawns = 0, last_act = -1;
-    int was_flap = 0;
-    float last_time = 0;
-    uint32_t placed;
-    bool was_jump = false;
-    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
-    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) {
-        free(data);
-        printf("  (no %s: demo skipped)\n", name);
+    float worst = 0;
+    int f;
+    snprintf(path, sizeof(path), "%s/../se/ttlv/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size))) {
+        printf("  (no Special Edition %s: skipped)\n", name);
         return;
     }
+    if (tc_level_load(&level, data, size) != TC_OK) { check(0, "SE level loads"); free(data); return; }
     free(data);
-    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    snprintf(path, sizeof(path), "%s/../se/ttlv/%s.ttai", dir, name);
     ai = read_file(path, &ai_size);
     memset(&desc, 0, sizeof(desc));
     desc.level = &level;
     desc.ai_data = ai;
     desc.ai_size = ai_size;
     desc.level_name = name;
-    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "demo viewer"); free(ai); tc_level_free(&level); return; }
-    free(ai);
-    if (!tc_viewer_player(&v)) { /* a level without Ed (the Special Edition's, without the retail game to lend him) */
-        printf("  (no Ed in %s: demo skipped)\n", name);
-        tc_viewer_free(&v);
-        tc_level_free(&level);
-        return;
-    }
-    /* The demo is chaotic: anything that changes Ed's inputs (the camera's position feeds his AI) reshuffles the run. 12345
-     * gave north 4 kinds of act after the play camera (2026-11-01) and 6 before; over seeds 1-8 the spread is the same
-     * either side. Seed 2 has 5 jumps and 8 kinds on north with both cameras. */
-    tc_viewer_set_demo(&v, true, getenv("DEMO_SEED") ? (uint32_t)atoi(getenv("DEMO_SEED")) : 2); /* DEMO_SEED: try others */
-    if (checked) check(tc_viewer_demo(&v) && v.playing, "demo: on, in play mode");
-    last = start = ed(&v);
-    placed = tc_viewer_player(&v)->placed;
-    for (i = 0; i < 60 * 60; i++) {
-        const tc_player *pl;
-        float vx, vy, off;
-        frame(&v, 1.0f / 60);
-        pl = tc_viewer_player(&v);
-        p = ed(&v);
-        if (pl->placed != placed) { respawns++; placed = pl->placed; last = p; }
-        travelled += sqrtf((p.x - last.x) * (p.x - last.x) + (p.y - last.y) * (p.y - last.y));
-        far_away = fmaxf(far_away, tc_v3_distance(p, start));
-        last = p;
-        jumps += !was_jump && ((v.held >> TC_VA_JUMP) & 1u);
-        was_jump = (v.held >> TC_VA_JUMP) & 1u;
-        if ((v.demo_act != last_act || v.demo_act_time < last_time) && v.demo_act >= 0 && v.demo_act < 16)
-            acts[v.demo_act]++, last_act = v.demo_act; /* a new act (one can follow its own kind) */
-        last_time = v.demo_act_time;
-        if (getenv("DEMO_TRACE") && strcmp(getenv("DEMO_TRACE"), name) == 0 && i % 15 == 0)
-            printf("    %5.2f act %d t %.1f pos %.1f %.1f %.1f vel %.1f %.1f %.1f ground %d heading-yaw %.2f cam %.2f aim %.2f "
-                   "flap %d\n", i / 60.0, v.demo_act, v.demo_act_time, p.x, p.y, p.z, pl->velocity.x, pl->velocity.y,
-                   pl->velocity.z, pl->grounded, TC_PI - pl->heading, v.camera.yaw, v.demo_aim, v.demo_flap);
-        flaps += v.demo_flap == 3 && !was_flap;
-        was_flap = v.demo_flap == 3;
-        vx = pl->velocity.x, vy = pl->velocity.y;
-        if (vx * vx + vy * vy > 4) { /* moving: is the camera behind him (within 50 degrees of his way)? */
-            off = fmodf(fabsf(v.camera.yaw - atan2f(vx, vy)), 2 * TC_PI);
-            if (off > TC_PI) off = 2 * TC_PI - off;
-            moving++;
-            behind += off < 50 * TC_PI / 180;
+    desc.seed = 5;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "SE viewer"); free(ai); tc_level_free(&level); return; }
+    tc_viewer_cycle_sectors(&v); /* every sector: every perso */
+    for (f = 0; f < 1200; f++) {
+        uint32_t count, opaque, i;
+        const tc_view_draw *d;
+        tc_viewer_update(&v, 1.0f / 60);
+        d = tc_viewer_draws(&v, &count, &opaque);
+        for (i = 0; i < count; i++) {
+            const float *m = d[i].model.m;
+            int c;
+            if (d[i].mesh < v.perso_first || d[i].mesh >= v.ed_first) continue;
+            for (c = 0; c < 3; c++) worst = fmaxf(worst, sqrtf(m[4 * c] * m[4 * c] + m[4 * c + 1] * m[4 * c + 1] + m[4 * c + 2] * m[4 * c + 2]));
         }
     }
-    for (k = 0; k < 16; k++) kinds += acts[k] > 0;
-    snprintf(what, sizeof(what), "demo %s 60 s: %.0f units walked, %.0f from the start at most, %d jumps, %d kinds of act "
-             "(run %d walk %d pause %d hop %d leap %d pogo %d swing %d shoot %d side %d), %d fly attempts, %d respawns, "
-             "camera behind him %.0f %% of the time he moves", name, travelled, far_away, jumps, kinds, acts[0], acts[1],
-             acts[2], acts[3], acts[4], acts[5], acts[6], acts[7], acts[8], flaps, respawns,
-             moving ? 100.0 * behind / moving : 0.0);
-    if (checked) check(isfinite(p.x) && travelled > 100 && far_away > 15 && jumps >= 5 && kinds >= 5
-                       && behind > moving * 3 / 4, what);
-    else printf("  info  %s\n", what);
-    tc_viewer_set_demo(&v, false, 0);
-    if (checked)
-        check(!tc_viewer_demo(&v) && v.move_y == 0 && !(v.held & ((1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) |
-              (1u << TC_VA_SHOOT) | (1u << TC_VA_LATERAL))), "demo off: the stick and the buttons let go");
+    snprintf(what, sizeof(what), "SE %s: perso parts at most %.2f x their size", name, (double)worst);
+    check(worst < 16, what);
     tc_viewer_free(&v);
+    free(ai);
     tc_level_free(&level);
 }
 
-static void demo_scenario(const char *dir) {
-    demo_level(dir, "north", true);
-    demo_level(dir, "sud0", false);
-    demo_level(dir, "Land", false);
-    demo_level(dir, "LeCanyon", false);
-    demo_level(dir, "pyramide", false);
+static void se_scale_scenario(const char *dir) {
+    static const char *const levels[] = {"carota", "cavedoc", "Land", "outro", "pyramide", "sud0"};
+    size_t i;
+    for (i = 0; i < sizeof(levels) / sizeof(levels[0]); i++) se_scale_level(dir, levels[i]);
 }
 
 static void portal_scenario(const char *dir) {
@@ -475,6 +429,36 @@ static void portal_scenario(const char *dir) {
     check(saw_229, "bar: Ed steps out of the portal (state 229)");
     tc_viewer_free(&w);
     tc_level_free(&bar);
+}
+
+/* The Special Edition's moving textures: its VisualMaterial tail sits 12 bytes lower than retail's, misread they all
+ * stood still (docs/SE.md "Moving textures"). LeCanyon's floor scrolls at engine (0, -0.006) a tick: with the exe's
+ * uv + offset and v' = 1 - v, +0.36 UV/s here. Its Kyou and arches are flipbooks. */
+static void se_moving_textures_scenario(const char *dir) {
+    char path[512], what[160];
+    uint8_t *data;
+    size_t size;
+    tc_level level;
+    uint32_t i, floors = 0, books = 0;
+    snprintf(path, sizeof(path), "%s/../se/ttlv/LeCanyon.ttlv", dir);
+    if (!(data = read_file(path, &size))) {
+        printf("  (no Special Edition LeCanyon: its moving textures skipped)\n");
+        return;
+    }
+    if (tc_level_load(&level, data, size) != TC_OK) { check(0, "SE LeCanyon loads"); free(data); return; }
+    free(data);
+    for (i = 0; i < level.mesh_count; i++) {
+        const tc_surface *s = &level.meshes[i].surface;
+        if (s->scroll[0] == 0 && s->scroll[1] > 0.35f && s->scroll[1] < 0.37f) floors++;
+        if (s->frame_count) books++;
+    }
+    for (i = 0; i < level.perso_count; i++) {
+        uint32_t p;
+        for (p = 0; p < level.persos[i].part_count; p++) books += level.persos[i].parts[p].mesh.surface.frame_count != 0;
+    }
+    snprintf(what, sizeof(what), "SE LeCanyon: %u floor meshes scroll at +0.36 UV/s, %u flipbook surfaces", floors, books);
+    check(floors >= 3 && books >= 3, what);
+    tc_level_free(&level);
 }
 
 /* The Special Edition's Totalski switches Ed between walking and skiing (tc_ai_mode_zone, docs/SE.md "Sliding in the
@@ -905,7 +889,8 @@ int main(int argc, char **argv) {
 
 done:
     sector_scenario(dir);
-    demo_scenario(dir);
+    se_scale_scenario(dir);
+    se_moving_textures_scenario(dir);
     portal_scenario(dir);
     se_ski_scenario(dir);
     ride_scenario(dir);

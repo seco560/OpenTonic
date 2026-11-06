@@ -319,6 +319,7 @@ const tc_perso_ways *tc_ways_of(const tc_ways *w, int32_t perso);
 
 typedef struct tc_level {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
+    uint64_t data_hash;          /* the file's content without the stamp and paths (recordings: tc_rec.h) */
     uint32_t light_set_count;    /* baked sets per vertex, 1-3 */
     float fog_near, fog_far;     /* linear fog by view depth (as the original's driver); fog_far <= fog_near: none */
     float fog_rgb[3];

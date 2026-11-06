@@ -97,6 +97,11 @@ SE_BACKDROP = 3
 SO_TYPES = {0x0: 'world', 0x4: 'perso', 0x8: 'sector', 0xD: 'ipo', 0x15: 'ipo'}
 IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0)  # row-major 3x4
 SCROLL_RATE = 60.0  # engine time unit = 1/60 s (frame delta = timer ms * 0.06; see NOTES)
+# The SE VisualMaterial has 12 bytes fewer between the texture (+0x48) and the scroll fields: scroll_cur +0x4C, speed
+# +0x54, scroll_on +0x5C, flipbook +0x64 / +0x68 / +0x6C (GLI_xRefreshAnimatedTexture, retail's FUN_004457d0 with every
+# field that much lower). Both engines draw uv + offset; ttlv.py emits the opposite for retail's data, so the SE's speed
+# is negated on reading (docs/SE.md "Moving textures").
+SE_VM_SHIFT = 0xC
 
 
 @dataclass(eq=False)
@@ -296,6 +301,41 @@ class Anim:
         return [(objs[i], g(i)) for i in range(len(local))]
 
 
+SE_NO_SCALE = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def se_matrix(un, m):
+    """A Special Edition compressed matrix -> (pos, quat (x, y, z, w), scale 3x3 row-major), as POS_fn_vDecompressPosition
+    (0x4808b0), or None for a type it leaves alone. u16 type (& 0xF; the high nibble repeats which parts are set, 0x80 and
+    above: a matrix already decompressed), then by type: 1 position; 2 rotation; 3 both; 7 both and a zoom; 0xB both and
+    axial scales; 0xF both and a symmetric scale matrix. Position: i16[3] / 512. Rotation: i16 w, x, y, z / 32767. Zoom
+    and axial scales: u16 / 256. The scale matrix: i16 s0..s5 / 256 as [s0 s1 s2; s1 s3 s4; s2 s4 s5]
+    (POS_fn_vDecompressScale): signed, its off-diagonals are small and negative as often as not. The perso's matrix is
+    T R S (POS_fn_vSetScaleMatrix), as with the other scales."""
+    t, = un('H', m)
+    if t >= 0x80 or t & 0xF not in (1, 2, 3, 7, 0xB, 0xF):
+        return None
+    t &= 0xF
+    o, pos, q, sc = 2, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), SE_NO_SCALE
+    if t & 1:
+        pos = tuple(v / 512 for v in un('3h', m, o))
+        o += 6
+    if t & 2:
+        w, x, y, z = (v / 32767 for v in un('4h', m, o))
+        q = (x, y, z, w)
+        o += 8
+    if t == 7:
+        k = un('H', m, o)[0] / 256
+        sc = (k, 0.0, 0.0, 0.0, k, 0.0, 0.0, 0.0, k)
+    elif t == 0xB:
+        x, y, z = (v / 256 for v in un('3H', m, o))
+        sc = (x, 0.0, 0.0, 0.0, y, 0.0, 0.0, 0.0, z)
+    elif t == 0xF:
+        a, b, c, d, e, f = (v / 256 for v in un('6h', m, o))
+        sc = (a, b, c, b, d, e, c, e, f)
+    return pos, q, sc
+
+
 @dataclass(eq=False)
 class SeAnim:
     """A Special Edition animation (docs/SE.md "Animations"), with Anim's interface (fps, n_frames, chans, objects,
@@ -304,11 +344,10 @@ class SeAnim:
     {u32 n, ptr n x {u16 child, u16 parent}}: channel indices, as retail TT)}; channels = ptr[n_channels] -> {ptr
     compressed matrix (the value 1: identity), u32 info: object-list index = low byte (0xFF none), channel id = byte 1,
     kind = byte 3 (0 an object, 2 none: always with object 0xFF; the 4 the player knows: none seen)}. Read from GAM\\PlayAnim (FUN_00423080). A
-    channel keeps its slot through an animation (the 1501 of the initial states). Compressed matrix: u16
-    flags, then if flags & 1 i16 position[3] / 512, & 2 i16 quaternion w, x, y, z / 32767, & 4 i16 uniform scale / 256,
-    & 8 i16 scale[3] / 256 (the high nibble repeats which parts are set). A channel's matrix is relative to its parent
-    in the frame's hierarchy, else to the perso. Samples between frames lerp position and scale and nlerp the
-    quaternion, looping to frame 0. frames[f][c] = (object or None, pos, quat (x, y, z, w), scale); hier[f] = pairs."""
+    channel keeps its slot through an animation (the 1501 of the initial states). Compressed matrix: se_matrix. A
+    channel's matrix is relative to its parent in the frame's hierarchy, else to the perso. Samples between frames lerp
+    position and the scale matrix and nlerp the quaternion, looping to frame 0. frames[f][c] = (object or None, pos,
+    quat (x, y, z, w), scale: a 3x3 row-major tuple); hier[f] = pairs."""
     fps: int
     n_frames: int
     frames: list
@@ -344,9 +383,10 @@ class SeAnim:
             if sum(x * y for x, y in zip(q0, q1)) < 0:
                 q1 = [-x for x in q1]
             px, py, pz = lerp(c0[1], c1[1])
-            sx, sy, sz = lerp(c0[3], c1[3])
+            s = lerp(c0[3], c1[3])
             out.append((c0[0], mat_mul((1, 0, 0, px, 0, 1, 0, py, 0, 0, 1, pz),
-                                       mat_mul(quat_matrix(*lerp(q0, q1)), (sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0)))))
+                                       mat_mul(quat_matrix(*lerp(q0, q1)), (s[0], s[1], s[2], 0, s[3], s[4], s[5], 0,
+                                                                            s[6], s[7], s[8], 0)))))
         parent, glob = self.parents(fi), {}
 
         def g(i, depth=0):
@@ -535,10 +575,13 @@ class LevelData:
         m = self.materials.get(vm)
         if m is None:
             f = self.un('I16f', vm)
-            speed, on = self.un('2fI', vm, 0x60)[:2], self.un('I', vm, 0x68)[0]
+            sh = SE_VM_SHIFT if self.se else 0
+            speed, on = self.un('2f', vm, 0x60 - sh), self.un('I', vm, 0x68 - sh)[0]
+            if self.se:  # into the sign ttlv.py emits, so that SE surfaces move as the exe moves them (SE_VM_SHIFT)
+                speed = tuple(0.0 - s for s in speed)
             m = self.materials[vm] = Material(f[0], f[1:5], f[5:9], f[9:13], f[13:17],
                                               self.texture(self.lv.ptr(vm, 0x48)), speed if on else (0.0, 0.0))
-            node, n = self.lv.ptr(vm, 0x70), self.un('I', vm, 0x78)[0]
+            node, n = self.lv.ptr(vm, 0x70 - sh), self.un('I', vm, 0x78 - sh)[0]
             for _ in range(n if node else 0):
                 m.frames.append((self.texture(self.lv.ptr(node)), self.un('f', node, 4)[0]))
                 node = self.lv.ptr(node, 8)
@@ -773,24 +816,13 @@ class LevelData:
                 obj = None if obj == 0xFF else obj
                 if m is None:  # the value 1 instead of a pointer: identity (POS_fn_vDecompressPosition), object kept
                     row.append((obj if rec and un('I', rec)[0] == 1 else None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0),
-                                (1.0, 1.0, 1.0)))
+                                SE_NO_SCALE))
                     continue
-                t, = un('H', m)
-                o, pos, q, sc = 2, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
-                if t & 1:
-                    pos = tuple(v / 512 for v in un('3h', m, o))
-                    o += 6
-                if t & 2:
-                    w, x, y, z = (v / 32767 for v in un('4h', m, o))
-                    q = (x, y, z, w)
-                    o += 8
-                if t & 4:  # scales unsigned (POS_fn_vDecompressPosition: & 0xffff)
-                    k = un('H', m, o)[0] / 256
-                    sc = (k, k, k)
-                    o += 2
-                if t & 8:
-                    sc = tuple(v / 256 for v in un('3H', m, o))
-                row.append((obj, pos, q, sc))
+                parts = se_matrix(un, m)
+                if parts is None:
+                    self.warnings.append(f'se anim {ar[1]:#x}: compressed matrix type {un("H", m)[0]:#x}')
+                    parts = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), SE_NO_SCALE
+                row.append((obj,) + parts)
             frames.append(row)
         return SeAnim(state_speed or speed or 30, nf, frames, hier)
 

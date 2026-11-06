@@ -240,7 +240,7 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
     float distance, elevation, stretch, length, allowed, pull, k;
     bool first;
     c->since_look += dt;
-    if (c->first_person && !t->manual) { /* at his head, where the player looks; nothing else */
+    if (c->first_person) { /* at his head, where the player looks; nothing else */
         view->position = tc_v3_add(t->position, tc_v3(0, 0, TC_CAM_EYE_HEIGHT));
         c->placed = false; /* the follow is placed afresh afterwards */
         c->hide_target = false;
@@ -277,7 +277,7 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
     base = tc_v3(pivot.x, pivot.y, 2 * c->height1 - c->height2); /* Ed's head, its height smoothed */
 
     /* the rig */
-    if (!t->manual) {
+    {
         bool held = c->holding;
         float off, yaw0 = view->yaw;
         turn(c, view, t, dt, first);
@@ -304,11 +304,6 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
             if (fabsf(c->hold_offset) < 1e-4f && fabsf(c->hold_rate) < 1e-3f) c->hold_offset = c->hold_rate = 0;
         }
         c->rig.z += c->hold_offset;
-    } else { /* the demo's own direction; the follow picks up from here */
-        c->rise = 0;
-        c->holding = c->swinging = false;
-        c->hold_offset = c->hold_rate = 0;
-        c->rig = tc_v3_sub(base, tc_v3_scale(tc_camera_forward(view), c->distance));
     }
 
     /* the eye: on the line from Ed's head (its height smoothed) to the rig, the level's pull taken off: more at once,
@@ -327,7 +322,7 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
     c->reach = length - c->pull;
     c->hide_target = c->reach < TC_CAM_HIDE_DISTANCE;
     view->position = tc_v3_add(base, tc_v3_scale(dir, c->reach));
-    if (!t->manual) view->pitch = fmaxf(-TC_CAM_PITCH_LIMIT, fminf(TC_CAM_PITCH_LIMIT, asinf(fmaxf(-1, fminf(1, -dir.z)))));
+    view->pitch = fmaxf(-TC_CAM_PITCH_LIMIT, fminf(TC_CAM_PITCH_LIMIT, asinf(fmaxf(-1, fminf(1, -dir.z)))));
 
     /* the watchdog: pulled in close by a wall, the player not turning it, look for an open side round him */
     c->swing_rest -= dt;
@@ -336,7 +331,7 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
         c->watch += TC_CAM_WATCH_TIME;
         if (c->watch <= 0) c->watch = TC_CAM_WATCH_TIME; /* a long stall */
         /* not on the slides: at his speed the swing turned the view three times as much and hid him no less */
-        if (!t->manual && t->shot != TC_CAM_SHOT_SKI && t->world && c->pull > 1e-3f && c->reach < fminf(TC_CAM_SWING_NEAR, c->distance - TC_CAM_NEAR_RANGE) &&
+        if (t->shot != TC_CAM_SHOT_SKI && t->world && c->pull > 1e-3f && c->reach < fminf(TC_CAM_SWING_NEAR, c->distance - TC_CAM_NEAR_RANGE) &&
             !c->recentering && !c->swinging && c->swing_rest <= 0 && c->since_look >= TC_CAM_GRACE)
             search(c, view, t, base, c->distance * c->stretch, c->elevation + c->rise);
     }

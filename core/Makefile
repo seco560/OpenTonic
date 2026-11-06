@@ -8,8 +8,10 @@
 #   make viewcheck  -> the viewer module (tc_viewer) headless on bar: scripted keys, draw lists, title readout
 #   make portalcheck -> Ed walks into portals on sud0, Land and north (docs/PORTALS.md)
 #   make sectorcheck -> every level's sectors against the game's own data (tc_sector.h)
-#   make camcheck   -> the play camera (tc_cam.h) on hand-made geometry, then the demo's line of sight on a few levels
+#   make camcheck   -> the play camera (tc_cam.h) on hand-made geometry, then a walk's line of sight on a few levels
 #   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
+#   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
+#   make replay     -> build/replay: a recording's info, timeline, csv, check
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 CC ?= cc
 AR ?= ar
@@ -22,7 +24,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/replaycheck $(BUILD)/replay
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -61,6 +63,11 @@ $(BUILD)/camcheck: tests/camcheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/castcheck: tests/castcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
+$(BUILD)/replaycheck: tests/replaycheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+$(BUILD)/replay: tests/replay.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -95,7 +102,16 @@ camcheck: $(BUILD)/camcheck
 castcheck: $(BUILD)/castcheck
 	$(BUILD)/castcheck ../files/out/ttlv
 
+replay: $(BUILD)/replay
+
+RECORDINGS := $(wildcard ../files/recordings/*.ttrec)
+replaycheck: $(BUILD)/replaycheck $(BUILD)/replay
+	$(BUILD)/replaycheck ../files/out/ttlv
+ifneq ($(RECORDINGS),)
+	$(BUILD)/replay check -d ../files/out/ttlv $(RECORDINGS)
+endif
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck clean
+.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck replaycheck replay clean

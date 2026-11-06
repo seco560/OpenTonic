@@ -165,6 +165,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     memset(m, 0, sizeof(*m));
     if ((e = chunks_open(&cs, data, size, "TTAI")) != TC_OK) return e;
     chunk_stamp(&cs, m->converter, sizeof m->converter);
+    m->data_hash = chunks_hash(&cs);
 
     chunk_need(&cs, "SCPT", r);
     rd_scpt(r, m);

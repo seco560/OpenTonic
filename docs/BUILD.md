@@ -109,6 +109,8 @@ pl_mpeg): `tools/make_intro.sh mpg`, the default off macOS.
 ## 8. Checks
 - `make -C core check` (or `swift run -c release CorePlayCheck files/out/ttlv`): the simple controller on every level
   (landing, wall runs without tunnelling, jump).
+- `make -C core replaycheck`: sessions recorded and replayed headless, then any keepers in `files/recordings`
+  (docs/RECORDING.md).
 - `make -C core mechcheck`: the game's ground/air mechanics on hand-made geometry (no game data needed).
 - `make -C core aicheck` (Ed's AI on bar; `AI_SCRIPT=fly|ski|wander`, see tests/aicheck.c) and
   `make -C core crashcheck` (Totalski: the skier crashes into a tree), `make -C core skicheck` (Totalski, skymap: random

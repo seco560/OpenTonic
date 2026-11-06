@@ -69,14 +69,18 @@ Vignette}`. Frontends: `LevelPicker.swift`, `sdl/src/picker.c`.
 
 Relocation is clean: 0 unresolved pointers on lecanyon, north and totalski, and 12 on the other eight (not traced:
 the same 12 everywhere, probably fix data). Everything else the converter walks has the same layout as retail:
-GPT perso-in-fix, SuperObjects, IPOs, geometry, materials, radiosity, PTX, persos, families, states, object lists.
+GPT perso-in-fix, SuperObjects, IPOs, geometry, materials (but for their tail: "Moving textures"), radiosity, PTX, persos,
+families, states, object lists.
 
 **SE animation** (`level.SeAnim`): AnimRef = {ptr frames, u8 n_frames, u8 speed, u8 n_channels, ...}. A frame is 16
 bytes {ptr channels, ptr f32 matrix, ptr f32 vector, ptr hierarchy}; the matrix and vector look like root motion and
 are not read (see "Animation"). channels = ptr[n] -> {ptr compressed matrix, u32 info}, where the object-list index is the low byte
-(0xFF = none) and the channel id is byte 1. Compressed matrix: u16 flags; & 1: i16 pos[3] / 512; & 2: i16 quaternion
-w, x, y, z / 32767 (the engine's conjugate convention, as retail); & 4: i16 uniform scale / 256; & 8: i16 scale[3] /
-256. Hierarchy = {u32 n, ptr {u16 child, u16 parent}[n]}, channel indices as in retail TT (always valid as indices,
+(0xFF = none) and the channel id is byte 1. Compressed matrix (`level.se_matrix`, POS_fn_vDecompressPosition 0x4808b0):
+u16 type & 0xF (the high nibble repeats which parts are set; 0x80 and up: already decompressed), one of 1 position, 2
+rotation, 3 both, 7 both + zoom, 0xB both + axial scales, 0xF both + a scale matrix. Position i16[3] / 512; rotation i16
+w, x, y, z / 32767 (the engine's conjugate convention, as retail); zoom and axial scales **u16** / 256; the scale matrix
+six **i16** / 256, symmetric: [s0 s1 s2; s1 s3 s4; s2 s4 s5] (POS_fn_vDecompressScale), the matrix being T R S
+(POS_fn_vSetScaleMatrix). Hierarchy = {u32 n, ptr {u16 child, u16 parent}[n]}, channel indices as in retail TT (always valid as indices,
 only sometimes as ids). Checks: props rest exactly on z = 0 at /512, and SE Ed's frame 0 renders upright (head, bow
 tie, floating hands and feet).
 
@@ -158,9 +162,7 @@ lists in viewcheck. viewcheck's demo now skips a level without Ed: it crashed in
 
 ## Demo
 
-The demo (level select's Demo button) picks from both editions' main levels with Ed (the SE's with a borrowed Ed).
-Both editions use the same level names, so "not the level just shown" compares files (main.swift `demoCurrent`,
-sdl/src/main.c `demo_path`). Only built (Swift) and syntax-checked (SDL); not seen running.
+Removed 2026-11-06, Ed's autopilot with it: the level select's Replays menu took its place (docs/RECORDING.md).
 
 ## Lighting (read and ported 2026-11-05)
 
@@ -248,7 +250,14 @@ The player is `GAM\\PlayAnim` (FUN_00423080 poses a frame, FUN_004239b0 and FUN_
 changes; no exported names, found through `POS_fn_vDecompressPosition`). Against the port's decoder, which was already
 close:
 - **Fixed:** a compressed matrix pointer of 1 means identity. The port took it for "no channel" and lost the object: 139
-  channel-frames of real parts in the levels' initial animations. Scales are unsigned.
+  channel-frames of real parts in the levels' initial animations. Zooms and axial scales are unsigned.
+- **Fixed 2026-11-06, the shards:** type 0xF is not a uniform scale and three axes but a symmetric scale matrix, signed.
+  The port read its off-diagonals as axis scales, and reading them unsigned (the line above, right for types 7 and 0xB
+  only) turned small negatives into 255: parts drawn up to 256 times too big, the yellow and red shards across sud0 (the
+  user's playtest). 3,277 channel-frames across the initial states; six levels drew it (carota, cavedoc, Land, outro,
+  pyramide, sud0), and the outro's and marmite's state clips carry it too (CAST). Over 30 s with every sector drawn: 49,534
+  perso draws past 16 times their size before, none after, the largest 3.15. `viewcheck` keeps it (under 16 times). Not
+  seen in the app yet. Retail doesn't come through here: bar and sud0 re-exported with only TEXS different (paths).
 - **Same as the port:** `frame = ms x state speed (+0x3B) / 1000 % frames`, stepped (the port blends between frames: its
   choice); hierarchy pairs index channel slots; slots stay put within an animation (1501 of 1501). `rec` byte 7 = 0 an
   object, 2 none, always with object 0xFF.
@@ -261,6 +270,25 @@ close:
   the exe's formula says 1. It is applied to SE props too. Retail and SE props carry the same speeds (15, 25, 30), so the
   data doesn't say the SE differs, and nobody has compared SE props with the original. The state clips (Ed, the cast) run
   at 1.
+
+## Moving textures (read 2026-11-06)
+
+The SE VisualMaterial has 12 bytes fewer between the texture (+0x48) and the scroll fields, so the exporter read neither
+its scrolls nor its flipbooks (`level.SE_VM_SHIFT`). `GLI_xRefreshAnimatedTexture` (0x45b9e0) is retail's FUN_004457d0
+with every field 0xC lower: scroll_cur +0x4C, speed +0x54, scroll_on +0x5C, last update +0x60, flipbook first +0x64,
+current +0x68, count +0x6C, start time +0x70, lock byte +0x74. Same clock as retail: ms x 0.06 (caller 0x428122; menus
+pass 1.0). On all 11 levels: 12 scrolling materials, the rest flipbooks (torches, lava, neons, Doc's Kyou, explosions,
+arches). LeCanyon's moving floor is RC_Canyon_21/23/24TX, speed (0, -0.006) a tick; its clouds cl_canyon02txy.
+
+**Sign (read, both games):** the offset is added, u + offset and v + offset. SE: the rasterizer at 0x46787b and 0x467aac;
+retail: GliDX6vr.dll 0x10003100 (from GLI_DRV_xSendElementTIToClip_TRIANGLES). ttlv.py emits the opposite, a 2026-10-19
+inference from sud0's rainbow. Physical check under the exe's rule, world space: the SE's falls all run down (sud0
+z -28/s, pyr_ochute -5.9/s, pyr_odeborde -1.5/s), so the SE reader negates its speeds.
+
+**Retail, open, left as it was:** retail's four scrolling surfaces still move opposite to the driver. PYR_OCHUTEANUTXY
+runs uphill in the port today (the exe's rule: z -6.65/s); O_ZARBI_AUNTXY would run uphill under the exe's rule (z
++13.7/s; its UVs differ from the SE's), which only the running original can settle. The fix, if wanted: drop the SE
+negation and emit `su, -sv` in ttlv.surface().
 
 ## Crash found in the first playtest (fixed 2026-11-04)
 
@@ -416,9 +444,8 @@ ones, `out/se/Vignette/Level`). Both frontends take the vignettes next to the sh
 cover. Port choice: Action and Jump do it too. While a portal has captured Ed and not yet fired, the core presents
 them to his scripts as Shoot (`tc_ed_ai_step`).
 
-**The arches' surface:** retail's cycles a flipbook (GEN_ARCH01R..04R, 5.4 ticks a frame, slowed by
-ttlv.TEXTURE_TIME_SCALE). SE's shows `gen_arch01` still, though its Textures.cnt holds `gen_arch01..04`. Port choice:
-SE arches play those four as retail does (`se.arch_frames`, on every SE material showing `gen_arche\gen_arch01.tga`).
+**The arches' surface:** a flipbook in both games (retail GEN_ARCH01R..04R, SE gen_arch01..04, 5.4 ticks a frame, slowed
+by ttlv.TEXTURE_TIME_SCALE). The SE's looked still only because its flipbook was misread ("Moving textures").
 
 ## The outro (2026-11-05)
 

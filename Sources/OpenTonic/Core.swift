@@ -52,8 +52,9 @@ final class Viewer {
     let raw: UnsafeMutablePointer<tc_viewer>
     let level: Level
 
-    /// carry: arriving through a portal (the last level's `pendingLevel`).
-    init(level: Level, carry: tc_viewer_carry? = nil) throws {
+    /// carry: arriving through a portal (the last level's `pendingLevel`). seed: the random stream (a recording's when
+    /// playing one back; 0: a fresh one). recorder: records this level (Recording), nil: not.
+    init(level: Level, carry: tc_viewer_carry? = nil, seed: UInt32 = 0, recorder: OpaquePointer? = nil) throws {
         let v = UnsafeMutablePointer<tc_viewer>.allocate(capacity: 1)
         let aiURL = level.url.deletingPathExtension().appendingPathExtension("ttai")
         let ai = try? Data(contentsOf: aiURL)
@@ -63,7 +64,8 @@ final class Viewer {
                 withUnsafePointer(to: &carried) { carryPointer in
                     var desc = tc_viewer_desc(level: level.pointer, ai_data: ai != nil ? bytes.baseAddress : nil,
                                               ai_size: ai?.count ?? 0, level_name: name,
-                                              carry: carry != nil ? carryPointer : nil, seed: UInt32.random(in: 1...UInt32.max))
+                                              carry: carry != nil ? carryPointer : nil,
+                                              seed: seed != 0 ? seed : UInt32.random(in: 1...UInt32.max), recorder: recorder)
                     return tc_viewer_init(v, &desc)  // copies the model, the name and the carry
                 }
             }

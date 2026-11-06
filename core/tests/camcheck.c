@@ -2,7 +2,7 @@
  * touches something drawn; BLOCK_DEBUG=1 the persos drawn between Ed's head and the eye.
  * The play camera (tc_cam.h) on hand-made geometry: no game data needed. Follow placement, the lazy tolerance and its
  * orbit (stays while Ed stands, eases back as he runs), the front stretch, recentring, presets, and collision (in at once, out eased, never past a wall). Then, with a
- * converted level folder (camcheck [out/ttlv]), Ed's demo on a few levels: how often the camera ends up behind a surface
+ * converted level folder (camcheck [out/ttlv]), a scripted walk on a few levels: how often the camera ends up behind a surface
  * as seen from Ed's head (a ray from the pivot to the camera, both faces). Test-only stdio. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -498,7 +498,17 @@ static void ski(void) {
     check(fabsf(d - TC_CAM_CLOSEUP_DISTANCE) < BAND, what);
 }
 
-/* ---- the demo on real levels: the camera behind a surface? ---- */
+/* ---- a walk on real levels: the camera behind a surface? ---- */
+
+/* A walk with Ed's AI as a player would make it (the follow camera): forward with turns, back towards
+ * the camera, jumps, into corners. */
+static const struct { tc_view_action a, b; int frames; } WALK[] = {
+    {TC_VA_FORWARD, TC_VA_COUNT, 180}, {TC_VA_FORWARD, TC_VA_LEFT, 120}, {TC_VA_LEFT, TC_VA_COUNT, 120},
+    {TC_VA_BACK, TC_VA_COUNT, 150},    {TC_VA_RIGHT, TC_VA_JUMP, 90},    {TC_VA_FORWARD, TC_VA_RIGHT, 150},
+    {TC_VA_FORWARD, TC_VA_JUMP, 60},   {TC_VA_BACK, TC_VA_LEFT, 120},    {TC_VA_FORWARD, TC_VA_COUNT, 240},
+    {TC_VA_LEFT, TC_VA_COUNT, 90},     {TC_VA_BACK, TC_VA_COUNT, 200},   {TC_VA_RIGHT, TC_VA_COUNT, 200},
+};
+
 
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
@@ -516,7 +526,7 @@ static uint8_t *read_file(const char *path, size_t *size) {
 }
 
 /* The collision the viewer's play session uses is private: a second copy of the level's, to look with. */
-static void level_demo(const char *dir, const char *name) {
+static void level_sight(const char *dir, const char *name) {
     char path[1024];
     size_t size, ai_size = 0;
     uint8_t *data, *ai;
@@ -524,7 +534,7 @@ static void level_demo(const char *dir, const char *name) {
     tc_viewer v;
     tc_viewer_desc desc;
     tc_collision col;
-    int i, frames = 0, hidden = 0, close = 0;
+    int i, j, rep, frames = 0, hidden = 0, close = 0;
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
     if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) {
         free(data);
@@ -545,25 +555,30 @@ static void level_demo(const char *dir, const char *name) {
     desc.level_name = name;
     if (tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_collision_free(&col); tc_level_free(&level); return; }
     free(ai);
-    tc_viewer_set_demo(&v, true, 4242);
-    for (i = 0; i < 60 * 60; i++) {
-        uint32_t c, o;
-        tc_vec3 ed, pivot, to;
-        float len;
-        tc_hit h;
-        tc_viewer_update(&v, 1.0f / 60);
-        tc_viewer_draws(&v, &c, &o);
-        if (v.ed_draw_count == 0) continue; /* in a portal */
-        /* where the camera aims: Ed as drawn, which the player position follows closely */
-        ed = tc_viewer_player(&v)->position;
-        pivot = pivot_of(ed);
-        to = tc_v3_sub(v.camera.position, pivot);
-        len = tc_v3_length(to);
-        frames++;
-        close += len < 2;
-        if (len > 0.3f && tc_collision_raycast(&col, pivot, tc_v3_scale(to, 1 / len), len - 0.25f, &h)) hidden++;
-    }
-    printf("  info  %s demo 60 s: %d frames, a surface between Ed's head and the camera in %d (%.1f %%), camera nearer "
+    for (rep = 0; rep < 2; rep++)
+        for (j = 0; j < (int)(sizeof(WALK) / sizeof(WALK[0])); j++) {
+            for (i = 0; i < WALK[j].frames; i++) {
+                uint32_t c, o;
+                tc_vec3 ed, pivot, to;
+                float len;
+                tc_hit h;
+                tc_viewer_set_action(&v, WALK[j].a, true);
+                if (WALK[j].b != TC_VA_COUNT) tc_viewer_set_action(&v, WALK[j].b, (i / 10) % 3 != 2);
+                tc_viewer_update(&v, 1.0f / 60);
+                tc_viewer_draws(&v, &c, &o);
+                if (v.ed_draw_count == 0) continue; /* in a portal */
+                /* where the camera aims: Ed as drawn, which the player position follows closely */
+                ed = tc_viewer_player(&v)->position;
+                pivot = pivot_of(ed);
+                to = tc_v3_sub(v.camera.position, pivot);
+                len = tc_v3_length(to);
+                frames++;
+                close += len < 2;
+                if (len > 0.3f && tc_collision_raycast(&col, pivot, tc_v3_scale(to, 1 / len), len - 0.25f, &h)) hidden++;
+            }
+            tc_viewer_release_all(&v);
+        }
+    printf("  info  %s walk: %d frames, a surface between Ed's head and the camera in %d (%.1f %%), camera nearer "
            "than 2 in %d\n", name, frames, hidden, frames ? 100.0 * hidden / frames : 0.0, close);
     tc_viewer_free(&v);
     tc_collision_free(&col);
@@ -705,15 +720,6 @@ static void clip_report(const char *level, const char *what, const clip_stats *s
            (double)st->nearest);
 }
 
-/* A walk with Ed's AI as a player would make it (the follow camera, not the demo's): forward with turns, back towards
- * the camera, jumps, into corners. */
-static const struct { tc_view_action a, b; int frames; } WALK[] = {
-    {TC_VA_FORWARD, TC_VA_COUNT, 180}, {TC_VA_FORWARD, TC_VA_LEFT, 120}, {TC_VA_LEFT, TC_VA_COUNT, 120},
-    {TC_VA_BACK, TC_VA_COUNT, 150},    {TC_VA_RIGHT, TC_VA_JUMP, 90},    {TC_VA_FORWARD, TC_VA_RIGHT, 150},
-    {TC_VA_FORWARD, TC_VA_JUMP, 60},   {TC_VA_BACK, TC_VA_LEFT, 120},    {TC_VA_FORWARD, TC_VA_COUNT, 240},
-    {TC_VA_LEFT, TC_VA_COUNT, 90},     {TC_VA_BACK, TC_VA_COUNT, 200},   {TC_VA_RIGHT, TC_VA_COUNT, 200},
-};
-
 static void level_clip(const char *dir, const char *name) {
     char path[1024];
     size_t size, ai_size = 0;
@@ -722,7 +728,7 @@ static void level_clip(const char *dir, const char *name) {
     tc_viewer v;
     tc_viewer_desc desc;
     tc_collision col;
-    clip_stats demo, walk;
+    clip_stats walk;
     int i, j, rep;
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
     if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) {
@@ -742,9 +748,8 @@ static void level_clip(const char *dir, const char *name) {
     desc.ai_data = ai;
     desc.ai_size = ai_size;
     desc.level_name = name;
-    memset(&demo, 0, sizeof(demo));
     memset(&walk, 0, sizeof(walk));
-    demo.nearest = walk.nearest = 1e9f;
+    walk.nearest = 1e9f;
     if (tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_collision_free(&col); tc_level_free(&level); return; }
     for (i = 0; i < 60; i++) { /* settle */
         uint32_t c, o;
@@ -764,21 +769,8 @@ static void level_clip(const char *dir, const char *name) {
             tc_viewer_release_all(&v);
         }
     tc_viewer_free(&v);
-    if (tc_viewer_init(&v, &desc) == TC_OK) {
-        tc_viewer_set_demo(&v, true, 4242);
-        for (i = 0; i < 60 * 60; i++) {
-            uint32_t c, o;
-            tc_viewer_update(&v, 1.0f / 60);
-            tc_viewer_draws(&v, &c, &o);
-            demo.hidden += v.cam.hide_target;
-            if (v.ed_draw_count == 0) continue;
-            clip_frame(&v, &col, pivot_of(tc_viewer_player(&v)->position), &demo);
-        }
-        tc_viewer_free(&v);
-    }
     free(ai);
     clip_report(name, "walk (follow camera)", &walk);
-    clip_report(name, "demo 60 s", &demo);
     tc_collision_free(&col);
     tc_level_free(&level);
 }
@@ -866,8 +858,8 @@ int main(int argc, char **argv) {
         const char *levels[] = {"north", "sud0", "Land", "bar", "LeCanyon"};
         const char *clip_levels[] = {"bar", "sud0", "north", "Land", "cavedoc", "pyramide"};
         size_t k;
-        printf("the demo on levels (the line of sight, both faces):\n");
-        for (k = 0; k < sizeof(levels) / sizeof(levels[0]); k++) level_demo(argv[1], levels[k]);
+        printf("a walk on levels (the line of sight, both faces):\n");
+        for (k = 0; k < sizeof(levels) / sizeof(levels[0]); k++) level_sight(argv[1], levels[k]);
         printf("no shaking (2026-11-01: the user saw it jitter as Ed walked towards the camera):\n");
         level_jitter(argv[1], "bar");
         level_jitter(argv[1], "north");

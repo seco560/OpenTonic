@@ -29,8 +29,8 @@ typedef struct picker {
     int heading_w[PICKER_SECTIONS], heading_h[PICKER_SECTIONS];
     SDL_GPUTexture *unknown;  /* "?": the picture of an imported level */
     int unknown_w, unknown_h;
-    SDL_GPUTexture *intro_text, *demo_text, *controls_text;  /* the buttons' labels */
-    int intro_w, intro_h, demo_w, demo_h, controls_w, controls_h;
+    SDL_GPUTexture *intro_text, *replays_text, *controls_text;  /* the buttons' labels */
+    int intro_w, intro_h, replays_w, replays_h, controls_w, controls_h;
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* pixels */
     int hover, selected;      /* -1 = none */
@@ -43,10 +43,10 @@ typedef struct picker {
 void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, const char *se_folder,
                  const char *se_thumbnails, float scale);
 void picker_close(picker *p);
-/* Tile under the point (target pixels), PICKER_INTRO / PICKER_DEMO / PICKER_CONTROLS for the buttons, or -1. */
+/* Tile under the point (target pixels), PICKER_INTRO / PICKER_REPLAYS / PICKER_CONTROLS for the buttons, or -1. */
 #define PICKER_INTRO (-2)     /* the big "Play Intro Video" button at the top */
 #define PICKER_CONTROLS (-3)  /* "Controls (F1)", top right */
-#define PICKER_DEMO (-4)      /* "Demo", beside the intro's: Ed wanders around random main levels */
+#define PICKER_REPLAYS (-4)   /* "Replays", beside the intro's: the recordings (replays.h) */
 int picker_hit(picker *p, float x, float y);
 void picker_set_hover(picker *p, float x, float y);
 void picker_scroll(picker *p, float pixels);
@@ -54,5 +54,10 @@ void picker_scroll(picker *p, float pixels);
 void picker_move(picker *p, int dx, int dy);
 /* Draws into a cleared 2D pass. */
 void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass);
+/* The menus' flat button, and a label with a drop shadow (it reads on any colour); uv NULL: all of it. */
+void picker_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh, bool hot,
+                   float scale);
+void picker_label(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *label, SDL_FRect t, const SDL_FRect *uv,
+                  float scale, SDL_FColor color);
 
 #endif

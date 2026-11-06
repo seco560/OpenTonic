@@ -43,6 +43,11 @@ $(BUILD)/opentonic: $(OBJ) $(CORE_LIB) $(SDL_DEP)
 $(BUILD)/obj/%.o: src/%.c $(SHADER_H) $(SDL_DEP) | $(BUILD)/obj
 	$(CC) $(CFLAGS) -I$(CORE)/include -I$(BUILD)/shaders -isystem third_party $(SDL_CFLAGS) -DTONIC_REPO_DIR='"$(abspath ..)"' -c $< -o $@
 
+# The build a recording names (docs/RECORDING.md): always rebuilt, or it would outlive the commit it names.
+BUILD_ID := $(shell git -C .. describe --always --dirty 2>/dev/null)
+$(BUILD)/obj/record.o: CFLAGS += -DOPENTONIC_BUILD='"$(BUILD_ID)"'
+$(BUILD)/obj/record.o: FORCE
+
 # The core has its own Makefile; always ask it (it knows when it is up to date).
 $(CORE_LIB): FORCE
 	$(MAKE) -C $(CORE) lib CC="$(CC)"

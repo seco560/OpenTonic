@@ -202,34 +202,11 @@ RETAIL_SNOW = (0.0, 0.8)  # (grip, rebound), level.LevelData.floor_material
 MIN_GRIP = 0.001
 
 
-# The arches' portal surface: retail cycles GEN_ARCH01R..04R (5.4 ticks each, ttlv.TEXTURE_TIME_SCALE slows the
-# flipbook); the SE shows gen_arch01 still, though its Textures.cnt holds gen_arch01..04. Port choice: the SE arches play
-# them as retail does.
-ARCH_SURFACE = 'gen_arche\\gen_arch01.tga'
-ARCH_FRAMES = ('gen_arch01', 'gen_arch02', 'gen_arch03', 'gen_arch04')
-ARCH_FRAME_TICKS = 5.4
-
-
-def arch_frames(m):
-    """Give an SE material showing the arches' still surface the retail flipbook (ARCH_SURFACE)."""
-    from . import level as lvl
-    t = m.texture if m else None
-    if not t or m.frames or t.name.lower() != ARCH_SURFACE:
-        return
-    m.frames = [(lvl.Texture(t.name[:-len('gen_arch01.tga')] + f + '.tga', t.flags, t.width, t.height, t.flags_byte),
-                 ARCH_FRAME_TICKS) for f in ARCH_FRAMES]
-
-
 def level_data(level, levels_dir=LEVELS, skier=False):
     """LevelData for an SE level with its floors adjusted for the retail Ed (SNOW_GRIP, MIN_GRIP)."""
     from . import level as lvl, sna
 
     class SeLevelData(lvl.LevelData):
-        def material(self, game_mat):
-            m = super().material(game_mat)
-            arch_frames(m)
-            return m
-
         def floor_material(self, gm):
             f = super().floor_material(gm)
             if f is None:

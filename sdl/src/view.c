@@ -90,7 +90,8 @@ static void add_mesh(mesh_builder *b, const tc_mesh *m, view_mesh *out) {
     b->index_count += m->index_count;
 }
 
-bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, char *err, size_t err_size) {
+bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, tc_recorder *recorder, uint32_t seed,
+               char *err, size_t err_size) {
     SDL_zerop(v);
     v->g = g;
     if (!tv_level_load(&v->level, ttlv_path, err, err_size)) return false;
@@ -100,7 +101,7 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *ca
     char *ai_path = path_with_ext(ttlv_path, ".ttai");
     size_t ai_size = 0;
     void *ai = ai_path ? SDL_LoadFile(ai_path, &ai_size) : NULL;
-    tc_viewer_desc desc = {r, ai, ai_size, v->level.name, carry, (Uint32)SDL_GetTicksNS() | 1};
+    tc_viewer_desc desc = {r, ai, ai_size, v->level.name, carry, seed ? seed : (Uint32)SDL_GetTicksNS() | 1, recorder};
     tc_result vr = tc_viewer_init(&v->viewer, &desc);
     if (ai && v->viewer.ai_result != TC_OK) SDL_Log("%s: %s", ai_path, tc_result_string(v->viewer.ai_result));
     SDL_free(ai);

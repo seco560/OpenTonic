@@ -27,6 +27,8 @@
 
 4. **START WITH THIS** My headless scenarios are fragile. I had to fix castcheck several times today: teleports dropped Ed into holes, Super Ed timing, the level exit at the end of Transit's flig were the test, not the engine. Your playtests arethe real oracle, and right now they leave nothing reusable behind. If the frontends could record your input per tick, and the core could replay a recording headless, every playtest would become a regression test that follows real routes. I think that's the single best investment for "not having bugs forever
 
+   **Update 2026-11-06: built; docs/RECORDING.md says what it records, how to use it and what's unverified.** The open questions below are settled there, except Mac against Linux. The Demo and Ed's autopilot are gone (user, 2026-11-06): the level select has a Replays menu instead.
+
    **Update 2026-11-05: agreed as the next piece of work, ahead of shooting.** Why it comes first, what the Special Edition lighting session added, and what the design has to respect.
 
    *What it's for (user):* regression tests from real playthroughs; playing the user's own runs back in demo mode, in place of or next to the scripted wanderer; and material to learn from: how a person actually moves through a level, which the random demo can't show.

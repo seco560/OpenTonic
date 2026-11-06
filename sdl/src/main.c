@@ -7,6 +7,8 @@
 #include "intro.h"
 #include "music.h"
 #include "picker.h"
+#include "record.h"
+#include "replays.h"
 #include "sfx.h"
 #include "util.h"
 #include "view.h"
@@ -46,15 +48,19 @@ static const char *controls_text =
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level  -  V intro  -  D demo (any key ends it)\n"
+    "Level select:  arrow keys + Enter, or click  -  Ctrl+L from a level  -  V intro  -  R replays\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
+    "Recording:  always on  -  F9 or the touchpad marks this moment\n"
+    "Replays:  Enter plays, Delete deletes, Esc back  -  Pad: Cross plays, Square deletes, Circle back\n"
+    "Watching one:  P or Cross pauses  -  Esc or Start back to the list\n"
+    "Paused:  mouse, arrows, right stick and wheel move the camera round Ed, back where it was on resuming\n"
     "\n"
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
     "  R2:  fly faster  -  L2:  recentre the camera  -  L3 (click):  first person\n"
     "  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
-    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro, Square the demo  -  Intro:  Cross, Circle or Start skip\n"
+    "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro, Square the replays  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
 
@@ -68,9 +74,9 @@ typedef struct app {
     char *level_folder;          /* out/ttlv */
     char *data_dir;              /* out: audio/, Vignette/, icon/ next to ttlv/ */
     bool captured;               /* mouse-look capture (viewer convenience, not part of the original controls); on
-                                    from the start of a level (not the demo), Esc releases it, a click takes it again */
+                                    from the start of a level (not a playback), Esc releases it, a click takes it again */
     bool skip_motion;            /* the first motion after capturing: dropped (set_captured) */
-    bool cursor_hidden;          /* no pointer over the intro, its loading screen and the demo (update_cursor) */
+    bool cursor_hidden;          /* no pointer over the intro, its loading screen and a playback (update_cursor) */
     SDL_JoystickID pad;          /* the gamepad last used, 0 = none (every gamepad is opened as it connects) */
     bool pad_fast;               /* its right trigger past half way: TC_VA_FAST */
     bool pad_recenter;           /* its left trigger past half way: recentre the camera (on the press) */
@@ -96,13 +102,21 @@ typedef struct app {
     char *next_level;            /* its .ttlv, or NULL */
     char next_name[64];          /* its level name (for the vignette) */
     float next_time;             /* seconds into its loading screen */
-    /* The demo (the level select's Demo button, D, Square): random main levels, Ed wandering by himself
-     * (tc_viewer_set_demo), the next level every DEMO_SECONDS or through a red portal he walks into; a key, click or pad
-     * button ends it. */
-    bool demo;
-    float demo_time;             /* seconds on this level */
-    char *demo_path;             /* the demo's level now (its .ttlv path; both editions share level names) */
     char *current_folder;        /* the shown level's folder (retail out/ttlv or out/se/ttlv): portals stay in it */
+    /* The run being recorded (docs/RECORDING.md): from a level opened from a menu, through its portals, back to a menu;
+     * and playing one back: the recorded frames at their own pace, level after level, the game's inputs locked. Esc or
+     * Start go back to the Replays menu, as its end does; Ctrl+L to the level select. */
+    tc_recorder *recorder;
+    uint32_t marks;              /* F9, the touchpad: this run's */
+    bool replaying;
+    tc_replay replay;
+    void *replay_data;
+    uint32_t replay_segment;
+    float replay_clock;          /* seconds of real time the recording is behind */
+    bool replay_paused;          /* P, Cross: the frames wait, the camera turns round Ed (tc_replay_pause) */
+    /* The Replays menu (R, Square), over the level select. */
+    bool replays_on;
+    replays rp;
     char title_base[512];
     char title[1024];
     Uint64 last_title_ns;
@@ -118,6 +132,8 @@ static void update_title(app *a) {
     char aa[32], status[512], s[1024];
     if (a->g.msaa > 1) SDL_snprintf(aa, sizeof aa, ", AA %dx", a->g.msaa);
     else SDL_snprintf(aa, sizeof aa, ", AA off");
+    if (a->marks) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", %u marks", a->marks);
+    if (a->replaying) SDL_strlcat(aa, a->replay_paused ? ", playback, paused" : ", playback", sizeof aa);
     if (a->g.scale > 100) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", SS %s", a->g.scale >= 200 ? "2x" : "1.5x");
     tc_viewer_status(&v->viewer, aa, status, sizeof status);
     SDL_snprintf(s, sizeof s, "%s  \xc2\xb7  %s", a->title_base, status);
@@ -144,10 +160,10 @@ static void set_captured(app *a, bool on) {
     }
 }
 
-/* Every frame: the pointer hides over the intro, the loading screen after it and the demo, and shows again on the
+/* Every frame: the pointer hides over the intro, the loading screen after it and a playback, and shows again on the
  * level select and in play (where mouse-look capture hides it as before; relative mode keeps it hidden either way). */
 static void update_cursor(app *a) {
-    bool hide = a->intro || a->next_level || (a->demo && a->view);
+    bool hide = a->intro || a->next_level || (a->replaying && a->view);
     if (hide == a->cursor_hidden) return;
     a->cursor_hidden = hide;
     if (hide) SDL_HideCursor();
@@ -180,8 +196,25 @@ static void close_picker(app *a) {
     a->picker_open = false;
 }
 
+static void close_replays(app *a) {
+    if (!a->replays_on) return;
+    replays_close(&a->rp);
+    a->replays_on = false;
+}
+
+/* The run ends here: what follows from a menu is another. */
+static void end_recording(app *a) {
+    record_stop(a->recorder);
+    a->recorder = NULL;
+    a->marks = 0;
+}
+
+static void stop_playback(app *a, const char *why);
+
 static void show_picker(app *a) {
-    a->demo = false;
+    stop_playback(a, "the level select");
+    end_recording(a);
+    close_replays(a);
     sfx_stop_all();
     char *audio = audio_dir(a);
     if (audio) music_play("menu", audio);
@@ -219,11 +252,16 @@ static void show_picker(app *a) {
 
 /* false (with a message box) when the level can't be loaded; the current screen stays. carry: arriving through a
  * portal, or NULL. Mouse-look capture stays as it was, so a portal's level change keeps playing. */
-static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
+static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *carry, uint32_t seed) {
     view *v = SDL_calloc(1, sizeof *v);
     if (!v) return false;
     char err[512];
-    if (!view_load(v, &a->g, path, carry, err, sizeof err)) {
+    /* No carry: from a menu, a new run; a portal's level goes on in this one. A playback isn't a run: the file is the record. */
+    if (!carry && !a->replaying) {
+        end_recording(a);
+        a->recorder = record_start();
+    }
+    if (!view_load(v, &a->g, path, carry, a->replaying ? NULL : a->recorder, seed, err, sizeof err)) {
         char msg[1024];
         SDL_snprintf(msg, sizeof msg, "Could not load %s: %s", path, err);
         SDL_Log("%s", msg);
@@ -234,6 +272,7 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     }
     close_level(a);
     close_picker(a);
+    close_replays(a);
     a->view = v;
     SDL_free(a->current_folder);
     a->current_folder = path_dir(path);
@@ -249,15 +288,18 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     SDL_free(audio);
     const tc_view_stats *s = &v->viewer.stats;
     uint32_t textures = v->texture_count - v->missing_textures;
-    SDL_snprintf(a->title_base, sizeof a->title_base, "Open Tonic \xe2\x80\x94 %s%s", a->demo ? "Demo \xe2\x80\x94 " : "",
+    SDL_snprintf(a->title_base, sizeof a->title_base, "Open Tonic \xe2\x80\x94 %s%s", a->replaying ? "Playback \xe2\x80\x94 " : "",
                  v->level.name);
-    if (a->demo) tc_viewer_set_demo(&v->viewer, true, SDL_rand_bits() | 1u);  /* through a red portal too */
-    else if (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS) set_captured(a, true);  /* mouse look from the start */
+    if (!a->replaying && (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS)) set_captured(a, true);  /* mouse look from the start */
     a->title[0] = 0;
     update_title(a);  /* play mode is on from the start when the level has Ed */
     SDL_Log("Loaded %s: %u meshes, %u persos (%u parts), %u triangles, %u textures, %u missing", v->level.name, s->meshes,
             s->persos, s->parts, s->triangles, textures, v->missing_textures);
     return true;
+}
+
+static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
+    return open_level_seeded(a, path, carry, 0);
 }
 
 /* A red portal's level change (after its loading screen): the .ttlv of that name (any case) in the levels folder,
@@ -287,62 +329,106 @@ static void open_portal_level(app *a, const tc_viewer_carry *pending) {
     SDL_free(folder);
 }
 
-#define DEMO_SECONDS 60.0f
+/* ---- playing a recording back ---- */
 
-/* Whether `file` in `folder` is a demo level: a main one (no cutscene, no imported model) with Ed's AI (.ttai). */
-static bool demo_level(const app *a, const char *folder, const char *file) {
-    char *name = path_stem(file), *out = path_dir(a->level_folder);
-    char *imported = out ? path_join(out, "Imported") : NULL, *dir = imported && name ? path_join(imported, name) : NULL;
-    char ai[700];
-    bool ok = name && !tc_level_is_cutscene(name) && !(dir && path_is_dir(dir));
-    if (ok) {
-        SDL_snprintf(ai, sizeof ai, "%s/%s.ttai", folder, name);
-        ok = path_is_file(ai);
-    }
-    SDL_free(dir);
-    SDL_free(imported);
-    SDL_free(out);
-    SDL_free(name);
-    return ok;
+static void stop_playback(app *a, const char *why) {
+    if (!a->replaying) return;
+    SDL_Log("Playback ended: %s", why);
+    tc_replay_close(&a->replay);
+    SDL_free(a->replay_data);
+    a->replay_data = NULL;
+    a->replaying = a->replay_paused = false;
+    update_title(a);
 }
 
-/* Another random main level (not the one shown), in the demo, from both editions (the Special Edition's in
- * out/se/ttlv: those with a borrowed Ed); the level select when there is none or it won't load. Both editions use the
- * same level names, so the one shown is told apart by its path. */
-static void next_demo_level(app *a) {
-    char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
-    const char *folders[2] = {a->level_folder, se_levels};
-    char *paths[256], *path = NULL;
-    int count = 0;
-    for (int k = 0; k < 2; k++) {
-        int n = 0;
-        char **files = folders[k] ? SDL_GlobDirectory(folders[k], "*.ttlv", SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
-        for (int i = 0; files && i < n && count < 256; i++)
-            if (demo_level(a, folders[k], files[i])) paths[count++] = path_join(folders[k], files[i]);
-        SDL_free(files);
-    }
-    for (int round = 0; round < 2 && !path && count; round++) {  /* the second round only when the current one is all there is */
-        int pick, m = 0, choices[256];
-        for (int i = 0; i < count; i++)
-            if (paths[i] && (round || !a->demo_path || SDL_strcmp(paths[i], a->demo_path) != 0)) choices[m++] = i;
-        if (m == 0) continue;
-        pick = choices[(int)SDL_rand(m)];
-        path = paths[pick];
-        paths[pick] = NULL;
-    }
-    for (int i = 0; i < count; i++) SDL_free(paths[i]);
-    SDL_free(se);
-    SDL_free(se_levels);
-    a->demo_time = 0;
-    SDL_free(a->demo_path);
-    a->demo_path = path;
-    if (!path || !open_level(a, path, NULL)) show_picker(a);
+/* The level of segment i, as the recording's run opened it; false (with the playback over) when it isn't here. */
+static void show_replays(app *a) {
+    if (a->replays_on) return;
+    char *folder = record_folder();
+    replays_open(&a->rp, &a->g, SDL_GetWindowDisplayScale(a->window), folder);
+    SDL_free(folder);
+    a->replays_on = true;
+    set_title(a, "Open Tonic \xe2\x80\x94 Replays");
 }
 
-static void start_demo(app *a) {
-    a->demo = true;
-    a->help = false;
-    next_demo_level(a);
+/* A playback's end, or Esc / Start in one: back to the list. */
+static void back_to_replays(app *a, const char *why) {
+    stop_playback(a, why);
+    show_picker(a);
+    if (!a->quit) show_replays(a);
+}
+
+static bool playback_level(app *a, uint32_t i) {
+    const tc_replay_segment *s = &a->replay.segments[i];
+    char *base = s->edition ? path_join(a->data_dir, "se") : NULL;
+    char *folder = s->edition ? (base ? path_join(base, "ttlv") : NULL) : SDL_strdup(a->level_folder);
+    char pattern[80];
+    int n = 0;
+    SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", s->level);
+    char **levels = folder ? SDL_GlobDirectory(folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    char *path = levels && n > 0 ? path_join(folder, levels[0]) : NULL;
+    bool ok = path && open_level_seeded(a, path, s->has_carry ? &s->carry : NULL, s->seed);
+    SDL_free(levels);
+    SDL_free(path);
+    SDL_free(folder);
+    SDL_free(base);
+    if (!ok) {
+        char msg[160];
+        SDL_snprintf(msg, sizeof msg, "This recording goes to %s, which is not here.", s->level);
+        stop_playback(a, msg);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Replay", msg, a->window);
+        return false;
+    }
+    a->replay_segment = i;
+    tc_replay_begin(&a->replay, i, &a->view->viewer, false);
+    return true;
+}
+
+static bool start_playback(app *a, const char *file) {
+    size_t size = 0;
+    tc_result e = TC_ERR_TRUNCATED;
+    a->replay_data = file ? SDL_LoadFile(file, &size) : NULL;
+    if (a->replay_data) e = tc_replay_open(&a->replay, a->replay_data, size);
+    if (e != TC_OK || !a->replay.segment_count) {
+        SDL_Log("Can't play %s: %s", file ? file : "(no recording)", a->replay_data ? tc_result_string(e) : "no such file");
+        if (e == TC_OK) tc_replay_close(&a->replay);
+        SDL_free(a->replay_data);
+        a->replay_data = NULL;
+        return false;
+    }
+    SDL_Log("Playing back %s: %u levels", file, a->replay.segment_count);
+    a->replaying = true;
+    a->replay_clock = 0;
+    return playback_level(a, 0);
+}
+
+static void toggle_playback_pause(app *a) {
+    a->replay_paused = !a->replay_paused;
+    tc_replay_pause(&a->replay, a->replay_paused);
+    a->replay_clock = 0;
+    set_captured(a, a->replay_paused && (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS));  /* the mouse looks */
+    update_title(a);
+}
+
+/* The frames real time has reached; a frontend's frame may hold none or several of the recording's. */
+static void playback_tick(app *a, float dt) {
+    if (a->replay_paused) {
+        tc_viewer_paused_look(&a->view->viewer, dt);
+        return;
+    }
+    a->replay_clock += dt;
+    while (a->replaying && a->replay_clock > 0) {
+        float step = 0;
+        const uint16_t *sounds;
+        if (!tc_replay_step(&a->replay, &step)) {
+            if (a->replay_segment + 1 >= a->replay.segment_count) back_to_replays(a, "the end of the recording");
+            else if (!playback_level(a, a->replay_segment + 1)) back_to_replays(a, "its next level isn't here");
+            return;
+        }
+        uint32_t n = tc_viewer_sounds(&a->view->viewer, &sounds);
+        if (n > 0) sfx_play(sounds, n);
+        a->replay_clock -= step;
+    }
 }
 
 /* The intro movie, from the level select screen (V): out/video/intro.mpg next to the ttlv folder. */
@@ -509,11 +595,82 @@ static void picker_key(app *a, const SDL_KeyboardEvent *k) {
     case SDL_SCANCODE_V:  /* V: the intro movie */
         if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) play_intro(a);
         break;
-    case SDL_SCANCODE_D:  /* D: the demo */
-        if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) start_demo(a);
+    case SDL_SCANCODE_R:  /* R: the replays */
+        if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) show_replays(a);
         break;
     default: break;
     }
+}
+
+/* ---- the Replays menu ---- */
+
+static void play_replay(app *a, int i) {
+    if (i < 0 || i >= a->rp.count || !a->rp.entries[i].playable) return;
+    char *path = SDL_strdup(a->rp.entries[i].path);  /* opening a level closes the menu */
+    if (!start_playback(a, path)) SDL_Log("Stayed on the Replays menu");
+    SDL_free(path);
+}
+
+static void delete_replay(app *a, int i) {
+    if (replays_delete(&a->rp, i)) return;
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Replays", "That recording could not be deleted.", a->window);
+}
+
+/* Enter or Cross on the selected row: its question's yes, else play. */
+static void replays_accept(app *a) {
+    replays *r = &a->rp;
+    if (r->confirm >= 0) delete_replay(a, r->confirm);
+    else play_replay(a, r->selected);
+}
+
+/* Esc or Circle: the question, else the menu. */
+static void replays_cancel(app *a) {
+    if (a->rp.confirm >= 0) a->rp.confirm = -1;
+    else {
+        close_replays(a);
+        set_title(a, "Open Tonic");
+    }
+}
+
+static void replays_key(app *a, const SDL_KeyboardEvent *k) {
+    replays *r = &a->rp;
+    switch (k->scancode) {
+    case SDL_SCANCODE_UP: replays_move(r, -1); break;
+    case SDL_SCANCODE_DOWN: replays_move(r, 1); break;
+    case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
+        if (!k->repeat) replays_accept(a);
+        break;
+    case SDL_SCANCODE_DELETE: case SDL_SCANCODE_BACKSPACE:
+        if (!k->repeat) replays_ask(r, r->selected);
+        break;
+    case SDL_SCANCODE_ESCAPE:
+        if (!k->repeat) replays_cancel(a);
+        break;
+    default: break;
+    }
+}
+
+static void replays_click(app *a, float x, float y) {
+    replays *r = &a->rp;
+    replays_hit h = replays_at(r, x, y);
+    switch (h.action) {
+    case REPLAYS_BACK: r->confirm = -1; replays_cancel(a); break;
+    case REPLAYS_ROW: r->selected = h.row; r->confirm = -1; break;
+    case REPLAYS_PLAY: play_replay(a, h.row); break;
+    case REPLAYS_DELETE: replays_ask(r, h.row); break;
+    case REPLAYS_YES: delete_replay(a, h.row); break;
+    case REPLAYS_KEEP: r->confirm = -1; break;
+    case REPLAYS_NOTHING: break;
+    }
+}
+
+/* "Look at this moment": kept in the recording with the frame and the state (docs/RECORDING.md). */
+static void mark_moment(app *a) {
+    uint32_t n = a->recorder && !a->replaying ? tc_recorder_mark(a->recorder, NULL) : 0;
+    if (!n) return;
+    a->marks = n;
+    SDL_Log("Mark %u", n);
+    update_title(a);
 }
 
 static void key_down(app *a, const SDL_KeyboardEvent *k) {
@@ -545,6 +702,10 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
         }
         return;
     }
+    if (sc == SDL_SCANCODE_F9) {  /* F9: mark this moment in the recording */
+        if (!k->repeat) mark_moment(a);
+        return;
+    }
     if (sc == SDL_SCANCODE_F3) {  /* F3: supersampling off / 1.5x / 2x */
         if (!k->repeat) {
             gpu_set_scale(&a->g, gpu_next_scale(&a->g));
@@ -567,8 +728,14 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
         return;
     }
     if (ctrl) return;
-    if (a->view && a->demo) { if (!k->repeat) show_picker(a); return; }  /* any other key ends the demo */
-    if (a->view) level_key(a, k);
+    if (a->view) {
+        if (!a->replaying) level_key(a, k);
+        else if (a->replay_paused) {  /* the look keys and no others: the rest would change the run */
+            int action = input_action(sc);
+            if (action >= 0) tc_viewer_set_action(&a->view->viewer, (tc_view_action)action, true);
+        }
+    }
+    else if (a->replays_on) replays_key(a, k);
     else if (a->picker_open) picker_key(a, k);
 }
 
@@ -604,7 +771,8 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         return;
     }
     if (a->view) {
-        if (button == SDL_GAMEPAD_BUTTON_START || a->demo) { show_picker(a); return; }  /* level select (Ctrl+L); ends the demo */
+        if (button == SDL_GAMEPAD_BUTTON_TOUCHPAD) { mark_moment(a); return; }  /* F9 */
+        if (button == SDL_GAMEPAD_BUTTON_START) { show_picker(a); return; }  /* level select (Ctrl+L) */
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {  /* L3: first person (0) */
             tc_viewer_toggle_first_person(&a->view->viewer);
             update_title(a);
@@ -618,6 +786,17 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         pad_actions(a, input_pad_actions(button), true);
         return;
     }
+    if (a->replays_on) {
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: replays_move(&a->rp, -1); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: replays_move(&a->rp, 1); break;
+        case SDL_GAMEPAD_BUTTON_SOUTH: replays_accept(a); break;
+        case SDL_GAMEPAD_BUTTON_WEST: replays_ask(&a->rp, a->rp.selected); break;  /* Square: delete */
+        case SDL_GAMEPAD_BUTTON_EAST: replays_cancel(a); break;
+        default: break;
+        }
+        return;
+    }
     if (!a->picker_open) return;
     switch (button) {
     case SDL_GAMEPAD_BUTTON_DPAD_LEFT: picker_move(&a->picker, -1, 0); break;
@@ -626,7 +805,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: picker_move(&a->picker, 0, 1); break;
     case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_START: open_selected(a); break;
     case SDL_GAMEPAD_BUTTON_NORTH: play_intro(a); break;  /* Triangle: the intro (V) */
-    case SDL_GAMEPAD_BUTTON_WEST: start_demo(a); break;   /* Square: the demo (D) */
+    case SDL_GAMEPAD_BUTTON_WEST: show_replays(a); break;  /* Square: the replays (R) */
     default: break;
     }
 }
@@ -635,12 +814,18 @@ static float pad_axis(SDL_Gamepad *g, SDL_GamepadAxis axis) {
     return SDL_max(-1.0f, (float)SDL_GetGamepadAxis(g, axis) / 32767.0f);
 }
 
+/* The left stick's step on the menu showing. */
+static void nav_move(app *a, int dx, int dy) {
+    if (!a->replays_on) picker_move(&a->picker, dx, dy);
+    else if (dy) replays_move(&a->rp, dy);
+}
+
 /* Every frame, from the last-used gamepad: in a level the sticks (the core's dead zones), R2 as Fast and the D-pad's
  * up / down as the mouse wheel (camera distance in play, fly speed in free-fly); in the level select the left stick
  * moves the selection, repeating while held, and the right one scrolls. */
 static void pad_update(app *a, float dt) {
     SDL_Gamepad *g = a->pad ? SDL_GetGamepadFromID(a->pad) : NULL;
-    if (!g || a->intro || a->next_level) return;
+    if (!g || a->intro || a->next_level || (a->replaying && !a->replay_paused)) return;  /* a playback's inputs are the recording's */
     float lx = pad_axis(g, SDL_GAMEPAD_AXIS_LEFTX), ly = -pad_axis(g, SDL_GAMEPAD_AXIS_LEFTY);  /* SDL: y down */
     float rx = pad_axis(g, SDL_GAMEPAD_AXIS_RIGHTX), ry = -pad_axis(g, SDL_GAMEPAD_AXIS_RIGHTY);
     if (a->view) {
@@ -654,30 +839,63 @@ static void pad_update(app *a, float dt) {
             tc_viewer_set_action(v, TC_VA_FAST, fast);
         }
         bool recenter = !a->help && pad_axis(g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 0.5f;  /* L2: recentre the camera */
-        if (recenter && !a->pad_recenter && !a->demo) { tc_viewer_recenter_camera(v); update_title(a); }
+        if (recenter && !a->pad_recenter && !a->replaying) { tc_viewer_recenter_camera(v); update_title(a); }
         a->pad_recenter = recenter;
         int wheel = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_UP) - SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
         if (wheel && !a->help) tc_viewer_wheel(v, (float)wheel * 10 * dt);  /* 10 notches a second */
-    } else if (a->picker_open && !a->help) {
+    } else if ((a->picker_open || a->replays_on) && !a->help) {
         int dx = SDL_fabsf(lx) > 0.5f && SDL_fabsf(lx) >= SDL_fabsf(ly) ? (lx > 0 ? 1 : -1) : 0;
         int dy = SDL_fabsf(ly) > 0.5f && SDL_fabsf(ly) > SDL_fabsf(lx) ? (ly > 0 ? -1 : 1) : 0;  /* stick up: row up */
         if (dx != a->nav_dx || dy != a->nav_dy) {
             a->nav_dx = dx;
             a->nav_dy = dy;
             a->nav_repeat = 0.4f;
-            if (dx || dy) picker_move(&a->picker, dx, dy);
+            if (dx || dy) nav_move(a, dx, dy);
         } else if ((dx || dy) && (a->nav_repeat -= dt) <= 0) {
             a->nav_repeat = 0.12f;
-            picker_move(&a->picker, dx, dy);
+            nav_move(a, dx, dy);
         }
-        if (SDL_fabsf(ry) > 0.2f) picker_scroll(&a->picker, -ry * 1500 * dt * a->picker.scale);
+        if (SDL_fabsf(ry) > 0.2f) {
+            if (a->replays_on) replays_scroll(&a->rp, -ry * 1500 * dt * a->rp.scale);
+            else picker_scroll(&a->picker, -ry * 1500 * dt * a->picker.scale);
+        }
     }
 }
 
 /* Window coordinates -> swapchain pixels. */
 static float to_pixels(const app *a, float v) { return v * SDL_GetWindowPixelDensity(a->window); }
 
+/* In a playback the game's inputs are the recording's: Esc and Start go back to the list, P and Cross pause; paused, the look
+ * inputs get through, otherwise clicks and pad buttons do nothing, and of the keys only the app's own (key_down:
+ * never level_key). True: the event is used up. */
+static bool playback_event(app *a, const SDL_Event *e) {
+    if (e->type == SDL_EVENT_KEY_DOWN) {
+        SDL_Scancode sc = e->key.scancode;
+        if (sc == SDL_SCANCODE_P && !(e->key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) {
+            if (!e->key.repeat) toggle_playback_pause(a);
+            return true;
+        }
+        if (sc != SDL_SCANCODE_ESCAPE || a->help) return false;
+        if (!e->key.repeat) back_to_replays(a, "back to the list");
+        return true;
+    }
+    if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e->type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+        SDL_GamepadButton button = (SDL_GamepadButton)e->gbutton.button;
+        bool down = e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+        if (down && button == SDL_GAMEPAD_BUTTON_START) back_to_replays(a, "back to the list");
+        else if (down && button == SDL_GAMEPAD_BUTTON_SOUTH) toggle_playback_pause(a);
+        else if (a->replay_paused) pad_actions(a, input_pad_actions(button), down);
+        return true;
+    }
+    if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        if (a->replay_paused && e->button.button == SDL_BUTTON_LEFT) set_captured(a, true);
+        return true;
+    }
+    return e->type == SDL_EVENT_KEY_UP && !a->replay_paused;
+}
+
 static void handle(app *a, const SDL_Event *e) {
+    if (a->replaying && playback_event(a, e)) return;
     switch (e->type) {
     case SDL_EVENT_QUIT: a->quit = true; break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -715,18 +933,18 @@ static void handle(app *a, const SDL_Event *e) {
         }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        if (e->button.button == SDL_BUTTON_MIDDLE && a->view && !a->demo && !a->help && !a->intro && !a->next_level) {
+        if (e->button.button == SDL_BUTTON_MIDDLE && a->view && !a->help && !a->intro && !a->next_level) {
             tc_viewer_recenter_camera(&a->view->viewer);  /* the middle button: recentre the camera (X) */
             update_title(a);
             break;
         }
         if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro || a->next_level) break;
-        if (a->view && a->demo) show_picker(a);  /* a click ends the demo */
-        else if (a->view) set_captured(a, true);
+        if (a->view) set_captured(a, true);
+        else if (a->replays_on) replays_click(a, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
         else if (a->picker_open) {
             int i = picker_hit(&a->picker, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
             if (i == PICKER_INTRO) play_intro(a);
-            else if (i == PICKER_DEMO) start_demo(a);
+            else if (i == PICKER_REPLAYS) show_replays(a);
             else if (i == PICKER_CONTROLS) a->help = true;
             else if (i >= 0) {
                 char *path = SDL_strdup(a->picker.entries[i].path);  /* opening closes the picker */
@@ -739,6 +957,8 @@ static void handle(app *a, const SDL_Event *e) {
         if (a->view && a->captured) {
             if (a->skip_motion) { a->skip_motion = false; break; }
             tc_viewer_mouse_look(&a->view->viewer, e->motion.xrel, e->motion.yrel);
+        } else if (a->replays_on) {
+            replays_set_hover(&a->rp, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y));
         } else if (a->picker_open && !a->intro && !a->next_level) {
             picker_set_hover(&a->picker, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y));
         }
@@ -746,7 +966,9 @@ static void handle(app *a, const SDL_Event *e) {
     case SDL_EVENT_MOUSE_WHEEL: {
         float y = e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e->wheel.y : e->wheel.y;
         if (a->view) {
-            tc_viewer_wheel(&a->view->viewer, y);  /* camera zoom in play mode, fly speed in free-fly */
+            if (!a->replaying || a->replay_paused) tc_viewer_wheel(&a->view->viewer, y);  /* camera zoom in play mode, fly speed in free-fly */
+        } else if (a->replays_on) {
+            replays_scroll(&a->rp, -y * 80 * a->rp.scale);
         } else if (a->picker_open && !a->intro && !a->next_level) {
             picker_scroll(&a->picker, -y * 80 * a->picker.scale);
         }
@@ -925,7 +1147,8 @@ static void draw(app *a) {
     } else {
         SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, true, (SDL_FColor){0.08f, 0.09f, 0.14f, 1});
         if (pass) {
-            if (a->picker_open) picker_draw(&a->picker, &f, pass);
+            if (a->replays_on) replays_draw(&a->rp, &f, pass);
+            else if (a->picker_open) picker_draw(&a->picker, &f, pass);
             if (a->help) draw_help(a, &f, pass);
             SDL_EndGPURenderPass(pass);
         }
@@ -1001,6 +1224,21 @@ int main(int argc, char **argv) {
     gpu_set_scale(&a.g, scale_setting());
     look_settings(&a);
 
+    /* --replay [file]: plays a recording back (the newest without one); the rest as usual. */
+    bool want_replay = false;
+    char *replay_file = NULL;
+    for (int i = 1; i < argc; i++)
+        if (!SDL_strcmp(argv[i], "--replay")) {
+            int used = 1;
+            want_replay = true;
+            if (i + 1 < argc && SDL_strstr(argv[i + 1], "." TC_REC_EXTENSION)) {
+                replay_file = SDL_strdup(argv[i + 1]);
+                used = 2;
+            }
+            for (int k = i; k + used <= argc; k++) argv[k] = argv[k + used];
+            argc -= used;
+            break;
+        }
     const char *level_file = NULL;
     if (argc > 1 && path_is_file(argv[1])) {
         level_file = argv[1];
@@ -1028,7 +1266,10 @@ int main(int argc, char **argv) {
     SDL_Log("Controls: WASD move, arrow keys look, R/F up/down, Shift fast; click to capture mouse-look, Esc to release; "
             "wheel = fly speed / play-mode zoom; , / . field of view; P pause animation; F2 antialiasing; F3 supersampling; starts as Ed when the level has "
             "him, Tab toggles free-fly (Space jump); Ctrl+L level select; F1 controls; F11 fullscreen");
-    if (!level_file || !open_level(&a, level_file, NULL)) show_picker(&a);
+    if (want_replay && !replay_file) replay_file = record_latest();
+    if (want_replay && start_playback(&a, replay_file)) {}
+    else if (!level_file || !open_level(&a, level_file, NULL)) show_picker(&a);
+    SDL_free(replay_file);
 
     Uint64 last = SDL_GetTicksNS();
     while (!a.quit) {
@@ -1040,14 +1281,16 @@ int main(int argc, char **argv) {
         last = now;
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
         if (a.next_level) a.next_time += dt;
-        if (a.demo && a.view && (a.demo_time += dt) >= DEMO_SECONDS) next_demo_level(&a);
         update_cursor(&a);
         pad_update(&a, dt);
-        if (a.view) {
+        if (a.view && a.replaying) playback_tick(&a, dt);
+        else if (a.view) {
             tc_viewer_update(&a.view->viewer, dt);
             const uint16_t *sounds;
             uint32_t n = tc_viewer_sounds(&a.view->viewer, &sounds);
             if (n > 0) sfx_play(sounds, n);
+        }
+        if (a.view) {
             /* Refresh the AI's behaviour/state and the light changes in the title. */
             if (tc_viewer_status_live(&a.view->viewer) && now - a.last_title_ns > 250000000) {
                 a.last_title_ns = now;
@@ -1056,7 +1299,7 @@ int main(int argc, char **argv) {
         }
         draw(&a);
         /* After a red portal's loading screen (drawn at least once at full progress): the next level. */
-        const tc_viewer_carry *pending = a.view ? tc_viewer_pending_level(&a.view->viewer) : NULL;
+        const tc_viewer_carry *pending = a.view && !a.replaying ? tc_viewer_pending_level(&a.view->viewer) : NULL;
         if (pending) open_portal_level(&a, pending);
         /* The same after the intro's loading screen: Totalski. */
         if (a.next_level && a.next_time >= TC_VIEWER_LOADING_SECONDS) finish_loading(&a);
@@ -1065,7 +1308,10 @@ int main(int argc, char **argv) {
     music_stop();
     sfx_quit();
     intro_close(a.intro);
+    stop_playback(&a, "quit");
+    close_replays(&a);
     close_level(&a);
+    end_recording(&a);
     close_picker(&a);
     SDL_WaitForGPUIdle(a.g.device);
     loading_free(&a);  /* quitting on the loading screen after the intro (no level holds it then) */
@@ -1076,7 +1322,6 @@ int main(int argc, char **argv) {
     SDL_DestroyWindow(a.window);
     SDL_free(a.level_folder);
     SDL_free(a.data_dir);
-    SDL_free(a.demo_path);
     SDL_free(a.current_folder);
     SDL_Quit();
     return 0;

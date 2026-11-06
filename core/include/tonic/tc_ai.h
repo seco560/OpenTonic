@@ -188,6 +188,7 @@ typedef struct tc_ai_water_points {
 
 typedef struct tc_ai_model {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
+    uint64_t data_hash;          /* the file's content without the stamp and paths (recordings: tc_rec.h) */
     uint32_t node_count;
     tc_ai_node *nodes;
     uint32_t script_count;

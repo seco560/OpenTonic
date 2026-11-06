@@ -29,9 +29,11 @@ typedef struct view {
 } view;
 
 /* Loads the .ttlv (and the .ttai next to it) and uploads it. carry: arriving through a portal (a copy of the last
- * level's tc_viewer_pending_level), or NULL. On failure err says why and the view is empty (view_free is still
- * safe). */
-bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, char *err, size_t err_size);
+ * level's tc_viewer_pending_level), or NULL. recorder: records this level (NULL: not); seed: the viewer's random stream
+ * (a recording's when playing one back; 0: a fresh one). On failure err says why and the view is empty (view_free is
+ * still safe). */
+bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, tc_recorder *recorder, uint32_t seed,
+               char *err, size_t err_size);
 void view_free(view *v);
 
 /* Clears and draws the level into the frame (its own 3D pass). */

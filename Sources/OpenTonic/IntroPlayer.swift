@@ -71,10 +71,10 @@ final class IntroView: NSView {
     }
 }
 
-/// The level select screen's root view: V plays the intro, D starts the demo.
+/// The level select screen's root view: V plays the intro, R opens the replays.
 final class PickerContainer: NSView {
     var onIntro: (() -> Void)?
-    var onDemo: (() -> Void)?
+    var onReplays: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -82,7 +82,7 @@ final class PickerContainer: NSView {
         let plain = event.modifierFlags.intersection([.command, .control, .option]).isEmpty
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "v" where plain: onIntro?()
-        case "d" where plain: onDemo?()
+        case "r" where plain: onReplays?()
         default: super.keyDown(with: event)
         }
     }

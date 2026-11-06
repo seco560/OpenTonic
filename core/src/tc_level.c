@@ -695,6 +695,7 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     level->ed.static_perso = -1;
     if ((e = chunks_open(&cs, data, size, "TTLV")) != TC_OK) return e;
     chunk_stamp(&cs, level->converter, sizeof level->converter);
+    level->data_hash = chunks_hash(&cs);
 
     chunk_need(&cs, "LEVL", r);
     level->light_set_count = rd_u32(r);

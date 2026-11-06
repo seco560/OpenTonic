@@ -42,7 +42,7 @@ final class ControlsView: NSView {
     /// A US layout, as compact as the bindings allow. Gaps are keys with an empty label and width.
     private static let rows: [[Key]] = [
         [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4"), k("", 0.5),
-         k("F5"), k("F6"), k("F7"), k("F8"), k("", 0.5), k("F9"), k("F10"), k("F11"), k("F12")],
+         k("F5"), k("F6"), k("F7"), k("F8"), k("", 0.5), k("F9", 1, .app, "mark"), k("F10"), k("F11"), k("F12")],
         [k("`"), k("1", 1, .view, "⌥ light 1"), k("2", 1, .view, "⌥ light 2"), k("3", 1, .view, "⌥ light 3"), k("4", 1, .view),
          k("5", 1, .camera, "close-up"), k("6", 1, .view), k("7", 1, .view), k("8", 1, .view), k("9", 1, .view),
          k("0", 1, .camera, "1st pers"),
@@ -69,7 +69,9 @@ final class ControlsView: NSView {
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
         "L: the original's lighting (the default: its formula, the lights and fog of Ed's sector) or the port's old one, to compare.",
         "* V (or Play Intro Video) plays the intro movie from the level select screen; when it ends, or is skipped, the ski slope starts.",
-        "D (or Demo) on the level select screen: Ed wanders around random main levels by himself, a new one every minute; any key or click ends it.",
+        "R (or Replays) on the level select screen: your recorded sessions, to play or delete. Watching one, P pauses and Esc goes back.",
+        "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
+        "F9 or the touchpad marks a moment in the recording, which is always on.",
     ]
 
     override init(frame: NSRect) {

@@ -102,8 +102,10 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
 
 One mesh/part per material, LOD 0 only, Z up. Samples: the A3D is evaluated (keyframe lerp, see level.Anim) at
 k = round(60 / fps) samples per animation frame. UVs are converted to top-left origin (v' = 1 - v; engine v=0 is the
-image's bottom row). The engine subtracts its scroll offset (inferred: only then does sud0's rainbow pool flow over its
-edge and down the falls). Engine time unit = 1/60 s (scroll speed and texture frame durations are per 1/60 s).
+image's bottom row). Scroll: surface() emits the engine's offset subtracted, inferred from sud0's rainbow pool flowing
+over its edge and down the falls. Both engines in fact add it (GliDX6vr.dll's triangle path, the SE's rasterizer), so
+the SE's reader negates its speeds to come out right and retail's four scrolling surfaces stay as they were (docs/SE.md
+"Moving textures"). Engine time unit = 1/60 s (scroll speed and texture frame durations are per 1/60 s).
 """
 import math
 import os

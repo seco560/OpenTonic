@@ -146,6 +146,8 @@ typedef struct tc_viewer_carry {
     uint8_t closeup;          /* the play camera's close-up (5) kept across the change */
 } tc_viewer_carry;
 
+typedef struct tc_recorder tc_recorder; /* tc_rec.h */
+
 typedef struct tc_viewer_desc {
     const tc_level *level;    /* loaded by the frontend; must outlive the viewer */
     const void *ai_data;      /* the .ttai next to the .ttlv (written by `tools.ttre level-ttai`), or NULL */
@@ -153,6 +155,7 @@ typedef struct tc_viewer_desc {
     const char *level_name;   /* "bar": the AI's per-level settings (copied) */
     const tc_viewer_carry *carry; /* arriving through a portal (tc_viewer_pending_level of the last level), or NULL */
     uint32_t seed;            /* random effects of the screen transitions */
+    tc_recorder *recorder;    /* records this viewer as a segment of its session (tc_rec.h), or NULL; outlives it */
 } tc_viewer_desc;
 
 typedef enum tc_viewer_phase {
@@ -171,6 +174,12 @@ typedef struct tc_viewer {
 
     /* Settings. */
     bool paused;              /* animation clock and Ed's AI stopped */
+    /* Paused while playing (tc_viewer_toggle_pause, tc_replay_pause): the camera turns round Ed, who stands, and comes back
+     * on resuming. */
+    bool inspecting;
+    tc_camera inspect_camera; /* what comes back */
+    tc_cam inspect_cam;
+    float inspect_orbit;
     float animation_speed;    /* viewer-only playback rate for comparing against the original; 1 = engine speed */
     float animation_time;     /* seconds */
     /* Baked lighting (light_set_count sets per vertex: 3 in sud0 and Land). light_set is shown, blending towards
@@ -212,27 +221,6 @@ typedef struct tc_viewer {
     float turn_speed;         /* radians per second (look keys, the right stick at full push), x look_sensitivity */
     float look_sensitivity;   /* x the mouse's 0.003 rad per point and turn_speed; 1 = default (tc_viewer_set_look) */
     bool invert_x, invert_y;  /* look input reversed: x turns the other way, y looks down for up */
-
-    /* Demo (tc_viewer_set_demo): Ed's autopilot. */
-    bool demo;
-    int demo_act, demo_stage; /* what he is doing (tc_viewer.c DEMO_*) and how far into it */
-    float demo_act_time, demo_act_length, demo_mark; /* seconds into it, how long it lasts, a time within it */
-    float demo_aim;           /* the way he heads (world; camera yaw convention: along (sin, cos)) */
-    float demo_turn;          /* the aim's drift, radians per second */
-    float demo_next_turn;     /* seconds to the next drift change */
-    float demo_pace;          /* stick push: 1 runs, ~0.45 walks */
-    float demo_side;          /* side-step: -1 left, 1 right */
-    float demo_probe;         /* seconds to the next look ahead for walls and drops */
-    float demo_check;         /* seconds to the next stuck check */
-    tc_vec3 demo_last;        /* Ed at the last stuck check */
-    float demo_facing;        /* Ed's facing, smoothed: what the camera stays behind (camera yaw convention) */
-    float demo_glance, demo_glance_time; /* the camera's look aside from behind him (radians), and its seconds left */
-    float demo_leap_wait;     /* seconds before he goes for another drop */
-    float demo_air;           /* seconds off the ground */
-    int demo_flap;            /* this time in the air: 0 undecided, 1 will try to fly, 2 tried or won't */
-    float demo_flap_after;    /* ... once this long in the air */
-    float demo_jump_free;     /* seconds since Jump was let go (the AI samples buttons at its 30 Hz tick) */
-    uint32_t demo_placed;     /* player.placed last frame: a respawn or teleport starts over */
 
     /* Play mode: the default when the level has Ed, collision and an idle clip. */
     tc_viewer_play *play;     /* NULL: free-fly only */
@@ -307,6 +295,8 @@ typedef struct tc_viewer {
     uint32_t piece_first, piece_count, piece_cap;
     float *blended_depth;     /* this frame's blended draws: view depth of their bounds' farthest corner */
     uint32_t blended_depth_cap;
+
+    tc_recorder *rec;             /* tc_viewer_desc.recorder */
 } tc_viewer;
 
 /* Sets up the start camera (the middle of the level), the play session (with Ed's AI when ai_data loads) and
@@ -373,7 +363,10 @@ uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events);
 
 /* Settings (keys in the Swift and SDL frontends in brackets). */
 void tc_viewer_step_speed(tc_viewer *v, int dir);   /* [ ]: 1/4, 1/3, 1/2, 2/3, 3/4, 1, 1.5, 2 */
-void tc_viewer_toggle_pause(tc_viewer *v);          /* P */
+/* P. Playing, the look inputs and the wheel still move the camera round Ed; resuming puts it back. */
+void tc_viewer_toggle_pause(tc_viewer *v);
+/* That camera, for a frontend that isn't calling tc_viewer_update (a paused playback, tc_replay_pause). */
+void tc_viewer_paused_look(tc_viewer *v, float dt);
 void tc_viewer_set_light_set(tc_viewer *v, uint32_t n);  /* 1-9: that set, held; ignored past light_set_count */
 void tc_viewer_follow_light(tc_viewer *v);   /* 0: the level's light persos set the light again (if it has any) */
 void tc_viewer_step_gamma(tc_viewer *v, bool up);   /* - =: x1.1, 0.5-2.5 */
@@ -409,16 +402,6 @@ void tc_viewer_toggle_invert_y(tc_viewer *v);         /* Y */
 void tc_viewer_toggle_play(tc_viewer *v);
 /* I: Ed's own AI <-> the simple controller (levels with a .ttai). */
 void tc_viewer_toggle_ai(tc_viewer *v);
-/* Demo (the level select's Demo button): Ed wanders around by himself, played with the stick and buttons as a player
- * would. He heads a way that drifts, turns off before walls, and picks what to do next at random: run, walk, stop and
- * look around, hop (now and then a double jump: a short flight), pogo, a stick swing, a shot, a side-step. Drops of 4
- * units or more he sees ahead he may run at and jump off; falling a long way he often tries to fly (Jump in the air),
- * then glides with a gentle bank. Stuck (under 0.5 units in 0.75 s): the most open way and a hop. The camera stays
- * behind him (smoothed after his way of moving), glancing aside now and then. Enters play mode; whatever the user
- * presses is the frontend's to handle (it ends the demo: off, back to the level select). */
-void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed); /* seed: its randomness (0: keep the viewer's) */
-bool tc_viewer_demo(const tc_viewer *v);
-
 /* The director's shot (tc_viewer.director) is on: the camera is the level's, Ed waits. */
 bool tc_viewer_directed(const tc_viewer *v);
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */
@@ -447,7 +430,7 @@ bool tc_viewer_crosshair(const tc_viewer *v, float aspect, tc_view_overlay *out)
 
 /* The adjustable settings both title bars show (UTF-8):
  * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]
- * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person][, scripted camera]" (look / invert: when not the
+ * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person][, scripted camera][, paused]" (look / invert: when not the
  * default; light: the set shown, or the change running; held = a number key's pick in a level with light persos;
  * sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with his AI, the
  * camera's normal distance). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".

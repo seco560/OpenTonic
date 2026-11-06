@@ -117,6 +117,9 @@ import TonicCore
     var onPendingLevel: (tc_viewer_carry) -> Void = { _ in }
     /// Gamepad buttons for the app (level select, controls, play / free-fly), after the frame that read them.
     var onGamepad: (Gamepad.Command) -> Void = { _ in }
+    /// Playing a recording back: it runs the frames instead of tc_viewer_update; onPlaybackEnd at its segment's end.
+    var playback: Playback?
+    var onPlaybackEnd: () -> Void = {}
     private lazy var gamepad = Gamepad()  // made on first use, in draw (main actor)
     private var pendingSent = false
     private(set) var missingTextures = 0
@@ -404,15 +407,23 @@ import TonicCore
         let now = CACurrentMediaTime()
         let dt = Float(min(now - (lastTime ?? now), 0.1))
         lastTime = now
-        let commands = gamepad.poll(v, dt: dt)
+        let commands = gamepad.poll(v, dt: dt, watching: playback != nil && playback?.paused != true)
         if !commands.isEmpty {
             let send = onGamepad
             DispatchQueue.main.async { commands.forEach(send) }  // the level select replaces this renderer: not from inside draw
         }
-        tc_viewer_update(v, dt)
-        var sounds: UnsafePointer<UInt16>?
-        let n = Int(tc_viewer_sounds(v, &sounds))
-        if n > 0, let sounds { Sfx.shared.play(Array(UnsafeBufferPointer(start: sounds, count: n))) }
+        if let playback {
+            if !playback.advance(dt, v) {
+                self.playback = nil
+                let end = onPlaybackEnd
+                DispatchQueue.main.async { end() }  // opening a level replaces this renderer: not from inside draw
+            }
+        } else {
+            tc_viewer_update(v, dt)
+            var sounds: UnsafePointer<UInt16>?
+            let n = Int(tc_viewer_sounds(v, &sounds))
+            if n > 0, let sounds { Sfx.shared.play(Array(UnsafeBufferPointer(start: sounds, count: n))) }
+        }
 
         let size = view.drawableSize
         var f = tc_view_frame()
@@ -506,7 +517,7 @@ import TonicCore
         }
         cmd.present(drawable)
         cmd.commit()
-        if !pendingSent, let carry = viewer?.pendingLevel {
+        if !pendingSent, playback == nil, let carry = viewer?.pendingLevel {
             pendingSent = true
             let send = onPendingLevel
             DispatchQueue.main.async { send(carry) }  // opening a level replaces this renderer: not from inside draw

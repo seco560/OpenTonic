@@ -182,7 +182,6 @@ typedef struct tc_cam_target {
     float distance;       /* the zoom: the distance behind him before the front stretch (presets scale with it) */
     int situation;        /* TC_CAM_SIT_* from Ed's scripts; 0 normal, -1 unknown (no AI): the normal follow */
     int shot;             /* TC_CAM_SHOT_* from the level's scripts (the camera's dsg39); 0 / -1: the walking camera */
-    bool manual;          /* the direction is someone else's this frame (the demo's own camera): position and collision only */
     tc_collision *world;  /* NULL: no collision. Its solid row is honoured as set (the caller's choice) */
     tc_cam_sight_fn sight;   /* NULL: none. The eye stays this side of what it reports too */
     void *sight_user;

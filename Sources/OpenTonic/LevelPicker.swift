@@ -15,12 +15,12 @@ final class LevelPicker: NSView {
     private let entries: [Entry]
     private let onPick: (URL) -> Void
     /// The two big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original) and
-    /// "Demo" (Ed wanders around random main levels by himself).
+    /// "Replays" (the recordings: ReplaysScreen).
     var onIntro: (() -> Void)?
-    var onDemo: (() -> Void)?
+    var onReplays: (() -> Void)?
     private let introButton = PickerButton(title: "▶  Play Intro Video", colors: (NSColor(calibratedRed: 0.95, green: 0.45, blue: 0.2, alpha: 1),
                                                                          NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.45, alpha: 1)))
-    private let demoButton = PickerButton(title: "✦  Demo", colors: (NSColor(calibratedRed: 0.2, green: 0.75, blue: 0.85, alpha: 1),
+    private let replaysButton = PickerButton(title: "✦  Replays", colors: (NSColor(calibratedRed: 0.2, green: 0.75, blue: 0.85, alpha: 1),
                                                                NSColor(calibratedRed: 0.25, green: 0.3, blue: 0.85, alpha: 1)))
     private let introHeight: CGFloat = 84
     private var tiles: [NSButton] = []
@@ -88,11 +88,11 @@ final class LevelPicker: NSView {
         introButton.target = self
         introButton.action = #selector(intro)
         introButton.toolTip = "The game's intro movie (V)"
-        demoButton.target = self
-        demoButton.action = #selector(demo)
-        demoButton.toolTip = "Ed wanders around random levels by himself; any key or click ends it (D)"
+        replaysButton.target = self
+        replaysButton.action = #selector(replays)
+        replaysButton.toolTip = "Your recorded sessions: play or delete them (R)"
         addSubview(introButton)
-        addSubview(demoButton)
+        addSubview(replaysButton)
         for (k, (heading, rule)) in zip(headings, rules).enumerated() where entries.contains(where: { $0.section == k }) {
             heading.font = .systemFont(ofSize: 17, weight: .bold)
             heading.textColor = NSColor(white: 0.92, alpha: 1)
@@ -129,7 +129,7 @@ final class LevelPicker: NSView {
         let bw: CGFloat = 280, bh: CGFloat = 54, gap: CGFloat = 24
         let bx = (width - 2 * bw - gap) / 2, by = pad + (introHeight - bh) / 2 - 8
         introButton.frame = NSRect(x: bx, y: by, width: bw, height: bh)
-        demoButton.frame = NSRect(x: bx + bw + gap, y: by, width: bw, height: bh)
+        replaysButton.frame = NSRect(x: bx + bw + gap, y: by, width: bw, height: bh)
         // Each section starts on a new row, under its heading; empty sections take no space.
         var y = pad + introHeight
         for (k, (heading, rule)) in zip(headings, rules).enumerated() {
@@ -150,7 +150,7 @@ final class LevelPicker: NSView {
 
     @objc private func pick(_ sender: NSButton) { onPick(entries[sender.tag].url) }
     @objc private func intro() { onIntro?() }
-    @objc private func demo() { onDemo?() }
+    @objc private func replays() { onReplays?() }
 }
 
 /// A big pill-shaped button of the level select: a two-colour gradient, white bold title, lighter under the mouse,

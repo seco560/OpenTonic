@@ -628,3 +628,5 @@ teleport), viewcheck (bar keeps sud0's close-up through the portal).
 3. Candidates seen on the way (not done): hold Ed's control frame while the stick stays pushed, so the rope and the
    swing don't curve his path (his controls are camera-relative: Ed's scripts read the camera's angle, FUNC 2); raise
    the eye over his head when a wall pulls it in close, instead of hiding him.
+
+**2026-11-06:** Ed's autopilot is removed, and with it the `manual` camera input it used. The demo measurements above are history: camcheck's line of sight and clipping reports now come from its scripted walk (the real follow camera; the autopilot had its own direction), and the walk and jitter results did not change.

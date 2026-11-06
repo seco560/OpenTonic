@@ -8,6 +8,12 @@
 #include "tonic/tc_ed_ai.h"
 #include "tonic/tc_cast.h"
 #include "tonic/tc_obstacle.h"
+#include "tc_rec_hooks.h"
+
+/* A settings door, for the recording: only the public functions, so one that calls another isn't written twice. */
+#define REC_DOOR(door, a, x) do { if (v->rec) tc_rec_door(v->rec, door, a, x, 0); } while (0)
+
+static void toggle_play(tc_viewer *v);
 
 /* ---- play session ---- */
 
@@ -970,16 +976,19 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->camera.far_z = fmaxf(2000, size * 3);
     v->fly_speed = fmaxf(2, size / 40);
     /* Start as Ed when the level has him (Tab still switches to free-fly). */
-    if (v->play) tc_viewer_toggle_play(v);
+    if (v->play) toggle_play(v);
     if (desc->carry && desc->carry->vertical_fov > 0) v->camera.vertical_fov = desc->carry->vertical_fov;
     if (desc->carry && desc->carry->orbit_distance > 0) v->orbit_distance = desc->carry->orbit_distance;
     if (desc->carry) v->cam.closeup = desc->carry->closeup != 0;
     if (desc->carry && v->play) arrive(v, desc->carry);
+    v->rec = desc->recorder;
+    if (v->rec) tc_rec_begin(v->rec, v, desc);
     return TC_OK;
 }
 
 void tc_viewer_free(tc_viewer *v) {
     uint32_t i;
+    if (v->rec) tc_rec_end(v->rec, v);
     play_destroy(v->play);
     light_destroy(v->light);
     tc_free((void *)v->effects);
@@ -1057,7 +1066,7 @@ static float axis(const tc_viewer *v, tc_view_action pos, tc_view_action neg) {
 
 /* Arrow keys, the right stick and the mouse turn the camera (both modes). */
 /* The look keys, the right stick and the mouse turn the view, x look_sensitivity, reversed per axis as set. In play mode
- * they turn the play camera round Ed and raise or lower it (tc_cam_look); not during the demo (its own camera). */
+ * they turn the play camera round Ed and raise or lower it (tc_cam_look). */
 static void look(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
     float yaw_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_RIGHT, TC_VA_LOOK_LEFT) + v->look_x));
@@ -1069,7 +1078,7 @@ static void look(tc_viewer *v, float dt) {
     if (v->invert_x) yaw = -yaw;
     if (v->invert_y) pitch = -pitch;
     if (v->playing && v->play) {
-        if (!v->demo) tc_cam_look(&v->cam, c, yaw, -pitch); /* looking up: the camera lower, looking up at him */
+        tc_cam_look(&v->cam, c, yaw, -pitch); /* looking up: the camera lower, looking up at him */
         return;
     }
     c->yaw += yaw;
@@ -1090,6 +1099,21 @@ static void fly(tc_viewer *v, float dt) {
     if (len > 0) {
         float speed = v->fly_speed * (held(v, TC_VA_FAST) ? 4.0f : 1.0f) * dt;
         c->position = tc_v3_add(c->position, tc_v3_scale(move, speed / fmaxf(len, 1)));
+    }
+}
+
+/* Into or out of a pause's camera. */
+static void set_inspecting(tc_viewer *v, bool on) {
+    if (on == v->inspecting) return;
+    v->inspecting = on;
+    if (on) {
+        v->inspect_camera = v->camera;
+        v->inspect_cam = v->cam;
+        v->inspect_orbit = v->orbit_distance;
+    } else {
+        v->camera = v->inspect_camera;
+        v->cam = v->inspect_cam;
+        v->orbit_distance = v->inspect_orbit;
     }
 }
 
@@ -1120,7 +1144,7 @@ static uint32_t ai_inputs(const tc_viewer *v) {
 
 /* ---- play mode ---- */
 
-void tc_viewer_toggle_play(tc_viewer *v) {
+static void toggle_play(tc_viewer *v) {
     tc_viewer_play *p = v->play;
     if (!p) return;
     v->playing = !v->playing;
@@ -1140,312 +1164,20 @@ void tc_viewer_toggle_play(tc_viewer *v) {
     tc_cam_reset(&v->cam);  /* following him, placed at once */
 }
 
+void tc_viewer_toggle_play(tc_viewer *v) {
+    REC_DOOR(TC_RD_TOGGLE_PLAY, 0, 0);
+    set_inspecting(v, false);
+    toggle_play(v);
+}
+
 void tc_viewer_toggle_ai(tc_viewer *v) {
+    REC_DOOR(TC_RD_TOGGLE_AI, 0, 0);
     if (!tc_viewer_has_ai(v)) return;
     v->play->use_ai = !v->play->use_ai;
     v->play->have_pose = false; /* the tick blending starts over from where Ed is */
     v->play->tick_time = 0;
     v->ed_state = -1;
     v->ed_phase = 0;
-}
-
-/* ---- demo ---- */
-
-/* What the autopilot is doing (tc_viewer.demo_act). */
-enum { DEMO_RUN, DEMO_WALK, DEMO_PAUSE, DEMO_HOP, DEMO_LEAP, DEMO_POGO, DEMO_SWING, DEMO_SHOOT, DEMO_SIDESTEP };
-#define DEMO_BUTTONS ((1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT) | (1u << TC_VA_LATERAL))
-#define DEMO_DROP 4.0f /* the least drop below Ed he goes for (units) */
-
-static float demo_random(tc_viewer *v) {
-    v->rng = v->rng * 1103515245u + 12345u;
-    return (float)((v->rng >> 8) & 0xFFFFu) / 65536.0f;
-}
-
-static float demo_between(tc_viewer *v, float lo, float hi) { return lo + (hi - lo) * demo_random(v); }
-
-static float wrap_angle(float a) {
-    a = fmodf(a + TC_PI, 2 * TC_PI);
-    return (a < 0 ? a + 2 * TC_PI : a) - TC_PI;
-}
-
-static tc_vec3 demo_dir(float a) { return tc_v3(sinf(a), cosf(a), 0); }
-
-/* Free way from Ed's chest along a, up to max. */
-static float demo_free(tc_viewer *v, float a, float max) {
-    tc_viewer_play *p = v->play;
-    float d = raycast(p, tc_v3_add(p->player.position, tc_v3(0, 0, 1.0f)), demo_dir(a), max);
-    return d < 0 ? max : d;
-}
-
-/* How far the ground at dist along a lies below Ed's feet; -1 when the way there is blocked or there is no ground
- * within 80 (the level's edge: not worth jumping into). */
-static float demo_drop(tc_viewer *v, float a, float dist) {
-    tc_viewer_play *p = v->play;
-    tc_vec3 chest = tc_v3_add(p->player.position, tc_v3(0, 0, 1.2f));
-    float d;
-    if (raycast(p, chest, demo_dir(a), dist) >= 0) return -1;
-    d = raycast(p, tc_v3_add(chest, tc_v3_scale(demo_dir(a), dist)), tc_v3(0, 0, -1), 80);
-    return d < 0 ? -1 : d - 1.2f;
-}
-
-/* A drop of DEMO_DROP or more round Ed, up to 12 units away where the way is clear: its depth and way (a), nearer and
- * deeper ones first; -1 when there is none. */
-static float demo_find_drop(tc_viewer *v, float *a) {
-    float best = -1, best_score = -1e9f;
-    int k, n;
-    for (k = 0; k < 12; k++) {
-        float b = v->demo_aim + (float)k * (TC_PI / 6), free = demo_free(v, b, 12.5f);
-        for (n = 1; n <= 3 && free > 4.0f * (float)n; n++) {
-            float d = demo_drop(v, b, 4.0f * (float)n);
-            if (d >= DEMO_DROP && fminf(d, 20) - 0.8f * 4.0f * (float)n > best_score) {
-                best = d, best_score = fminf(d, 20) - 0.8f * 4.0f * (float)n, *a = b;
-                break; /* the nearest edge that way */
-            }
-        }
-    }
-    return best;
-}
-
-/* The most open way round Ed, small turns from the aim preferred (either side first at random). */
-static float demo_open_way(tc_viewer *v) {
-    float best = v->demo_aim + TC_PI, best_score = -1e9f, sign = demo_random(v) < 0.5f ? -1.0f : 1.0f;
-    int k;
-    for (k = 1; k <= 7; k++) {
-        float off = sign * (k & 1 ? 1.0f : -1.0f) * (float)((k + 1) / 2) * (TC_PI / 4);
-        float score = demo_free(v, v->demo_aim + off, 10) - fabsf(off) * 0.8f;
-        if (score > best_score) best_score = score, best = v->demo_aim + off;
-    }
-    return wrap_angle(best);
-}
-
-static void demo_start(tc_viewer *v, int act) {
-    v->demo_act = act;
-    v->demo_stage = 0;
-    v->demo_act_time = 0;
-    v->demo_mark = 0;
-    v->demo_pace = 1;
-    switch (act) {
-    case DEMO_RUN: v->demo_act_length = demo_between(v, 3, 8); break;
-    case DEMO_WALK: v->demo_act_length = demo_between(v, 2, 4); v->demo_pace = 0.45f; break;
-    case DEMO_PAUSE:
-        v->demo_act_length = demo_between(v, 1.2f, 2.8f);
-        v->demo_pace = 0;
-        v->demo_glance = (demo_random(v) < 0.5f ? -1 : 1) * demo_between(v, 0.5f, 1.3f);
-        v->demo_glance_time = v->demo_act_length;
-        break;
-    case DEMO_HOP:
-        v->demo_act_length = 1.5f;
-        v->demo_mark = demo_between(v, 0.15f, 0.4f); /* the jump held this long: higher */
-        v->demo_flap = demo_random(v) < 0.45f ? 1 : 2; /* often a double jump: a try at flying */
-        v->demo_flap_after = 0.35f;
-        break;
-    case DEMO_LEAP: v->demo_act_length = 4; break; /* to reach the edge; then as long as he is in the air */
-    case DEMO_POGO: v->demo_act_length = demo_between(v, 4, 7); v->demo_flap = 2; break;
-    case DEMO_SWING: case DEMO_SHOOT: v->demo_act_length = 0.9f; break;
-    case DEMO_SIDESTEP:
-        v->demo_act_length = demo_between(v, 0.8f, 1.4f);
-        v->demo_side = demo_random(v) < 0.5f ? -1 : 1;
-        break;
-    default: break;
-    }
-}
-
-/* What next: a drop in sight first, now and then; else a random act (fewer on skis, in the water or without his AI). */
-static void demo_pick(tc_viewer *v) {
-    static const struct { int act, weight; } acts[] = {
-        {DEMO_RUN, 30}, {DEMO_WALK, 8}, {DEMO_PAUSE, 8}, {DEMO_HOP, 16}, {DEMO_POGO, 12}, {DEMO_SWING, 8},
-        {DEMO_SHOOT, 6}, {DEMO_SIDESTEP, 6},
-    };
-    tc_viewer_play *p = v->play;
-    uint32_t card = p->has_driver ? p->driver.card_type : 0;
-    bool plain = !p->has_driver || card == 1 || card == 2; /* simple controller, swimming, skiing */
-    float r, total = 0, best, best_a = 0;
-    size_t i;
-    if (!p->player.grounded) { demo_start(v, DEMO_RUN); return; } /* in the air: carry on */
-    if (!plain && v->demo_leap_wait <= 0) {
-        best = demo_find_drop(v, &best_a);
-        if (best >= DEMO_DROP && demo_random(v) < 0.75f) {
-            v->demo_aim = wrap_angle(best_a);
-            demo_start(v, DEMO_LEAP);
-            v->demo_flap = demo_random(v) < (best >= 6 ? 0.85f : 0.4f) ? 1 : 2; /* high: he tries to fly */
-            v->demo_flap_after = 0.45f;
-            return;
-        }
-    }
-    if (plain) { demo_start(v, demo_random(v) < 0.2f ? DEMO_HOP : demo_random(v) < 0.15f ? DEMO_WALK : DEMO_RUN); return; }
-    for (i = 0; i < sizeof(acts) / sizeof(acts[0]); i++) total += (float)acts[i].weight;
-    r = demo_random(v) * total;
-    for (i = 0; i < sizeof(acts) / sizeof(acts[0]) - 1 && r >= (float)acts[i].weight; i++) r -= (float)acts[i].weight;
-    demo_start(v, acts[i].act);
-    if (acts[i].act == DEMO_RUN && demo_random(v) < 0.15f) { /* a look aside on the way */
-        v->demo_glance = (demo_random(v) < 0.5f ? -1 : 1) * demo_between(v, 0.4f, 0.9f);
-        v->demo_glance_time = demo_between(v, 1.5f, 2.5f);
-    }
-}
-
-void tc_viewer_set_demo(tc_viewer *v, bool on, uint32_t seed) {
-    v->demo = on && v->play != NULL;
-    if (seed) v->rng = seed;
-    v->move_x = v->move_y = v->look_x = v->look_y = 0;
-    v->held &= ~DEMO_BUTTONS;
-    tc_cam_reset(&v->cam); /* its own camera while on; following Ed after it */
-    if (!v->demo) return;
-    if (!v->playing) tc_viewer_toggle_play(v);
-    v->demo_placed = v->play->player.placed - 1; /* the first step starts it */
-}
-
-bool tc_viewer_demo(const tc_viewer *v) { return v->demo; }
-
-/* One frame of the autopilot (tc_viewer_set_demo): the stick and buttons as a player would, and the camera behind Ed. */
-static void demo_step(tc_viewer *v, float dt) {
-    tc_viewer_play *p = v->play;
-    tc_player *pl = &p->player;
-    uint32_t card = p->has_driver ? p->driver.card_type : 0, buttons = 0;
-    bool ground = pl->grounded, flying = card == 5, footing = ground || card == 1, wander; /* footing: swimming too */
-    float fwd = 0, side = 0, rel, face, pitch, t, k;
-    if (pl->placed != v->demo_placed) { /* started, respawned or moved: start over from where he faces */
-        v->demo_placed = pl->placed;
-        v->demo_aim = v->demo_facing = v->camera.yaw = wrap_angle(TC_PI - pl->heading);
-        v->demo_turn = 0;
-        v->demo_next_turn = 2;
-        v->demo_probe = v->demo_check = 0.75f;
-        v->demo_last = pl->position;
-        v->demo_glance_time = 0;
-        v->demo_leap_wait = 3;
-        v->demo_air = 0;
-        v->demo_flap = 0;
-        v->demo_jump_free = 1;
-        demo_start(v, DEMO_RUN);
-        v->demo_act_length = 2;
-    }
-    v->demo_act_time += dt;
-    t = v->demo_act_time;
-    v->demo_leap_wait -= dt;
-    v->demo_glance_time -= dt;
-    if (!ground) v->demo_air += dt;
-    else { /* on the ground: a new fall decides again, unless this act decided already */
-        v->demo_air = 0;
-        if (v->demo_act != DEMO_HOP && v->demo_act != DEMO_LEAP && v->demo_act != DEMO_POGO) v->demo_flap = 0;
-    }
-    if ((v->demo_next_turn -= dt) <= 0) { /* the aim's drift: straight on about as often as a curve */
-        v->demo_next_turn = demo_between(v, 2, 5);
-        v->demo_turn = demo_random(v) < 0.4f ? 0 : demo_between(v, -0.5f, 0.5f);
-    }
-
-    wander = v->demo_act == DEMO_RUN || v->demo_act == DEMO_WALK || v->demo_act == DEMO_POGO;
-    switch (v->demo_act) {
-    case DEMO_RUN: case DEMO_WALK:
-        v->demo_aim += v->demo_turn * dt;
-        fwd = v->demo_pace;
-        break;
-    case DEMO_PAUSE: break;
-    case DEMO_HOP:
-        fwd = 1;
-        if (t < v->demo_mark) buttons |= 1u << TC_VA_JUMP;
-        if (t > 0.5f && ground) t = v->demo_act_time = v->demo_act_length; /* landed */
-        break;
-    case DEMO_LEAP:
-        fwd = 1;
-        if (v->demo_stage == 0) { /* running at the drop: jump at its edge (or off it, running) */
-            float drop = demo_drop(v, v->demo_aim, 1.0f);
-            if (!ground) v->demo_stage = 2;
-            else if (drop < 0 || drop > 2) v->demo_stage = 1, v->demo_mark = t;
-        }
-        if (v->demo_stage == 1) {
-            if (t - v->demo_mark < 0.3f) buttons |= 1u << TC_VA_JUMP;
-            if (!ground) v->demo_stage = 2;
-            else if (t - v->demo_mark > 1) v->demo_act_length = 0; /* the jump didn't leave the ground */
-        }
-        if (v->demo_stage == 2) {
-            v->demo_act_length = t + 1; /* as long as he is in the air */
-            if (ground) v->demo_act_length = 0, v->demo_leap_wait = demo_between(v, 5, 12);
-            else if (t > 25) v->demo_act_length = 0;
-        }
-        break;
-    case DEMO_POGO: /* jump, Action in the air (B89 -> B23: on the pogo, B92), bounce on forward; Action again gets off
-                     * (B92's ButtonJustPressed(action) -> B27) */
-        if (t < 0.3f) buttons |= 1u << TC_VA_JUMP;
-        if (t > 0.55f && t < 0.85f) buttons |= 1u << TC_VA_ACTION;
-        if (t > 1.2f) { v->demo_aim += v->demo_turn * dt; fwd = 0.8f; }
-        if (t > v->demo_act_length - 0.5f && t < v->demo_act_length - 0.2f) buttons |= 1u << TC_VA_ACTION;
-        break;
-    case DEMO_SWING: case DEMO_SHOOT:
-        fwd = 0.7f;
-        if (t > 0.1f && t < 0.3f) buttons |= 1u << (v->demo_act == DEMO_SWING ? TC_VA_ACTION : TC_VA_SHOOT);
-        break;
-    case DEMO_SIDESTEP:
-        buttons |= 1u << TC_VA_LATERAL;
-        side = 0.9f * v->demo_side;
-        break;
-    default: break;
-    }
-
-    if (wander && footing && (v->demo_probe -= dt) <= 0) { /* look ahead: a drop to go for, or a wall to turn off before */
-        float drop = demo_drop(v, v->demo_aim, 2.5f), a = v->demo_aim;
-        bool leaps = v->demo_act != DEMO_POGO && v->demo_leap_wait <= 0 && p->has_driver && card == 0;
-        v->demo_probe = 0.3f;
-        if (leaps && drop < DEMO_DROP && demo_random(v) < 0.3f) drop = demo_find_drop(v, &a); /* now and then all round */
-        if (leaps && drop >= DEMO_DROP && demo_random(v) < 0.6f) {
-            v->demo_aim = wrap_angle(a);
-            demo_start(v, DEMO_LEAP);
-            v->demo_flap = demo_random(v) < (drop >= 6 ? 0.85f : 0.4f) ? 1 : 2;
-            v->demo_flap_after = 0.45f;
-        } else if (demo_free(v, v->demo_aim, 3) < 2.5f || (drop >= DEMO_DROP && demo_random(v) < 0.7f)) {
-            v->demo_aim = demo_open_way(v);
-        }
-    }
-    if ((v->demo_check -= dt) <= 0) { /* stuck against something: the most open way, and a hop */
-        float dx = pl->position.x - v->demo_last.x, dy = pl->position.y - v->demo_last.y;
-        if ((fwd > 0 || v->demo_act == DEMO_SIDESTEP) && footing && dx * dx + dy * dy < 0.25f && t > 0.75f) {
-            v->demo_aim = demo_open_way(v);
-            if (v->demo_act != DEMO_POGO) { /* on the pogo only the turn: getting off takes its Action press */
-                demo_start(v, DEMO_HOP);
-                v->demo_flap = 2;
-            }
-        }
-        v->demo_check = 0.75f;
-        v->demo_last = pl->position;
-    }
-    /* Falling a long way: he often tries to fly (Jump in the air: B89 -> B26), decided once per fall. */
-    if (!ground && !flying && card != 1 && card != 2 && p->has_driver) {
-        if (v->demo_flap == 0 && v->demo_air > 0.6f && pl->velocity.z < -5)
-            v->demo_flap = demo_random(v) < 0.75f ? 1 : 2, v->demo_flap_after = v->demo_air;
-        if (v->demo_flap == 1 && v->demo_air >= v->demo_flap_after && !(buttons & (1u << TC_VA_JUMP))
-            && v->demo_jump_free >= 0.1f) { /* a fresh press: let go for a few of the AI's ticks first */
-            v->demo_flap = 3; /* pressed: held for a moment below */
-            v->demo_mark = v->demo_air;
-        }
-    }
-    if (v->demo_flap == 3) {
-        if (v->demo_air - v->demo_mark < 0.3f && !ground) buttons |= 1u << TC_VA_JUMP;
-        else v->demo_flap = 2;
-    }
-    if (flying) { /* the glide: the stick left alone trims it; a gentle bank with the drift */
-        fwd = 0;
-        side = fmaxf(-0.6f, fminf(0.6f, v->demo_turn * 1.5f));
-        v->demo_aim = v->demo_facing;
-    }
-    if (v->demo_act_time >= v->demo_act_length) demo_pick(v);
-    v->demo_aim = wrap_angle(v->demo_aim);
-
-    /* The camera behind him: after the way he moves (where he faces when about still, or side-stepping), smoothed;
-     * a little higher over drops and in flight. Not the look stick: it turns faster than a player's would need to. */
-    face = TC_PI - pl->heading;
-    if (v->demo_act != DEMO_SIDESTEP && pl->velocity.x * pl->velocity.x + pl->velocity.y * pl->velocity.y > 4)
-        face = atan2f(pl->velocity.x, pl->velocity.y);
-    v->demo_facing = wrap_angle(v->demo_facing + wrap_angle(face - v->demo_facing) * (1 - expf(-dt / 0.25f)));
-    k = 1 - expf(-dt / (flying ? 0.35f : 0.7f)); /* a banking glide turns steadily: keep up closer */
-    v->camera.yaw += wrap_angle(v->demo_facing + (v->demo_glance_time > 0 ? v->demo_glance : 0) - v->camera.yaw) * k;
-    pitch = flying || v->demo_act == DEMO_LEAP ? -0.5f : v->demo_act == DEMO_PAUSE ? -0.2f : -0.3f;
-    v->camera.pitch += (pitch - v->camera.pitch) * (1 - expf(-dt / 0.8f));
-
-    /* The stick is camera-relative: towards the aim from where the camera looks. */
-    rel = wrap_angle(v->demo_aim - v->camera.yaw);
-    v->move_x = flying ? side : side + fwd * sinf(rel);
-    v->move_y = flying ? 0 : fwd * cosf(rel);
-    v->look_x = v->look_y = 0;
-    v->held = (v->held & ~DEMO_BUTTONS) | buttons;
-    v->demo_jump_free = buttons & (1u << TC_VA_JUMP) ? 0 : v->demo_jump_free + dt;
 }
 
 bool tc_viewer_can_play(const tc_viewer *v) { return v->play != NULL; }
@@ -1778,7 +1510,7 @@ static bool update_director(tc_viewer *v, bool fresh) {
         v->director_serial = g->cam_serial;
         v->director_released = false;
     }
-    want = g->cam_mode == 6 && g->cam_target != 0 && !v->director_released && !v->demo &&
+    want = g->cam_mode == 6 && g->cam_target != 0 && !v->director_released &&
            tc_cast_position(&p->cast, g->cam_target, &target);
     if (want && v->director && fresh) {
         want = false;
@@ -1807,6 +1539,42 @@ static bool update_director(tc_viewer *v, bool fresh) {
 
 bool tc_viewer_directed(const tc_viewer *v) { return v->director; }
 
+static void update_camera(tc_viewer *v, float dt, bool fresh) {
+    tc_viewer_play *p = v->play;
+    /* The play camera (tc_cam.h): round Ed as drawn, turned by the player; against every surface of the level (no sector
+     * row: the camera must not see through anything). */
+    {
+        tc_cam_target t;
+        const uint8_t *solid = p->world.solid;
+        t.position = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
+        t.behind = TC_PI - p->player.heading; /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
+        if (p->use_ai && p->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
+                                       * the last tick's: the ski follow holds within 0.05 rad of it and stepped at 30 Hz
+                                       * with it */
+            t.behind -= remainderf(atan2f(p->pose_draw.m[1], p->pose_draw.m[0]) - atan2f(p->pose_cur.m[1], p->pose_cur.m[0]),
+                                   2 * TC_PI); /* behind = pi - heading: a heading change counts negative */
+        t.speed = v->inspecting ? 0 : tc_player_horizontal_speed(&p->player); /* paused he stands, whatever he was doing */
+        t.velocity = v->inspecting ? tc_v3(0, 0, 0) : p->player.velocity;
+        t.distance = v->orbit_distance;
+        t.situation = tc_viewer_camera_situation(v);
+        /* riding on a sliding stage (the skier is the player there: the cast's main alias; Ed's own slides on the walking
+         * levels use the same card and keep the walking camera, his scripts setting the shot to 0): tc_viewer_camera_shot */
+        if (p->use_ai && p->has_driver && p->driver.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
+        t.shot = tc_viewer_camera_shot(v);
+        t.world = &p->world;
+        t.sight = camera_sight; /* the persos as drawn last frame */
+        t.sight_user = v;
+        p->world.solid = NULL;
+        if (!update_director(v, fresh)) tc_cam_update(&v->cam, &v->camera, &t, dt);
+        p->world.solid = solid;
+    }
+}
+
+void tc_viewer_paused_look(tc_viewer *v, float dt) {
+    look(v, dt);
+    if (v->playing && v->play) update_camera(v, dt, false);
+}
+
 static void update_play(tc_viewer *v, float dt, bool fresh) {
     tc_viewer_play *p = v->play;
     const tc_level *l = v->level;
@@ -1826,34 +1594,7 @@ static void update_play(tc_viewer *v, float dt, bool fresh) {
         tc_player_step(&p->player, dt, &in);
         if (p->has_driver) simple_portals(v, dt);
     }
-    /* The play camera (tc_cam.h): round Ed as drawn, turned by the player; against every surface of the level (no sector
-     * row: the camera must not see through anything). */
-    {
-        tc_cam_target t;
-        const uint8_t *solid = p->world.solid;
-        t.position = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
-        t.behind = TC_PI - p->player.heading; /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
-        if (p->use_ai && p->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
-                                       * the last tick's: the ski follow holds within 0.05 rad of it and stepped at 30 Hz
-                                       * with it */
-            t.behind -= remainderf(atan2f(p->pose_draw.m[1], p->pose_draw.m[0]) - atan2f(p->pose_cur.m[1], p->pose_cur.m[0]),
-                                   2 * TC_PI); /* behind = pi - heading: a heading change counts negative */
-        t.speed = tc_player_horizontal_speed(&p->player);
-        t.velocity = p->player.velocity;
-        t.distance = v->orbit_distance;
-        t.manual = v->demo;
-        t.situation = tc_viewer_camera_situation(v);
-        /* riding on a sliding stage (the skier is the player there: the cast's main alias; Ed's own slides on the walking
-         * levels use the same card and keep the walking camera, his scripts setting the shot to 0): tc_viewer_camera_shot */
-        if (p->use_ai && p->has_driver && p->driver.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
-        t.shot = tc_viewer_camera_shot(v);
-        t.world = &p->world;
-        t.sight = camera_sight; /* the persos as drawn last frame */
-        t.sight_user = v;
-        p->world.solid = NULL;
-        if (!update_director(v, fresh)) tc_cam_update(&v->cam, &v->camera, &t, dt);
-        p->world.solid = solid;
-    }
+    update_camera(v, dt, fresh);
 
     if (p->use_ai) return; /* the AI's state clock picked the frame (step_ai) */
     if (v->walk_in == 1) { /* the step-in: once through at its own rate, then the cover */
@@ -1904,7 +1645,7 @@ uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
 }
 
 
-void tc_viewer_update(tc_viewer *v, float dt) {
+static void update_frame(tc_viewer *v, float dt) {
     const uint32_t skip_mask = (1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT);
     bool fresh = (v->held & skip_mask & ~v->skip_held) != 0;
     v->skip_held = v->held & skip_mask;
@@ -1914,10 +1655,7 @@ void tc_viewer_update(tc_viewer *v, float dt) {
         return;
     }
     if (v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) look(v, 0); /* the level is about to change: Ed waits */
-    else if (v->playing) {
-        if (v->demo) demo_step(v, dt);
-        update_play(v, dt, fresh);
-    }
+    else if (v->playing) update_play(v, dt, fresh);
     else fly(v, dt);
     update_sectors(v);
     update_lighting(v, dt);
@@ -1926,9 +1664,16 @@ void tc_viewer_update(tc_viewer *v, float dt) {
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
 
+void tc_viewer_update(tc_viewer *v, float dt) {
+    if (v->rec) tc_rec_frame_in(v->rec, v, dt);
+    update_frame(v, dt);
+    if (v->rec) tc_rec_frame_out(v->rec, v, dt);
+}
+
 /* ---- settings ---- */
 
 void tc_viewer_step_speed(tc_viewer *v, int dir) {
+    REC_DOOR(TC_RD_STEP_SPEED, dir, 0);
     static const float steps[] = {0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 0.75f, 1, 1.5f, 2};
     const int count = (int)(sizeof(steps) / sizeof(steps[0]));
     int i = 5, s;
@@ -1938,18 +1683,25 @@ void tc_viewer_step_speed(tc_viewer *v, int dir) {
     v->animation_speed = steps[i < 0 ? 0 : i >= count ? count - 1 : i];
 }
 
-void tc_viewer_toggle_pause(tc_viewer *v) { v->paused = !v->paused; }
+void tc_viewer_toggle_pause(tc_viewer *v) {
+    REC_DOOR(TC_RD_TOGGLE_PAUSE, 0, 0);
+    v->paused = !v->paused;
+    set_inspecting(v, v->paused && v->playing);
+}
 
 void tc_viewer_recenter_camera(tc_viewer *v) {
-    if (v->playing && !v->demo) tc_cam_recenter(&v->cam);
+    REC_DOOR(TC_RD_RECENTER, 0, 0);
+    if (v->playing) tc_cam_recenter(&v->cam);
 }
 
 void tc_viewer_toggle_closeup(tc_viewer *v) {
-    if (v->playing && !v->demo) v->cam.closeup = !v->cam.closeup;
+    REC_DOOR(TC_RD_CLOSEUP, 0, 0);
+    if (v->playing) v->cam.closeup = !v->cam.closeup;
 }
 
 void tc_viewer_toggle_first_person(tc_viewer *v) {
-    if (!v->playing || v->demo || !v->play) return;
+    REC_DOOR(TC_RD_FIRST_PERSON, 0, 0);
+    if (!v->playing || !v->play) return;
     v->cam.first_person = !v->cam.first_person;
     v->camera.yaw = TC_PI - v->play->player.heading; /* entering: looking the way he faces; leaving: behind him */
     v->camera.pitch = v->cam.first_person ? 0 : -TC_CAM_ELEVATION;
@@ -1975,51 +1727,72 @@ int tc_viewer_camera_situation(const tc_viewer *v) {
     return (int)tc_ai_other_dsgvar_float(&p->driver.ai, (uint32_t)p->driver.camera, 40);
 }
 
-void tc_viewer_set_look(tc_viewer *v, float sensitivity, bool invert_x, bool invert_y) {
+static void set_look(tc_viewer *v, float sensitivity, bool invert_x, bool invert_y) {
     v->look_sensitivity = sensitivity > 0 ? fmaxf(0.25f, fminf(4, sensitivity)) : 1;
     v->invert_x = invert_x;
     v->invert_y = invert_y;
 }
 
-void tc_viewer_step_look(tc_viewer *v, int dir) {
-    float s = v->look_sensitivity * (dir > 0 ? 1.25f : 0.8f);
-    if (fabsf(s - 1) < 0.01f) s = 1; /* the steps land back on 1 exactly */
-    tc_viewer_set_look(v, s, v->invert_x, v->invert_y);
+void tc_viewer_set_look(tc_viewer *v, float sensitivity, bool invert_x, bool invert_y) {
+    REC_DOOR(TC_RD_SET_LOOK, (invert_x ? 1 : 0) | (invert_y ? 2 : 0), sensitivity);
+    set_look(v, sensitivity, invert_x, invert_y);
 }
 
-void tc_viewer_toggle_invert_y(tc_viewer *v) { v->invert_y = !v->invert_y; }
+void tc_viewer_step_look(tc_viewer *v, int dir) {
+    float s = v->look_sensitivity * (dir > 0 ? 1.25f : 0.8f);
+    REC_DOOR(TC_RD_STEP_LOOK, dir, 0);
+    if (fabsf(s - 1) < 0.01f) s = 1; /* the steps land back on 1 exactly */
+    set_look(v, s, v->invert_x, v->invert_y);
+}
+
+void tc_viewer_toggle_invert_y(tc_viewer *v) {
+    REC_DOOR(TC_RD_INVERT_Y, 0, 0);
+    v->invert_y = !v->invert_y;
+}
 
 void tc_viewer_set_light_set(tc_viewer *v, uint32_t n) {
+    REC_DOOR(TC_RD_LIGHT_SET, (int32_t)n, 0);
     if (n >= v->light_set_count) return;
     v->light_set = v->light_next = v->light_target = n;
     v->light_blend = v->light_rate = 0;
     v->light_scripted = false;
 }
 
-void tc_viewer_follow_light(tc_viewer *v) { v->light_scripted = v->light != NULL; }
+void tc_viewer_follow_light(tc_viewer *v) {
+    REC_DOOR(TC_RD_FOLLOW_LIGHT, 0, 0);
+    v->light_scripted = v->light != NULL;
+}
 
 void tc_viewer_step_gamma(tc_viewer *v, bool up) {
+    REC_DOOR(TC_RD_STEP_GAMMA, up, 0);
     v->gamma = fmaxf(0.5f, fminf(2.5f, v->gamma * (up ? 1.1f : 1 / 1.1f)));
 }
 
 void tc_viewer_step_fov(tc_viewer *v, int dir) {
+    REC_DOOR(TC_RD_STEP_FOV, dir, 0);
     /* in the original's measure, horizontal at 4:3: 86 degrees by default, 5 degree steps, 50-120 */
     float deg = roundf(tc_camera_hfov_43(v->camera.vertical_fov) * 180 / TC_PI) + (dir > 0 ? 5.0f : -5.0f);
     v->camera.vertical_fov = tc_camera_vfov_from_hfov_43(fmaxf(50, fminf(120, deg)) * TC_PI / 180);
 }
 
-void tc_viewer_toggle_fog(tc_viewer *v) { v->fog_enabled = !v->fog_enabled; }
+void tc_viewer_toggle_fog(tc_viewer *v) {
+    REC_DOOR(TC_RD_FOG, 0, 0);
+    v->fog_enabled = !v->fog_enabled;
+}
 
 void tc_viewer_cycle_lighting(tc_viewer *v) {
+    REC_DOOR(TC_RD_LIGHTING, 0, 0);
     if (v->level->has_lighting) v->lighting = (tc_view_lighting)((v->lighting + 1) % TC_VL_COUNT);
 }
 
 void tc_viewer_cycle_sectors(tc_viewer *v) {
+    REC_DOOR(TC_RD_SECTORS, 0, 0);
     if (v->sectors) v->sector_mode = (tc_view_sectors)((v->sector_mode + 1) % TC_VS_COUNT);
 }
 
 void tc_viewer_wheel(tc_viewer *v, float notches) {
     float step = powf(1.1f, notches);
+    REC_DOOR(TC_RD_WHEEL, 0, notches);
     if (v->playing) v->orbit_distance = fmaxf(1.5f, fminf(25, v->orbit_distance / step));  /* camera zoom */
     else v->fly_speed = fmaxf(0.5f, fminf(500, v->fly_speed * step));                       /* fly speed */
 }
@@ -2054,6 +1827,7 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
     if (v->playing && v->director) APPEND("%s", ", scripted camera");
+    if (v->paused) APPEND("%s", ", paused");
     if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
         APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,
                (unsigned)v->play->cast.globals.lives, (int)v->play->driver.ai.hit_points);
@@ -2262,7 +2036,7 @@ static const uint8_t *shown_sectors(tc_viewer *v) {
     return v->sector_shown;
 }
 
-const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count) {
+static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count) {
     const tc_level *l = v->level;
     const tc_mat4 identity = tc_mat4_identity();
     draw_list dl = {0, 0};
@@ -2375,6 +2149,12 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
     *count = dl.count;
     v->draw_count = dl.count;
     return v->draws;
+}
+
+const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count) {
+    const tc_view_draw *d = build_draws(v, count, opaque_count);
+    if (v->rec) tc_rec_draw(v->rec, v, d, *count);
+    return d;
 }
 
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
