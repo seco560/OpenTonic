@@ -345,7 +345,7 @@ static void stop_playback(app *a, const char *why) {
 static void show_replays(app *a) {
     if (a->replays_on) return;
     char *folder = record_folder();
-    replays_open(&a->rp, &a->g, SDL_GetWindowDisplayScale(a->window), folder);
+    replays_open(&a->rp, &a->g, SDL_GetWindowDisplayScale(a->window), folder, record_enabled());
     SDL_free(folder);
     a->replays_on = true;
     set_title(a, "Open Tonic \xe2\x80\x94 Replays");
@@ -632,11 +632,22 @@ static void replays_cancel(app *a) {
     }
 }
 
+/* Record runs: from the next run on. */
+static void replays_toggle_record(app *a) {
+    replays *r = &a->rp;
+    if (!r->can_record) return;
+    r->recording = !r->recording;
+    record_set_enabled(r->recording);
+}
+
 static void replays_key(app *a, const SDL_KeyboardEvent *k) {
     replays *r = &a->rp;
     switch (k->scancode) {
     case SDL_SCANCODE_UP: replays_move(r, -1); break;
     case SDL_SCANCODE_DOWN: replays_move(r, 1); break;
+    case SDL_SCANCODE_R:
+        if (!k->repeat) replays_toggle_record(a);
+        break;
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
         if (!k->repeat) replays_accept(a);
         break;
@@ -660,6 +671,7 @@ static void replays_click(app *a, float x, float y) {
     case REPLAYS_DELETE: replays_ask(r, h.row); break;
     case REPLAYS_YES: delete_replay(a, h.row); break;
     case REPLAYS_KEEP: r->confirm = -1; break;
+    case REPLAYS_RECORD: replays_toggle_record(a); break;
     case REPLAYS_NOTHING: break;
     }
 }
@@ -792,6 +804,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         case SDL_GAMEPAD_BUTTON_DPAD_DOWN: replays_move(&a->rp, 1); break;
         case SDL_GAMEPAD_BUTTON_SOUTH: replays_accept(a); break;
         case SDL_GAMEPAD_BUTTON_WEST: replays_ask(&a->rp, a->rp.selected); break;  /* Square: delete */
+        case SDL_GAMEPAD_BUTTON_NORTH: replays_toggle_record(a); break;  /* Triangle: Record runs */
         case SDL_GAMEPAD_BUTTON_EAST: replays_cancel(a); break;
         default: break;
         }

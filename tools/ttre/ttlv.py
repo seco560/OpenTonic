@@ -102,10 +102,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
 
 One mesh/part per material, LOD 0 only, Z up. Samples: the A3D is evaluated (keyframe lerp, see level.Anim) at
 k = round(60 / fps) samples per animation frame. UVs are converted to top-left origin (v' = 1 - v; engine v=0 is the
-image's bottom row). Scroll: surface() emits the engine's offset subtracted, inferred from sud0's rainbow pool flowing
-over its edge and down the falls. Both engines in fact add it (GliDX6vr.dll's triangle path, the SE's rasterizer), so
-the SE's reader negates its speeds to come out right and retail's four scrolling surfaces stay as they were (docs/SE.md
-"Moving textures"). Engine time unit = 1/60 s (scroll speed and texture frame durations are per 1/60 s).
+image's bottom row). Both engines add their scroll offset to the UVs (GliDX6vr.dll's triangle path, the SE's rasterizer;
+docs/SE.md "Moving textures"), so v' takes it negated. Engine time unit = 1/60 s (scroll speed and texture frame durations are per 1/60 s).
 """
 import math
 import os
@@ -362,7 +360,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
             flags |= tiling(t.name)
         su, sv = (s * level.SCROLL_RATE for s in mat.scroll) if mat else (0, 0)
         frames = [(texture_id(t)[0], d / level.SCROLL_RATE / texture_time_scale(t)) for t, d in mat.frames] if mat else []
-        return dict(surface=struct.pack('<iI2f2H', tid, flags, -su, sv, len(frames), 0)
+        return dict(surface=struct.pack('<iI2f2H', tid, flags, su, -sv, len(frames), 0)
                     + b''.join(struct.pack('<if', t, d) for t, d in frames), material=mat)
 
     def geometry(m):

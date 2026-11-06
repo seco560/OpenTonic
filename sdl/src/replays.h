@@ -15,7 +15,7 @@ typedef struct replays_entry {
 
 /* What is under a point. */
 typedef enum replays_action {
-    REPLAYS_NOTHING, REPLAYS_BACK, REPLAYS_ROW, REPLAYS_PLAY, REPLAYS_DELETE, REPLAYS_YES, REPLAYS_KEEP
+    REPLAYS_NOTHING, REPLAYS_BACK, REPLAYS_ROW, REPLAYS_PLAY, REPLAYS_DELETE, REPLAYS_YES, REPLAYS_KEEP, REPLAYS_RECORD
 } replays_action;
 typedef struct replays_hit { replays_action action; int row; } replays_hit;
 
@@ -28,13 +28,16 @@ typedef struct replays {
     int confirm;                 /* the row asking "delete?", -1 none */
     replays_hit hover;
     int text_scale;
+    bool can_record, recording;  /* the Record runs toggle: shown, and its state (record_enabled) */
+    SDL_GPUTexture *record_on, *record_off;
+    int record_on_w, record_on_h, record_off_w, record_off_h;
     SDL_GPUTexture *heading, *back, *play, *del, *yes, *keep, *ask, *empty;
     int heading_w, heading_h, back_w, back_h, play_w, play_h, del_w, del_h, yes_w, yes_h, keep_w, keep_h, ask_w, ask_h,
         empty_w, empty_h;
 } replays;
 
-/* Lists folder's recordings (NULL: recording is off). */
-void replays_open(replays *r, gpu *g, float scale, const char *folder);
+/* Lists folder's recordings (NULL: recording is off, no toggle); recording: the toggle's state. */
+void replays_open(replays *r, gpu *g, float scale, const char *folder, bool recording);
 void replays_close(replays *r);
 replays_hit replays_at(const replays *r, float x, float y);
 void replays_set_hover(replays *r, float x, float y);

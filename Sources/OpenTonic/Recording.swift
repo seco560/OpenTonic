@@ -36,9 +36,9 @@ private final class RecordingFile {
     }
 }
 
-/// The run being recorded (core: tc_rec.h; docs/RECORDING.md), as the SDL build's sdl/src/record.c: a run, from a level
-/// opened from a menu through its portals back to a menu, leaves one .ttrec in the recordings folder. F9 or the touchpad
-/// marks a moment.
+/// The run being recorded (core: tc_rec.h; docs/RECORDING.md), as the SDL build's sdl/src/record.c: with Record runs on in
+/// the Replays menu, a run, from a level opened from a menu through its portals back to a menu, leaves one .ttrec in the
+/// recordings folder. F9 or the touchpad marks a moment.
 @MainActor final class Recording {
     static let shared = Recording()
     private(set) var recorder: OpaquePointer?
@@ -52,6 +52,13 @@ private final class RecordingFile {
         }
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("OpenTonic/Recordings")
+    }
+
+    /// Record runs, the Replays menu's toggle: off by default, as the files add up. Kept across launches (UserDefaults
+    /// "recordRuns"); a new value counts from the next run.
+    static var enabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "recordRuns") }
+        set { UserDefaults.standard.set(newValue, forKey: "recordRuns") }
     }
 
     nonisolated static func stamp() -> String {
@@ -71,7 +78,7 @@ private final class RecordingFile {
     /// A new run, the last one closed.
     func start() {
         stop()
-        guard let folder = Self.folder else { return }
+        guard Self.enabled, let folder = Self.folder else { return }
         let f = RecordingFile(folder: folder)
         recorder = tc_recorder_create({ user, data, size in
             guard let user, let data else { return }

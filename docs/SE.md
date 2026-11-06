@@ -281,14 +281,11 @@ pass 1.0). On all 11 levels: 12 scrolling materials, the rest flipbooks (torches
 arches). LeCanyon's moving floor is RC_Canyon_21/23/24TX, speed (0, -0.006) a tick; its clouds cl_canyon02txy.
 
 **Sign (read, both games):** the offset is added, u + offset and v + offset. SE: the rasterizer at 0x46787b and 0x467aac;
-retail: GliDX6vr.dll 0x10003100 (from GLI_DRV_xSendElementTIToClip_TRIANGLES). ttlv.py emits the opposite, a 2026-10-19
-inference from sud0's rainbow. Physical check under the exe's rule, world space: the SE's falls all run down (sud0
-z -28/s, pyr_ochute -5.9/s, pyr_odeborde -1.5/s), so the SE reader negates its speeds.
-
-**Retail, open, left as it was:** retail's four scrolling surfaces still move opposite to the driver. PYR_OCHUTEANUTXY
-runs uphill in the port today (the exe's rule: z -6.65/s); O_ZARBI_AUNTXY would run uphill under the exe's rule (z
-+13.7/s; its UVs differ from the SE's), which only the running original can settle. The fix, if wanted: drop the SE
-negation and emit `su, -sv` in ttlv.surface().
+retail: GliDX6vr.dll 0x10003100 (from GLI_DRV_xSendElementTIToClip_TRIANGLES). `ttlv.surface` follows it for both games;
+until 2026-11-06 it did the opposite, a 2026-10-19 inference from sud0's rainbow. Under this rule, in world space, the
+SE's falls all run down (sud0 z -28/s, pyr_ochute -5.9/s, pyr_odeborde -1.5/s), retail's PYR_OCHUTEANUTXY too (-6.65/s),
+and retail's sud0 rainbow O_ZARBI_AUNTXY runs *up* (+13.7/s; its UVs differ from the SE's): the user saw it do so in the
+original (2026-11-06). The fix reversed 6 retail meshes (cavedoc 3, marmite, pyramide, sud0), nothing else.
 
 ## Crash found in the first playtest (fixed 2026-11-04)
 

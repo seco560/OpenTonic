@@ -10,7 +10,8 @@ Why it exists: docs/FINDINGS.md item 4.
 | | |
 |---|---|
 | Where | `~/Library/Application Support/OpenTonic/Recordings` (macOS, both builds), `~/.local/share/OpenTonic/Recordings` (Linux) |
-| Other folder, or off | `TONIC_RECORDINGS=/some/folder`, `TONIC_RECORDINGS=off` |
+| Turn it on | **Record runs** in the Replays menu (R; Triangle on SDL's pad). **Off by default**: the files add up. Kept across launches; counts from the next run |
+| Other folder, or off | `TONIC_RECORDINGS=/some/folder`, `TONIC_RECORDINGS=off` (no toggle then) |
 | Mark a moment | **F9**, or the pad's touchpad: "look at this". The title counts them |
 | Watch or delete one | **Replays** on the level select (R, or Square): the list, newest first, with Play and Delete |
 | Watching one | locked: the game's keys, the mouse and the pad do nothing. **P** or Cross pauses: mouse, arrows, right stick and wheel move the camera round Ed, and resuming puts it back (a level's scripted shot, as in the outro, keeps its camera). Esc or Start goes back to the list, as its end does; Cmd-L / Ctrl+L to the level select |
@@ -32,8 +33,10 @@ It took the place of the old Demo (Ed's autopilot, removed 2026-11-06: the user 
 - A row: its levels, then date, length, marks, and "did not end cleanly" for a crash or a kill.
 - **Delete is permanent** (not the Trash) and asks first: in the row in the SDL build, a dialog in the Swift one.
 - A run ends on the way to a menu, so nothing in the list is being written.
-- Keys: up / down, Return plays, Delete or Backspace deletes, Esc back. SDL's pad: Cross plays, Square deletes, Circle
-  back. The Swift build's level select and this menu have no pad control, as before.
+- Record runs: `Recording.enabled` (UserDefaults "recordRuns") in the Swift build, the file `record-runs` beside the
+  Recordings folder in SDL's (`record_enabled`). Off, a run makes no recorder at all, so F9 marks nothing.
+- Keys: up / down, Return plays, Delete or Backspace deletes, R flips Record runs, Esc back. SDL's pad: Cross plays,
+  Square deletes, Triangle flips Record runs, Circle back. The Swift build's level select and this menu have no pad control, as before.
 - Rows are read from the whole of every file, so a very large folder will open slowly (not measured).
 - Files from the autopilot's days are listed, deletable, not playable: their inputs came from code that is gone.
   `replay check` skips them.

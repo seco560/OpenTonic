@@ -19,6 +19,34 @@ char *record_folder(void) {
     return folder;
 }
 
+/* The toggle is a file beside the recordings: there means on. */
+static char *enabled_path(void) {
+    char *pref = SDL_GetPrefPath("", "OpenTonic");
+    char *path = pref ? path_join(pref, "record-runs") : NULL;
+    SDL_free(pref);
+    return path;
+}
+
+bool record_enabled(void) {
+    char *path = enabled_path();
+    bool on = path && SDL_GetPathInfo(path, NULL);
+    SDL_free(path);
+    return on;
+}
+
+void record_set_enabled(bool on) {
+    char *path = enabled_path();
+    if (!path) return;
+    if (on) {
+        SDL_IOStream *f = SDL_IOFromFile(path, "wb");
+        if (f) SDL_CloseIO(f);
+        else SDL_Log("Can't keep Record runs on: %s", SDL_GetError());
+    } else if (!SDL_RemovePath(path)) {
+        SDL_Log("Can't keep Record runs off: %s", SDL_GetError());
+    }
+    SDL_free(path);
+}
+
 static void stamp(char *out, size_t size) {
     SDL_Time now;
     SDL_DateTime t;
@@ -64,6 +92,7 @@ tc_recorder *record_start(void) {
     tc_recorder *r;
     if (!folder) return NULL;
     SDL_free(folder);
+    if (!record_enabled()) return NULL;
     failed = false;
     if (!(r = tc_recorder_create(sink, NULL))) return NULL;
     stamp(when, sizeof when);

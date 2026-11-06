@@ -40,7 +40,7 @@ def triangles(data, persos=True, t=None):
         flip = level.mat_det(m) < 0
         cols = level.vertex_light(key)
         for el in geo.elements:
-            su, sv = (-x * level.SCROLL_RATE * t for x in el.material.scroll) if t and el.material else (0, 0)
+            su, sv = (x * level.SCROLL_RATE * t for x in el.material.scroll) if t and el.material else (0, 0)
             for tri, uvt in zip(el.triangles, el.uv_tris or [(0, 0, 0)] * len(el.triangles)):
                 if flip:
                     tri, uvt = tri[::-1], uvt[::-1]

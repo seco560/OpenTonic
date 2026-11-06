@@ -3,7 +3,8 @@ import TonicCore
 
 /// The Replays menu: the recordings (Recording) in a list, newest first, each to play or delete; sdl/src/replays.c is the
 /// SDL build's. Row text is the core's (tc_replay_summarize). Deleting asks first; an autopilot run can't be played. A run
-/// ends on the way to a menu, so nothing here is being written. Up / Down select, Return plays, Delete deletes, Esc goes back.
+/// ends on the way to a menu, so nothing here is being written. Up / Down select, Return plays, Delete deletes, R flips
+/// Record runs (Recording.enabled), Esc goes back.
 final class ReplaysScreen: NSView {
     private struct Entry { let url: URL; let title: String; let details: String; let playable: Bool }
 
@@ -18,6 +19,7 @@ final class ReplaysScreen: NSView {
     private let list = List()
     private let scroll = NSScrollView()
     private let empty: NSTextField
+    private let record = NSButton(checkboxWithTitle: "Record runs", target: nil, action: nil)
     private let rowHeight: CGFloat = 72, gap: CGFloat = 8, header: CGFloat = 64
 
     override var acceptsFirstResponder: Bool { true }
@@ -28,7 +30,7 @@ final class ReplaysScreen: NSView {
             .sorted { $0.lastPathComponent > $1.lastPathComponent }  // the names start with their date
             .map { Self.read($0) }
         empty = NSTextField(labelWithString: folder == nil ? "Recording is off (TONIC_RECORDINGS)."
-                                                           : "No recordings yet: play a level and one is saved by itself.")
+                                                           : "No recordings yet: turn on Record runs, then play a level.")
         super.init(frame: frame)
         appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
         autoresizingMask = [.width, .height]
@@ -48,6 +50,15 @@ final class ReplaysScreen: NSView {
         back.frame.origin = NSPoint(x: 16, y: bounds.height - header + (header - back.frame.height) / 2)
         back.autoresizingMask = [.maxXMargin, .minYMargin]
         addSubview(back)
+        record.target = self
+        record.action = #selector(toggleRecord)
+        record.state = Recording.enabled ? .on : .off
+        record.isEnabled = folder != nil
+        record.toolTip = "Save each run from here on, to play back in this list (R). Off by default: the files add up."
+        record.sizeToFit()
+        record.frame.origin = NSPoint(x: bounds.width - record.frame.width - 16, y: bounds.height - header + (header - record.frame.height) / 2)
+        record.autoresizingMask = [.minXMargin, .minYMargin]
+        addSubview(record)
 
         scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - header)
         scroll.autoresizingMask = [.width, .height]
@@ -167,6 +178,7 @@ final class ReplaysScreen: NSView {
     }
 
     @objc private func goBack() { onBack?() }
+    @objc private func toggleRecord() { Recording.enabled = record.state == .on }
     @objc private func playRow(_ sender: NSButton) { play(sender.tag) }
     @objc private func deleteRow(_ sender: NSButton) { delete(sender.tag) }
 
@@ -177,6 +189,7 @@ final class ReplaysScreen: NSView {
         case 125: if !entries.isEmpty { select(min(selected + 1, entries.count - 1)) }  // down
         case 36, 76: if !event.isARepeat { play(selected) }  // Return, keypad Enter
         case 51, 117: if !event.isARepeat { delete(selected) }  // Delete, forward delete
+        case 15: if !event.isARepeat, record.isEnabled { record.performClick(nil) }  // R
         default: super.keyDown(with: event)
         }
     }

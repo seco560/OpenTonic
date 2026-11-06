@@ -99,8 +99,7 @@ IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0)  # row-major 3x4
 SCROLL_RATE = 60.0  # engine time unit = 1/60 s (frame delta = timer ms * 0.06; see NOTES)
 # The SE VisualMaterial has 12 bytes fewer between the texture (+0x48) and the scroll fields: scroll_cur +0x4C, speed
 # +0x54, scroll_on +0x5C, flipbook +0x64 / +0x68 / +0x6C (GLI_xRefreshAnimatedTexture, retail's FUN_004457d0 with every
-# field that much lower). Both engines draw uv + offset; ttlv.py emits the opposite for retail's data, so the SE's speed
-# is negated on reading (docs/SE.md "Moving textures").
+# field that much lower; docs/SE.md "Moving textures").
 SE_VM_SHIFT = 0xC
 
 
@@ -577,8 +576,6 @@ class LevelData:
             f = self.un('I16f', vm)
             sh = SE_VM_SHIFT if self.se else 0
             speed, on = self.un('2f', vm, 0x60 - sh), self.un('I', vm, 0x68 - sh)[0]
-            if self.se:  # into the sign ttlv.py emits, so that SE surfaces move as the exe moves them (SE_VM_SHIFT)
-                speed = tuple(0.0 - s for s in speed)
             m = self.materials[vm] = Material(f[0], f[1:5], f[5:9], f[9:13], f[13:17],
                                               self.texture(self.lv.ptr(vm, 0x48)), speed if on else (0.0, 0.0))
             node, n = self.lv.ptr(vm, 0x70 - sh), self.un('I', vm, 0x78 - sh)[0]
