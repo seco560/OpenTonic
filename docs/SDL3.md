@@ -39,7 +39,7 @@ version do not load ("re-run the conversion"): `tools/convert_files.sh` re-expor
 
 Controls match the Swift app; macOS shortcuts become Ctrl+L (level select), F1 (controls overlay, replaces the
 alert), F11 or Alt+Enter (full screen), Ctrl+Q (quit). The level select screen also takes the arrow keys and Enter
-(past the side of the Retail / Special panes, on to the other pane), and V plays the intro movie (Esc, Space or Enter skip). Random Stage opens a stage of either edition (no cutscenes or imported models). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
+(past the side of the Retail / Special / Cutscenes panes, on to the next pane, round the ring), and V plays the intro movie (Esc, Space or Enter skip). Random Stage opens a stage of either edition (no cutscenes or imported models). F2 cycles the level's antialiasing (off / 2x / 4x / 8x
 MSAA, as far as the GPU goes; shown in the title bar); `TONIC_MSAA=n` sets where it starts (default 8). F3 cycles supersampling off / 1.5x / 2x (`TONIC_SCALE=100|150|200` sets where it
 starts, default off: on the Celeron J4125 it is too heavy): the level is drawn at that many times the window's pixels per axis, on top of the MSAA, into an
 offscreen target that a linear blit filters down into the window (at 2x a 2 x 2 box filter; overlays and menus still

@@ -5,19 +5,20 @@ import TonicCore
 /// Grid of converted levels (*.ttlv in the levels folder, and in the Special Edition's out/se/ttlv), each shown with
 /// its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
 /// available (matched case-insensitively).
-/// Four sections: "Retail Edition" and "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) are two panes side
-/// by side, one showing at a time: each scrolling inside itself, slid left and right with the arrows at their top
-/// (retail is the left one; side by side because portals will link the two). Under them, in the bottom third of the
-/// window and scrolling inside itself too: the game's cutscene-only levels (`tc_level_is_cutscene`) and "Imported":
+/// Four sections. "Retail Edition", "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) and "Cutscenes" (the
+/// retail game's cutscene-only levels, `tc_level_is_cutscene`) are three panes in a ring, one showing at a time: each
+/// scrolling inside itself, slid left and right with the arrows at their top, in that order and round again (right of
+/// the cutscenes: retail). Under them, in the bottom third of the window and scrolling inside itself too: "Imported",
 /// models brought in with tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a question
 /// mark as their picture. The page itself only scrolls in a window too short for a row of each.
 final class LevelPicker: NSView {
     struct Entry { let name: String; let url: URL; let image: NSImage?; let section: Int }
-    private struct Pane { let section: Int; let scroll: NSScrollView; let grid: NSView }
+    /// A pane: its page (heading, rule and scroll view, sliding as one) in the viewport.
+    private struct Pane { let section: Int; let page: NSView; let scroll: NSScrollView; let grid: NSView }
 
     private static let titles = ["Retail Edition", "Special Edition", "Cutscenes", "Imported"]
-    private static let specialEdition = 1, imported = 3
-    private static let editions = 2  // sections 0 and 1 are the panes
+    private static let specialEdition = 1, cutscenes = 2, imported = 3
+    private static let paneSections = 3  // sections 0, 1 and 2 are the panes
     private let entries: [Entry]
     private let onPick: (URL) -> Void
     /// The big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original), "Random Stage"
@@ -36,11 +37,19 @@ final class LevelPicker: NSView {
                                       NSColor(calibratedRed: 0.22, green: 0.25, blue: 0.4, alpha: 1))
     private let introHeight: CGFloat = 84
     private var tiles: [NSButton] = []
-    /// The window onto the panes (the full width, so a pane leaves by the window's side), and the strip that slides in it.
-    private let viewport = FlippedView(), strip = FlippedView()
+    /// The window onto the panes (the full width, so a pane leaves by the window's side): the one showing fills it, the
+    /// others wait out of sight beside it.
+    private let viewport = FlippedView()
     private var panes: [Pane] = []
     private var pane = 0  // the one showing, in `panes`
-    /// Under the panes: the cutscenes and the imported levels, headings and all.
+    /// Where the ring of panes stands, in panes (panes.count is the first again), and where it eases to: one step per
+    /// slide whichever way round, as the SDL picker. Each display refresh places the pages from it (placePages). Not
+    /// the animator: a page moved to the arrow's side and animated in the same pass started from where its layer last
+    /// was (AppKit updates it later), so the wrap from Cutscenes to Retail and back swept the wrong way.
+    private var slidePos: CGFloat = 0, slideTo: CGFloat = 0
+    private var slideLink: CADisplayLink?
+    private var slideTime: CFTimeInterval = 0
+    /// Under the panes: the imported levels, heading and all.
     private let lower = PaneScrollView(), lowerGrid = FlippedView()
     private let headings = LevelPicker.titles.map { NSTextField(labelWithString: $0) }
     private let rules = LevelPicker.titles.map { _ in NSBox() }
@@ -50,8 +59,8 @@ final class LevelPicker: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// showSpecial: the Special Edition's pane first (when it has levels).
-    init(folder: URL, thumbnails: URL, seFolder: URL? = nil, seThumbnails: URL? = nil, showSpecial: Bool = false,
+    /// showSection: the section whose pane shows first (when it has levels; else the first that has).
+    init(folder: URL, thumbnails: URL, seFolder: URL? = nil, seThumbnails: URL? = nil, showSection: Int = 0,
          onPick: @escaping (URL) -> Void) {
         self.onPick = onPick
         let fm = FileManager.default
@@ -59,7 +68,7 @@ final class LevelPicker: NSView {
         func section(_ url: URL) -> Int {
             let name = url.deletingPathExtension().lastPathComponent
             if fm.fileExists(atPath: imported.appendingPathComponent(name).path) { return LevelPicker.imported }
-            return tc_level_is_cutscene(name) != 0 ? 2 : 0
+            return tc_level_is_cutscene(name) != 0 ? LevelPicker.cutscenes : 0
         }
         func levels(in dir: URL?) -> [URL] {
             guard let dir else { return [] }
@@ -95,17 +104,19 @@ final class LevelPicker: NSView {
         shadow.shadowBlurRadius = 3
         viewport.wantsLayer = true
         viewport.clipsToBounds = true
-        viewport.addSubview(strip)
         addSubview(viewport)
-        for k in 0..<LevelPicker.editions where entries.contains(where: { $0.section == k }) {
-            let scroll = PaneScrollView(), grid = FlippedView()
+        for k in 0..<LevelPicker.paneSections where entries.contains(where: { $0.section == k }) {
+            let page = FlippedView(), scroll = PaneScrollView(), grid = FlippedView()
             scroll.hold(grid)
-            strip.addSubview(scroll)
-            panes.append(Pane(section: k, scroll: scroll, grid: grid))
+            page.addSubview(scroll)
+            viewport.addSubview(page)
+            panes.append(Pane(section: k, page: page, scroll: scroll, grid: grid))
         }
         lower.hold(lowerGrid)
         addSubview(lower)
-        pane = panes.firstIndex { $0.section == LevelPicker.specialEdition && showSpecial } ?? 0
+        pane = panes.firstIndex { $0.section == showSection } ?? 0
+        slidePos = CGFloat(pane)
+        slideTo = slidePos
         for (i, e) in entries.enumerated() {
             let b = NSButton(title: e.name, image: e.image ?? NSImage(size: tile), target: self, action: #selector(pick(_:)))
             b.tag = i
@@ -130,10 +141,8 @@ final class LevelPicker: NSView {
         replaysButton.toolTip = "Your recorded sessions: play or delete them"
         leftArrow.target = self
         leftArrow.action = #selector(slideLeft)
-        leftArrow.toolTip = "Retail Edition (left arrow key)"
         rightArrow.target = self
         rightArrow.action = #selector(slideRight)
-        rightArrow.toolTip = "Special Edition (right arrow key)"
         addSubview(introButton)
         addSubview(randomButton)
         addSubview(replaysButton)
@@ -143,7 +152,7 @@ final class LevelPicker: NSView {
             heading.font = .systemFont(ofSize: 17, weight: .bold)
             heading.textColor = NSColor(white: 0.92, alpha: 1)
             rule.boxType = .separator
-            let parent: NSView = k < LevelPicker.editions ? strip : lowerGrid  // the editions': riding with their panes
+            let parent: NSView = panes.first { $0.section == k }?.page ?? lowerGrid  // the panes': riding with them
             parent.addSubview(heading)
             parent.addSubview(rule)
         }
@@ -153,31 +162,73 @@ final class LevelPicker: NSView {
 
     var isEmpty: Bool { entries.isEmpty }
 
-    /// Opens a stage of either edition at random. Not the cutscenes, which the Special Edition's pane has one of (its
+    /// Opens a stage of either edition at random. Not the cutscenes (the Special Edition's pane has one too: its
     /// outro), nor the imported models.
     func pickRandom() {
-        let stages = entries.filter { $0.section < LevelPicker.editions && tc_level_is_cutscene($0.name) == 0 }
+        let stages = entries.filter { $0.section < LevelPicker.cutscenes && tc_level_is_cutscene($0.name) == 0 }
         if let stage = stages.randomElement() { onPick(stage.url) }
     }
 
-    /// Slide to the pane on that side (-1 left, 1 right), if there is one.
+    /// Slide to the pane on that side (-1 left, 1 right), round the ring: left of retail are the cutscenes. The pane
+    /// slid to comes in from that side whichever it is, the one showing leaving by the other.
     func slide(_ dir: Int) {
-        guard panes.indices.contains(pane + dir) else { return }
-        pane += dir
+        guard panes.count > 1, dir != 0 else { return }
+        let dir = dir < 0 ? -1 : 1
+        pane = (pane + dir + panes.count) % panes.count
+        slideTo += CGFloat(dir)
         updateArrows()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            strip.animator().setFrameOrigin(stripOrigin)
+        guard slideLink == nil else { return }  // already easing: it heads for the new place
+        let link = displayLink(target: self, selector: #selector(stepSlide(_:)))
+        link.add(to: .main, forMode: .common)
+        slideLink = link
+        slideTime = 0
+    }
+
+    /// One display refresh of the slide: eased by the time since the last (SDL's rate), then the pages placed; once
+    /// there, both back into [0, n) (the same place in the ring) and the link stops.
+    @objc private func stepSlide(_ link: CADisplayLink) {
+        let dt = slideTime > 0 ? link.timestamp - slideTime : 1.0 / 60
+        slideTime = link.timestamp
+        slidePos += (slideTo - slidePos) * CGFloat(1 - exp(-14 * dt))
+        if abs(slideTo - slidePos) < 0.001 { settleSlide() }
+        placePages()
+    }
+
+    private func settleSlide() {
+        let n = CGFloat(max(1, panes.count))
+        slideTo -= (slideTo / n).rounded(.down) * n
+        slidePos = slideTo
+        slideLink?.invalidate()
+        slideLink = nil
+    }
+
+    /// Off the screen (a level picked mid-slide): no more refreshes; it would be back where it was going.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil, slideLink != nil { settleSlide() }
+    }
+
+    /// Each page where the slide has it: side by side, the nearer way round the ring (so the pane slid to comes in
+    /// from the side of the arrow); those wholly out of sight hidden.
+    private func placePages() {
+        let n = CGFloat(max(1, panes.count)), width = viewport.bounds.width
+        for (j, p) in panes.enumerated() {
+            var d = CGFloat(j) - slidePos
+            d -= n * ((d + n / 2) / n).rounded(.down)
+            p.page.setFrameOrigin(NSPoint(x: (d * width).rounded(), y: 0))
+            p.page.isHidden = abs(d) >= 1
         }
     }
 
-    private var stripOrigin: NSPoint { NSPoint(x: -CGFloat(pane) * viewport.bounds.width, y: 0) }
-
-    /// Only the arrows with a pane that way.
+    /// The arrows go round the ring (with two panes or more); their tips name the pane each leads to.
     private func updateArrows() {
-        leftArrow.isHidden = pane == 0
-        rightArrow.isHidden = pane >= panes.count - 1
+        let round = panes.count > 1
+        leftArrow.isHidden = !round
+        rightArrow.isHidden = !round
+        guard round else { return }
+        func title(_ dir: Int) -> String { LevelPicker.titles[panes[(pane + dir + panes.count) % panes.count].section] }
+        leftArrow.toolTip = "\(title(-1)) (left arrow key)"
+        rightArrow.toolTip = "\(title(1)) (right arrow key)"
     }
 
     /// The placeholder picture of an imported level: a big question mark on a dark tile.
@@ -218,7 +269,7 @@ final class LevelPicker: NSView {
         }
         // The rest: each section starts on a new row, under its heading; empty sections take no space.
         var lowerRows: CGFloat = 0
-        for (k, (heading, rule)) in zip(headings, rules).enumerated() where k >= LevelPicker.editions {
+        for (k, (heading, rule)) in zip(headings, rules).enumerated() where k >= LevelPicker.paneSections {
             let members = entries.indices.filter { entries[$0].section == k }
             guard !members.isEmpty else { continue }
             heading.sizeToFit()
@@ -232,21 +283,21 @@ final class LevelPicker: NSView {
         let lowerHeight = panes.isEmpty ? max(size.height - top, oneRow)
             : min(lowerRows, max((size.height / 3).rounded(.down), oneRow))
         var y = top
-        // The panes; their headings centred between the arrows.
+        // The panes, where the slide has them (placePages); their headings centred between the arrows.
         if !panes.isEmpty {
             let height = max(size.height - top - lowerHeight, oneRow), paneHeight = height - headingHeight
             viewport.frame = NSRect(x: 0, y: y, width: width, height: height)
-            strip.frame = NSRect(x: 0, y: 0, width: CGFloat(panes.count) * width, height: height)
-            strip.setFrameOrigin(stripOrigin)
-            for (j, p) in panes.enumerated() {
-                let x = CGFloat(j) * width, heading = headings[p.section]
+            for p in panes {
+                let heading = headings[p.section]
+                p.page.setFrameSize(NSSize(width: width, height: height))
                 heading.sizeToFit()
-                heading.frame.origin = NSPoint(x: x + (width - heading.frame.width) / 2, y: 4)
-                rules[p.section].frame = NSRect(x: x + left, y: headingHeight - 10, width: rowWidth, height: 1)
-                p.scroll.frame = NSRect(x: x, y: headingHeight, width: width, height: paneHeight)
+                heading.frame.origin = NSPoint(x: (width - heading.frame.width) / 2, y: 4)
+                rules[p.section].frame = NSRect(x: left, y: headingHeight - 10, width: rowWidth, height: 1)
+                p.scroll.frame = NSRect(x: 0, y: headingHeight, width: width, height: paneHeight)
                 let rows = place(entries.indices.filter { entries[$0].section == p.section }, top: 0)
                 p.grid.setFrameSize(NSSize(width: p.scroll.contentSize.width, height: max(rows, paneHeight)))
             }
+            placePages()
             let aw: CGFloat = 56, ah: CGFloat = 32, ay = y + (headingHeight - ah) / 2 - 6
             leftArrow.frame = NSRect(x: left, y: ay, width: aw, height: ah)
             rightArrow.frame = NSRect(x: left + rowWidth - aw, y: ay, width: aw, height: ah)

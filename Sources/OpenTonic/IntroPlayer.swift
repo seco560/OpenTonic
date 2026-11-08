@@ -72,7 +72,7 @@ final class IntroView: NSView {
 }
 
 /// The level select screen's root view: V plays the intro, R opens the replays, the left and right arrows slide the
-/// Retail / Special Edition panes.
+/// Retail / Special Edition / Cutscenes panes.
 final class PickerContainer: NSView {
     var onIntro: (() -> Void)?
     var onSlide: ((Int) -> Void)?

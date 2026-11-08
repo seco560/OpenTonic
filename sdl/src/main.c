@@ -48,7 +48,7 @@ static const char *controls_text =
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special)  -  Ctrl+L from a level  -  V intro\n"
+    "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special / Cutscenes)  -  Ctrl+L from a level  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
     "Replays:  Enter plays, Delete deletes, Esc back  -  Pad: Cross plays, Square deletes, Circle back\n"
@@ -107,6 +107,7 @@ typedef struct app {
     char next_name[64];          /* its level name (for the vignette) */
     float next_time;             /* seconds into its loading screen */
     char *current_folder;        /* the shown level's folder (retail out/ttlv or out/se/ttlv): portals stay in it */
+    bool current_cutscene;       /* the shown level is a cutscene one (tc_level_is_cutscene): back on the Cutscenes pane */
     /* The run being recorded (docs/RECORDING.md): from a level opened from a menu, through its portals, back to a menu;
      * and playing one back: the recorded frames at their own pace, level after level, the game's inputs locked. Esc or
      * Start go back to the Replays menu, as its end does; Ctrl+L to the level select. */
@@ -235,10 +236,10 @@ static void show_picker(app *a) {
         char *thumbs = vignette ? path_join(vignette, "Level") : NULL;
         char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
         char *se_vignette = se ? path_join(se, "Vignette") : NULL, *se_thumbs = se_vignette ? path_join(se_vignette, "Level") : NULL;
-        /* Back from a level: on the pane of its edition. */
+        /* Back from a level: on its pane (its edition's, or the retail cutscenes'). */
         bool from_se = se_levels && a->current_folder && SDL_strcmp(a->current_folder, se_levels) == 0;
         picker_open(&a->picker, &a->g, a->level_folder, thumbs ? thumbs : "", se_levels, se_thumbs,
-                    SDL_GetWindowDisplayScale(a->window), from_se ? 1 : 0);
+                    SDL_GetWindowDisplayScale(a->window), from_se ? 1 : a->current_cutscene ? 2 : 0);
         SDL_free(vignette);
         SDL_free(thumbs);
         SDL_free(se);
@@ -285,6 +286,9 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     a->view = v;
     SDL_free(a->current_folder);
     a->current_folder = path_dir(path);
+    char *stem = path_stem(path);
+    a->current_cutscene = tc_level_is_cutscene(stem) != 0;
+    SDL_free(stem);
     a->pad_fast = false;  /* the new viewer holds nothing */
     tc_viewer_set_look(&v->viewer, a->look_sensitivity, a->invert_x, a->invert_y);
     /* Level music from the user-edited table out/audio/music.tsv (next to out/ttlv); sound effects from out/audio/sfx. */
@@ -500,6 +504,7 @@ static void finish_intro(app *a) {
     if (!path) { show_picker(a); return; }
     SDL_free(a->current_folder);
     a->current_folder = path_dir(path);  /* the loading screen's vignette is the edition's */
+    a->current_cutscene = false;  /* a ski slope */
     a->next_level = path;
     a->next_time = 0;
     set_title(a, "Open Tonic");

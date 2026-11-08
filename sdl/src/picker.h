@@ -2,10 +2,10 @@
  * its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
  * available (matched case-insensitively). Port of LevelPicker.swift, drawn with the 2D quad pipeline: click a tile, or
  * move with the arrow keys and press Enter. All sizes in pixels.
- * Four sections: "Retail Edition" and "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) are two panes side
- * by side, one showing at a time: fixed height, each scrolling inside itself, slid left and right with the arrows at
- * their top (retail is the left one; side by side because portals will link the two). Under them the page goes on with
- * the game's cutscene-only levels (tc_level_is_cutscene) and "Imported": models brought in with
+ * Four sections. "Retail Edition", "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) and "Cutscenes" (the
+ * retail game's cutscene-only levels, tc_level_is_cutscene) are three panes in a ring, one showing at a time: fixed
+ * height, each scrolling inside itself, slid left and right with the arrows at their top, in that order and round
+ * again (right of the cutscenes: retail). Under them the page goes on with "Imported": models brought in with
  * tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), drawn with a question mark when they have no
  * picture. */
 #ifndef TV_PICKER_H
@@ -13,7 +13,7 @@
 #include "gpu.h"
 
 #define PICKER_SECTIONS 4
-#define PICKER_EDITIONS 2  /* sections 0 and 1 are the panes */
+#define PICKER_PANES 3  /* sections 0, 1 and 2 are the panes */
 
 typedef struct picker_entry {
     char *name, *path;
@@ -37,9 +37,10 @@ typedef struct picker {
     int intro_w, intro_h, random_w, random_h, replays_w, replays_h, controls_w, controls_h, left_w, left_h, right_w, right_h;
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* the page's, pixels */
-    int pane;                 /* the edition showing: a selected tile of an edition is always in it */
-    float pane_scroll[PICKER_EDITIONS];  /* each pane's own, pixels */
-    float slide;              /* where the panes stand: 0 retail, 1 special; eases to `pane` */
+    int pane;                 /* the section of the pane showing: a selected tile of a pane is always in it */
+    float pane_scroll[PICKER_PANES];  /* each pane's own, pixels */
+    float slide, slide_to;    /* where the ring of panes stands, in panes (the n with levels: n is the first again);
+                               * eases to slide_to, one step per slide whichever way round */
     Uint64 slide_ns;          /* the last frame's time */
     int hover, selected;      /* -1 = none */
     int columns;              /* from the last layout */
@@ -47,7 +48,8 @@ typedef struct picker {
 } picker;
 
 /* Lists the folders' levels and loads their thumbnails (se_folder / se_thumbnails: the Special Edition's, NULL or
- * missing: none). count == 0 when there are none. pane: the edition to show first (the other if it has no levels). */
+ * missing: none). count == 0 when there are none. pane: the section to show first (the first pane with levels if it
+ * has none). */
 void picker_open(picker *p, gpu *g, const char *folder, const char *thumbnails, const char *se_folder,
                  const char *se_thumbnails, float scale, int pane);
 void picker_close(picker *p);
@@ -55,12 +57,12 @@ void picker_close(picker *p);
 #define PICKER_INTRO (-2)     /* the big "Play Intro Video" button at the top */
 #define PICKER_CONTROLS (-3)  /* "Controls (F1)", top right */
 #define PICKER_REPLAYS (-4)   /* "Replays", in the same row: the recordings (replays.h) */
-#define PICKER_PANE_LEFT (-5) /* the panes' arrows (only the ones with a pane that way) */
+#define PICKER_PANE_LEFT (-5) /* the panes' arrows (when there is more than one pane: they go round) */
 #define PICKER_PANE_RIGHT (-6)
 #define PICKER_RANDOM (-7)    /* "Random Stage", between the intro's and the replays' */
 int picker_hit(picker *p, float x, float y);
 void picker_set_hover(picker *p, float x, float y);
-/* A stage of either edition at random, -1 if none. Not the cutscenes, which the Special Edition's pane has one of (its
+/* A stage of either edition at random, -1 if none. Not the cutscenes (the Special Edition's pane has one too: its
  * outro), nor the imported models. */
 int picker_random(const picker *p);
 void picker_scroll(picker *p, float pixels);
@@ -68,10 +70,10 @@ void picker_scroll(picker *p, float pixels);
 void picker_scroll_pane(picker *p, float pixels);
 /* The wheel, the pointer at (x, y): over the panes as picker_scroll_pane, elsewhere the page. */
 void picker_wheel(picker *p, float x, float y, float pixels);
-/* Slide to the pane on that side (-1 left, 1 right), if there is one. */
+/* Slide to the pane on that side (-1 left, 1 right), round the ring: left of retail are the cutscenes. */
 void picker_pane(picker *p, int dir);
 /* Arrow keys: move the selection by columns/rows (the first press selects the first tile); past the side of a pane, on
- * to the pane there. */
+ * to the pane there (round the ring, as the arrows). */
 void picker_move(picker *p, int dx, int dy);
 /* Draws into a cleared 2D pass. */
 void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass);

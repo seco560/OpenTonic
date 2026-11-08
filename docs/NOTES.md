@@ -489,8 +489,11 @@ old look for comparing (title: "old lighting").
   converted). The level select has a big "Play Intro Video" button at the top (and V), Controls top right.
 - **Which ski slope (2026-11-06, user):** a port choice, not the original's: a coin toss between retail and Special
   Edition Totalski, the other when one isn't converted. The loading screen shows that edition's vignette.
-- **Level select layout (2026-11-06, user):** the Swift build fits the window: cutscenes and imports scroll in the bottom
-  third (at least a row, at most what they fill), the level panes get the rest. SDL keeps its two-row panes and scrolling page.
+- **Level select layout (2026-11-06, user):** the Swift build fits the window: imports scroll in the bottom third (at
+  least a row, at most what they fill), the level panes get the rest. SDL keeps its two-row panes and scrolling page.
+- **Cutscenes pane (2026-11-08, user):** the cutscenes left the bottom area for a pane of their own, after the Special
+  Edition's: Retail -> Special -> Cutscenes, and the arrows go round (right of Cutscenes is Retail, left of Retail is
+  Cutscenes), in both frontends; back from a cutscene level the picker opens on it. Less crowded.
 - Disc and installed copies are byte-identical.
 - FFmpeg decodes it natively. TonicTroubleFix ships an Indeo-free intro path, worth checking how it handles sound.
 - Upscaling plan:
@@ -731,7 +734,7 @@ This was the simple demo I thought of making that eventually spiraled into remak
   21_2 North Plain, 9_8 South Plain, 8_6 Pyramid, 76_1 Grögh HQ, 80_1 Ski Slope, 89_1 Bonus (Crazy Town); 66_30 no album match.
   Level pairings inferred from names: bar/cock01 = Glacier Cocktail?, pyr_fou = Pyramid?, BigBoss = Grögh HQ?, rest by name.
 - User-confirmed (2026-10-24): **cutscene-only levels** = bar, death, mammyon, outro, pharmmap, pyr_fou, SpyCarota,
-  spynorth (`tc_level_is_cutscene`; both level pickers list them last under "Cutscenes", still explorable). marmite
+  spynorth (`tc_level_is_cutscene`; both level pickers give them their own "Cutscenes" pane, after the two editions', still explorable). marmite
   (Pressure Cooker) is playable.
 - User-confirmed (2026-10-19): cock01 = Glacier Cocktail; the bar/pyr_fou/BigBoss guesses are correct. Levels without
   their own track reuse other levels' music in the game; until the sound events are decoded they play North Plain.

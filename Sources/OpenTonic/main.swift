@@ -586,10 +586,12 @@ final class GameView: MTKView {
         let out = levelFolder.deletingLastPathComponent()
         let thumbs = out.appendingPathComponent("Vignette/Level")
         let seFolder = out.appendingPathComponent("se/ttlv")
-        // Back from a level: on the pane of its edition.
+        // Back from a level: on its pane (its edition's, or the retail cutscenes').
+        let fromSpecial = currentLevelFolder?.standardizedFileURL == seFolder.standardizedFileURL
+        let fromCutscene = currentLevelName.map { tc_level_is_cutscene($0) != 0 } ?? false
         let picker = LevelPicker(folder: levelFolder, thumbnails: thumbs, seFolder: seFolder,
                                  seThumbnails: out.appendingPathComponent("se/Vignette/Level"),
-                                 showSpecial: currentLevelFolder?.standardizedFileURL == seFolder.standardizedFileURL) { [weak self] url in
+                                 showSection: fromSpecial ? 1 : fromCutscene ? 2 : 0) { [weak self] url in
             self?.openLevel(url)
         }
         picker.onIntro = { [weak self] in self?.playIntro() }
@@ -720,6 +722,8 @@ final class GameView: MTKView {
     /// The folder of the level shown (the retail levels', or the Special Edition's out/se/ttlv): a portal's level
     /// change stays in it, so the Special Edition's arches lead to its own levels.
     private var currentLevelFolder: URL?
+    /// Its file name without the extension (the level select opens on the Cutscenes pane after a cutscene level).
+    private var currentLevelName: String?
 
     /// A red portal's level change: the .ttlv of that name (any case) in the shown level's folder, entered with the carry.
     func openPortalLevel(_ carry: tc_viewer_carry) {
@@ -740,6 +744,7 @@ final class GameView: MTKView {
 
     func openLevel(_ url: URL, carry: tc_viewer_carry? = nil, seed: UInt32 = 0) {
         currentLevelFolder = url.deletingLastPathComponent()
+        currentLevelName = url.deletingPathExtension().lastPathComponent
         // The old view may hold the mouse (cursor hidden and detached): release it, and capture again in the new view so
         // a portal's level change keeps playing (and Esc still releases it).
         let wasCaptured = gameView?.isCaptured ?? false
