@@ -101,9 +101,19 @@ final class LoadingScreen: NSView {
     func show(level: String, progress: Float) {
         if level != self.level {
             self.level = level
+            // A custom-layer portal names its edition ("se:sud0", "retail:sud0"; tools/ttre/custom.py).
+            let parts = level.split(separator: ":", maxSplits: 1).map(String.init)
+            let name = parts.last ?? level
+            var folder = vignettes
+            if parts.count == 2 {
+                var out = vignettes.deletingLastPathComponent().deletingLastPathComponent()
+                if out.lastPathComponent == "se" { out = out.deletingLastPathComponent() }
+                if parts[0] == "se" { out = out.appendingPathComponent("se") }
+                folder = out.appendingPathComponent("Vignette/Level")
+            }
             // Vignette names differ in case from the level names (Cock01.png / cock01).
-            let files = (try? FileManager.default.contentsOfDirectory(at: vignettes, includingPropertiesForKeys: nil)) ?? []
-            image.image = files.first { $0.deletingPathExtension().lastPathComponent.lowercased() == level.lowercased() }
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            image.image = files.first { $0.deletingPathExtension().lastPathComponent.lowercased() == name.lowercased() }
                 .flatMap { NSImage(contentsOf: $0) }
             needsLayout = true
         }
@@ -727,8 +737,11 @@ final class GameView: MTKView {
 
     /// A red portal's level change: the .ttlv of that name (any case) in the shown level's folder, entered with the carry.
     func openPortalLevel(_ carry: tc_viewer_carry) {
-        let name = cString(carry.level)
-        let folder = currentLevelFolder ?? levelFolder
+        // A custom-layer portal names its edition ("se:sud0", "retail:sud0"; tools/ttre/custom.py).
+        let parts = cString(carry.level).split(separator: ":", maxSplits: 1).map(String.init)
+        let name = parts.last ?? ""
+        let folder = parts.count < 2 ? (currentLevelFolder ?? levelFolder)
+            : parts[0] == "se" ? levelFolder.deletingLastPathComponent().appendingPathComponent("se/ttlv") : levelFolder
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         guard let url = files.first(where: { $0.pathExtension.lowercased() == "ttlv"
                                              && $0.deletingPathExtension().lastPathComponent.lowercased() == name }) else {

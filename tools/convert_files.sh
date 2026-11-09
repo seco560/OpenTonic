@@ -262,6 +262,9 @@ elif outdated icon "$OUT/icon/OpenTonic.png" tools/make_icon.sh; then
   record icon
 else echo "== icon: current (skip)"; fi
 
+# ---- 7. the custom layer: our own edits on top of the levels (tools/ttre/custom.py; every run, it is quick) ----
+python3 -m tools.ttre.custom "$OUT"
+
 # ---- checks ----
 if [ "$CHECK" = 1 ]; then
   echo "== core checks"

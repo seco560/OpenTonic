@@ -198,3 +198,12 @@ to the exit arch (or just hand control back).
 ## Not in scope (later)
 `GenTransitionSubMap` zone teleports (COND_13 zone test), the scripted camera moves, portal sounds (PROC_118),
 the collectible gate, death -> Land (B59), Doc's training levels (`transit`), saved-position arrivals (`dsg134 == 1`).
+
+## Custom layer (2026-11-09): our own edits on top of the levels
+`tools/ttre/custom.py`, the last step of `tools/convert_files.sh`, patches finished .ttlv / .ttai files (keeping their stamp;
+pristine copies in `files/out/.custom-base`, a `CUST` chunk marks an edited file). `__main__` must not import it, or every
+edit there would make all levels stale. Its `EDITS` table so far: two pairs of arches, one arch of each pair in each edition's sud0, at the spots where Ed
+stood at the end of the placing recordings, front to the camera. Retail sud0 shows the SE's South Plain arch and leads to SE
+sud0; SE sud0 shows retail's red exit arch with the "South Plain" sign and leads to retail sud0. An arch is static MESH
+entries plus a PORT record (radius 4, two-sided, the retail walk-in) and two PLAC entries: Ed arrives 5.5 in front of the
+other arch. Level names `se:x` / `retail:x` switch edition; the frontends pick the folder and the vignette.

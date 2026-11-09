@@ -315,14 +315,26 @@ static bool open_level(app *a, const char *path, const tc_viewer_carry *carry) {
     return open_level_seeded(a, path, carry, 0);
 }
 
+/* A custom-layer portal names its level's edition (tools/ttre/custom.py): "se:sud0", "retail:sud0". The plain name;
+ * *edition 1 the Special Edition, 0 retail, -1 the shown level's. */
+static const char *level_split(const char *level, int *edition) {
+    *edition = !SDL_strncmp(level, "se:", 3) ? 1 : !SDL_strncmp(level, "retail:", 7) ? 0 : -1;
+    return *edition == 1 ? level + 3 : *edition == 0 ? level + 7 : level;
+}
+
 /* A red portal's level change (after its loading screen): the .ttlv of that name (any case) in the levels folder,
  * entered with the carry; the level select when it's missing or doesn't load. */
 static void open_portal_level(app *a, const tc_viewer_carry *pending) {
     tc_viewer_carry carry = *pending;  /* freed with the current viewer */
     char pattern[80];
+    int edition;
+    const char *name = level_split(carry.level, &edition);
     /* The shown level's folder: the Special Edition's arches lead to its own levels (out/se/ttlv). */
-    char *folder = SDL_strdup(a->current_folder ? a->current_folder : a->level_folder);
-    SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", carry.level);
+    char *se = edition == 1 ? path_join(a->data_dir, "se") : NULL;
+    char *folder = edition == 1 ? (se ? path_join(se, "ttlv") : NULL)
+                                : SDL_strdup(edition == 0 || !a->current_folder ? a->level_folder : a->current_folder);
+    SDL_free(se);
+    SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", name);
     int n = 0;
     char **levels = folder ? SDL_GlobDirectory(folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
     char *path = levels && n > 0 ? path_join(folder, levels[0]) : NULL;
@@ -1046,7 +1058,10 @@ static void loading_prepare(app *a, const char *level) {
     a->loading_start_ns = SDL_GetTicksNS();
     /* Vignette names differ in case from the level names (Cock01.png / cock01). Next to the shown level's folder (the
      * Special Edition's: out/se/Vignette/Level, for its arches' level changes), else the retail ones. */
-    char *base = a->current_folder ? path_dir(a->current_folder) : NULL;
+    int edition;
+    const char *name = level_split(level, &edition);
+    char *base = edition == 1 ? path_join(a->data_dir, "se") : edition == 0 ? SDL_strdup(a->data_dir)
+               : a->current_folder ? path_dir(a->current_folder) : NULL;
     char *vignette = base ? path_join(base, "Vignette") : NULL;
     char *dir = vignette ? path_join(vignette, "Level") : NULL;
     if (!dir || !path_is_dir(dir)) {
@@ -1057,7 +1072,7 @@ static void loading_prepare(app *a, const char *level) {
     }
     SDL_free(base);
     char pattern[80];
-    SDL_snprintf(pattern, sizeof pattern, "%s.png", level);
+    SDL_snprintf(pattern, sizeof pattern, "%s.png", name);
     int n = 0;
     char **found = dir ? SDL_GlobDirectory(dir, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
     char *path = found && n > 0 ? path_join(dir, found[0]) : NULL;
