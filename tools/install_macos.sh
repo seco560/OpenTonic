@@ -91,6 +91,8 @@ cp Sources/OpenTonic/Shaders.metal "$APP/Contents/Resources/"
 $SYNC --exclude '*_ai.txt' "$OUT/ttlv/" "$R/ttlv/"  # the AI listings level-ttai writes next to the .ttai: debugging only
 if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$R/Textures/"; else rm -rf "$R/Textures"; fi
 if [ -d "$OUT/Vignette/Level" ]; then $SYNC "$OUT/Vignette/Level/" "$R/Vignette/Level/"; else rm -rf "$R/Vignette/Level"; fi
+# The original demo tapes (tools/ttre/demos.py): Replays' demo button.
+if [ -d "$OUT/demos" ]; then $SYNC "$OUT/demos/" "$R/demos/"; else rm -rf "$R/demos"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$R/Imported/"; else rm -rf "$R/Imported"; fi
 # The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.

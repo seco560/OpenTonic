@@ -123,35 +123,52 @@ private final class RecordingFile {
 /// Playing a recording back: the recorded frames at their own pace, level after level, the game's inputs locked. P pauses,
 /// the camera turning round Ed. Esc, Start and its end go back to the Replays menu, Cmd-L to the level select.
 @MainActor final class Playback {
-    private let raw = UnsafeMutablePointer<tc_replay>.allocate(capacity: 1)
-    private let bytes: UnsafeMutableRawBufferPointer
+    /// nil: an original demo, whose tape the viewer plays itself (tc_viewer_play_tape).
+    private let raw: UnsafeMutablePointer<tc_replay>?
+    private let bytes: UnsafeMutableRawBufferPointer?
     private var clock: Float = 0
     private(set) var segment: UInt32 = 0
     /// The frames wait and the camera turns round Ed (tc_replay_pause).
     private(set) var paused = false
 
-    init?(url: URL) {
-        guard let data = try? Data(contentsOf: url) else { raw.deallocate(); return nil }
-        bytes = .allocate(byteCount: max(data.count, 1), alignment: 8)
-        data.copyBytes(to: bytes)
-        guard tc_replay_open(raw, bytes.baseAddress, data.count) == TC_OK, raw.pointee.segment_count > 0 else {
-            bytes.deallocate()
-            raw.deallocate()
-            return nil
-        }
+    /// An original demo: watched as a recording is, nothing to step here.
+    init() {
+        raw = nil
+        bytes = nil
     }
 
-    var segmentCount: UInt32 { raw.pointee.segment_count }
-    func info(_ i: UInt32) -> tc_replay_segment { raw.pointee.segments[Int(i)] }
+    init?(url: URL) {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let replay = UnsafeMutablePointer<tc_replay>.allocate(capacity: 1)
+        let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: max(data.count, 1), alignment: 8)
+        data.copyBytes(to: buffer)
+        guard tc_replay_open(replay, buffer.baseAddress, data.count) == TC_OK, replay.pointee.segment_count > 0 else {
+            buffer.deallocate()
+            replay.deallocate()
+            return nil
+        }
+        raw = replay
+        bytes = buffer
+    }
+
+    var segmentCount: UInt32 { raw?.pointee.segment_count ?? 0 }
+    func info(_ i: UInt32) -> tc_replay_segment { raw!.pointee.segments[Int(i)] }
 
     func begin(_ i: UInt32, _ v: UnsafeMutablePointer<tc_viewer>) {
         segment = i
-        tc_replay_begin(raw, i, v, false)
+        if let raw { tc_replay_begin(raw, i, v, false) }
     }
 
     /// The frames real time has reached: a display frame may hold none or several of the recording's. False at the
     /// segment's end.
     func advance(_ dt: Float, _ v: UnsafeMutablePointer<tc_viewer>) -> Bool {
+        guard let raw else {  // an original demo: false at the tape's end
+            tc_viewer_update(v, dt)
+            var sounds: UnsafePointer<UInt16>?
+            let n = Int(tc_viewer_sounds(v, &sounds))
+            if n > 0, let sounds { Sfx.shared.play(Array(UnsafeBufferPointer(start: sounds, count: n))) }
+            return !tc_viewer_tape_done(v)
+        }
         if paused {
             tc_viewer_paused_look(v, dt)
             return true
@@ -169,12 +186,14 @@ private final class RecordingFile {
     }
 
     func togglePause() {
+        guard let raw else { return }  // a tape has no paused look
         paused.toggle()
         tc_replay_pause(raw, paused)
         clock = 0
     }
 
     func close() {
+        guard let raw, let bytes else { return }
         tc_replay_close(raw)
         bytes.deallocate()
         raw.deallocate()

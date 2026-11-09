@@ -32,7 +32,7 @@ static int newest_first(const void *a, const void *b) {
     return SDL_strcmp(((const replays_entry *)b)->path, ((const replays_entry *)a)->path);
 }
 
-void replays_open(replays *r, gpu *g, float scale, const char *folder, bool recording) {
+void replays_open(replays *r, gpu *g, float scale, const char *folder, bool recording, bool demos) {
     int n = 0;
     char **names = folder ? SDL_GlobDirectory(folder, "*." TC_REC_EXTENSION, 0, &n) : NULL;
     SDL_zerop(r);
@@ -41,6 +41,7 @@ void replays_open(replays *r, gpu *g, float scale, const char *folder, bool reco
     r->selected = r->confirm = -1;
     r->can_record = folder != NULL;
     r->recording = recording;
+    r->can_demo = demos;
     r->text_scale = SDL_max(1, (int)SDL_roundf(2 * r->scale));
     r->entries = n > 0 ? SDL_calloc((size_t)n, sizeof *r->entries) : NULL;
     for (int i = 0; r->entries && i < n; i++)
@@ -59,8 +60,8 @@ void replays_open(replays *r, gpu *g, float scale, const char *folder, bool reco
     r->yes = gpu_text(g, "Yes, delete", r->text_scale, &r->yes_w, &r->yes_h);
     r->keep = gpu_text(g, "Keep", r->text_scale, &r->keep_w, &r->keep_h);
     r->ask = gpu_text(g, "Delete this recording for good?", r->text_scale, &r->ask_w, &r->ask_h);
-    r->record_on = gpu_text(g, "Record runs: On (R)", r->text_scale, &r->record_on_w, &r->record_on_h);
-    r->record_off = gpu_text(g, "Record runs: Off (R)", r->text_scale, &r->record_off_w, &r->record_off_h);
+    r->demos = gpu_text(g, "Original demos (D)", r->text_scale, &r->demos_w, &r->demos_h);
+    r->record = gpu_text(g, "Record runs (R)", r->text_scale, &r->record_w, &r->record_h);
     r->empty = gpu_text(g, folder ? "No recordings yet: turn on Record runs, then play a level."
                                   : "Recording is off (TONIC_RECORDINGS).", r->text_scale, &r->empty_w, &r->empty_h);
 }
@@ -72,7 +73,7 @@ static void free_entry(replays *r, replays_entry *e) {
 }
 
 void replays_close(replays *r) {
-    SDL_GPUTexture *labels[] = {r->heading, r->back, r->play, r->del, r->yes, r->keep, r->ask, r->empty, r->record_on, r->record_off};
+    SDL_GPUTexture *labels[] = {r->heading, r->back, r->play, r->del, r->yes, r->keep, r->ask, r->empty, r->record, r->demos};
     for (int i = 0; i < r->count; i++) free_entry(r, &r->entries[i]);
     for (size_t k = 0; k < SDL_arraysize(labels); k++)
         if (labels[k]) SDL_ReleaseGPUTexture(r->g->device, labels[k]);
@@ -80,8 +81,13 @@ void replays_close(replays *r) {
     SDL_zerop(r);
 }
 
-/* Layout: a header band that stays put, then the rows, which scroll under it. */
-static float header_height(const replays *r) { return 76 * r->scale; }
+/* Layout: a header band that stays put, then the rows, which scroll under it. In the band the title on its own line, so
+ * it meets nothing, and under it Back, the original demos and the Record runs switch. */
+static const SDL_FColor ACCENT = {0.72f, 0.42f, 0.14f, 1};
+static float button_height(const replays *r) { return (float)r->back_h + 16 * r->scale; }
+static float title_y(const replays *r) { return 14 * r->scale; }
+static float controls_y(const replays *r) { return title_y(r) + (float)r->heading_h + 12 * r->scale; }
+static float header_height(const replays *r) { return controls_y(r) + button_height(r) + 16 * r->scale; }
 static float row_height(const replays *r) { return 78 * r->scale; }
 static float row_gap(const replays *r) { return 8 * r->scale; }
 
@@ -92,15 +98,23 @@ static SDL_FRect row_rect(const replays *r, int i) {
 }
 
 static SDL_FRect back_rect(const replays *r) {
-    float w = (float)r->back_w + 24 * r->scale, h = (float)r->back_h + 16 * r->scale;
-    SDL_FRect q = {16 * r->scale, 16 * r->scale, w, h};
+    SDL_FRect q = {16 * r->scale, controls_y(r), (float)r->back_w + 24 * r->scale, button_height(r)};
     return q;
 }
 
-/* The Record runs toggle, the header's right end; as wide for either state, so it stays put under the pointer. */
+/* The original demos, beside Back. */
+static SDL_FRect demos_rect(const replays *r) {
+    SDL_FRect b = back_rect(r);
+    SDL_FRect q = {b.x + b.w + 12 * r->scale, b.y, (float)r->demos_w + 32 * r->scale, b.h};
+    return q;
+}
+
+/* The Record runs switch and its label, the controls' right end: all of it answers the mouse. */
+#define SWITCH_W 44.0f
+#define SWITCH_H 22.0f
 static SDL_FRect record_rect(const replays *r) {
-    float w = (float)SDL_max(r->record_on_w, r->record_off_w) + 24 * r->scale, h = (float)r->record_off_h + 16 * r->scale;
-    SDL_FRect q = {r->width - w - 16 * r->scale, 16 * r->scale, w, h};
+    float w = (SWITCH_W + 12) * r->scale + (float)r->record_w;
+    SDL_FRect q = {r->width - w - 16 * r->scale, controls_y(r), w, button_height(r)};
     return q;
 }
 
@@ -121,6 +135,7 @@ static float max_scroll(const replays *r) {
 replays_hit replays_at(const replays *r, float x, float y) {
     replays_hit h = {REPLAYS_NOTHING, -1};
     if (inside(back_rect(r), x, y)) { h.action = REPLAYS_BACK; return h; }
+    if (r->can_demo && inside(demos_rect(r), x, y)) { h.action = REPLAYS_DEMOS; return h; }
     if (r->can_record && inside(record_rect(r), x, y)) { h.action = REPLAYS_RECORD; return h; }
     if (y < header_height(r)) return h;  /* the rows scroll under the header */
     for (int i = 0; i < r->count; i++) {
@@ -187,6 +202,21 @@ static void row_button(replays *r, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FR
     picker_button(r->g, f, pass, q, label, w, h, r->hover.row == i && r->hover.action == a, r->scale);
 }
 
+/* A switch you can read at a glance: green with the knob right when on, grey with it left when off. */
+static void draw_record_switch(replays *r, gpu_frame *f, SDL_GPURenderPass *pass) {
+    gpu *g = r->g;
+    float s = r->scale, k = r->hover.action == REPLAYS_RECORD ? 1.2f : 1, inset = 3 * s;
+    SDL_FRect q = record_rect(r);
+    SDL_FRect track = {q.x, SDL_roundf(q.y + (q.h - SWITCH_H * s) / 2), SWITCH_W * s, SWITCH_H * s};
+    float knob = track.h - 2 * inset;
+    SDL_FRect dot = {r->recording ? track.x + track.w - inset - knob : track.x + inset, track.y + inset, knob, knob};
+    SDL_FColor c = r->recording ? (SDL_FColor){0.22f * k, 0.62f * k, 0.32f * k, 1} : (SDL_FColor){0.3f * k, 0.32f * k, 0.4f * k, 1};
+    gpu_quad(g, f, pass, NULL, track, NULL, c);
+    gpu_quad(g, f, pass, NULL, dot, NULL, (SDL_FColor){0.95f, 0.96f, 1, 1});
+    picker_label(g, f, pass, r->record, (SDL_FRect){track.x + track.w + 12 * s, SDL_roundf(q.y + (q.h - (float)r->record_h) / 2), (float)r->record_w,
+                 (float)r->record_h}, NULL, s, r->recording ? TEXT : DIM);
+}
+
 void replays_draw(replays *r, gpu_frame *f, SDL_GPURenderPass *pass) {
     gpu *g = r->g;
     float s = r->scale;
@@ -201,6 +231,7 @@ void replays_draw(replays *r, gpu_frame *f, SDL_GPURenderPass *pass) {
         SDL_FRect left = button_rect(r, q, 1);
         float tx = q.x + 16 * s, room = left.x - tx - 12 * s;
         gpu_quad(g, f, pass, NULL, q, NULL, hot ? (SDL_FColor){0.2f, 0.23f, 0.34f, 1} : (SDL_FColor){0.14f, 0.15f, 0.22f, 1});
+        if (hot) gpu_quad(g, f, pass, NULL, (SDL_FRect){q.x, q.y, SDL_roundf(4 * s), q.h}, NULL, ACCENT);
         if (r->confirm == i) {
             clipped(r, f, pass, r->ask, r->ask_w, r->ask_h, tx, SDL_roundf(q.y + (q.h - (float)r->ask_h) / 2), room, WARN);
             row_button(r, f, pass, left, r->yes, r->yes_w, r->yes_h, i, REPLAYS_YES);
@@ -213,12 +244,13 @@ void replays_draw(replays *r, gpu_frame *f, SDL_GPURenderPass *pass) {
         row_button(r, f, pass, button_rect(r, q, 0), r->del, r->del_w, r->del_h, i, REPLAYS_DELETE);
     }
     gpu_quad(g, f, pass, NULL, (SDL_FRect){0, 0, r->width, header_height(r)}, NULL, (SDL_FColor){0.08f, 0.09f, 0.14f, 1});
+    gpu_quad(g, f, pass, NULL, (SDL_FRect){0, SDL_roundf(header_height(r) - 2 * s), r->width, SDL_max(1.0f, SDL_roundf(2 * s))}, NULL, ACCENT);
     picker_button(g, f, pass, back_rect(r), r->back, r->back_w, r->back_h, r->hover.action == REPLAYS_BACK, s);
-    if (r->can_record)
-        picker_button(g, f, pass, record_rect(r), r->recording ? r->record_on : r->record_off, r->recording ? r->record_on_w : r->record_off_w,
-                      r->recording ? r->record_on_h : r->record_off_h, r->hover.action == REPLAYS_RECORD, s);
+    if (r->can_demo)
+        picker_big_button(g, f, pass, demos_rect(r), r->demos, r->demos_w, r->demos_h, r->hover.action == REPLAYS_DEMOS, s, ACCENT);
+    if (r->can_record) draw_record_switch(r, f, pass);
     if (r->heading) picker_label(g, f, pass, r->heading, (SDL_FRect){SDL_roundf((r->width - (float)r->heading_w) / 2),
-                                 SDL_roundf((header_height(r) - (float)r->heading_h) / 2), (float)r->heading_w, (float)r->heading_h}, NULL, s, TEXT);
+                                 SDL_roundf(title_y(r)), (float)r->heading_w, (float)r->heading_h}, NULL, s, TEXT);
     if (r->count == 0 && r->empty)
         picker_label(g, f, pass, r->empty, (SDL_FRect){SDL_roundf((r->width - (float)r->empty_w) / 2), SDL_roundf(r->height / 2),
                      (float)r->empty_w, (float)r->empty_h}, NULL, s, DIM);

@@ -171,7 +171,8 @@ static layout layout_for(const picker *p, float width) {
     l.heading = 40 * s;
     l.intro = 68 * s;  /* the band of the big buttons, above the first heading */
     l.inset = 8 * s;  /* above a pane's first row: room for the selection's glow */
-    l.pane_h = 2 * l.cell_h + l.inset;  /* two rows */
+    /* what the window has left under the heading, so a pane's own scrolling reaches all of it; at least a row */
+    l.pane_h = SDL_max(l.cell_h + l.inset, p->height - (l.pad + l.intro + l.heading) - l.pad);
     l.cols = SDL_max(1, (int)((width - l.pad) / l.cell_w));
     l.left = SDL_max(l.pad, (width - (float)l.cols * l.cell_w + l.pad) / 2);
     return l;
@@ -185,8 +186,6 @@ static float heading_y(const picker *p, const layout *l, int k) {
     float y = l->pad + l->intro;
     if (k < PICKER_PANES) return y;
     if (p->first[PICKER_PANES] > 0) y += l->heading + l->pane_h;
-    for (int s = PICKER_PANES; s < k; s++)
-        if (p->first[s + 1] > p->first[s]) y += l->heading + (float)rows_of(p->first[s + 1] - p->first[s], l->cols) * l->cell_h;
     return y;
 }
 
@@ -303,7 +302,7 @@ void picker_label(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture 
 
 /* The big buttons (as LevelPicker.swift's PickerButton, in flat quads): a glow when under the mouse, a light rim, the
  * colour with a lighter top half, the label white with a shadow. */
-static void draw_big_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh,
+void picker_big_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh,
                             bool hot, float scale, SDL_FColor c) {
     float k = hot ? 1.2f : 1, e = SDL_max(1.0f, SDL_roundf(scale)), glow = 6 * scale;
     SDL_FColor body = {SDL_min(1.0f, c.r * k), SDL_min(1.0f, c.g * k), SDL_min(1.0f, c.b * k), 1};
@@ -472,11 +471,11 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass) {
     ease_slide(p);
     SDL_FRect ir = intro_rect(p, &l), nr = random_rect(p, &l), dr = replays_rect(p, &l);
     if (ir.y + ir.h > 0) {
-        draw_big_button(g, f, pass, ir, p->intro_text, p->intro_w, p->intro_h, p->hover == PICKER_INTRO, p->scale,
+        picker_big_button(g, f, pass, ir, p->intro_text, p->intro_w, p->intro_h, p->hover == PICKER_INTRO, p->scale,
                         (SDL_FColor){0.88f, 0.32f, 0.3f, 1});
-        draw_big_button(g, f, pass, nr, p->random_text, p->random_w, p->random_h, p->hover == PICKER_RANDOM, p->scale,
+        picker_big_button(g, f, pass, nr, p->random_text, p->random_w, p->random_h, p->hover == PICKER_RANDOM, p->scale,
                         (SDL_FColor){0.25f, 0.65f, 0.38f, 1});
-        draw_big_button(g, f, pass, dr, p->replays_text, p->replays_w, p->replays_h, p->hover == PICKER_REPLAYS, p->scale,
+        picker_big_button(g, f, pass, dr, p->replays_text, p->replays_w, p->replays_h, p->hover == PICKER_REPLAYS, p->scale,
                         (SDL_FColor){0.2f, 0.55f, 0.85f, 1});
     }
     for (int k = 0; k < PICKER_SECTIONS; k++) {

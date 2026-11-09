@@ -83,6 +83,8 @@ install -m 755 sdl/build/opentonic "$DEST/opentonic"
 $SYNC --exclude '*_ai.txt' "$OUT/ttlv/" "$D/ttlv/"  # the AI listings next to the .ttai: debugging only
 if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$D/Textures/"; else rm -rf "$D/Textures"; fi
 [ -d "$OUT/Vignette/Level" ] && $SYNC "$OUT/Vignette/Level/" "$D/Vignette/Level/"
+# The original demo tapes (tools/ttre/demos.py): Replays' demo button.
+if [ -d "$OUT/demos" ]; then $SYNC "$OUT/demos/" "$D/demos/"; else rm -rf "$D/demos"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$D/Imported/"; else rm -rf "$D/Imported"; fi
 # The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.

@@ -2,18 +2,16 @@
  * its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
  * available (matched case-insensitively). Port of LevelPicker.swift, drawn with the 2D quad pipeline: click a tile, or
  * move with the arrow keys and press Enter. All sizes in pixels.
- * Four sections. "Retail Edition", "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) and "Cutscenes" (the
- * retail game's cutscene-only levels, tc_level_is_cutscene) are three panes in a ring, one showing at a time: fixed
- * height, each scrolling inside itself, slid left and right with the arrows at their top, in that order and round
- * again (right of the cutscenes: retail). Under them the page goes on with "Imported": models brought in with
- * tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), drawn with a question mark when they have no
- * picture. */
+ * Four sections, four panes in a ring, one showing at a time: "Retail Edition", "Special Edition" (the 1998 disc's levels,
+ * tools/ttre/se.py), "Cutscenes" (the retail game's cutscene-only levels, tc_level_is_cutscene) and "Imported" (models
+ * brought in with tools/ttre/import_gltf.py: they have a folder out/Imported/<name>, and a question mark when they have no
+ * picture). Each fills the window's height, scrolls inside itself and slides left and right with the arrows at its top. */
 #ifndef TV_PICKER_H
 #define TV_PICKER_H
 #include "gpu.h"
 
 #define PICKER_SECTIONS 4
-#define PICKER_PANES 3  /* sections 0, 1 and 2 are the panes */
+#define PICKER_PANES 4  /* all the sections are panes, Imported the last */
 
 typedef struct picker_entry {
     char *name, *path;
@@ -80,6 +78,9 @@ void picker_draw(picker *p, gpu_frame *f, SDL_GPURenderPass *pass);
 /* The menus' flat button, and a label with a drop shadow (it reads on any colour); uv NULL: all of it. */
 void picker_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh, bool hot,
                    float scale);
+/* The big buttons' look (the level select's): colour c, a rim, a glow under the mouse. */
+void picker_big_button(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_FRect r, SDL_GPUTexture *label, int lw, int lh,
+                       bool hot, float scale, SDL_FColor c);
 void picker_label(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *label, SDL_FRect t, const SDL_FRect *uv,
                   float scale, SDL_FColor color);
 

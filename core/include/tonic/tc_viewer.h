@@ -173,6 +173,7 @@ typedef enum tc_viewer_phase {
 
 typedef struct tc_viewer_play tc_viewer_play;  /* private: collision, Ed's controller and AI at stable addresses */
 typedef struct tc_viewer_light tc_viewer_light; /* private: the light persos' AI */
+typedef struct tc_viewer_tape tc_viewer_tape;   /* private: an original demo tape in progress (tc_viewer_play_tape) */
 
 /* Fields are readable; change them through the functions below so every frontend behaves the same. */
 typedef struct tc_viewer {
@@ -314,6 +315,7 @@ typedef struct tc_viewer {
     uint32_t blended_depth_cap;
 
     tc_recorder *rec;             /* tc_viewer_desc.recorder */
+    tc_viewer_tape *tape;         /* an original demo playing (tc_viewer_play_tape), NULL none */
 } tc_viewer;
 
 /* Sets up the start camera (the middle of the level), the play session (with Ed's AI when ai_data loads) and
@@ -344,6 +346,14 @@ void tc_viewer_set_look_stick(tc_viewer *v, float x, float y);
 
 /* One frame: look, free-fly or Ed (AI or simple controller) with the orbit camera, Ed's clip, animation clock. */
 void tc_viewer_update(tc_viewer *v, float dt);
+
+/* Plays an original demo tape (tc_tape.h, a whole Demos/<level>/DemoNNN.sav; copied) on this level, straight after
+ * tc_viewer_init: from now on tc_viewer_update shows the tape, with Ed's AI, the cast's and the mechanics stopped and
+ * the inputs ignored. false: not a tape, or not one of this level (no retail play session, or its objects don't
+ * match the level's persos). docs/RECORDING.md "The original demos". */
+bool tc_viewer_play_tape(tc_viewer *v, const void *data, size_t size);
+/* The tape has been played to its end (true from then on; the last frame stays up). */
+bool tc_viewer_tape_done(const tc_viewer *v);
 /* This frame's draws: opaque ones first, then [opaque_count, count) with TC_FLAG_TRANSPARENT, to draw after
  * everything opaque without depth writes, back to front: by the distance of each mesh's centre from the camera,
  * farthest first (ties keep the list's order). The original sorts its blended elements by depth too

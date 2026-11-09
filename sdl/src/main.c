@@ -51,7 +51,7 @@ static const char *controls_text =
     "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special / Cutscenes)  -  Ctrl+L from a level  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
-    "Replays:  Enter plays, Delete deletes, Esc back  -  Pad: Cross plays, Square deletes, Circle back\n"
+    "Replays:  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
     "Watching one:  P or Cross pauses  -  Esc or Start back to the list\n"
     "Paused:  mouse, arrows, right stick and wheel move the camera round Ed, back where it was on resuming\n"
     "\n"
@@ -119,6 +119,10 @@ typedef struct app {
     uint32_t replay_segment;
     float replay_clock;          /* seconds of real time the recording is behind */
     bool replay_paused;          /* P, Cross: the frames wait, the camera turns round Ed (tc_replay_pause) */
+    /* The original demos, watched as a playback is (replaying is on): the tapes in their round. */
+    bool demo;
+    char **demo_tapes;
+    int demo_count, demo_at;
     /* The Replays menu, over the level select. */
     bool replays_on;
     replays rp;
@@ -218,6 +222,8 @@ static void end_recording(app *a) {
 }
 
 static void stop_playback(app *a, const char *why);
+static void demo_forget(app *a);
+static bool demos_available(app *a);
 
 static void show_picker(app *a) {
     stop_playback(a, "the level select");
@@ -359,9 +365,13 @@ static void open_portal_level(app *a, const tc_viewer_carry *pending) {
 static void stop_playback(app *a, const char *why) {
     if (!a->replaying) return;
     SDL_Log("Playback ended: %s", why);
-    tc_replay_close(&a->replay);
-    SDL_free(a->replay_data);
-    a->replay_data = NULL;
+    if (a->demo) {
+        demo_forget(a);
+    } else {
+        tc_replay_close(&a->replay);
+        SDL_free(a->replay_data);
+        a->replay_data = NULL;
+    }
     a->replaying = a->replay_paused = false;
     update_title(a);
 }
@@ -370,7 +380,7 @@ static void stop_playback(app *a, const char *why) {
 static void show_replays(app *a) {
     if (a->replays_on) return;
     char *folder = record_folder();
-    replays_open(&a->rp, &a->g, SDL_GetWindowDisplayScale(a->window), folder, record_enabled());
+    replays_open(&a->rp, &a->g, SDL_GetWindowDisplayScale(a->window), folder, record_enabled(), demos_available(a));
     SDL_free(folder);
     a->replays_on = true;
     set_title(a, "Open Tonic \xe2\x80\x94 Replays");
@@ -428,6 +438,7 @@ static bool start_playback(app *a, const char *file) {
 }
 
 static void toggle_playback_pause(app *a) {
+    if (a->demo) return;  /* a tape has no paused look */
     a->replay_paused = !a->replay_paused;
     tc_replay_pause(&a->replay, a->replay_paused);
     a->replay_clock = 0;
@@ -435,8 +446,104 @@ static void toggle_playback_pause(app *a) {
     update_title(a);
 }
 
+/* ---- the original demos (Replays' button): the disc's tapes on their levels, in a shuffled round ---- */
+
+static void demo_forget(app *a) {
+    for (int i = 0; i < a->demo_count; i++) SDL_free(a->demo_tapes[i]);
+    SDL_free(a->demo_tapes);
+    a->demo_tapes = NULL;
+    a->demo_count = a->demo_at = 0;
+    a->demo = false;
+}
+
+/* out/demos/<Level>/DemoNNN.sav: the tapes' paths in a->demo_tapes; false: none. */
+static bool demo_find(app *a) {
+    char *folder = path_join(a->data_dir, "demos");
+    int n = 0;
+    char **names = folder ? SDL_GlobDirectory(folder, "*/*.sav", SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    demo_forget(a);
+    if (names && n > 0 && (a->demo_tapes = SDL_calloc((size_t)n, sizeof *a->demo_tapes)))
+        for (int i = 0; i < n; i++)
+            if ((a->demo_tapes[a->demo_count] = path_join(folder, names[i]))) a->demo_count++;
+    SDL_free(names);
+    SDL_free(folder);
+    return a->demo_count > 0;
+}
+
+static bool demos_available(app *a) {
+    bool found = demo_find(a);
+    demo_forget(a);
+    return found;
+}
+
+static void demo_shuffle(app *a) {
+    const char *last = a->demo_count ? a->demo_tapes[a->demo_count - 1] : NULL;
+    for (int i = a->demo_count - 1; i > 0; i--) {
+        int j = SDL_rand(i + 1);
+        char *t = a->demo_tapes[i];
+        a->demo_tapes[i] = a->demo_tapes[j];
+        a->demo_tapes[j] = t;
+    }
+    if (a->demo_count > 1 && a->demo_tapes[0] == last) {  /* not the same one twice running */
+        a->demo_tapes[0] = a->demo_tapes[a->demo_count - 1];
+        a->demo_tapes[a->demo_count - 1] = (char *)last;
+    }
+}
+
+/* The next tape that plays: its level opened and the tape on it. false: none of them does. */
+static bool demo_next(app *a) {
+    for (int tries = 0; tries < a->demo_count; tries++) {
+        if (a->demo_at >= a->demo_count) {
+            demo_shuffle(a);
+            a->demo_at = 0;
+        }
+        const char *tape = a->demo_tapes[a->demo_at++];
+        char *dir = path_dir(tape), *level = dir ? path_stem(dir) : NULL;
+        char pattern[160];
+        int n = 0;
+        SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", level ? level : "");
+        char **levels = SDL_GlobDirectory(a->level_folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n);
+        char *path = levels && n > 0 ? path_join(a->level_folder, levels[0]) : NULL;
+        bool ok = false;
+        if (path && open_level_seeded(a, path, NULL, (uint32_t)SDL_rand(SDL_MAX_SINT32))) {
+            size_t size = 0;
+            void *data = SDL_LoadFile(tape, &size);
+            ok = data && tc_viewer_play_tape(&a->view->viewer, data, size);
+            SDL_free(data);
+            if (ok) SDL_Log("Original demo: %s", tape);
+            else SDL_Log("Can't play the demo %s on its level", tape);
+        }
+        SDL_free(path);
+        SDL_free(levels);
+        SDL_free(level);
+        SDL_free(dir);
+        if (ok) return true;
+    }
+    return false;
+}
+
+static void start_demos(app *a) {
+    if (!demo_find(a)) return;
+    demo_shuffle(a);
+    a->demo = a->replaying = true;
+    a->replay_clock = 0;
+    if (!demo_next(a)) back_to_replays(a, "no original demo could be played");
+}
+
+static void demo_tick(app *a, float dt) {
+    const uint16_t *sounds;
+    tc_viewer_update(&a->view->viewer, dt);
+    uint32_t n = tc_viewer_sounds(&a->view->viewer, &sounds);
+    if (n > 0) sfx_play(sounds, n);
+    if (tc_viewer_tape_done(&a->view->viewer) && !demo_next(a)) back_to_replays(a, "no original demo could be played");
+}
+
 /* The frames real time has reached; a frontend's frame may hold none or several of the recording's. */
 static void playback_tick(app *a, float dt) {
+    if (a->demo) {
+        demo_tick(a, dt);
+        return;
+    }
     if (a->replay_paused) {
         tc_viewer_paused_look(&a->view->viewer, dt);
         return;
@@ -692,6 +799,9 @@ static void replays_key(app *a, const SDL_KeyboardEvent *k) {
     case SDL_SCANCODE_R:
         if (!k->repeat) replays_toggle_record(a);
         break;
+    case SDL_SCANCODE_D:
+        if (!k->repeat && r->can_demo) start_demos(a);
+        break;
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
         if (!k->repeat) replays_accept(a);
         break;
@@ -716,6 +826,7 @@ static void replays_click(app *a, float x, float y) {
     case REPLAYS_YES: delete_replay(a, h.row); break;
     case REPLAYS_KEEP: r->confirm = -1; break;
     case REPLAYS_RECORD: replays_toggle_record(a); break;
+    case REPLAYS_DEMOS: start_demos(a); break;
     case REPLAYS_NOTHING: break;
     }
 }
@@ -849,6 +960,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         case SDL_GAMEPAD_BUTTON_SOUTH: replays_accept(a); break;
         case SDL_GAMEPAD_BUTTON_WEST: replays_ask(&a->rp, a->rp.selected); break;  /* Square: delete */
         case SDL_GAMEPAD_BUTTON_NORTH: replays_toggle_record(a); break;  /* Triangle: Record runs */
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: if (a->rp.can_demo) start_demos(a); break;  /* L1: the original demos */
         case SDL_GAMEPAD_BUTTON_EAST: replays_cancel(a); break;
         default: break;
         }

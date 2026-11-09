@@ -4,7 +4,7 @@ import TonicCore
 /// The Replays menu: the recordings (Recording) in a list, newest first, each to play or delete; sdl/src/replays.c is the
 /// SDL build's. Row text is the core's (tc_replay_summarize). Deleting asks first; an autopilot run can't be played. A run
 /// ends on the way to a menu, so nothing here is being written. Up / Down select, Return plays, Delete deletes, R flips
-/// Record runs (Recording.enabled), Esc goes back.
+/// Record runs (Recording.enabled), D plays the original demos, Esc goes back.
 final class ReplaysScreen: NSView {
     private struct Entry { let url: URL; let title: String; let details: String; let playable: Bool }
 
@@ -13,18 +13,22 @@ final class ReplaysScreen: NSView {
 
     var onBack: (() -> Void)?
     var onPlay: ((URL) -> Void)?
+    var onDemos: (() -> Void)?
+    private let hasDemos: Bool
     private var entries: [Entry]
     private var rows: [NSBox] = []
     private var selected = -1
     private let list = List()
     private let scroll = NSScrollView()
     private let empty: NSTextField
-    private let record = NSButton(checkboxWithTitle: "Record runs", target: nil, action: nil)
+    private let record = NSSwitch()
+    private let recordLabel = NSTextField(labelWithString: "Record runs (R)")
     private let rowHeight: CGFloat = 72, gap: CGFloat = 8, header: CGFloat = 64
 
     override var acceptsFirstResponder: Bool { true }
 
-    init(frame: NSRect, folder: URL?) {
+    init(frame: NSRect, folder: URL?, hasDemos: Bool) {
+        self.hasDemos = hasDemos
         let files = folder.flatMap { try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) } ?? []
         entries = files.filter { $0.pathExtension == TC_REC_EXTENSION }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }  // the names start with their date
@@ -50,6 +54,15 @@ final class ReplaysScreen: NSView {
         back.frame.origin = NSPoint(x: 16, y: bounds.height - header + (header - back.frame.height) / 2)
         back.autoresizingMask = [.maxXMargin, .minYMargin]
         addSubview(back)
+        if hasDemos {
+            let demos = NSButton(title: "Original demos", target: self, action: #selector(playDemos))
+            demos.bezelStyle = .rounded
+            demos.toolTip = "The demos from the original game, one after another (D)"
+            demos.sizeToFit()
+            demos.frame.origin = NSPoint(x: back.frame.maxX + 8, y: back.frame.minY)
+            demos.autoresizingMask = [.maxXMargin, .minYMargin]
+            addSubview(demos)
+        }
         record.target = self
         record.action = #selector(toggleRecord)
         record.state = Recording.enabled ? .on : .off
@@ -59,6 +72,12 @@ final class ReplaysScreen: NSView {
         record.frame.origin = NSPoint(x: bounds.width - record.frame.width - 16, y: bounds.height - header + (header - record.frame.height) / 2)
         record.autoresizingMask = [.minXMargin, .minYMargin]
         addSubview(record)
+        recordLabel.textColor = folder != nil ? .labelColor : .disabledControlTextColor
+        recordLabel.toolTip = record.toolTip
+        recordLabel.sizeToFit()
+        recordLabel.frame.origin = NSPoint(x: record.frame.minX - recordLabel.frame.width - 8, y: record.frame.midY - recordLabel.frame.height / 2)
+        recordLabel.autoresizingMask = [.minXMargin, .minYMargin]
+        addSubview(recordLabel)
 
         scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - header)
         scroll.autoresizingMask = [.width, .height]
@@ -178,6 +197,7 @@ final class ReplaysScreen: NSView {
     }
 
     @objc private func goBack() { onBack?() }
+    @objc private func playDemos() { onDemos?() }
     @objc private func toggleRecord() { Recording.enabled = record.state == .on }
     @objc private func playRow(_ sender: NSButton) { play(sender.tag) }
     @objc private func deleteRow(_ sender: NSButton) { delete(sender.tag) }
@@ -190,6 +210,7 @@ final class ReplaysScreen: NSView {
         case 36, 76: if !event.isARepeat { play(selected) }  // Return, keypad Enter
         case 51, 117: if !event.isARepeat { delete(selected) }  // Delete, forward delete
         case 15: if !event.isARepeat, record.isEnabled { record.performClick(nil) }  // R
+        case 2: if !event.isARepeat, hasDemos { onDemos?() }  // D
         default: super.keyDown(with: event)
         }
     }

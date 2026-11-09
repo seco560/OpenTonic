@@ -1,3 +1,30 @@
+## Current plan: two games first, linked at the end (user, 2026-11-09)
+
+The working plan. The Definitive Edition below stays the possible far goal, not the next step.
+
+- **Implement Retail and Special separately and faithfully.** The player chooses which to play first.
+- **The only link:** beating either game unlocks the other, through the portals in South Plain (tools/ttre/custom.py; today
+  they are always open, with no condition). There are no other links between the two games.
+- **Afterwards,** once that is settled: use the custom layer to connect other things.
+- **Eventually, maybe:** both games merged and interleaved, through Tonic Tooling and the rest.
+
+What follows from it (Claude's reading, not the user's words):
+- Each edition keeps its own progress, save data, lives and menu. Only "this game was beaten" is shared. The two lives
+  systems work completely differently (the user's pain point) and need no reconciling while the games are separate.
+- Retail is still without real progression: game state incoherent, story gates removed at export, SaveGame skipped.
+- The survey of what scripts read and write (save values, flags, story branches) is still useful, one edition at a time; whether
+  the editions' values mean the same no longer matters yet. Not started.
+
+**Two Eds (user, 2026-11-09).** The Special Edition's Ed moves completely differently (tank controls), so he will have to be
+decompiled and reimplemented as well; today SE levels run on a borrowed retail Ed (docs/NOTES.md "Real debt"). Either Ed can
+be chosen: at will while in development, later behind a flag. By default, going through a portal changes to that edition's
+own Ed.
+
+Also pending: the notes need a clean-up (NOTES.md is long and contradicts itself). The user wants Claude to do it, asking
+them questions about what is in there.
+
+---
+
 ## Future direction: Open Tonic, the Definitive Edition (user, 2026-11-05, later that day)
 
 The user's design decision, written down as future direction; nothing below is built yet, and it is a long road.

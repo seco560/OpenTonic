@@ -5,12 +5,11 @@ import TonicCore
 /// Grid of converted levels (*.ttlv in the levels folder, and in the Special Edition's out/se/ttlv), each shown with
 /// its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
 /// available (matched case-insensitively).
-/// Four sections. "Retail Edition", "Special Edition" (the 1998 disc's levels, tools/ttre/se.py) and "Cutscenes" (the
-/// retail game's cutscene-only levels, `tc_level_is_cutscene`) are three panes in a ring, one showing at a time: each
-/// scrolling inside itself, slid left and right with the arrows at their top, in that order and round again (right of
-/// the cutscenes: retail). Under them, in the bottom third of the window and scrolling inside itself too: "Imported",
-/// models brought in with tools/ttre/import_gltf.py (they have a folder out/Imported/<name>), shown with a question
-/// mark as their picture. The page itself only scrolls in a window too short for a row of each.
+/// Four sections, four panes in a ring, one showing at a time: "Retail Edition", "Special Edition" (the 1998 disc's
+/// levels, tools/ttre/se.py), "Cutscenes" (the retail game's cutscene-only levels, `tc_level_is_cutscene`) and "Imported"
+/// (models brought in with tools/ttre/import_gltf.py: they have a folder out/Imported/<name>, and a question mark as
+/// their picture). Each scrolls inside itself; the arrows at their top slide left and right, in that order and round
+/// again. The page itself only scrolls in a window too short for a row.
 final class LevelPicker: NSView {
     struct Entry { let name: String; let url: URL; let image: NSImage?; let section: Int }
     /// A pane: its page (heading, rule and scroll view, sliding as one) in the viewport.
@@ -18,7 +17,7 @@ final class LevelPicker: NSView {
 
     private static let titles = ["Retail Edition", "Special Edition", "Cutscenes", "Imported"]
     private static let specialEdition = 1, cutscenes = 2, imported = 3
-    private static let paneSections = 3  // sections 0, 1 and 2 are the panes
+    private static let paneSections = 4  // all the sections are panes, Imported the last
     private let entries: [Entry]
     private let onPick: (URL) -> Void
     /// The big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original), "Random Stage"

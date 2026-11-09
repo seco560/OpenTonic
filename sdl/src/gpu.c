@@ -493,7 +493,10 @@ SDL_GPUTexture *gpu_text(gpu *g, const char *text, int scale, int *w, int *h) {
     int lines = 1, longest = 0, len = 0;
     for (const char *c = text; *c; c++) {
         if (*c == '\n') { lines++; len = 0; continue; }
-        if ((*c & 0xC0) != 0x80) longest = SDL_max(longest, ++len);  /* UTF-8: count code points */
+        if ((*c & 0xC0) != 0x80) {  /* UTF-8: count code points */
+            len++;  /* apart from SDL_max, a macro: it would count twice */
+            longest = SDL_max(longest, len);
+        }
     }
     const int glyph = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE, line = glyph + 2;
     int tw = SDL_max(1, longest * glyph * scale), th = lines * line * scale;

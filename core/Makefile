@@ -69,6 +69,9 @@ $(BUILD)/movecheck: tests/movecheck.c $(BUILD)/libtoniccore.a
 
 $(BUILD)/replaycheck: tests/replaycheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+$(BUILD)/tapecheck: tests/tapecheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD)/replay: tests/replay.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
@@ -109,6 +112,9 @@ castcheck: $(BUILD)/castcheck
 movecheck: $(BUILD)/movecheck
 	$(BUILD)/movecheck ../files/out/ttlv
 
+tapecheck: $(BUILD)/tapecheck
+	$(BUILD)/tapecheck ../files/out/ttlv ../files/out/demos
+
 replay: $(BUILD)/replay
 
 RECORDINGS := $(wildcard ../files/recordings/*.ttrec)
@@ -121,4 +127,4 @@ endif
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck replay clean
+.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck tapecheck replay clean

@@ -265,6 +265,9 @@ else echo "== icon: current (skip)"; fi
 # ---- 7. the custom layer: our own edits on top of the levels (tools/ttre/custom.py; every run, it is quick) ----
 python3 -m tools.ttre.custom "$OUT"
 
+# ---- 8. the original demo tapes (Replays' button; tools/ttre/demos.py; every run, it is quick) ----
+[ "$RETAIL" = 1 ] && python3 -m tools.ttre.demos "$SRC" "$OUT"
+
 # ---- checks ----
 if [ "$CHECK" = 1 ]; then
   echo "== core checks"

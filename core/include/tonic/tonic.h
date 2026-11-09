@@ -16,6 +16,7 @@
 #include "tc_speech.h"
 #include "tc_viewer.h"
 #include "tc_rec.h"
+#include "tc_tape.h"
 #include "tc_mec.h"
 #include "tc_obstacle.h"
 #endif

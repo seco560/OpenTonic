@@ -437,6 +437,9 @@ final class GameView: MTKView {
     private var nextLevelTimer: Timer?
     /// Playing a recording back (the Replays menu, --replay [file]): Playback.
     private var playback: Playback?
+    /// The original demos' round (the Replays menu's button): the tapes, and the next one to play.
+    private var demoTapes: [URL] = []
+    private var demoAt = 0
     /// Default data, first that exists: inside OpenTonic.app (Contents/Resources/data/ttlv, built by
     /// tools/install_macos.sh); files/out/ttlv in the working directory (`swift run` from the repo); files/out/ttlv in
     /// the source checkout this binary was built from (Xcode runs it from DerivedData, so re-exported levels show
@@ -505,6 +508,61 @@ final class GameView: MTKView {
         return playbackLevel(0)
     }
 
+    /// out/demos/<Level>/DemoNNN.sav.
+    private func findDemos() -> [URL] {
+        let fm = FileManager.default, root = levelFolder.deletingLastPathComponent().appendingPathComponent("demos")
+        let folders = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        return folders.flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
+            .filter { $0.pathExtension.lowercased() == "sav" }
+    }
+
+    /// The Replays menu's button: the original demos in a shuffled round, watched as a recording is.
+    private func startDemos() {
+        demoTapes = findDemos().shuffled()
+        demoAt = 0
+        guard !demoTapes.isEmpty else { return }
+        playback = Playback()
+        if !nextDemo() { backToReplays("no original demo could be played") }
+    }
+
+    /// The next tape that plays: its level opened and the tape on it. False: none of them does.
+    @discardableResult private func nextDemo() -> Bool {
+        guard let p = playback else { return false }
+        for _ in demoTapes.indices {
+            if demoAt >= demoTapes.count {  // a new round, not starting with the one just seen
+                let last = demoTapes.last
+                demoTapes.shuffle()
+                if demoTapes.count > 1, demoTapes.first == last { demoTapes.swapAt(0, demoTapes.count - 1) }
+                demoAt = 0
+            }
+            let tape = demoTapes[demoAt]
+            demoAt += 1
+            let name = tape.deletingLastPathComponent().lastPathComponent.lowercased()
+            let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
+            guard let url = files.first(where: { $0.pathExtension.lowercased() == "ttlv"
+                                                 && $0.deletingPathExtension().lastPathComponent.lowercased() == name }),
+                  let data = try? Data(contentsOf: tape) else { continue }
+            openLevel(url, seed: UInt32.random(in: 0...UInt32.max))
+            guard let r = renderer, let v = r.viewer, v.level.url == url,
+                  data.withUnsafeBytes({ tc_viewer_play_tape(v.raw, $0.baseAddress, $0.count) }) else {
+                print("Can't play the demo \(tape.path) on its level")
+                continue
+            }
+            print("Original demo: \(tape.path)")
+            r.playback = p
+            r.onPlaybackEnd = { [weak self] in
+                guard let self else { return }
+                if !self.nextDemo() { self.backToReplays("no original demo could be played") }
+            }
+            gameView?.onPlaybackBack = { [weak self] in self?.backToReplays("back to the list") }
+            gameView?.onPlaybackPause = nil
+            if let view = gameView { window.invalidateCursorRects(for: view) }  // the pointer goes (resetCursorRects)
+            window.title = "Open Tonic — Original demo — \(v.level.name)"
+            return true
+        }
+        return false
+    }
+
     /// A playback's end, or Esc / Start in one: back to the list.
     private func backToReplays(_ why: String) {
         stopPlayback(why)
@@ -515,9 +573,10 @@ final class GameView: MTKView {
     @MainActor @objc func showReplays() {
         stopPlayback("the Replays menu")
         leaveLevel()
-        let screen = ReplaysScreen(frame: window.contentLayoutRect, folder: Recording.folder)
+        let screen = ReplaysScreen(frame: window.contentLayoutRect, folder: Recording.folder, hasDemos: !findDemos().isEmpty)
         screen.onBack = { [weak self] in self?.showPicker() }
         screen.onPlay = { [weak self] url in _ = self?.startPlayback(url) }
+        screen.onDemos = { [weak self] in self?.startDemos() }
         window.contentView = screen
         window.makeFirstResponder(screen)
         window.title = "Open Tonic — Replays"
@@ -584,6 +643,7 @@ final class GameView: MTKView {
         guard let p = playback else { return }
         print("Playback ended: \(why)")
         playback = nil
+        demoTapes = []
         renderer?.playback = nil
         p.close()
     }

@@ -41,6 +41,36 @@ It took the place of the old Demo (Ed's autopilot, removed 2026-11-06: the user 
 - Files from the autopilot's days are listed, deletable, not playable: their inputs came from code that is gone.
   `replay check` skips them.
 
+## The original demos
+
+The **Original demos** button in the Replays menu (D; L1 on SDL's pad) plays the disc's own demo tapes, in a shuffled round
+until Esc or Start, watched like a recording (locked, no recorder). Code: `core/src/tc_tape.c` (the file),
+`tc_viewer_play_tape` in `core/src/tc_viewer.c` (playing it on a level), `tools/ttre/demos.py` (out/demos). This took the place of
+the old autopilot (removed 2026-11-06).
+
+Retail only: 8 distinct tapes on 6 levels (cock01, LeCanyon x2, pyramide x2, sud0, Totalski, Transit), about 8.3 minutes; the
+install's three TotalSki tapes are one and are kept once. The Special Edition has none, and they don't fit its levels.
+They sit beside GAMEDATA in the install, not in it: copy `Demos` to `files/sources/Demos`, then `tools/convert_files.sh`.
+
+What a tape is (`tc_tape.h` has the format; the exe's Demos.c: writer GAM_0042d2f0, player GAM_00434680 / 00434440): per frame,
+every perso on show with place, rotation, state and animation frame. Not inputs: it plays with Ed's AI, the cast's and the
+mechanics stopped, so no engine change can make it drift, unlike a `.ttrec`.
+
+Measured (`make -C core tapecheck`, headless, all 8): reads to its end; on sud0, pyramide, LeCanyon and TotalSki the tape's
+animation frames fit our Ed's states with no shift (100 %, TotalSki 98.9 %), the camera looks at Ed (mean cosine 0.88 to 0.99).
+
+- **A perso is drawn only while it is in the frame.** The exe records what it drew, so a perso away from the camera is off the
+  tape. Ed is off it for 17-37 % of three tapes, on fly-throughs and cutaways: the camera is looking elsewhere then.
+- **Which perso is which:** tape object = cast id + a shift per level (the exe's list has other persos first), taken from
+  what first shows up at its level placement. Ed follows from it. Persos that aren't in the cast aren't moved by a tape.
+- **The camera** is the tape's own, looking along its -Y as any perso faces (measured; the roll is dropped). Rotations are filed as
+  the inverse: checked against Ed's start placement and the way he travels on the walking tapes (mean cosine 0.98-0.99).
+- **Port, not the exe's:** frames are interpolated for display rates above the tape's; the sounds are the state animations'
+  (crossing their frames), and the tape's own sound and effect events are read past.
+
+Not done: spawned objects (the tape's 0x1400 / 0x1000 records: shots, sparks, what the tape's slots below the shift hold), its
+sound, particle and module-visibility events, per-perso transparency. Not seen on a screen by Claude.
+
 ## What is recorded
 
 **To run it again:**
