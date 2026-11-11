@@ -378,6 +378,8 @@ typedef struct tc_level {
     tc_ways ways;
     tc_speech_data speech;       /* .ttlv SPCH (optional) */                /* .ttlv WAYS (none: no waypoints; the way primitives then do nothing) */
     uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
+    struct tcx_level *custom;    /* custom gameplay's data, not the game's (core/include/tonic/custom/tcx.h: the custom
+                                    layer's cars, .ttlv VEHI); NULL: none */
     int has_lighting;            /* .ttlv LITE was there: the lights, the sectors' lights and fogs, the materials, the */
     uint32_t light_count;        /* centres (without it only the port's old lighting works) */
     tc_light *lights;

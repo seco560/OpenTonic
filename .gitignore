@@ -2,6 +2,7 @@
 /.build
 /Packages
 /core/build
+/core/build-nocustom
 /sdl/build
 xcuserdata/
 DerivedData/

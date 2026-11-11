@@ -16,7 +16,15 @@ The layer only splices data the core already reads. A portal is:
 Each level's arch stands where Ed stood at the end of the recording that placed it (docs/PORTALS.md), front towards where
 the camera was: local -Y = (sin h, -cos h), h = the recorded heading. A level name 'se:x' / 'retail:x' takes a portal to
 that edition's level x; the frontends strip the prefix and pick the folder.
+
+A car (VEHICLES; docs/ENGINE.md "Vehicles") is a GTA III-era .dff + .txd under files/sources, converted to a .glb in
+<out>/Vehicles/<name> (tools/ttre/dff2gltf.py) and spliced in by tools/ttre/vehicle.py: a PRSO perso, its PCOL box and a
+VEHI record, which the core drives (core/include/tonic/custom/tcx_vehicle.h: custom gameplay, not the game's). Placed, as the arches, where Ed stood at the end of a recording.
+
+A level whose edits are already in it (its CUST chunk holds their digest: this layer's code, its entries for the level,
+the cars' sources) is left as it is, so a re-run rewrites nothing (LibertyCity2001's .ttlv is about 200 MB).
 """
+import hashlib
 import math
 import os
 import shutil
@@ -46,6 +54,14 @@ EDITS = [
     ('se/ttlv/sud0', 0, ARCH_RETAIL, (-140.612, 43.3026, -3.30366), 1.04693, 'retail:sud0', RETAIL_TEXTURES),
     ('ttlv/sud0', 1, ARCH_SE, (-173.811, 109.539, 2.4063), -10.0605, 'se:sud0', SE_TEXTURES),
     ('se/ttlv/sud0', 1, ARCH_RETAIL, (-175.307, 110.389, 3.10458), -3.98005, 'retail:sud0', RETAIL_TEXTURES),
+]
+
+# (level under out, model under files/sources, paint (R, G, B), position, heading). The core drops a car onto the ground
+# below its position.
+VEHICLES = [
+    # Ed's car: the Mazda MX-5 (NB) mod for GTA III (replaces the Manana), in the parking lot where Ed stood at the end of
+    # the user's recording of 2026-11-12 (2026-11-12_002726_metal.ttrec), facing his way
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (168, 18, 24), (-127.325, 641.63, -5.06258), 1.56694),
 ]
 
 
@@ -295,17 +311,45 @@ def pristine(out, relative):
         shutil.copyfile(path, base)
 
 
+def digest(level, edits, cars, sources):
+    """What a level's edits come from: this layer's code (and what it imports), its entries, its cars' model files."""
+    h = hashlib.sha256(chunks.stamp(('custom', 'vehicle')).encode() + repr((level, edits, cars)).encode())
+    for car in cars:
+        dff = os.path.join(sources, car[1])
+        for f in (dff, os.path.splitext(dff)[0] + '.txd'):
+            if os.path.exists(f):
+                h.update(open(f, 'rb').read())
+    return b'custom layer ' + h.hexdigest()[:16].encode()
+
+
+def current(path, mark):
+    try:
+        return (chunks.read(path) or {}).get('CUST') == mark
+    except (OSError, ValueError):
+        return False
+
+
 def run(out):
-    for level in dict.fromkeys(e[0] for e in EDITS):  # a level's arches go on together, from its pristine files
+    from tools.ttre import vehicle
+    sources = os.path.join(os.path.dirname(os.path.abspath(out)), 'sources')
+    for level in dict.fromkeys([e[0] for e in EDITS] + [v[0] for v in VEHICLES]):  # a level's edits go on together
         edits = [(i, e) for i, e in enumerate(EDITS) if e[0] == level]
+        cars = [v for v in VEHICLES if v[0] == level]
         ttlv_path, ttai_path = os.path.join(out, level + '.ttlv'), os.path.join(out, level + '.ttai')
-        needed = [ttlv_path, ttai_path] + [os.path.join(out, e[2][0] + '.ttlv') for _, e in edits]
-        if not all(os.path.exists(p) for p in needed):
-            print(f'custom layer: {level} or an arch\'s level is not exported, skipped')
+        needed = [ttlv_path] + ([ttai_path] if edits else []) + [os.path.join(out, e[2][0] + '.ttlv') for _, e in edits]
+        missing = [os.path.join(sources, v[1]) for v in cars if not os.path.exists(os.path.join(sources, v[1]))]
+        if not all(os.path.exists(p) for p in needed) or missing:
+            print(f'custom layer: {level}, an arch\'s level or a car\'s model is not there, skipped')
+            continue
+        mark = digest(level, [e for _, e in edits], cars, sources)
+        if current(ttlv_path, mark) and (not edits or current(ttai_path, mark)):
+            print(f'custom layer: {level}: up to date')
             continue
         pristine(out, level + '.ttlv')
-        pristine(out, level + '.ttai')
-        c, a = chunks.read(ttlv_path, 'TTLV'), chunks.read(ttai_path, 'TTAI')
+        if edits:
+            pristine(out, level + '.ttai')
+        c = chunks.read(ttlv_path, 'TTLV')
+        a = chunks.read(ttai_path, 'TTAI') if edits else None
         for index, (_, pair, arch, position, heading, dest, root) in edits:
             parts = arch_parts(out, arch)
             splice_meshes(c, parts, rotation(position, heading), root)
@@ -319,9 +363,18 @@ def run(out):
             add_portal(a, position, heading, dest, index, place_ed, place_camera)
             add_places(a, [(place_ed, at(ARRIVE_DISTANCE, 0.02), heading), (place_camera, at(CAMERA_DISTANCE, CAMERA_HEIGHT), heading)])
             print(f'custom layer: {level}: arch {pair} at {position}, leading to {dest}, {len(parts)} meshes')
-        c['CUST'] = a['CUST'] = b'custom layer'
+        for _, source, paint, position, heading in cars:
+            name, glb = vehicle.model(sources, source, out, paint)
+            n_parts, n_tris, (lo, hi), wheels = vehicle.splice(c, glb, name, os.path.dirname(glb),
+                                                                os.path.dirname(ttlv_path), rotation(position, heading),
+                                                                read_textures)
+            print(f'custom layer: {level}: car {name} at {position}, {n_parts} meshes, {n_tris} triangles, '
+                  f'{len(wheels)} wheels, body {[round(x, 2) for x in lo]}..{[round(x, 2) for x in hi]}')
+        c['CUST'] = mark
         write(ttlv_path, 'TTLV', c)
-        write(ttai_path, 'TTAI', a)
+        if edits:
+            a['CUST'] = mark
+            write(ttai_path, 'TTAI', a)
 
 
 if __name__ == '__main__':

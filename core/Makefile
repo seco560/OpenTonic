@@ -18,6 +18,8 @@
 #                      passed by (tests/testlevels.h). Run it before and after a change.
 #   make replay     -> build/replay: a recording's info, timeline, csv, check
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
+#   make CUSTOM=0 ...  -> the same without custom gameplay (src/custom: ours, not the game's; include/tonic/custom/tcx.h),
+#                      into build-nocustom: `make CUSTOM=0 checkall` shows the game doesn't lean on any of it
 CC ?= cc
 AR ?= ar
 CFLAGS ?= -O2
@@ -25,15 +27,24 @@ CFLAGS ?= -O2
 # tools/exe/oracle.py checks the ports against the exe with it (and Package.swift has it too).
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -ffp-contract=off -Iinclude
 LDLIBS += -lm
-BUILD := build
+# Custom gameplay (src/custom, tcx_*): in by default; CUSTOM=0 leaves it out (tcx.h's calls become no-ops).
+CUSTOM ?= 1
+ifeq ($(CUSTOM),0)
+BUILD := build-nocustom
+CFLAGS += -DTC_NO_CUSTOM
 SRC := $(wildcard src/*.c)
+else
+BUILD := build
+SRC := $(wildcard src/*.c) $(wildcard src/custom/*.c)
+endif
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
 all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/replay
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
-$(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard src/*.h) Makefile | $(BUILD)
+$(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard include/tonic/custom/*.h) $(wildcard src/*.h) Makefile | $(BUILD)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/libtoniccore.a: $(OBJ)

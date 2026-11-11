@@ -95,6 +95,8 @@ if [ -d "$OUT/Vignette/Level" ]; then $SYNC "$OUT/Vignette/Level/" "$R/Vignette/
 if [ -d "$OUT/demos" ]; then $SYNC "$OUT/demos/" "$R/demos/"; else rm -rf "$R/demos"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$R/Imported/"; else rm -rf "$R/Imported"; fi
+# The custom layer's cars (tools/ttre/vehicle.py): their textures (the .ttlv files name them as ../Vehicles/<car>/...).
+if [ -d "$OUT/Vehicles" ]; then $SYNC --exclude '*.glb' --exclude '*.stamp' "$OUT/Vehicles/" "$R/Vehicles/"; else rm -rf "$R/Vehicles"; fi
 # The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.
 if [ -d "$OUT/se/ttlv" ]; then $SYNC --exclude '*_ai.txt' --exclude levels.tsv "$OUT/se/" "$R/se/"; else rm -rf "$R/se"; fi
 # Sound effects (tools/ttre/sfx.py): the global sound events' files and their table.

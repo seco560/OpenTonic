@@ -2,6 +2,7 @@
 #include "tonic/tc_level.h"
 #include "tonic/tc_alloc.h"
 #include "tc_reader.h"
+#include "tonic/custom/tcx.h"
 #include <ctype.h>
 #include <string.h>
 
@@ -131,6 +132,8 @@ void tc_level_free(tc_level *level) {
         tc_free(f->body);
         tc_free(f->bodies);
     }
+    tcx_level_free(level->custom);
+    level->custom = NULL;
     tc_free(level->cast.families);
     tc_free(level->cast.cards);
     for (i = 0; level->cast.entries && i < level->cast.count; i++) {
@@ -936,6 +939,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
     if (chunk_need(&cs, "EDIT", r)) { /* optional: the game version the level comes from (absent: retail) */
         level->edition = rd_u32(r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "VEHI", r)) { /* optional: custom gameplay's (core/src/custom, tcx.h), read there */
+        if ((e = tcx_level_read(level, "VEHI", r->data, r->size)) != TC_OK) goto fail;
+        r->offset = r->size;
     }
 
     if (chunk_need(&cs, "LITE", r)) {

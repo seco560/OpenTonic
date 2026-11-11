@@ -92,6 +92,7 @@ void tc_cam_look(tc_cam *c, tc_camera *view, float yaw, float rise) {
     c->recentering = false;
     c->swinging = false;
     c->swing_rate = 0;
+    c->chase_rate = 0;
 }
 
 void tc_cam_recenter(tc_cam *c) {
@@ -228,7 +229,14 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
             view->yaw = wrap(view->yaw + (c->swing_rate + r) * 0.5f * dt);
             c->swing_rate = fabsf(r) < 1e-3f ? 0 : r;
         }
-        if (t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE && c->distance > 0.1f) {
+        if (t->chase > 0 && t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE) {
+            /* the chase (a car's): in behind it, critically damped (from standing: no jolt as it starts); the rope's
+             * gain starts over for when it ends */
+            float d = wrap(t->behind - view->yaw), w = 1 / t->chase, h = fminf(dt, 1.0f / 30);
+            c->chase_rate += (w * w * d - 2 * w * c->chase_rate) * h;
+            view->yaw = wrap(view->yaw + c->chase_rate * h);
+            c->rope_gain = 0;
+        } else if (t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE && c->distance > 0.1f) {
             /* the rope: Ed's speed across the view (along the camera's right) over the follow's distance (not over the
              * distance a wall leaves: pulled in close, that turned it wildly) */
             float across = c->rope_x * cosf(view->yaw) - c->rope_y * sinf(view->yaw);
@@ -237,6 +245,7 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
             across = across > 0 ? fmaxf(0, across - dead) : fminf(0, across + dead);
             view->yaw = wrap(view->yaw + c->rope_gain * TC_CAM_ROPE * across / c->distance * dt);
         } else if (c->since_look < TC_CAM_GRACE) c->rope_gain = 0; /* the player has it: fade in afresh after */
+        if (!(t->chase > 0 && t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE)) c->chase_rate = 0;
     }
     if (t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE) c->rise -= c->rise * ease(dt, TC_CAM_RELAX_TIME);
 }

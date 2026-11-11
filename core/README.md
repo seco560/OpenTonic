@@ -15,6 +15,10 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
 - Must stay clean with `-std=c11 -Wall -Wextra -Wpedantic`.
 - No FP contraction (`src/tc_internal.h`), except the cross product, which uses `fmaf` on purpose
   to match the original Swift code exactly. `tests/playcheck.c` must keep matching the reference output.
+- **Custom gameplay apart.** What Tonic Trouble never had (the toy car so far) lives in `src/custom/` and
+  `include/tonic/custom/`, named `tcx_*`, and the rest of the core reaches it only through the calls in
+  `include/tonic/custom/tcx.h` (grep `tcx_` to see every seam). Nothing of the game may depend on it:
+  `make CUSTOM=0 checkall` builds the core without it (into `build-nocustom`) and must pass too.
 - Platform layers (Swift/AppKit/Metal in `Sources/OpenTonic`, a future Vita backend) own the
   window, rendering, audio, file I/O and input, and talk to the core only through `include/tonic/*.h`.
 

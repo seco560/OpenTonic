@@ -20,4 +20,6 @@
 #include "tc_tape.h"
 #include "tc_mec.h"
 #include "tc_obstacle.h"
+/* Custom gameplay: ours, not the game's (custom/tcx.h; the core builds without it: make CUSTOM=0). */
+#include "custom/tcx.h"
 #endif

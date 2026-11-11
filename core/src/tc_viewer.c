@@ -9,6 +9,7 @@
 #include "tonic/tc_cast.h"
 #include "tonic/tc_obstacle.h"
 #include "tonic/tc_tape.h"
+#include "tonic/custom/tcx.h"
 #include "tc_rec_hooks.h"
 
 /* A settings door, for the recording: only the public functions, so one that calls another isn't written twice. */
@@ -47,6 +48,11 @@ struct tc_viewer_play {
     float phase_prev, phase_cur;
     float rate_cur;              /* animation frames per second of the state after the last tick */
     bool loop_cur;
+    /* Custom gameplay, not the game's (core/src/custom, tcx.h; NULL: none): while it holds Ed (in a car), his AI and
+     * mechanics (and the cast, which steps on his clock) hold, and he is drawn at ed_model. */
+    struct tcx_play *custom;
+    bool ed_posed;
+    tc_mat4 ed_model;
 };
 
 static bool level_has_ed(const tc_level *l) { return l->has_ed && l->collision_triangle_count > 0; }
@@ -131,6 +137,7 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     if (p->has_cast) p->cast.world = &p->world;
     p->use_ai = p->has_driver;
+    p->custom = tcx_play_create(l, &p->world, &p->obstacles, v->perso_first);
     return p;
 }
 
@@ -140,6 +147,7 @@ static void play_destroy(tc_viewer_play *p) {
     if (p->has_driver) tc_ed_ai_free(&p->driver);
     if (p->has_model) tc_ai_model_free(&p->model);
     if (p->has_alt) tc_ai_model_free(&p->alt);
+    tcx_play_free(p->custom);
     tc_collision_free(&p->world);
     tc_obstacles_free(&p->obstacles);
     tc_free(p);
@@ -1180,7 +1188,41 @@ static uint32_t ai_inputs(const tc_viewer *v) {
     for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
         if (held(v, map[i].a)) r |= 1u << map[i].bit;
     if (v->cam.first_person) r &= (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_SHOOT); /* he stands while looking */
+    if (v->play && tcx_holds_action(v->play->custom)) r &= ~(1u << TC_AI_IN_ACTION); /* that press was custom gameplay's */
     return r;
+}
+
+/* ---- custom gameplay (core/src/custom, tcx.h): not the game's ---- */
+
+/* Before Ed's step: custom gameplay's frame (the cars move; Action gets him in or out). True while it holds him: he is not
+ * stepped, and drawn as it says. */
+static bool update_custom(tc_viewer *v, float dt) {
+    tc_viewer_play *p = v->play;
+    tcx_host h;
+    tcx_ed ed;
+    if (!p->custom) return false;
+    h.player = &p->player;
+    h.held = v->held;
+    h.move_x = v->move_x, h.move_y = v->move_y;
+    h.paused = v->paused;
+    h.held_back = v->director || v->speech_held || v->inspecting || v->phase != TC_VP_PLAY;
+    h.may_start = !v->cam.first_person;
+    h.animation_speed = v->animation_speed;
+    h.ed_clip = v->ed_clip, h.ed_phase = v->ed_phase;
+    p->ed_posed = tcx_update(p->custom, &h, dt, &ed);
+    if (ed.landed) { /* back on his feet: his AI's tick blending starts over there */
+        p->have_pose = false;
+        p->tick_time = 0;
+        v->ed_state = -1;
+        v->ed_phase = 0;
+    }
+    if (!p->ed_posed) return false;
+    p->ed_model = ed.model;
+    v->ed_clip = ed.clip;
+    v->ed_phase = ed.phase;
+    v->ed_loop = ed.loop;
+    v->ed_state = -1;
+    return true;
 }
 
 /* ---- play mode ---- */
@@ -1190,6 +1232,8 @@ static void toggle_play(tc_viewer *v) {
     if (!p) return;
     v->playing = !v->playing;
     if (!v->playing) {
+        tcx_abort(p->custom, &p->player);
+        p->ed_posed = false;
         v->has_exit_camera = true;
         v->exit_camera = v->camera.position;
         return;
@@ -1222,6 +1266,8 @@ void tc_viewer_toggle_ai(tc_viewer *v) {
 }
 
 bool tc_viewer_can_play(const tc_viewer *v) { return v->play != NULL; }
+
+const struct tcx_play *tc_viewer_custom(const tc_viewer *v) { return v->play ? v->play->custom : NULL; }
 
 bool tc_viewer_has_ai(const tc_viewer *v) { return v->play && v->play->has_driver; }
 
@@ -1542,6 +1588,7 @@ static uint32_t perso_crossings(const tc_viewer *v, bool ghosts, tc_vec3 from, t
         if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
         if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
         if ((v->mesh_ghost && v->mesh_ghost[dr->mesh]) != ghosts) continue;
+        if (v->play && tcx_sight_skips(v->play->custom, dr->mesh)) continue;
         m = v->meshes[dr->mesh];
         s = v->mesh_sphere + 4 * dr->mesh;
         c = model_point(&dr->model, s);
@@ -1670,11 +1717,15 @@ static void update_camera(tc_viewer *v, float dt, bool fresh) {
          * levels use the same card and keep the walking camera, his scripts setting the shot to 0): tc_viewer_camera_shot */
         if (p->use_ai && p->has_driver && p->driver.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
         t.shot = tc_viewer_camera_shot(v);
+        t.chase = 0;
+        tcx_camera_target(p->custom, &t);
         t.world = &p->world;
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;
         p->world.solid = NULL;
+        tcx_camera_obstacles(p->custom, false); /* custom gameplay's cars don't stop the camera */
         if (!update_director(v, fresh)) tc_cam_update(&v->cam, &v->camera, &t, dt);
+        tcx_camera_obstacles(p->custom, true);
         p->world.solid = solid;
     }
 }
@@ -2042,6 +2093,10 @@ static void update_play(tc_viewer *v, float dt, bool fresh) {
         return;
     }
     look(v, dt);
+    if (update_custom(v, dt)) { /* custom gameplay holds Ed (in a car): the camera follows what it says */
+        update_camera(v, dt, fresh);
+        return;
+    }
     if (p->use_ai) {
         step_ai(v, v->paused ? 0 : dt); /* Ed's own scripts, at the game's tick */
         if (!v->paused) {
@@ -2390,6 +2445,10 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
     if (v->playing && v->director) APPEND("%s", ", scripted camera");
+    {
+        char custom[64];
+        if (v->playing && v->play && tcx_status(v->play->custom, custom, sizeof custom)) APPEND("%s", custom);
+    }
     if (v->paused) APPEND("%s", ", paused");
     if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
         APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,
@@ -2631,6 +2690,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         uint32_t nch = p->channel_count, base;
         tc_mat4 world;
         tc_sample s;
+        tc_mat34 w34;
         const tc_cast_actor *actor;
         if (p->sample_count == 0 || (v->playing && (int32_t)i == l->ed.static_perso)) continue;
         /* drawn with its sector (the sector's character list); unknown: always. A tape says itself who is on show. */
@@ -2649,6 +2709,20 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         z = water && sec < v->sectors->count ? v->sector_water[sec] : NAN; /* drawn in its sector's pass */
         actor = v->playing && v->play && v->play->has_cast && v->play->use_ai ? tc_cast_actor_of(&v->play->cast, i) : NULL;
         if (!actor && v->spawn_prso && v->spawn_prso[i]) continue;
+        if (!actor && v->play && tcx_perso_pose(v->play->custom, i, &w34)) { /* moved by custom gameplay (a car) */
+            world = tc_mat4_from34(&w34);
+            for (k = 0; k < p->part_count; k++) {
+                const tc_part *part = &p->parts[k];
+                tc_mat34 c34;
+                tc_mat4 m, model;
+                if (part->channel >= nch || p->shown[part->channel] != part->object) continue;
+                c34 = tcx_perso_channel(v->play->custom, i, part->channel);
+                m = tc_mat4_from34(&c34);
+                model = tc_mat4_mul(&world, &m);
+                add_draw(v, &dl, first + k, &model, 0, part->mesh.index_count, z);
+            }
+            continue;
+        }
         if (actor) { /* its own AI's state animation; parts keyed by object (channel numbering differs per animation) */
             const tc_cast_anim *an;
             tc_mat34 w34;
@@ -2694,9 +2768,10 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;
-        /* The skier's board tilts with the slope. */
-        tc_mat4 model = v->play->use_ai && v->play->has_driver ? v->play->pose_draw
-                                                               : tc_player_model_matrix(&v->play->player);
+        /* The skier's board tilts with the slope; custom gameplay (a car) may pose him. */
+        tc_mat4 model = v->play->ed_posed                           ? v->play->ed_model
+                        : v->play->use_ai && v->play->has_driver ? v->play->pose_draw
+                                                                 : tc_player_model_matrix(&v->play->player);
         sec = tc_viewer_ed_sector(v);
         z = water && sec != TC_SECTOR_NONE && sec < v->sectors->count ? v->sector_water[sec] : NAN;
         v->draw_lit = v->sector_lit && sec < v->sectors->count ? &v->sector_lit[sec] : NULL;
@@ -2804,7 +2879,8 @@ bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {
     if (!p || !v->playing || v->ed_draw_count == 0) return false;
     if (p->use_ai && p->has_driver && (p->driver.card_type == 1 || p->driver.card_type == 7)) return false; /* swimming */
     /* Where he is drawn (between the AI's ticks), as the camera's target */
-    o = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
+    o = p->ed_posed ? p->player.position /* custom gameplay's place */
+        : p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->player.position;
     if (!tc_collision_raycast(&p->world, tc_v3_add(o, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1), TC_VIEW_SHADOW_REACH + 0.5f, &hit))
         return false;
     out->normal = hit.normal.z < 0 ? tc_v3_scale(hit.normal, -1) : hit.normal; /* the raycast is two-sided */

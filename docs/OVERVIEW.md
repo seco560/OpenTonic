@@ -60,6 +60,7 @@ for all levels, `progress.ttpg`, shown by the debug menu).
 | `tc_debug.c` | the debug menu (F4): the powers and save values, who uses them, switches |
 | `tc_player.c` | the old "simple Ed": a plain walker with no scripts, kept as a fallback |
 | `tc_viewer.c` | everything else, tied together: input, the frame, portals, lighting, the draw list. The biggest file, and the one a split is planned for |
+| `custom/tcx_*.c` | custom gameplay, ours and not the game's (the toy car and Ed's ride: docs/ENGINE.md "Custom gameplay"), reached only through `custom/tcx.h`; `make CUSTOM=0` builds the core without it |
 
 ## One frame
 

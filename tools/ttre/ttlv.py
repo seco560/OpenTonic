@@ -70,6 +70,9 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
               u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
           u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
           u32 n_collision (= COLL's triangles), n x u16 sector (a static's sector, a perso's; 0xFFFF: always solid)
+  VEHI* the custom layer's cars (tools/ttre/vehicle.py; layout in core custom/tcx_vehicle.h): per car its PRSO entry (body on
+        channel 0, a channel per wheel), its PCOL box's perso id, the body's bounds, the wheels, the driver's seat and Ed's
+        scale in it. Imported levels only.
   EDIT* u32 edition: 0 retail (also when absent), 1 the Special Edition (se.py): the core's TC_EDITION_SPECIAL.
   CHLT* after LITE: u16 n_sectors, u16 0, n_sectors x { u16 n, n x u16 light }: per sector, lights that reach only its
         characters and water surfaces, not the static geometry (the Special Edition's static lights: docs/SE.md

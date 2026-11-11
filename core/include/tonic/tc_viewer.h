@@ -446,6 +446,9 @@ void tc_viewer_toggle_ai(tc_viewer *v);
 /* The director's shot (tc_viewer.director) is on: the camera is the level's, Ed waits. */
 bool tc_viewer_directed(const tc_viewer *v);
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */
+/* Custom gameplay in play (core/include/tonic/custom/tcx.h: not the game's; its cars, Ed's ride), NULL: none. */
+struct tcx_play;
+const struct tcx_play *tc_viewer_custom(const tc_viewer *v);
 bool tc_viewer_has_ai(const tc_viewer *v);     /* ... with Ed's AI */
 bool tc_viewer_ai_active(const tc_viewer *v);  /* playing with the AI: its status changes every frame */
 /* The status line changes by itself (the AI is active, or the light persos change the light): refresh it often. */
@@ -489,7 +492,7 @@ bool tc_viewer_crosshair(const tc_viewer *v, float aspect, tc_view_overlay *out)
 
 /* The adjustable settings both title bars show (UTF-8):
  * "anim 1.00×, gamma 1.00, FOV 86°<extra>[, look 125 %][, invert X|Y|XY][, light 1/2|1→2[ held]][, fog on|off]
- * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person][, scripted camera][, paused]" (look / invert: when not the
+ * [, old lighting][, sector sctX[ alone]][, free-fly][, simple controller][, close-up][, first person][, scripted camera][, driving N km/h][, paused]" (look / invert: when not the
  * default; light: the set shown, or the change running; held = a number key's pick in a level with light persos;
  * sector: Ed's, unless all sectors are drawn; the modes only when not the default: playing as Ed with his AI, the
  * camera's normal distance). extra (NULL = none) is the frontend's own settings, e.g. ", AA 4x".

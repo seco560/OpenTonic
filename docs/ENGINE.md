@@ -551,3 +551,53 @@ glance, what they affect, being able to trigger them on/off"). The game holds wh
   do not compile on this machine).
 - **Not done:** what 7, 8, 0x70, 0x100, 0x200 are (the menu says "not read"); the lives; the camera-key settings and the
   close-up key's remap (the user's step 2); labels for save values 7-30.
+
+## Custom gameplay (2026-11-12)
+
+Gameplay Tonic Trouble never had is kept apart from the game's, so it can't be mistaken for it (the user's rule). In the
+core: `core/src/custom/` and `core/include/tonic/custom/`, everything named `tcx_*`; the rest of the core calls in only
+through `custom/tcx.h` (a handful of hooks in tc_viewer.c and one in tc_level.c: grep `tcx_`), and the level's custom data
+hangs off one pointer (`tc_level.custom`). `make CUSTOM=0` builds the core without any of it (the hooks become no-ops,
+the custom layer's chunks are skipped) into `core/build-nocustom`; `make -C core CUSTOM=0 checkall` passing shows the
+game doesn't lean on it (2026-11-12: both builds pass, camcheck the same). Without it a level the custom layer gave a
+car still loads, the car standing as a plain perso. On the tools side the custom layer is `tools/ttre/custom.py` and its
+helpers (`vehicle.py`, `dff2gltf.py`, `rw.py`). Not yet sorted (another session): what the port added on top of the game
+elsewhere (the walkable hint scenes, the arches between editions, the camera's own passes) against what is the game's.
+
+## Vehicles (custom gameplay, 2026-11-12)
+
+Tonic Trouble has no vehicles: this is a toy for the imported levels, the first piece of gameplay of our own. Ed's car in
+LibertyCity2001 is a GTA III car mod (files/sources/Vehicles/manana: the Mazda MX-5 that replaces the Manana).
+
+- **Model:** `python3 -m tools.ttre.dff2gltf MODEL.dff OUT.glb [--paint R,G,B]` turns a GTA III-era .dff + .txd (PC
+  RenderWare, tools/ttre/rw.py) into a self-contained .glb: the undamaged parts, the four wheels, the paint baked into the
+  textures (per material as the game splits them: the BinMesh PLG; the triangles' own material field is 0 in GTA's
+  files). It also opens in Blender or goes through import_gltf.py as a level of its own.
+- **Into a level:** tools/ttre/custom.py VEHICLES (level, model under files/sources, paint, place, heading) ->
+  tools/ttre/vehicle.py: a PRSO perso (body on channel 0, a channel per wheel), a PCOL box (Ed bumps into it, stands on it)
+  and a VEHI record. The .glb and the PNGs go to files/out/Vehicles/<car> (the install scripts copy the PNGs). The custom
+  layer skips a level whose edits are already in it (CUST holds their digest), so a re-run doesn't rewrite Liberty City.
+- **Core:** core/include/tonic/custom/tcx_vehicle.h, core/src/custom/tcx_vehicle.c (the car, the ride), tcx_play.c (its
+  part of the play session: the viewer's hooks), tcx_level.c (VEHI) (second pass 2026-11-12, "tighter, more engaging and realistic"). Fixed
+  1/60 s ticks: a rear-wheel-drive engine whose push falls off with speed against aero drag (0-100 km/h in 5 s, about
+  150 km/h top), brakes into reverse; two axles whose tyres push sideways with their slip angle up to a grip limit (about
+  15 u/s^2; 12 felt too slippery to the user), the yaw from the two about the centre of mass: it runs wide at the limit (the front's limit a little under
+  the rear's, the rear tyres stiffer), the drive uses up some of the rear's grip (power oversteer out of slow corners), the
+  handbrake (Jump / Space) leaves the rear 40 % of its grip, eased in over 0.1 s and back over 0.35 s (the user found the first
+  version's drift "dodgy": it snapped both ways), and the steering lock opens up again while it slides, to catch it; below
+  3 u/s and in reverse the plain bicycle model, blended into the tyres' up to 7 u/s. Fast (Shift) hops it (7.2 u/s up, about
+  1.3 high, one per press); it keeps turning in the air. The body is drawn on
+  springs: nose up under power, down braking, leaning out of turns, bouncing on landing (Ed in the seat rides with it).
+  On the ground it follows the static collision under its wheels (a ray each, steps up to 0.7, tilts with the ground,
+  falls off ledges); three spheres along the body against walls (a knock takes some of its spin); back to its start after
+  4 s in the air. Measured headless on a flat test square (scratch probe); not tuned by feel yet. The ride: Action within 1.6 of the body hops Ed into the driver's seat (0.55 s, his "jump"
+  clip stretched over the arc, kept under a ceiling), shrinking to the car's rider scale (0.42: the user asked for a
+  shrunken Ed inside), where he stands in his idle, tilting with the car (the seat: GTA's ped_frontseat dummy mirrored to
+  the driver's side); W / S throttle and brake, A / D steer, Space (Jump) the handbrake,
+  Shift (Fast) a hop (swapped on the user's word, 2026-11-12; the left stick too); Action hops him out beside the driver's door (else the other side, the back, the front), where
+  his control comes back. Meanwhile his AI and mechanics hold, and so does the cast (it steps on his clock: no level with
+  a cast has a car yet). The camera: the follow with the ski preset (pulled back with speed) and a chase that turns in
+  behind the car (tc_cam_target.chase, critically damped, 0.35 s); the cars don't block the camera and aren't in its sight
+  test. Title bar: "driving N km/h".
+- **Not done:** collisions with persos or other cars, damage, sounds, lights, a sitting pose for Ed, a prompt (the
+  imported levels have no font), the cast running while he drives.

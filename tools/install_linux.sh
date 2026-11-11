@@ -87,6 +87,8 @@ if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$D/Textures/"; else rm -
 if [ -d "$OUT/demos" ]; then $SYNC "$OUT/demos/" "$D/demos/"; else rm -rf "$D/demos"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$D/Imported/"; else rm -rf "$D/Imported"; fi
+# The custom layer's cars (tools/ttre/vehicle.py): their textures (the .ttlv files name them as ../Vehicles/<car>/...).
+if [ -d "$OUT/Vehicles" ]; then $SYNC --exclude '*.glb' --exclude '*.stamp' "$OUT/Vehicles/" "$D/Vehicles/"; else rm -rf "$D/Vehicles"; fi
 # The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.
 if [ -d "$OUT/se/ttlv" ]; then $SYNC --exclude '*_ai.txt' --exclude levels.tsv "$OUT/se/" "$D/se/"; else rm -rf "$D/se"; fi
 # Music stays WAV (the SDL build streams WAV only) with its table; sound effects (tools/ttre/sfx.py) as they are.

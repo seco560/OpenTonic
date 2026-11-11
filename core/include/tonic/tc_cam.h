@@ -166,6 +166,7 @@ typedef struct tc_cam {
     float swing_rate;     /* its turning speed (rad/s): starts from turn_rate, carried on and dying out after it ends */
     float turn_rate;      /* how fast the orbit turned last frame (rad/s): a swing starts from it, no jolt */
     float swing_rest;     /* seconds before the watchdog may swing again (TC_CAM_SWING_REST) */
+    float chase_rate;     /* the chase's turning speed (rad/s, tc_cam_target.chase): critically damped, from 0 */
 } tc_cam;
 
 /* What else stands in the camera's view, beside the level's collision: the share (0..1) of the segment from -> to that
@@ -185,6 +186,10 @@ typedef struct tc_cam_target {
     float distance;       /* the zoom: the distance behind him before the front stretch (presets scale with it) */
     int situation;        /* TC_CAM_SIT_* from Ed's scripts; 0 normal, -1 unknown (no AI): the normal follow */
     int shot;             /* TC_CAM_SHOT_* from the level's scripts (the camera's dsg39); 0 / -1: the walking camera */
+    float chase;          /* > 0: a chase camera (the port's, for custom gameplay's cars: custom/tcx_vehicle.h): while the target moves and the
+                             player leaves the camera alone, it turns in behind (`behind`), critically damped with this
+                             time constant in seconds (gathering speed and slowing down smoothly, as the watchdog's
+                             swing), instead of the rope; 0: the rope (Ed on foot) */
     tc_collision *world;  /* NULL: no collision. Its solid row is honoured as set (the caller's choice) */
     tc_cam_sight_fn sight;   /* NULL: none. The eye stays this side of what it reports too */
     void *sight_user;
