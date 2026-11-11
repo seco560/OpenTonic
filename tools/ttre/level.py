@@ -467,7 +467,10 @@ def sphere_triangles(center, r):
 # done; sctporte1 / sctporte2 / sctportedroite / sctportegauche: the level's other gates (user's request, 2026-10-29).
 # Level name (lowercase) -> sector names (exact, any case).
 GATES_OPEN = True
-STORY_GATES = {'sud0': ('sctporte', 'sctporte1', 'sctporte2', 'sctportedroite', 'sctportegauche')}
+# 2026-11-11: sctporte (the wall across the river) is exported again: the scripts move sectors now (PROC 109 / 116 / 117,
+# tc_cast's moving sectors), and Suzy's first schedule drops it when Ed has power 7 (docs/ENGINE.md "Game progress").
+# The others stay out until their scripts (the tomato cannon, the mummies) are seen to open them.
+STORY_GATES = {'sud0': ('sctporte1', 'sctporte2', 'sctportedroite', 'sctportegauche')}
 
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
 
@@ -1581,6 +1584,12 @@ class LevelData:
                 ids[t.loc] = len(ps) + 1 + j
             self._perso_ids = ids
         return self._perso_ids
+
+    def sector_index(self, so_loc):
+        """A sector SuperObject's index in sectors() (the .ttlv SECT's order; a script's type 27 node names one), or None."""
+        if not hasattr(self, '_sector_index'):
+            self._sector_index = {s.so.loc: i for i, s in enumerate(self.sectors())}
+        return self._sector_index.get(so_loc)
 
     def perso_sector(self, perso_loc):
         """A perso's current sector in the snapshot (SectorInfo, perso +0x24: +4 the sector), as an index in sectors(),

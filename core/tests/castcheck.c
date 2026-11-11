@@ -480,6 +480,71 @@ static void level(const char *dir, const char *name) {
     tc_level_free(&lv);
 }
 
+/* sud0's wall across the river (the sector sctporte; docs/ENGINE.md "Game progress"): Suzy's first schedule drops it 50
+ * (Proc_TranslateLocalSector) when Ed has power 7, and leaves it when he has not. Seen from the collision (a ray across
+ * where it stands) and from the cast's moving sectors. An export from before the wall was kept has nothing to check. */
+static int wall_run(const char *dir, uint16_t powers, bool *hit, float *z, bool *moved) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level lv;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_cast *c;
+    tc_collision *world;
+    const uint8_t *solid;
+    const tc_mat34 *m = NULL;
+    tc_hit h;
+    uint16_t i, sector = TC_SECTOR_NONE;
+    snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/sud0.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &lv;
+    desc.level_name = "sud0";
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.seed = 7;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_level_free(&lv); return 0; }
+    if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+    c = (tc_cast *)tc_viewer_cast(&v);
+    for (i = 0; i < lv.sectors.count; i++)
+        if (lv.sectors.sectors[i].name && !strcmp(lv.sectors.sectors[i].name, "sctporte")) sector = i;
+    if (!c || sector == TC_SECTOR_NONE) { tc_viewer_free(&v); free(ai); tc_level_free(&lv); return 0; }
+    c->globals.powers = powers; /* before the first tick: her schedule tests it at once */
+    for (i = 0; i < 120; i++) frame(&v);
+    m = tc_cast_sector_matrix(c, sector);
+    *moved = m != NULL;
+    *z = m ? m->m[11] : 0;
+    world = tc_viewer_player(&v)->world;
+    solid = world->solid;
+    world->solid = NULL; /* every sector's triangles */
+    *hit = tc_collision_raycast(world, tc_v3(-112, 45, 1), tc_v3(1, 0, 0), 20, &h) && h.distance > 6 && h.distance < 12;
+    world->solid = solid;
+    tc_viewer_free(&v);
+    free(ai);
+    tc_level_free(&lv);
+    return 1;
+}
+
+static void river_wall(const char *dir) {
+    bool hit_with, hit_without, moved_with, moved_without;
+    float z_with, z_without;
+    if (!wall_run(dir, 0, &hit_without, &z_without, &moved_without) || !wall_run(dir, TC_AI_POWERS_ALL, &hit_with, &z_with, &moved_with))
+        return;
+    printf("sud0's river wall: without power 7 %s (moved %d, z %.1f); with it %s (moved %d, z %.1f)\n",
+           hit_without ? "it stands" : "nothing there", moved_without, (double)z_without,
+           hit_with ? "it stands" : "nothing there", moved_with, (double)z_with);
+    if (!hit_without && !moved_with) {
+        printf("  info  this export has no wall and no sector the scripts can name (made before 2026-11-11: reinstall)\n");
+        return;
+    }
+    check(hit_without && !moved_without, "without power 7 the wall across the river stands");
+    check(moved_with && fabsf(z_with + 50) < 0.01f && !hit_with, "with power 7 Suzy drops it 50: the way is open");
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv";
     static const char *defaults[] = {"sud0", "north", "Land"};
@@ -488,6 +553,7 @@ int main(int argc, char **argv) {
         for (i = 2; i < argc; i++) level(dir, argv[i]);
     else
         for (i = 0; i < 3; i++) level(dir, defaults[i]);
+    if (argc <= 2) river_wall(dir);
     printf(failures ? "FAIL (%d)\n" : "ok\n", failures);
     return failures ? 1 : 0;
 }

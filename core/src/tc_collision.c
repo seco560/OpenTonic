@@ -36,6 +36,9 @@ void tc_collision_free(tc_collision *col) {
     tc_free(col->cell_start);
     tc_free(col->cell_tris);
     tc_free(col->stamp);
+    tc_free(col->loose);
+    tc_free(col->loose_rest);
+    tc_free(col->is_loose);
     memset(col, 0, sizeof *col);
 }
 
@@ -135,6 +138,7 @@ static void query_cell(int32_t c, void *user) {
         const tc_tri *t;
         if (col->stamp[i] == col->query) continue;
         col->stamp[i] = col->query;
+        if (col->is_loose && col->is_loose[i]) continue; /* a moved sector's: tc_collision_query has it */
         t = &col->tris[i];
         if (col->solid && t->sector < col->solid_count && !col->solid[t->sector]) continue;
         if (t->lo.x <= q->hi.x && t->lo.y <= q->hi.y && t->lo.z <= q->hi.z &&
@@ -150,6 +154,61 @@ void tc_collision_query(tc_collision *col, tc_vec3 lo, tc_vec3 hi, tc_tri_fn fn,
     if (col->query == 0) { memset(col->stamp, 0, col->tri_count * sizeof(uint32_t)); col->query = 1; }
     q.col = col; q.lo = lo; q.hi = hi; q.fn = fn; q.user = user;
     for_cells(col, lo.x, lo.y, hi.x, hi.y, query_cell, &q);
+    { /* the moved sectors' triangles, where they are now */
+        uint32_t k;
+        for (k = 0; k < col->loose_count; k++) {
+            const tc_tri *t = &col->tris[col->loose[k]];
+            if (col->solid && t->sector < col->solid_count && !col->solid[t->sector]) continue;
+            if (t->lo.x <= hi.x && t->lo.y <= hi.y && t->lo.z <= hi.z && t->hi.x >= lo.x && t->hi.y >= lo.y && t->hi.z >= lo.z)
+                fn(t, user);
+        }
+    }
+}
+
+bool tc_collision_move_sector(tc_collision *col, uint16_t sector, const tc_mat34 *m) {
+    uint32_t i, k, have = 0, want = 0;
+    if (sector == 0xFFFF || col->tri_count == 0) return true;
+    for (k = 0; k < col->loose_count; k++) have += col->tris[col->loose[k]].sector == sector;
+    if (!have) { /* its first move: out of the grid */
+        for (i = 0; i < col->tri_count; i++) want += col->tris[i].sector == sector;
+        if (want) {
+            uint32_t *loose = (uint32_t *)tc_calloc(col->loose_count + want, sizeof *loose);
+            tc_vec3 *rest = (tc_vec3 *)tc_calloc(3 * (size_t)(col->loose_count + want), sizeof *rest);
+            if (!col->is_loose) col->is_loose = (uint8_t *)tc_calloc(col->tri_count, 1);
+            if (!loose || !rest || !col->is_loose) { tc_free(loose); tc_free(rest); return false; }
+            if (col->loose_count) {
+                memcpy(loose, col->loose, col->loose_count * sizeof *loose);
+                memcpy(rest, col->loose_rest, 3 * (size_t)col->loose_count * sizeof *rest);
+            }
+            tc_free(col->loose);
+            tc_free(col->loose_rest);
+            col->loose = loose;
+            col->loose_rest = rest;
+            for (i = 0; i < col->tri_count; i++) {
+                const tc_tri *t = &col->tris[i];
+                if (t->sector != sector) continue;
+                k = col->loose_count++;
+                loose[k] = i;
+                rest[3 * k] = t->a; rest[3 * k + 1] = t->b; rest[3 * k + 2] = t->c;
+                col->is_loose[i] = 1;
+            }
+        }
+    }
+    for (k = 0; k < col->loose_count; k++) {
+        tc_tri *t = &col->tris[col->loose[k]];
+        tc_vec3 nrm;
+        float len;
+        if (t->sector != sector) continue;
+        t->a = tc_m34_point(m, col->loose_rest[3 * k]);
+        t->b = tc_m34_point(m, col->loose_rest[3 * k + 1]);
+        t->c = tc_m34_point(m, col->loose_rest[3 * k + 2]);
+        nrm = tc_v3_cross(tc_v3_sub(t->b, t->a), tc_v3_sub(t->c, t->a));
+        len = tc_v3_length(nrm);
+        if (len > 1e-8f) t->normal = tc_v3_div(nrm, len);
+        t->lo = tc_v3_min(t->a, tc_v3_min(t->b, t->c));
+        t->hi = tc_v3_max(t->a, tc_v3_max(t->b, t->c));
+    }
+    return true;
 }
 
 typedef struct ray_ctx { tc_vec3 o, d; float max_distance, best; const tc_tri *tri; } ray_ctx;

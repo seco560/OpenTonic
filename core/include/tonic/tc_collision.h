@@ -40,6 +40,12 @@ typedef struct tc_collision {
      * it at a row while it moves a perso. */
     const uint8_t *solid;
     uint32_t solid_count;
+    /* The triangles of the sectors that have moved (tc_collision_move_sector): out of the grid, tested by every query.
+     * loose: their indices in tris; loose_rest: 3 points each, where the export has them; is_loose: per triangle. */
+    uint32_t *loose;
+    tc_vec3 *loose_rest;
+    uint8_t *is_loose;
+    uint32_t loose_count;
     /* Perso obstacles (tc_obstacle.h; NULL: none). The mover sets, for the length of its step, who it is: self (not
      * its own obstacle), self_priority (its collide set +0x34: it meets obstacles of a priority up to it) and
      * self_meets (+0x35: without it, no perso at all, MEC_SweepPass_0043c830); ignore = an obstacle it does not meet
@@ -65,6 +71,10 @@ void tc_collision_free(tc_collision *col);
 /* Each triangle's sector from a per-input-triangle table (tc_sectors.collision_sector; NULL clears them), among
  * sector_count sectors (the length of a solid row). Clears solid. */
 void tc_collision_set_sectors(tc_collision *col, const uint16_t *sector, uint32_t count, uint32_t sector_count);
+/* A sector's triangles (tc_collision_set_sectors) at m x where the export has them: the scripts' moving sectors (a gate
+ * that drops away, a door that turns; tc_cast's sector moves). The first call for a sector takes its triangles out of the
+ * grid for good. false: out of memory. */
+bool tc_collision_move_sector(tc_collision *col, uint16_t sector, const tc_mat34 *m);
 
 /* Calls fn once for each triangle whose bounds overlap the box lo..hi (and solid allows). Not reentrant. */
 typedef void (*tc_tri_fn)(const tc_tri *tri, void *user);

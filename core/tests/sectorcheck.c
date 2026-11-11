@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "tonic/tonic.h"
+#include "testlevels.h"
 
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
@@ -39,7 +40,9 @@ static float formula(float radiosity, float ambient, float diffuse) {
     return l < 0 ? 0 : l > 1 ? 1 : l;
 }
 
-static void lighting_check(const char *file, const tc_level *l) {
+/* `exported`: how many of the static meshes are the export's own (testlevels.h); the custom layer's come after them with
+ * the lighting of the level they were copied from, so the export's vertex rules are not theirs. */
+static void lighting_check(const char *file, const tc_level *l, uint32_t exported) {
     const tc_sectors *s = &l->sectors;
     uint32_t i, k, most = 0, fogs = 0, envs = 0, uncentred = 0, unbaked = 0, verts = 0, baked = 0, spheres = 0, persos = 0, flat = 0;
     double old_sum = 0, new_sum = 0;
@@ -57,7 +60,10 @@ static void lighting_check(const char *file, const tc_level *l) {
         for (k = 0; k < s->sectors[i].env_count; k++) envs++, fogs += s->sectors[i].envs[k].fog != 0;
     }
     for (i = 0; i < l->light_count; i++) spheres += l->lights[i].type == TC_LIGHT_SPHERICAL;
-    for (i = 0; i < l->mesh_count; i++) {
+    if (exported < l->mesh_count)
+        printf("  custom layer: %u meshes after the export's %u, not counted in the vertex rules below\n",
+               l->mesh_count - exported, exported);
+    for (i = 0; i < l->mesh_count && i < exported; i++) {
         const tc_mesh *m = &l->meshes[i];
         for (k = 0; k < m->vertex_count; k++) {
             const tc_vertex *x = &m->vertices[k];
@@ -130,7 +136,7 @@ static void level_check(const char *dir, const char *file) {
     tc_level l;
     const tc_sectors *s = &l.sectors;
     uint32_t i, k, match = 0, virt = 0, other = 0, none = 0, unknown = 0, crossed = 0, blocked = 0, dead = 0;
-    uint32_t floors = 0, portals = 0, water_groups = 0;
+    uint32_t floors = 0, portals = 0, water_groups = 0, exported;
     snprintf(path, sizeof(path), "%s/%s", dir, file);
     if (!(data = read_file(path, &size)) || tc_level_load(&l, data, size) != TC_OK) {
         printf("%-12s FAIL: does not load\n", file);
@@ -184,7 +190,13 @@ static void level_check(const char *dir, const char *file) {
         printf("  Ed's start (%.1f, %.1f, %.1f): %s\n", l.ed.start.m[3], l.ed.start.m[7], l.ed.start.m[11],
                e == TC_SECTOR_NONE ? "(none)" : tc_sectors_name(s, e));
     }
-    lighting_check(file, &l);
+    exported = test_export_meshes(dir, file, data, size);
+    if (exported == TEST_NO_BASE || (exported != TEST_NO_CUSTOM && exported > l.mesh_count)) {
+        printf("  FAIL: a custom layer (CUST) without a usable pristine copy in .custom-base\n");
+        failures++;
+        exported = 0;
+    }
+    lighting_check(file, &l, exported);
     tc_level_free(&l);
     free(data);
 }
@@ -200,7 +212,9 @@ int main(int argc, char **argv) {
     } else if ((d = opendir(dir)) != NULL) {
         while ((e = readdir(d)) != NULL) {
             size_t n = strlen(e->d_name);
-            if (n > 5 && strcmp(e->d_name + n - 5, ".ttlv") == 0) level_check(dir, e->d_name);
+            if (n <= 5 || strcmp(e->d_name + n - 5, ".ttlv") != 0) continue;
+            if (test_imported(dir, e->d_name)) { printf("%-12s imported: passed by\n", e->d_name); continue; }
+            level_check(dir, e->d_name);
         }
         closedir(d);
     } else {

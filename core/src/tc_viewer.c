@@ -360,6 +360,12 @@ static void arrive(tc_viewer *v, const tc_viewer_carry *c) {
     uint16_t i;
     if (!m) return;
     if (c->dsg_size && c->dsg_size == m->dsg.size && p->driver.ai.dsg) memcpy(p->driver.ai.dsg, c->dsg, c->dsg_size);
+    if (c->has_progress && p->has_cast) { /* before the cast's first tick: its scripts' first tests see them */
+        tc_ai_globals *g = &p->cast.globals;
+        g->lives = c->lives;
+        g->powers = c->powers;
+        memcpy(g->values, c->values, sizeof g->values);
+    }
     for (i = 0; c->place[0] && i < m->place_count; i++)
         if (m->places[i].name && same_text(m->places[i].name, c->place))
             tc_player_teleport(&p->player, m->places[i].position, m->places[i].heading);
@@ -408,6 +414,13 @@ static void update_portals(tc_viewer *v, float dt) {
             c->vertical_fov = v->camera.vertical_fov;
             c->orbit_distance = v->orbit_distance;
             c->closeup = v->cam.closeup;
+            c->has_progress = v->play->has_cast;
+            if (c->has_progress) {
+                const tc_ai_globals *g = &v->play->cast.globals;
+                c->lives = g->lives;
+                c->powers = g->powers;
+                memcpy(c->values, g->values, sizeof c->values);
+            }
             v->carry = c;
             v->phase = TC_VP_LOADING;
             v->loading_time = 0;
@@ -1018,6 +1031,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->mesh_water);
     tc_free(v->draws);
     tc_free(v->mesh_sphere);
+    tc_free(v->mesh_ghost);
     tc_free(v->blended);
     for (i = 0; i < v->piece_count; i++) {
         tc_free(v->pieces[i].vertices);
@@ -1491,24 +1505,36 @@ static void mesh_spheres(tc_viewer *v) {
         }
         s[3] = sqrtf(r);
     }
+    /* the parts of the cast's actors without collision of their own */
+    if ((v->mesh_ghost = (uint8_t *)tc_calloc(v->mesh_count ? v->mesh_count : 1, 1)) != NULL && v->play && v->play->has_cast) {
+        uint32_t first = v->perso_first;
+        for (i = 0; i < v->level->perso_count; first += v->level->persos[i].part_count, i++) {
+            const tc_cast_actor *a = tc_cast_actor_of(&v->play->cast, i);
+            for (k = 0; a && !a->obstacle && k < v->level->persos[i].part_count && first + k < v->mesh_count; k++)
+                v->mesh_ghost[first + k] = 1;
+        }
+    }
 }
 
-static float camera_sight(void *user, tc_vec3 from, tc_vec3 to) {
-    tc_viewer *v = (tc_viewer *)user;
-    tc_vec3 d = tc_v3_sub(to, from);
-    float best = 1, len2 = tc_v3_dot(d, d);
-    uint32_t i, k;
-    if (len2 < 1e-10f || !v->draws) return 1;
-    mesh_spheres(v);
-    if (!v->mesh_sphere) return 1;
+#define SIGHT_FAR 30.0f      /* how long the rays are that count crossings (in or out of the persos) */
+#define SIGHT_CROSSINGS 64
+#define SIGHT_ROOM 0.85f     /* a gap between two solids the eye fits in: twice the camera's radius and a little */
+
+/* The drawn persos' crossings of the ray from + d x t, t in 0..1: up to cap of them into ts (unordered), the count (of
+ * all of them) returned. Persos only (not Ed, statics, pieces), and nothing see-through. ghosts: those of the cast's
+ * actors Ed does not collide with (tc_viewer.mesh_ghost), else those of all the others. */
+static uint32_t perso_crossings(const tc_viewer *v, bool ghosts, tc_vec3 from, tc_vec3 d, float *ts, uint32_t cap) {
+    float len2 = tc_v3_dot(d, d);
+    uint32_t i, k, n = 0;
     for (i = 0; i < v->draw_count; i++) {
         const tc_view_draw *dr = &v->draws[i];
         const tc_mesh *m;
         const float *s;
         tc_vec3 c, rel;
         float scale, r, along;
-        if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue; /* persos only (not Ed, statics, pieces) */
+        if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
         if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
+        if ((v->mesh_ghost && v->mesh_ghost[dr->mesh]) != ghosts) continue;
         m = v->meshes[dr->mesh];
         s = v->mesh_sphere + 4 * dr->mesh;
         c = model_point(&dr->model, s);
@@ -1518,15 +1544,59 @@ static float camera_sight(void *user, tc_vec3 from, tc_vec3 to) {
         r = s[3] * scale;
         rel = tc_v3_sub(c, from);
         along = fmaxf(0, fminf(1, tc_v3_dot(rel, d) / len2));
-        if (tc_v3_length(tc_v3_sub(rel, tc_v3_scale(d, along))) > r) continue; /* the segment misses its sphere */
+        if (tc_v3_length(tc_v3_sub(rel, tc_v3_scale(d, along))) > r) continue; /* the ray misses its sphere */
         for (k = dr->first_index; k + 2 < dr->first_index + dr->index_count && k + 2 < m->index_count; k += 3) {
             float t = segment_tri_t(from, d, model_point(&dr->model, m->vertices[m->indices[k]].position),
                                     model_point(&dr->model, m->vertices[m->indices[k + 1]].position),
                                     model_point(&dr->model, m->vertices[m->indices[k + 2]].position));
-            if (t < best) best = t;
+            if (t > 1) continue;
+            if (n < cap) ts[n] = t;
+            n++;
         }
     }
-    return best;
+    return n;
+}
+
+/* tc_cam_sight_fn over the persos as drawn last frame: the nearest crossing, as the exe's ray. Port, for the cast's
+ * actors Ed does not collide with (they can stand in him, and the eye was put inside them): the crossings of a long ray,
+ * in order, are where it goes into and out of them (a perso's parts are open shells that close together, so they are
+ * counted as one). An odd count says `from` is inside one, which two more rays from it must agree with (a sheet crosses
+ * once too). Then *inside is where that solid ends, and the share returned is up to the next thing after it. */
+static float camera_sight(void *user, tc_vec3 from, tc_vec3 to, float *inside) {
+    static const float other[2][3] = {{0.9f, -0.37f, 0.22f}, {-0.41f, 0.88f, -0.24f}};
+    tc_viewer *v = (tc_viewer *)user;
+    tc_vec3 d = tc_v3_sub(to, from);
+    float len2 = tc_v3_dot(d, d), len, far_len, ts[SIGHT_CROSSINGS], skip[1], end = 0, block = INFINITY, solid = INFINITY;
+    uint32_t n, k, j;
+    *inside = 0;
+    if (len2 < 1e-10f || !v->draws) return 1;
+    mesh_spheres(v);
+    if (!v->mesh_sphere) return 1;
+    len = sqrtf(len2);
+    n = perso_crossings(v, false, from, d, ts, SIGHT_CROSSINGS);
+    for (k = 0; k < n && k < SIGHT_CROSSINGS; k++) solid = fminf(solid, ts[k] * len);
+    far_len = fmaxf(len, SIGHT_FAR);
+    n = perso_crossings(v, true, from, tc_v3_scale(d, far_len / len), ts, SIGHT_CROSSINGS);
+    if (n > SIGHT_CROSSINGS) n = SIGHT_CROSSINGS - ((n ^ SIGHT_CROSSINGS) & 1); /* too many: the nearest, the parity kept */
+    for (k = 1; k < n; k++) { /* in order */
+        float t = ts[k];
+        for (j = k; j > 0 && ts[j - 1] > t; j--) ts[j] = ts[j - 1];
+        ts[j] = t;
+    }
+    for (k = 0; k < n; k++) ts[k] *= far_len;
+    k = 0;
+    if ((n & 1) &&
+        (perso_crossings(v, true, from, tc_v3(other[0][0] * SIGHT_FAR, other[0][1] * SIGHT_FAR, other[0][2] * SIGHT_FAR), skip, 0) & 1) &&
+        (perso_crossings(v, true, from, tc_v3(other[1][0] * SIGHT_FAR, other[1][1] * SIGHT_FAR, other[1][2] * SIGHT_FAR), skip, 0) & 1)) {
+        /* inside: out at ts[0], then on through whatever follows too closely for the eye to fit between */
+        end = ts[0];
+        for (k = 1; k + 1 < n && ts[k] < end + SIGHT_ROOM; k += 2) end = ts[k + 1];
+        if (end > len || solid < end + SIGHT_ROOM) end = 0, k = 0; /* no room beyond it within reach: as the exe's ray */
+    }
+    if (k < n) block = ts[k];
+    *inside = end;
+    block = fminf(block, solid);
+    return block < len ? block / len : 1;
 }
 
 /* The director's shot (tc_viewer.director): camera mode 6 on a target, from the cast's scripts (tc_ai_globals). fresh:
@@ -2349,7 +2419,9 @@ static void add_mesh(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     uint32_t n = v->mesh_ranges ? v->mesh_ranges[2 * mesh + 1] : 0, k, first = 0, count = 0;
     const tc_sector_range *r;
     float z = NAN, rz;
-    if ((!shown && !water) || n == 0) {
+    /* the sectors the scripts have moved (tc_cast_sector_matrix): each of their ranges a draw of its own, at its matrix */
+    const tc_cast *cast = v->play && v->play->has_cast && v->play->cast.moving_sector_count && v->sectors ? &v->play->cast : NULL;
+    if ((!shown && !water && !cast) || n == 0) {
         add_draw(v, dl, mesh, model, 0, v->meshes[mesh]->index_count, NAN);
         return;
     }
@@ -2357,6 +2429,14 @@ static void add_mesh(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     for (k = 0; k < n; k++) {
         if (shown && !tc_sectors_group_shown(v->sectors, r[k].group, shown)) continue;
         rz = water && r[k].group < v->sectors->count ? v->sector_water[r[k].group] : NAN;
+        if (cast && r[k].group < v->sectors->count) {
+            const tc_mat34 *moved = tc_cast_sector_matrix(cast, r[k].group);
+            if (moved) {
+                tc_mat4 m4 = tc_mat4_from34(moved), at = tc_mat4_mul(model, &m4);
+                add_draw(v, dl, mesh, &at, r[k].first, r[k].count, rz);
+                continue;
+            }
+        }
         if (count && first + count == r[k].first && (isnan(z) ? isnan(rz) : z == rz)) {
             count += r[k].count;
             continue;

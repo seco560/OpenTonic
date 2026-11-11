@@ -12,6 +12,9 @@
 #   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
 #   make movecheck  -> what each level perso does with Ed near it: rows to diff between builds (docs/ENGINE.md "Perso motion")
 #   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
+#   make checkall   -> THE GATE: every check above in turn, one line each, logs in build/logs; fails if any does. Also the
+#                      Special Edition's sectors when ../files/out/se/ttlv is there. Imported levels (out/Imported) are
+#                      passed by (tests/testlevels.h). Run it before and after a change.
 #   make replay     -> build/replay: a recording's info, timeline, csv, check
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 CC ?= cc
@@ -35,7 +38,7 @@ $(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard src/*.h) Makefile
 $(BUILD)/libtoniccore.a: $(OBJ)
 	$(AR) rcs $@ $^
 
-$(BUILD)/playcheck: tests/playcheck.c $(BUILD)/libtoniccore.a
+$(BUILD)/playcheck: tests/playcheck.c tests/testlevels.h $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/aicheck: tests/aicheck.c $(BUILD)/libtoniccore.a
@@ -56,7 +59,7 @@ $(BUILD)/viewcheck: tests/viewcheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/portalcheck: tests/portalcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
-$(BUILD)/sectorcheck: tests/sectorcheck.c $(BUILD)/libtoniccore.a
+$(BUILD)/sectorcheck: tests/sectorcheck.c tests/testlevels.h $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/camcheck: tests/camcheck.c $(BUILD)/libtoniccore.a
@@ -124,7 +127,22 @@ ifneq ($(RECORDINGS),)
 	$(BUILD)/replay check -d ../files/out/ttlv $(RECORDINGS)
 endif
 
+# The gate. Each check runs whatever the others did; a red line names its log.
+GATE := check mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck
+SE_TTLV := ../files/out/se/ttlv
+checkall: all
+	@mkdir -p $(BUILD)/logs; failed=""; \
+	for t in $(GATE); do \
+		if $(MAKE) --no-print-directory $$t > $(BUILD)/logs/$$t.log 2>&1; then echo "  ok    $$t"; \
+		else echo "  FAIL  $$t   ($(BUILD)/logs/$$t.log)"; failed="$$failed $$t"; fi; \
+	done; \
+	if [ -d $(SE_TTLV) ]; then \
+		if $(BUILD)/sectorcheck $(SE_TTLV) > $(BUILD)/logs/sectorcheck-se.log 2>&1; then echo "  ok    sectorcheck (Special Edition)"; \
+		else echo "  FAIL  sectorcheck (Special Edition)   ($(BUILD)/logs/sectorcheck-se.log)"; failed="$$failed sectorcheck-se"; fi; \
+	fi; \
+	if [ -n "$$failed" ]; then echo "checkall: FAILED:$$failed"; exit 1; fi; echo "checkall: all ok"
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck tapecheck replay clean
+.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck tapecheck replay clean

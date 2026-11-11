@@ -153,6 +153,13 @@ typedef struct tc_viewer_carry {
     float vertical_fov;       /* the camera's field of view (, .) kept across the change, radians; 0 = the default */
     float orbit_distance;     /* the play camera's zoom (wheel) kept across the change; 0 = the default */
     uint8_t closeup;          /* the play camera's close-up (5) kept across the change */
+    /* The game's progress (tc_ai_globals: the exe keeps these in its save block, beyond any one level), from a level
+     * with a cast into the next. Kept at the end: a recording files this struct's tail by its size, so one made before
+     * these were here reads as has_progress 0, and its levels start as they did (tc_rec.c read_segment). */
+    uint8_t has_progress;
+    uint8_t lives;
+    uint16_t powers;
+    int16_t values[31];
 } tc_viewer_carry;
 
 typedef struct tc_recorder tc_recorder; /* tc_rec.h */
@@ -302,6 +309,8 @@ typedef struct tc_viewer {
     uint32_t draw_cap, blended_cap;
     uint32_t draw_count;          /* the last tc_viewer_draws' count (the camera's sight test reads its persos) */
     float *mesh_sphere;           /* per mesh: centre xyz and radius of its vertex bounds (mesh space); lazily made */
+    uint8_t *mesh_ghost;          /* per mesh, with mesh_sphere: 1 = a cast actor's part that Ed does not collide with (no
+                                   * obstacle of its own): it can stand in him, and the camera's sight allows for that */
     /* Transparent statics drawn as pieces (TC_VIEW_PIECE_SIZE cells), so they sort back to front: the pieces follow
      * Ed's parts in the mesh table, piece_origin[k] = the static mesh piece k came from, split[i] = 1 when static
      * mesh i is drawn as its pieces. mesh_centre / mesh_extent: per transparent mesh, the centre and half size of its

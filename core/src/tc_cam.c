@@ -103,18 +103,23 @@ void tc_cam_recenter(tc_cam *c) {
 /* How far the camera's sphere gets from the pivot along dir (unit) before it meets the level, up to distance: the
  * sphere swept (the exe's sweep: faces it moves into) and a ray, both faces (the original's "can see" ray), less the
  * sphere's radius; the drawn persos by the viewer's sight test. Never past a surface; 0 when one is at the pivot. */
-static float clear_distance_r(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, float distance, float radius) {
+/* least (NULL: not wanted): port, how far out the eye has to be to be out of a perso the pivot is in (tc_cam_sight_fn),
+ * 0 none; never more than the distance returned. */
+static float clear_distance_r(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, float distance, float radius, float *least) {
     tc_collision *world = t->world;
     tc_ai_sphere_set body; /* one sphere at the origin */
     tc_mec_hit hit;
     tc_hit h;
-    float d = distance;
+    float d = distance, out = 0;
+    if (least) *least = 0;
     if (distance <= 0) return distance;
     if (t->sight) { /* the drawn persos: the sphere's radius kept off them along the line */
-        float reach = distance + radius, f = t->sight(t->sight_user, pivot, tc_v3_add(pivot, tc_v3_scale(dir, reach)));
+        float inside = 0, reach = distance + radius;
+        float f = t->sight(t->sight_user, pivot, tc_v3_add(pivot, tc_v3_scale(dir, reach)), &inside);
         if (f < 1) d = fmaxf(0, f * reach - radius);
+        if (inside > 0) d = fmaxf(d, out = fminf(distance, inside + radius)); /* port: out of the perso the pivot is in */
     }
-    if (!world) return d;
+    if (!world) { if (least) *least = fminf(out, d); return d; }
     memset(&body, 0, sizeof(body));
     body.spheres[0].radius = radius;
     body.spheres[0].rebound = 1;
@@ -124,11 +129,12 @@ static float clear_distance_r(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir
         d = fminf(d, fmaxf(0, hit.t * distance - 0.02f)); /* just short of touching */
     if (tc_collision_raycast(world, pivot, dir, distance + radius, &h))
         d = fminf(d, fmaxf(0, h.distance - radius));
+    if (least) *least = fminf(out, d);
     return d;
 }
 
 static float clear_distance(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, float distance) {
-    return clear_distance_r(t, pivot, dir, distance, TC_CAM_RADIUS);
+    return clear_distance_r(t, pivot, dir, distance, TC_CAM_RADIUS, NULL);
 }
 
 /* The preset for Ed's situation: distance (before the front stretch), elevation, the stretch in front of him. */
@@ -237,7 +243,7 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
 
 void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt) {
     tc_vec3 pivot = tc_v3_add(t->position, tc_v3(0, 0, TC_CAM_AIM_HEIGHT)), dir, base;
-    float distance, elevation, stretch, length, allowed, pull, k;
+    float distance, elevation, stretch, length, allowed, pull, k, least = 0;
     bool first;
     c->since_look += dt;
     if (c->first_person) { /* at his head, where the player looks; nothing else */
@@ -312,13 +318,14 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
     length = tc_v3_length(dir);
     if (length < 1e-4f) { dir = tc_v3_scale(tc_camera_forward(view), -1); length = 0; }
     else dir = tc_v3_scale(dir, 1 / length);
-    allowed = fminf(length, clear_distance(t, base, dir, length));
+    allowed = fminf(length, clear_distance_r(t, base, dir, length, TC_CAM_RADIUS, &least));
     pull = length - allowed;
     if (first || pull > c->pull) c->pull = pull;                       /* blocked: in at once */
     else c->pull += (pull - c->pull) * ease(dt, TC_CAM_RELEASE_TIME);  /* clear: back out, gently */
     /* never more than there is (Ed walking at the camera shortens the distance under an older, larger pull: until
      * 2026-11-01 that put the camera through him) */
     c->pull = fminf(c->pull, length);
+    if (least > 0) c->pull = fminf(c->pull, length - fminf(least, allowed)); /* port: out of a perso at once, not eased */
     c->reach = length - c->pull;
     c->hide_target = c->reach < TC_CAM_HIDE_DISTANCE;
     view->position = tc_v3_add(base, tc_v3_scale(dir, c->reach));

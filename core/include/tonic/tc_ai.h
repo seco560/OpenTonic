@@ -303,8 +303,22 @@ typedef struct tc_ai_light_call { int32_t set, duration_ms; bool absolute; } tc_
 /* Game counters the scripts share (NULL in a perso: its own). lives: the byte at *DAT_008bc840 (PROC 77 sets, 78 adds
  * one, 79 takes one; FUNC 40 reads, 41 / 42 add / take one and read): what the gold Eds count; its starting value
  * (the save data's) is not read, the port starts at 0. */
+#define TC_AI_POWERS_ALL 0xFFFFu
+/* A script's order to move a sector (GAM_0042a350 / 0042a270 / 0042a100), for the host's table of moving sectors (tc_cast):
+ * PROC 116 Proc_TranslateSector(sector, to, ms), 117 Proc_TranslateLocalSector(sector, by, ms), 109 Proc_RotateSector(sector,
+ * axis, pivot, degrees, ms). sector: its index in the level's sectors (.ttlv SECT; the script's type 27 node). */
+#define TC_AI_MAX_SECTOR_ORDERS 8
+enum { TC_AI_SECTOR_TO, TC_AI_SECTOR_BY, TC_AI_SECTOR_TURN };
+typedef struct tc_ai_sector_order { uint16_t sector; uint8_t kind; tc_vec3 a, b; float angle; int32_t ms; } tc_ai_sector_order;
 typedef struct tc_ai_globals {
     uint8_t lives;
+    /* Ed's powers: the u16 at *DAT_004ec6d4, a set of masks (7, 8, 0x70, 0x80, 0x100, 0x200 in the scripts). COND 90
+     * Cond_TestPower(m) = (powers & m) == m (0x419680); PROC 200 sets them, 201 Proc_SubPower clears m (0x419660), 202
+     * Proc_AddPower adds m (0x419650). Port: they start all on (TC_AI_POWERS_ALL: every ability, every story test
+     * passes), as the port has run so far; the save data's start value is not read. Not in the recordings' hash yet. */
+    uint16_t powers;
+    tc_ai_sector_order sector_orders[TC_AI_MAX_SECTOR_ORDERS]; /* this tick's, in order: the host takes them */
+    uint8_t sector_order_count;
     /* The save values (31 i16 at DAT_004ec6d0, GAM_004195f0 / GAM_00419620): FUNC 93 reads one, PROC 143 adds one, PROC
      * 144 sets one (story progress, the bees ...). Their starting values are the save data's: the port starts at 0. */
     int16_t values[31];
@@ -375,7 +389,6 @@ struct tc_ai_perso {
     int8_t zone_combined;
     tc_vec3 *other_positions;    /* per model->others (the camera's eye for role 1) */
     const char *level_name;      /* LevelIs, compared case-insensitively ("bar") */
-    uint32_t global_flags;       /* GlobalFlag?(n) (abilities?): bit n; all set by default */
     int32_t hit_points;          /* FUNC_34 / PROC_66 on Ed (inferred) */
     bool screen_covered;         /* GameState63: the cover transition has finished (the screen is black) */
 

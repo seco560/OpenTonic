@@ -363,6 +363,12 @@ static void portal(const char *folder) {
     check(pending != NULL, "Ed at the portal: the game asks for the next level");
     if (!pending) { place_frame = -1; tc_viewer_free(&v); tc_recorder_free(rec); free(m.data); unload(&a); return; }
     carry = *pending;
+    { /* the game's progress goes with him (tc_viewer_carry.has_progress) */
+        const tc_cast *cast = tc_viewer_cast(&v);
+        check(cast && carry.has_progress && carry.powers == cast->globals.powers && carry.lives == cast->globals.lives &&
+              !memcmp(carry.values, cast->globals.values, sizeof carry.values), "the level change carries the powers, lives and save values");
+        printf("  carried: powers %#x, lives %u, save value 0 = %d\n", (unsigned)carry.powers, (unsigned)carry.lives, (int)carry.values[0]);
+    }
     if (!load(&b, folder, carry.level)) {
         check(0, "the level the portal asks for loads");
         place_frame = -1;
@@ -374,6 +380,25 @@ static void portal(const char *folder) {
     }
     describe(&d, &b, carry.level, 32, rec, &carry);
     tc_viewer_init(&after, &d); /* as the frontends: made first, the last one freed after */
+    { /* ... and the next level starts from it, where it has a cast (changed here first, to see it is the carry's) */
+        tc_viewer probe;
+        tc_viewer_desc pd = d;
+        tc_viewer_carry changed = carry;
+        const tc_cast *cast;
+        changed.powers = 0x0087;
+        changed.lives = 3;
+        changed.values[0] = 5;
+        pd.carry = &changed;
+        pd.recorder = NULL;
+        tc_viewer_init(&probe, &pd);
+        cast = tc_viewer_cast(&probe);
+        if (cast)
+            check(cast->globals.powers == 0x0087 && cast->globals.lives == 3 && cast->globals.values[0] == 5,
+                  "the next level starts with the carried powers, lives and save values");
+        else
+            printf("  (%s has no cast: nothing to carry into)\n", carry.level);
+        tc_viewer_free(&probe);
+    }
     tc_viewer_free(&v);
     play(&after, 300);
     tc_viewer_free(&after);

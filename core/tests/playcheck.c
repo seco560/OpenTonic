@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include "tonic/tonic.h"
+#include "testlevels.h"
 
 #if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
@@ -267,6 +268,7 @@ int main(int argc, char **argv) {
         while ((e = readdir(dir)) != NULL) {
             size_t len = strlen(e->d_name);
             if (len > 5 && strcmp(e->d_name + len - 5, ".ttlv") == 0) {
+                if (test_imported(folder, e->d_name)) { printf("%s: imported, passed by\n", e->d_name); continue; }
                 if (count == cap) {
                     char **grown = (char **)realloc(names, (cap = cap ? cap * 2 : 32) * sizeof *names);
                     if (!grown) break;

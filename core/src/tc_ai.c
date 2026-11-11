@@ -1409,7 +1409,11 @@ static bool condition(run *r, uint32_t i) {
         uint32_t type = st && st->card != TC_AI_NONE16 ? p->model->cards[st->card].type : TC_AI_NONE16;
         return (type == 4 || type == 10) && p->contacts == 0 && p->velocity.z <= 0;
     }
-    case 90: { uint32_t n = (uint32_t)as_int(arg(r, i, 0)); return n < 32 ? (p->global_flags >> n) & 1 : (p->global_flags & n) != 0; }
+    case 90: { /* Cond_TestPower (0x4991d0 -> 0x419680): every bit of the mask */
+        const tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        uint16_t m = (uint16_t)as_int(arg(r, i, 0));
+        return (g->powers & m) == m;
+    }
     case 63: return p->screen_covered; /* GameState63 = GAM_004290a0: the cover transition has finished */
     /* FUN_004985e0: the contact's collide identifier & mask (FUN_00497890), when the report has that contact */
     case 44: return (p->contacts & TC_AI_CONTACT_GROUND) && (p->ground_material & as_int(arg(r, i, 0)));
@@ -1969,6 +1973,32 @@ static uint32_t procedure(run *r, uint32_t i) {
         }
         return 0;
     }
+    case 109: case 116: case 117: { /* PROC_109Etc_0048a260, PROC_116Etc_0048a410: a sector moved over time (the host's) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        value sec = arg(r, i, 0);
+        tc_ai_sector_order *o;
+        if (sec.i < 0 || sec.i >= 0xFFFF || g->sector_order_count >= TC_AI_MAX_SECTOR_ORDERS) return 0;
+        o = &g->sector_orders[g->sector_order_count++];
+        memset(o, 0, sizeof *o);
+        o->sector = (uint16_t)sec.i;
+        o->a = argv3(r, i, 1);
+        if (c == 109) {
+            o->kind = TC_AI_SECTOR_TURN;
+            o->b = argv3(r, i, 2);
+            o->angle = argf(r, i, 3) * 0.01745329238474369f; /* DAT_004d2cdc */
+            o->ms = as_int(arg(r, i, 4));
+        } else {
+            o->kind = c == 116 ? TC_AI_SECTOR_TO : TC_AI_SECTOR_BY;
+            o->ms = as_int(arg(r, i, 2));
+        }
+        return 0;
+    }
+    case 200: case 201: case 202: { /* PROC_200Etc_0048b080: the powers := m, &= ~m (Proc_SubPower), |= m (Proc_AddPower) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        uint16_t m = (uint16_t)as_int(arg(r, i, 0));
+        g->powers = c == 200 ? m : c == 201 ? (uint16_t)(g->powers & ~m) : (uint16_t)(g->powers | m);
+        return 0;
+    }
     case 203: p->display_flag8 = false; return 0;
     case 204: p->display_flag8 = true; return 0;
     case 205: p->transparency = (uint8_t)as_int(arg(r, i, 0)); return 0;
@@ -2469,7 +2499,7 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     else p->reflex.behaviour = 0xFFFF;
     p->time_ms = 60000;
     p->rng = 0x1234567u;
-    p->global_flags = 0xFFFFFFFFu;
+    p->own_globals.powers = TC_AI_POWERS_ALL;
     p->hit_points = 4;
     p->hit_points_max = p->hit_points_max_init = 4;
     p->hit_points_ceiling = 255;

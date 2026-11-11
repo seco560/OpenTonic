@@ -49,6 +49,20 @@ typedef struct tc_cast_dyn {
     tc_mec_walk walk;            /* type 7: its own sweep's contacts (MEC_CollideMoveNoTurn_004bedd6, flags 4) */
 } tc_cast_dyn;
 
+/* A sector the scripts move (the exe's table DAT_005212f4, 0x48 a record: GAM_0042a000). world: its matrix, the identity
+ * where the export has it (port: the exe's is the sector SuperObject's own, the identity in the levels looked at).
+ * Translation (GAM_0042a1c0, stepped by GAM_00429d00): velocity per ms towards target; turn (GAM_00429e80, GAM_00429b40):
+ * about axis through pivot, angle towards angle_target at rate per ms. */
+#define TC_CAST_MAX_MOVING_SECTORS 16
+typedef struct tc_cast_moving_sector {
+    uint16_t sector;
+    tc_mat34 world;
+    bool moving, turning;
+    tc_vec3 velocity, target;
+    tc_vec3 axis, pivot;
+    float angle, angle_target, rate;
+} tc_cast_moving_sector;
+
 typedef struct tc_cast_actor {
     const tc_cast_entry *entry;
     tc_ai_model model;           /* its scripts; the states are its family's (owned by tc_cast) */
@@ -109,6 +123,8 @@ typedef struct tc_cast {
     bool talk_cover;             /* a speaker's GameAction2: the host starts the cover */
     const char *talk_level;      /* a speaker's ChangeLevel: the host goes there, NULL none */
     float main_mass;             /* host-fed: his mass (his card's +4): what he weighs on what he rides (FUN_004c32f6) */
+    tc_cast_moving_sector moving_sectors[TC_CAST_MAX_MOVING_SECTORS]; /* in the order the scripts first moved them */
+    uint32_t moving_sector_count;
 } tc_cast;
 
 /* main: the main actor's AI (it gets the cast's lookup; must outlive the cast). Levels without a CAST chunk give an
@@ -141,6 +157,9 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o);
  * actor's CAST record: the camera's snapshot position); false when the cast does not know it. */
 bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out);
 bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out);
+/* The matrix of a sector the scripts have moved (the identity: where the export has it), NULL for one they have not.
+ * The static world's triangles follow it (c->world); the host draws the sector's geometry with it. */
+const tc_mat34 *tc_cast_sector_matrix(const tc_cast *c, uint16_t sector);
 /* The actor that draws level perso `prso` (tc_level.persos index), or NULL. */
 const tc_cast_actor *tc_cast_actor_of(const tc_cast *c, uint32_t prso);
 /* How to draw an actor, t (0..1) into the time since the last tick: its world matrix and its state animation with the

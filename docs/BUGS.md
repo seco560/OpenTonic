@@ -33,3 +33,46 @@ These might not necessarily be called bugs, but rather more overarching issues w
 
 * Tonic Tooling: we're building a game engine here. So a full editing suite for it would enable freedom in doing things such as: making the lake at the bottom of the Vegetable HQ teleport location swimmable (and adding some way to get back up, too!) In the original game you die by falling there, but it'd be cool to actually swim in it and climb back up. Many other such situations, but also giving way to creating whole new levels. I still want to see Tonic Trouble 2, and am also envisioning my own interactive action-adventure ideas in this engine. This admittedly big piece of work could make or break the project, so be very careful. But still...
   * **Design considerations written down 2026-11-01 (Claude), from our discussion:** docs/TOOLING.md (source -> cook -> runtime, glTF for assets + a JSON level file, scripts in a text form, a `.ttlv` -> glTF exporter first). Not started; the camera comes first (docs/NOTES.md "Next session: start here").
+
+## Playtest interview (2026-11-11)
+
+The user's answers on what the notes still called unseen ("awaiting playtest"). Anything marked so elsewhere in docs/ and
+listed here as fine is seen: this section wins. Special Edition items were left out (parked).
+
+**Seen and fine:** no Ed clone after a portal; ghost water gone; the Glacier Cocktail lake swims; drawing by sector with
+its fog and lights; the story walls are open (to be handled as the game does once progress exists); cock01's ice.
+
+**The queue** (the user's words, shortened; order is not priority):
+1. **Water:** jumping in is mostly fine, wants polish. Ed still clips through the bottom of water bodies. The underwater
+   camera sits too high and is hard to steer with.
+2. **Walk-in passages (sud0):** work, but must not play the portals' transition animation: that is for portals only.
+3. **Ledge hang:** rough: Ed hangs at odd angles, or clips instead of grabbing. Later.
+4. **Decals:** Agent XYZ's poster still flickers in one small corner.
+5. **Pickups:** some thermometers do not work (sud0, by the portal to the SE's sud0, where the tomato enemy is). The
+   antidotes (the swirly ones) play the wrong sound.
+6. **Levers and machines:** most levers work. **The lever and machine persos turn to face Ed, instead of Ed taking his
+   place at them.** Missing: the platforms on sud0's way to the north plain, pushing the boulders there, cavedoc's
+   popcorn machine (its puzzle).
+7. **Dying:** in some pits Ed still hits the bottom; some pits do not work; after a respawn he is shown falling for about
+   half a second; lava and deadly water do not kill him.
+8. **Lifts and platforms:** most work. Sometimes one disappears mid-path. Ed flying clips through moving platforms.
+9. **Pushed things:** cavedoc's crate moves but does not start the machine (a story gate?). marmite's boxes fly off one
+   way when hit, without colliding.
+10. **Enemies:** bare: no proper sounds or collision. They can be killed and they hurt Ed.
+11. **Shooting:** rough. Aiming in first person does not tilt the blowpipe up or down. No shot leaves while one is in
+    the air (what the exe does there is to be read).
+12. **Stick attacks:** hit, with no sound from Ed or the enemy and no other feedback.
+13. **Cast sounds:** many still unheard. A script sometimes loops a laugh (cavedoc: fighting the corn, near the popcorn
+    puzzle; probably Doc's robot's).
+14. **Hint scenes:** only bar is reliable. spynorth sometimes. pharmmap, pyr_fou and mammyon can be started with effort
+    but skip to the level without the line. SpyCarota can leave Ed stuck: Agent XYZ is up on the ledge, out of reach
+    (once it started from below).
+15. **The follow camera** (answered later the same day): fine, faithful down to the original's quirks (stuck behind walls
+    in caves, centring behind Ed oddly). **It clipped into characters and showed their insides** (Suzy, the tomatoes,
+    Grogh's henchmen). **Changed 2026-11-11 (Claude), not seen in the app:** the characters Ed does not collide with can
+    stand in him, and the sight ray then started inside them; the eye now goes beyond such a character, at once
+    (tc_viewer.c `camera_sight`, tc_cam.c). A scratch probe on sud0's boxers: the eye inside a character on 40 of 600
+    frames before, 10 after (one boxer), 1 -> 0 (the other). The bar's walk in camcheck changes too (Ed hidden on 518
+    frames, was 963). Recordings made before will not replay the same.
+16. **The ski camera:** still odd. The original demos' camera looked more faithful, but sat too far behind Ed (why is
+    open: the field of view, the aspect, the physics).

@@ -1371,6 +1371,10 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
             return behaviours[ref]
         if t == 22 and ref and not d.se:  # a family: its index (family +0xC = the std game's +0, the names table 0)
             return d.un('I', ref, 0xC)[0]
+        if t == 27 and ref and not d.se:  # a sector (Proc_TranslateSector ...): its index in the .ttlv SECT
+            got = d.sector_index(ref)
+            if got is not None:
+                return got
         if t == 29 and not d.se:  # a waypoint: its number in the level's table (waypoints(), the .ttlv WAYS)
             got = waypoints(d).get(ref, 0) if ref else 0
             if got or not ref:

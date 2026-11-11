@@ -468,3 +468,55 @@ flat, within TC_CAST_HEARING), animation sound events, DisplayVignetteDuring (PR
 | PROC 212-214 particles | 8 | | **skipped**, purely visual |
 | PROC 165 / 173 / 182 / 192 / 199 | 134 | camera speed, angle, shake, orientation | **skipped** (the camera is the port's own) |
 | PROC 241 (c2boxer) | 2 | under a distance, something on a channel (`0x48b7d0`, not read): 750 hits in 5 s | **skipped**, not understood |
+
+## Game progress (2026-11-11; **read** unless marked)
+What the scripts read and write as progress, surveyed over every AI model of the 21 retail levels (a scratch survey of
+the primitives below; 525 distinct uses). The state is small:
+- **Powers:** the u16 at `*DAT_004ec6d4`. `Cond_TestPower(m)` (COND 90, `0x419680`) = (powers & m) == m;
+  `Proc_AddPower` (PROC 202, `GAM_00419650`) |= m; `Proc_SubPower` (PROC 201, `0x419660`) &= ~m; PROC 200
+  (`GAM_00419670`) := m. `GAM_004196a0`(0..3) adds 0x7F / 0x80 / 0x100 / 0x200. The scripts use the masks 7, 8, 0x70,
+  0x80, 0x100, 0x200. **0x80 is flying** (cavedoc's J2P_GelePouvoirVoler takes it inside a zone and gives it back;
+  LeCanyon's gencanyon gives and takes the wings). What 7, 8, 0x70, 0x100 and 0x200 are: **open** (Ed's scripts test
+  each).
+- **Who gives them:** cavedoc's robot (rob-val FRB_RoboBne B11) gives **7**; sud0's Doc (docfou) gives 8, 0x70, 0x80,
+  0x100 and 0x200; the cheat-code reader gives any.
+- **Save values:** 31 i16 (FUNC 93 / PROC 143 / 144). Slot 0: the bees (docfou, gen_IncreaseBees). Slots 1-6: read by
+  sud0's Doc and by Suzy, written by no script with a constant slot (the inventory writes save values by the object's
+  slot, perso +0x34: Doc's six things, **inferred**). Odd slots 7-23: read by sud0's gen_arche (HEG_ArcheMagicMush adds
+  them up), written only by the cheat codes in script. Even slots 8-28: read by genplainesud. Who writes those two
+  rows in normal play is **open** (not a script with a constant slot).
+- **sud0's gates** (the sectors `GATES_OPEN` removes at export): `sctporte`, the wall across the river, drops 50 by
+  `Proc_TranslateLocalSector` (PROC 117) in Suzy's (HEG_LaBelleSuzy) first schedule **when Ed has power 7**; without
+  it she moves `sctfeuillage3` instead and stays. `sctporte1` / `sctporte2`: the tomato cannon (HEG_TomateCanon), PROC
+  117 over 1000 ms. `sctportedroite` / `sctportegauche`: the mummies and ZOR_GenDemoPyramide, `Proc_RotateSector`
+  (PROC 109) by 80 degrees.
+- Uses, all levels: TestPower 607 rows (before merging the same model across levels), LevelIs 393, SaveValue 348,
+  AddPower 264, SetSaveValue 197, GameAction2 156, SubPower 135, ChangeLevel 112, RotateSector 98, TranslateLocalSector
+  79, IncSaveValue 74, AddObjectInInventory 40, SaveGame 24, TranslateSector 24.
+
+**Port today.** Three stand-ins fake progress, and they depend on each other: the powers start all on
+(TC_AI_POWERS_ALL; tc_ai.h), cast.py `freeze_story_removals` turns the removals under a power or save-value test into
+freezes, and level.py `GATES_OPEN` leaves the gate sectors out (all but the river wall, below). Since 2026-11-11 the powers are real state in
+tc_ai_globals (the exe's test, PROC 200-202), and the powers, the lives and the save values go through a level change
+(tc_viewer_carry.has_progress; from a menu a level starts afresh; replaycheck's portal run checks it). The powers are
+not in the recordings' hash. The inventory is a stub.
+
+**Moving sectors (2026-11-11; read unless marked).** The exe keeps a table of the sectors its scripts move (`DAT_005212f4`,
+0x48 a record, made on a sector's first order: `GAM_0042a000`). `Proc_TranslateSector`(sector, to, ms) (PROC 116,
+`GAM_0042a350`) and `Proc_TranslateLocalSector`(sector, by, ms) (117, `GAM_0042a270`) set a target and a velocity
+(`GAM_0042a1c0`: the way / ms, per ms; no time: the whole way as the velocity). Each frame after the persos
+(`GAM_00429d00`): while the target is ahead along the velocity the sector moves ms x velocity, then it is put on the target
+(so with no time it is far past for one frame, then there). `Proc_RotateSector`(sector, axis, pivot, degrees, ms) (109,
+`GAM_0042a100`, `GAM_00429e80`): the angle / ms a frame until the angle is reached, x -> R (x - pivot) + pivot
+(`GAM_00429b40`, `GAM_004298d0`). Both move the sector's SuperObject and its children, and the persos of its character
+list that are flagged or stand on it (`GAM_004299e0`, `GAM_004297a0`).
+**Port:** script nodes of type 27 are the sector's index in the .ttlv SECT (ai.py `resolve`); the orders go through
+tc_ai_globals.sector_orders to tc_cast's moving sectors (tc_cast.c `move_sectors`, 16 at most), stepped each tick as the
+exe's frame; the sector's collision triangles leave the static grid and follow its matrix (`tc_collision_move_sector`); the
+viewer draws its ranges at that matrix (tc_viewer.c `add_mesh`). **Not done / not verified:** the persos in a moved sector
+do not move with it; the turn's sense (`FUN_004a9588`'s axis-angle is not read: taken as right-handed); nothing is drawn
+between ticks (30 steps a second); the sector's own floors and portals (tc_sector) stay where they were; the camera's and
+the other raycasts see the moved triangles (they are the static world's).
+**sud0's river wall** is exported again (level.py STORY_GATES keeps the other four out): castcheck `river_wall`: without
+power 7 it stands, with it Suzy drops it 50 at the level's start and the way is open. Headless, on a scratch export; an
+export from before prints an info line instead.

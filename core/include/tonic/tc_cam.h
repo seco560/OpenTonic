@@ -170,8 +170,11 @@ typedef struct tc_cam {
 
 /* What else stands in the camera's view, beside the level's collision: the share (0..1) of the segment from -> to that
  * is clear of it, 1 = all. The original's sight ray tests the drawn geometry, persos' included (FUN_004a3a00 ->
- * FUN_004a3920 -> FUN_00484210, GLIGLOU_004427d0's visual objects); the viewer answers with the persos it drew. */
-typedef float (*tc_cam_sight_fn)(void *user, tc_vec3 from, tc_vec3 to);
+ * FUN_004a3920 -> FUN_00484210, GLIGLOU_004427d0's visual objects); the viewer answers with the persos it drew.
+ * Port (the user, 2026-11-11: the eye showed a character's inside): *inside = how far along the segment (units) the
+ * solid goes on that `from` itself is in, 0 when it is in none (a character overlapping Ed: the cast does not collide
+ * with him as the exe's does). The eye is then put beyond it, and the share is that of what comes after. */
+typedef float (*tc_cam_sight_fn)(void *user, tc_vec3 from, tc_vec3 to, float *inside);
 
 /* What the camera follows this frame. */
 typedef struct tc_cam_target {

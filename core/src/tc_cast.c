@@ -4,6 +4,7 @@
 #include "tonic/tc_alloc.h"
 #include "tonic/tc_player.h"
 #include "tonic/tc_obstacle.h"
+#include "tonic/tc_collision.h"
 
 static tc_ai_perso *cast_find(void *user, int32_t id) {
     tc_cast *c = (tc_cast *)user;
@@ -255,6 +256,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
     const tc_cast_data *d = &l->cast;
     uint32_t i, n = 0;
     memset(c, 0, sizeof(*c));
+    c->globals.powers = TC_AI_POWERS_ALL; /* port: every power from the start (tc_ai.h) */
     c->level = l;
     c->main = main;
     c->main_id = d->main_actor;
@@ -545,8 +547,88 @@ void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main
     step_pass(c, true, dt, s, main_sector);
 }
 
+const tc_mat34 *tc_cast_sector_matrix(const tc_cast *c, uint16_t sector) {
+    uint32_t i;
+    for (i = 0; i < c->moving_sector_count; i++)
+        if (c->moving_sectors[i].sector == sector) return &c->moving_sectors[i].world;
+    return NULL;
+}
+
+/* The exe's table of moving sectors: this tick's orders (tc_ai_globals.sector_orders), then each record's step, as the
+ * frame does after the persos (GAM_00429d00, from 0x428a69's step 7). Port: the sector's static triangles follow
+ * (tc_collision_move_sector); the persos standing in it do not yet (GAM_004299e0 moves those of its character list that
+ * are flagged or stand on it). */
+static void move_sectors(tc_cast *c, float dt) {
+    tc_ai_globals *g = &c->globals;
+    float ms = dt * 1000;
+    uint32_t i, k;
+    for (i = 0; i < g->sector_order_count; i++) {
+        const tc_ai_sector_order *o = &g->sector_orders[i];
+        tc_cast_moving_sector *m = NULL;
+        for (k = 0; k < c->moving_sector_count; k++)
+            if (c->moving_sectors[k].sector == o->sector) m = &c->moving_sectors[k];
+        if (!m) { /* GAM_0042a000 / GAM_00429ef0: a new record, while there is room */
+            static const tc_mat34 identity = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+            if (c->moving_sector_count >= TC_CAST_MAX_MOVING_SECTORS) continue;
+            m = &c->moving_sectors[c->moving_sector_count++];
+            memset(m, 0, sizeof *m);
+            m->sector = o->sector;
+            m->world = identity;
+        }
+        if (o->kind == TC_AI_SECTOR_TURN) { /* GAM_0042a100: the axis and pivot, then GAM_00429e80 */
+            m->axis = o->a;
+            m->pivot = o->b;
+            m->angle_target = m->angle + o->angle;
+            m->rate = o->ms ? o->angle / (float)o->ms : o->angle;
+            m->turning = true;
+        } else { /* GAM_0042a350 (to a place) / GAM_0042a270 (by a vector) -> GAM_0042a1c0 */
+            tc_vec3 at = tc_v3(m->world.m[3], m->world.m[7], m->world.m[11]);
+            tc_vec3 by = o->kind == TC_AI_SECTOR_TO ? tc_v3_sub(o->a, at) : o->a;
+            m->target = tc_v3_add(at, by);
+            m->velocity = o->ms ? tc_v3_scale(by, 1.0f / (float)o->ms) : by; /* DAT_004d2248 = 1; no time: the whole of it */
+            m->moving = true;
+        }
+    }
+    g->sector_order_count = 0;
+    for (i = 0; i < c->moving_sector_count; i++) {
+        tc_cast_moving_sector *m = &c->moving_sectors[i];
+        bool changed = false;
+        if (m->turning) { /* this frame's share of the angle, the last one what is left */
+            float left = m->angle_target - m->angle, step = ms * m->rate;
+            tc_vec3 a = m->axis;
+            float len = tc_v3_length(a);
+            if (left < 0 ? step <= left : left <= step) { step = left; m->turning = false; }
+            m->angle += step;
+            if (len > 1e-6f && step != 0) { /* x -> R (x - pivot) + pivot, before the matrix it has (GAM_00429b40) */
+                float co = cosf(step), si = sinf(step), t = 1 - co;
+                tc_mat34 r, w = m->world;
+                a = tc_v3_scale(a, 1 / len);
+                r.m[0] = t * a.x * a.x + co;       r.m[1] = t * a.x * a.y - si * a.z; r.m[2] = t * a.x * a.z + si * a.y;
+                r.m[4] = t * a.x * a.y + si * a.z; r.m[5] = t * a.y * a.y + co;       r.m[6] = t * a.y * a.z - si * a.x;
+                r.m[8] = t * a.x * a.z - si * a.y; r.m[9] = t * a.y * a.z + si * a.x; r.m[10] = t * a.z * a.z + co;
+                r.m[3] = r.m[7] = r.m[11] = 0;
+                {
+                    tc_vec3 back = tc_m34_vector(&r, m->pivot);
+                    r.m[3] = m->pivot.x - back.x; r.m[7] = m->pivot.y - back.y; r.m[11] = m->pivot.z - back.z;
+                }
+                m->world = tc_m34_mul(&r, &w);
+                changed = true;
+            }
+        }
+        if (m->moving) { /* towards the target while it is still ahead, then on it */
+            tc_vec3 at = tc_v3(m->world.m[3], m->world.m[7], m->world.m[11]), left = tc_v3_sub(m->target, at), step = left;
+            if (tc_v3_dot(m->velocity, left) > 0) step = tc_v3_scale(m->velocity, ms);
+            else m->moving = false;
+            m->world.m[3] += step.x; m->world.m[7] += step.y; m->world.m[11] += step.z;
+            changed = true;
+        }
+        if (changed && c->world) tc_collision_move_sector(c->world, m->sector, &m->world);
+    }
+}
+
 void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
     step_pass(c, false, dt, s, main_sector);
+    move_sectors(c, dt);
 }
 
 void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
