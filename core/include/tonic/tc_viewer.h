@@ -15,6 +15,7 @@
 #include "tc_player.h"
 #include "tc_transition.h"
 #include "tc_speech.h"
+#include "tc_debug.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -323,6 +324,10 @@ typedef struct tc_viewer {
     float *blended_depth;     /* this frame's blended draws: view depth of their bounds' farthest corner */
     uint32_t blended_depth_cap;
 
+    /* The debug menu (tc_debug.h; F4). While it is open the game holds, as under a scripted picture, and the held
+     * actions move the menu instead (tc_viewer_toggle_debug). */
+    tc_debug debug;
+
     tc_recorder *rec;             /* tc_viewer_desc.recorder */
     tc_viewer_tape *tape;         /* an original demo playing (tc_viewer_play_tape), NULL none */
 } tc_viewer;
@@ -456,6 +461,18 @@ const struct tc_ed_ai *tc_viewer_driver(const tc_viewer *v);
 bool tc_viewer_speech_panel(tc_viewer *v, float aspect, tc_view_speech_panel *out);
 /* Ed is within reach of a hint scene's speaker who is waiting for him: Action talks (the panel shows the prompt). */
 bool tc_viewer_talk_prompt(const tc_viewer *v);
+/* The debug menu (tc_debug.h): the game's progress flags, who uses them, switches. Open, the game holds and the held
+ * actions drive the menu: forward / back or look up / down (or the left stick) choose a row, left / right change it,
+ * Jump or Action switch it, Fast makes a save value's steps 10. "Reload the level" leaves through
+ * tc_viewer_pending_level, as a portal back into the same level with the progress as set. */
+void tc_viewer_toggle_debug(tc_viewer *v);
+bool tc_viewer_debug_open(const tc_viewer *v);
+/* The survey the menu shows beside each flag: the bytes of progress.ttpg from the levels' folder (copied). Without it
+ * the menu works and says the survey is missing. */
+tc_result tc_viewer_set_survey(tc_viewer *v, const void *data, size_t size);
+/* The menu's picture this frame for a viewport of this aspect, TC_DEBUG_PANEL_W x _H, drawn as the speech panel is
+ * (over everything else). False: closed. */
+bool tc_viewer_debug_panel(tc_viewer *v, float aspect, tc_view_speech_panel *out);
 /* The line on show, or NULL. */
 const tc_dialogue *tc_viewer_speech(const tc_viewer *v);
 /* The level persos running their own AI while playing (tc_cast.h), or NULL (no CAST chunk, no Ed AI). */

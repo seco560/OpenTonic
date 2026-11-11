@@ -79,6 +79,11 @@ final class Viewer {
         }
         raw = v
         self.level = level
+        // The debug menu's survey, from the levels' folder (tools/ttre/progress.py; none is fine: the menu says so).
+        if let survey = try? Data(contentsOf: level.folder.appendingPathComponent("progress.ttpg")) {
+            let sr = survey.withUnsafeBytes { tc_viewer_set_survey(v, $0.baseAddress, survey.count) }
+            if sr != TC_OK { print("progress.ttpg: \(String(cString: tc_result_string(sr)))") }
+        }
     }
 
     deinit { tc_viewer_free(raw); raw.deallocate() }

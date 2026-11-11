@@ -328,6 +328,14 @@ final class GameView: MTKView {
             }
             return
         }
+        if event.keyCode == 118 {  // F4: the debug menu (tc_debug.h; as the SDL build's F4)
+            if !event.isARepeat { tc_viewer_toggle_debug(v) }
+            return
+        }
+        if tc_viewer_debug_open(v) {  // the menu takes the held actions and nothing else
+            if let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, true) }
+            return
+        }
         if event.keyCode == 33 || event.keyCode == 30 {  // [ / ]: animation speed
             if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
             return
@@ -784,7 +792,7 @@ final class GameView: MTKView {
             + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera round him "
             + "(L2 recentres it, L3 first person), R3 (click) free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, "
             + "R1 lateral (free-fly: up), L1 free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, "
-            + "Start level select, Select / Options these controls."
+            + "Start level select, Select / Options these controls, Triangle / Y the debug menu."
         alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
@@ -867,6 +875,8 @@ final class GameView: MTKView {
                         tc_viewer_recenter_camera(v)
                         view?.updateTitle()
                     }
+                case .debugMenu:
+                    if let v = view?.renderer?.viewer?.raw { tc_viewer_toggle_debug(v) }
                 case .press, .pausePlayback: break
                 }
             }

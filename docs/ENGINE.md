@@ -501,6 +501,11 @@ tc_ai_globals (the exe's test, PROC 200-202), and the powers, the lives and the 
 (tc_viewer_carry.has_progress; from a menu a level starts afresh; replaycheck's portal run checks it). The powers are
 not in the recordings' hash. The inventory is a stub.
 
+**Odd in the data (2026-11-11, from the survey below):** LeCanyon's YAS_GestionDuChrono and NBD_TransRetry call
+IncSaveValue(33), past the 31 values the port keeps (it ignores the call; FUNC 93 gives -1 out of range, as read). What the
+exe's `GAM_00419620` does with 33 is **open**. LeCanyon's SDO_ActiveLesAiles gives 7 as well as 0x80, and FRB_Gen_ArcheCanyon
+(BigBoss, cock01, LeCanyon) takes both.
+
 **Moving sectors (2026-11-11; read unless marked).** The exe keeps a table of the sectors its scripts move (`DAT_005212f4`,
 0x48 a record, made on a sector's first order: `GAM_0042a000`). `Proc_TranslateSector`(sector, to, ms) (PROC 116,
 `GAM_0042a350`) and `Proc_TranslateLocalSector`(sector, by, ms) (117, `GAM_0042a270`) set a target and a velocity
@@ -520,3 +525,29 @@ the other raycasts see the moved triangles (they are the static world's).
 **sud0's river wall** is exported again (level.py STORY_GATES keeps the other four out): castcheck `river_wall`: without
 power 7 it stands, with it Suzy drops it 50 at the level's start and the way is open. Headless, on a scratch export; an
 export from before prints an info line instead.
+
+## The debug menu (2026-11-11; **port**)
+F4, or Triangle on a pad: the game's progress at a glance, and switches for it (tc_debug.h; the user's wish: "see flags at a
+glance, what they affect, being able to trigger them on/off"). The game holds while it is open, as under a scripted picture.
+- **Two pages.** Powers: a row per mask the scripts use (7, 8, 0x70, 0x80, 0x100, 0x200), ON / off / part, then "all on",
+  "story start" (no powers, every save value 0), whose uses to show, and "reload the level". Save values: the 31 slots.
+- **Moves.** Forward / back, the look keys or the left stick choose; left / right change (a power off / on, a value - / +,
+  by 10 with Fast); Jump or Action switch (a value: 0 <-> 1). A held direction repeats.
+- **A switch is live:** it writes tc_ai_globals at once (flying goes the moment 0x80 is off). Most scripts test once, at
+  the level's start, so "reload the level" starts this level again at Ed's start with the progress as set: a level change
+  into the same level (tc_viewer_pending_level), the portals' path, so the frontends and the recordings need nothing new.
+- **What uses a flag:** the pane beside the rows lists the characters whose scripts hold a call with that mask or slot, in
+  this level (with the fix's persos: Ed, the cheat-code reader) or in every level. It is the progress survey as data:
+  `python3 -m tools.ttre.progress files/out` (a step of tools/convert_files.sh) reads every perso's scripts in the 21
+  retail levels and writes files/out/ttlv/progress.ttpg (337 rows) and progress.tsv, the same as text. A row says a script
+  holds the call, not that it runs. Calls with a computed slot are listed under every save value ("any slot").
+- **All in the core:** the state, the moves and the picture (800 x 480, an 8x8 public-domain font: font8x8). A frontend
+  loads progress.ttpg from the levels' folder (tc_viewer_set_survey), toggles (tc_viewer_toggle_debug), and draws
+  tc_viewer_debug_panel as it draws the speech panel. While open, only the held actions and F4 reach the viewer.
+- **Recordings:** opening and closing is a door (TC_RD_DEBUG); the moves are the frames' held actions. The rows do not
+  depend on the survey, so a replay is the same without it. The powers are still not in the recordings' hash.
+- **Checked** by `make debugcheck` (in the gate): the moves, power 7 off, the reload with the river wall standing, a recorded
+  session replayed exact. **Not seen in the app.** The SDL build's part type-checks against SDL3 here, no more (its shaders
+  do not compile on this machine).
+- **Not done:** what 7, 8, 0x70, 0x100, 0x200 are (the menu says "not read"); the lives; the camera-key settings and the
+  close-up key's remap (the user's step 2); labels for save values 7-30.

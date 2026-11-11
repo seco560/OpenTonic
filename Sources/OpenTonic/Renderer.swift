@@ -503,6 +503,7 @@ import TonicCore
         drawOverlay(enc, viewer!)
         drawCrosshair(enc, v, Float(size.width / max(size.height, 1)))
         drawSpeech(enc, v, Float(size.width / max(size.height, 1)))
+        drawDebug(enc, v, Float(size.width / max(size.height, 1)))
         enc.endEncoding()
         if let scaled {  // supersampled: filter it down into the drawable
             let p = MTLRenderPassDescriptor()
@@ -598,6 +599,39 @@ import TonicCore
         enc.setVertexBytes(&verts, length: MemoryLayout<OverlayVertex>.stride * verts.count, index: 0)
         enc.setFragmentBytes(&params, length: MemoryLayout<OverlayParams>.stride, index: 0)
         enc.setFragmentTexture(speechTextures[speechTurn], index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+    }
+
+    /// The debug menu (tc_viewer_debug_panel; F4): the core's picture, over everything, as the text window's.
+    private var debugTextures: [MTLTexture] = []
+    private var debugTurn = 0
+    private var debugVersion: UInt32 = 0
+    private func drawDebug(_ enc: MTLRenderCommandEncoder, _ v: UnsafeMutablePointer<tc_viewer>, _ aspect: Float) {
+        var p = tc_view_speech_panel()
+        guard tc_viewer_debug_panel(v, aspect, &p), let rgba = p.rgba else { return }
+        if debugTextures.isEmpty {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: Int(p.width), height: Int(p.height),
+                                                             mipmapped: false)
+            debugTextures = (0..<3).compactMap { _ in device.makeTexture(descriptor: d) }
+            debugVersion = p.version &- 1
+        }
+        guard debugTextures.count == 3 else { return }
+        if p.version != debugVersion {
+            debugVersion = p.version
+            debugTurn = (debugTurn + 1) % 3
+            debugTextures[debugTurn].replace(region: MTLRegionMake2D(0, 0, Int(p.width), Int(p.height)), mipmapLevel: 0,
+                                             withBytes: rgba, bytesPerRow: Int(p.width) * 4)
+        }
+        let r = withUnsafeBytes(of: p.rect) { Array($0.bindMemory(to: Float.self)) }
+        var verts = [OverlayVertex(position: [r[0], r[1]], uv: [0, 0]), OverlayVertex(position: [r[2], r[1]], uv: [1, 0]),
+                     OverlayVertex(position: [r[0], r[3]], uv: [0, 1]), OverlayVertex(position: [r[2], r[1]], uv: [1, 0]),
+                     OverlayVertex(position: [r[2], r[3]], uv: [1, 1]), OverlayVertex(position: [r[0], r[3]], uv: [0, 1])]
+        var params = OverlayParams(mode: 3, threshold: 0)
+        enc.setRenderPipelineState(overlayPipeline)
+        enc.setDepthStencilState(overlayDepthState)
+        enc.setVertexBytes(&verts, length: MemoryLayout<OverlayVertex>.stride * verts.count, index: 0)
+        enc.setFragmentBytes(&params, length: MemoryLayout<OverlayParams>.stride, index: 0)
+        enc.setFragmentTexture(debugTextures[debugTurn], index: 0)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
     }
 

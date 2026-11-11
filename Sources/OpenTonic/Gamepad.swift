@@ -7,9 +7,9 @@ import TonicCore
 /// pad, A on an Xbox one. Polled once a frame by the renderer, before tc_viewer_update.
 @MainActor final class Gamepad {
     /// What the app does rather than the viewer: Start = level select, Select = the controls, R3 = play / free-fly,
-    /// L2 = recentre the camera, the touchpad = mark this moment in the recording (F9), Cross = pause a playback; press: one
-    /// of the face buttons went down.
-    enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, press, mark, pausePlayback }
+    /// L2 = recentre the camera, the touchpad = mark this moment in the recording (F9), Cross = pause a playback,
+    /// Triangle = the debug menu (F4); press: one of the face buttons went down.
+    enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, press, mark, pausePlayback, debugMenu }
 
     private var pressed: [ObjectIdentifier: Bool] = [:]
     private var fast = false, recenter = false
@@ -31,7 +31,7 @@ import TonicCore
         recenter = l2
         // D-pad up / down: the scroll wheel (camera distance in play, fly speed in free-fly), 10 notches a second.
         let wheel = (pad.dpad.up.isPressed ? 1 : 0) - (pad.dpad.down.isPressed ? 1 : 0)
-        if wheel != 0, !watching { tc_viewer_wheel(v, Float(wheel) * 10 * dt) }
+        if wheel != 0, !watching, !tc_viewer_debug_open(v) { tc_viewer_wheel(v, Float(wheel) * 10 * dt) }
         let bindings: [(GCControllerButtonInput, [tc_view_action])] = [
             (pad.buttonA, [TC_VA_JUMP]), (pad.buttonX, [TC_VA_ACTION]), (pad.buttonB, [TC_VA_SHOOT]),
             (pad.rightShoulder, [TC_VA_LATERAL, TC_VA_UP]), (pad.leftShoulder, [TC_VA_DOWN]),  // R1 also up, L1 down in free-fly
@@ -52,7 +52,10 @@ import TonicCore
         let touchpad = (pad as? GCDualSenseGamepad)?.touchpadButton ?? (pad as? GCDualShockGamepad)?.touchpadButton
         if let touchpad, changed(touchpad) == true { commands.append(.mark) }
         if recentred { commands.append(.recenter) }
-        if anyDown || changed(pad.buttonY) == true { commands.append(.press) }
+        if changed(pad.buttonY) == true {  // Triangle: the debug menu (F4)
+            commands.append(.press)
+            if !watching { commands.append(.debugMenu) }
+        } else if anyDown { commands.append(.press) }
         return commands
     }
 

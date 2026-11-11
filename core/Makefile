@@ -12,6 +12,7 @@
 #   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
 #   make movecheck  -> what each level perso does with Ed near it: rows to diff between builds (docs/ENGINE.md "Perso motion")
 #   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
+#   make debugcheck -> the debug menu (tc_debug.h) on sud0: its moves, a power switched off, reload, a replay
 #   make checkall   -> THE GATE: every check above in turn, one line each, logs in build/logs; fails if any does. Also the
 #                      Special Edition's sectors when ../files/out/se/ttlv is there. Imported levels (out/Imported) are
 #                      passed by (tests/testlevels.h). Run it before and after a change.
@@ -28,7 +29,7 @@ BUILD := build
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/replay
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/replay
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -71,6 +72,8 @@ $(BUILD)/movecheck: tests/movecheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/replaycheck: tests/replaycheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+$(BUILD)/debugcheck: tests/debugcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 $(BUILD)/tapecheck: tests/tapecheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
@@ -127,8 +130,11 @@ ifneq ($(RECORDINGS),)
 	$(BUILD)/replay check -d ../files/out/ttlv $(RECORDINGS)
 endif
 
+debugcheck: $(BUILD)/debugcheck
+	$(BUILD)/debugcheck ../files/out/ttlv
+
 # The gate. Each check runs whatever the others did; a red line names its log.
-GATE := check mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck
+GATE := check mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck
 SE_TTLV := ../files/out/se/ttlv
 checkall: all
 	@mkdir -p $(BUILD)/logs; failed=""; \
@@ -145,4 +151,4 @@ checkall: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck tapecheck replay clean
+.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck tapecheck replay clean

@@ -50,6 +50,8 @@ static const char *controls_text =
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
     "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special / Cutscenes)  -  Ctrl+L from a level  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
+    "Debug menu:  F4 (pad: Triangle)  the game's powers and save values, who uses them, switches; the game holds while it\n"
+    "  is open  -  W / S or up / down choose, A / D or left / right change, Space or E switch\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
     "Replays:  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
     "Watching one:  P or Cross pauses  -  Esc or Start back to the list\n"
@@ -99,6 +101,10 @@ typedef struct app {
     uint32_t speech_version;
     bool speech_on;
     float speech_rect[4];
+    SDL_GPUTexture *debug;       /* the debug menu's picture (tc_viewer_debug_panel), remade when it changes */
+    uint32_t debug_version;
+    bool debug_on;
+    float debug_rect[4];
     Uint64 loading_start_ns;     /* when the level last changed: the bar's animation clock */
     SDL_GPUTexture *loading_bar; /* the bar's rainbow pool (Textures/Sud0/o_zarbi_auntxy.png), loaded once */
     bool loading_bar_tried;
@@ -191,6 +197,9 @@ static void loading_free(app *a) {
     if (a->speech) SDL_ReleaseGPUTexture(a->g.device, a->speech);
     a->speech = NULL;
     a->speech_on = false;
+    if (a->debug) SDL_ReleaseGPUTexture(a->g.device, a->debug);
+    a->debug = NULL;
+    a->debug_on = false;
 }
 
 static void close_level(app *a) {
@@ -643,6 +652,15 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     tc_viewer *v = &a->view->viewer;
     SDL_Scancode sc = k->scancode;
     if (sc == SDL_SCANCODE_ESCAPE) { set_captured(a, false); return; }
+    if (sc == SDL_SCANCODE_F4) {  /* F4: the debug menu (tc_debug.h) */
+        if (!k->repeat) tc_viewer_toggle_debug(v);
+        return;
+    }
+    if (tc_viewer_debug_open(v)) {  /* the menu takes the held actions and nothing else */
+        int action = input_action(sc);
+        if (action >= 0) tc_viewer_set_action(v, (tc_view_action)action, true);
+        return;
+    }
     if (sc == SDL_SCANCODE_LEFTBRACKET || sc == SDL_SCANCODE_RIGHTBRACKET) {  /* [ / ]: animation speed */
         if (!k->repeat) { tc_viewer_step_speed(v, sc == SDL_SCANCODE_RIGHTBRACKET ? 1 : -1); update_title(a); }
         return;
@@ -940,6 +958,14 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     if (a->view) {
         if (button == SDL_GAMEPAD_BUTTON_TOUCHPAD) { mark_moment(a); return; }  /* F9 */
         if (button == SDL_GAMEPAD_BUTTON_START) { show_picker(a); return; }  /* level select (Ctrl+L) */
+        if (button == SDL_GAMEPAD_BUTTON_NORTH && !a->replaying) {  /* Triangle: the debug menu (F4) */
+            tc_viewer_toggle_debug(&a->view->viewer);
+            return;
+        }
+        if (tc_viewer_debug_open(&a->view->viewer)) {  /* the menu takes the held actions and nothing else */
+            pad_actions(a, input_pad_actions(button), true);
+            return;
+        }
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {  /* L3: first person (0) */
             tc_viewer_toggle_first_person(&a->view->viewer);
             update_title(a);
@@ -1010,7 +1036,7 @@ static void pad_update(app *a, float dt) {
         if (recenter && !a->pad_recenter && !a->replaying) { tc_viewer_recenter_camera(v); update_title(a); }
         a->pad_recenter = recenter;
         int wheel = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_UP) - SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
-        if (wheel && !a->help) tc_viewer_wheel(v, (float)wheel * 10 * dt);  /* 10 notches a second */
+        if (wheel && !a->help && !tc_viewer_debug_open(v)) tc_viewer_wheel(v, (float)wheel * 10 * dt);  /* 10 notches a second */
     } else if ((a->picker_open || a->replays_on) && !a->help) {
         int dx = SDL_fabsf(lx) > 0.5f && SDL_fabsf(lx) >= SDL_fabsf(ly) ? (lx > 0 ? 1 : -1) : 0;
         int dy = SDL_fabsf(ly) > 0.5f && SDL_fabsf(ly) > SDL_fabsf(lx) ? (ly > 0 ? -1 : 1) : 0;  /* stick up: row up */
@@ -1271,6 +1297,33 @@ static void speech_prepare(app *a) {
     SDL_DestroySurface(s);
 }
 
+/* The debug menu's picture, as the text window's. */
+static void debug_prepare(app *a) {
+    tc_view_speech_panel p;
+    int w = 1, h = 1;
+    SDL_GetWindowSizeInPixels(a->window, &w, &h);
+    a->debug_on = tc_viewer_debug_panel(&a->view->viewer, h ? (float)w / (float)h : 1, &p);
+    if (!a->debug_on) return;
+    SDL_memcpy(a->debug_rect, p.rect, sizeof(a->debug_rect));
+    if (a->debug && p.version == a->debug_version) return;
+    SDL_Surface *s = SDL_CreateSurfaceFrom((int)p.width, (int)p.height, SDL_PIXELFORMAT_RGBA32, (void *)p.rgba, (int)p.width * 4);
+    gpu_upload u;
+    if (s && gpu_upload_begin(&a->g, &u)) {
+        if (a->debug) SDL_ReleaseGPUTexture(a->g.device, a->debug);
+        a->debug = gpu_upload_surface(&a->g, &u, s, false);
+        a->debug_version = p.version;
+        gpu_upload_end(&a->g, &u);
+    }
+    SDL_DestroySurface(s);
+}
+
+static void draw_debug(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
+    float W = (float)f->width, H = (float)f->height;
+    const float *r = a->debug_rect;
+    gpu_quad(&a->g, f, pass, a->debug, (SDL_FRect){r[0] * W, r[1] * H, (r[2] - r[0]) * W, (r[3] - r[1]) * H}, NULL,
+             (SDL_FColor){1, 1, 1, 1});
+}
+
 static void draw_speech(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
     float W = (float)f->width, H = (float)f->height;
     const float *r = a->speech_rect;
@@ -1313,6 +1366,7 @@ static void draw(app *a) {
         if (o.kind == TC_VO_LOADING) loading_prepare(a, o.level);
         if (o.kind == TC_VO_PICTURE) picture_prepare(a, o.picture);
         speech_prepare(a);
+        debug_prepare(a);
     } else if (a->next_level) {
         loading_prepare(a, a->next_name);
     }
@@ -1331,8 +1385,8 @@ static void draw(app *a) {
     } else if (a->view) {
         view_draw_frame(a->view, &f);
         bool sight = view_draw_crosshair(a->view, &f, NULL);
-        bool speech = a->speech_on && a->speech;
-        if (o.kind != TC_VO_NONE || a->help || sight || speech) {  /* screen transition or loading screen, the gunsight, the controls */
+        bool speech = a->speech_on && a->speech, menu = a->debug_on && a->debug;
+        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu) {  /* screen transition or loading screen, the gunsight, the controls */
             SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, false, (SDL_FColor){0, 0, 0, 1});
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
@@ -1340,6 +1394,7 @@ static void draw(app *a) {
                 if (speech) draw_speech(a, &f, pass);
                 if (o.kind == TC_VO_LOADING) draw_loading(a, &f, pass, o.progress);
                 if (o.kind == TC_VO_PICTURE) draw_picture(a, &f, pass);
+                if (menu) draw_debug(a, &f, pass);
                 if (a->help) draw_help(a, &f, pass);
                 SDL_EndGPURenderPass(pass);
             }

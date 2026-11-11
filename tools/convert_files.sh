@@ -240,6 +240,11 @@ elif outdated sfx "$OUT/audio/sfx/events.tsv" sfx; then
   if python3 -m tools.ttre.sfx "$OUT/audio/sfx"; then record sfx; else echo "sound effects: failed (skipped)" >&2; fi
 else echo "== sound effects: current (skip)"; fi
 
+# ---- 5c. the progress survey: who tests, gives and takes each power and save value (the debug menu shows it) ----
+if outdated progress "$OUT/ttlv/progress.ttpg" progress; then
+  if python3 -m tools.ttre.progress "$OUT"; then record progress; else echo "progress survey: failed (skipped)" >&2; fi
+else echo "== progress survey: current (skip)"; fi
+
 # ---- 5b. intro movie (needs the disc's Videos folder) ----
 if [ ! -e "$SRC/Videos/EDPROL.AVI" ]; then echo "== intro movie: $SRC/Videos/EDPROL.AVI not found (optional, skip)"
 elif ! has ffmpeg || ! has vgmstream-cli; then echo "== intro movie: needs ffmpeg and vgmstream-cli (optional, skip)"

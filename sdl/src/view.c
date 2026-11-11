@@ -113,6 +113,17 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *ca
     }
     v->has_viewer = true;
 
+    /* The debug menu's survey, from the levels' folder (tools/ttre/progress.py; none is fine: the menu says so). */
+    char *survey_path = path_join(v->level.folder, "progress.ttpg");
+    size_t survey_size = 0;
+    void *survey = survey_path ? SDL_LoadFile(survey_path, &survey_size) : NULL;
+    if (survey) {
+        tc_result sr = tc_viewer_set_survey(&v->viewer, survey, survey_size);
+        if (sr != TC_OK) SDL_Log("%s: %s", survey_path, tc_result_string(sr));
+    }
+    SDL_free(survey);
+    SDL_free(survey_path);
+
     gpu_upload up;
     if (!gpu_upload_begin(g, &up)) {
         SDL_snprintf(err, err_size, "GPU upload: %s", SDL_GetError());

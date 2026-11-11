@@ -9,6 +9,7 @@ typedef enum tc_rec_door {
     TC_RD_STEP_SPEED = 1, TC_RD_TOGGLE_PAUSE, TC_RD_RECENTER, TC_RD_CLOSEUP, TC_RD_FIRST_PERSON, TC_RD_SET_LOOK,
     TC_RD_STEP_LOOK, TC_RD_INVERT_Y, TC_RD_LIGHT_SET, TC_RD_FOLLOW_LIGHT, TC_RD_STEP_GAMMA, TC_RD_STEP_FOV, TC_RD_FOG,
     TC_RD_LIGHTING, TC_RD_SECTORS, TC_RD_WHEEL, TC_RD_TOGGLE_PLAY, TC_RD_TOGGLE_AI, TC_RD_DEMO_ON, TC_RD_DEMO_OFF,
+    TC_RD_DEBUG, /* the debug menu opened or closed; its moves are the frames' held actions */
     TC_RD_COUNT
 } tc_rec_door_id;
 

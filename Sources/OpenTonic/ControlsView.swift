@@ -41,7 +41,7 @@ final class ControlsView: NSView {
 
     /// A US layout, as compact as the bindings allow. Gaps are keys with an empty label and width.
     private static let rows: [[Key]] = [
-        [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4"), k("", 0.5),
+        [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4", 1, .app, "debug"), k("", 0.5),
          k("F5"), k("F6"), k("F7"), k("F8"), k("", 0.5), k("F9", 1, .app, "mark"), k("F10"), k("F11"), k("F12")],
         [k("`"), k("1", 1, .view, "⌥ light 1"), k("2", 1, .view, "⌥ light 2"), k("3", 1, .view, "⌥ light 3"), k("4", 1, .view),
          k("5", 1, .camera, "close-up"), k("6", 1, .view), k("7", 1, .view), k("8", 1, .view), k("9", 1, .view),
@@ -72,6 +72,7 @@ final class ControlsView: NSView {
         "R (or Replays) on the level select screen: your recorded sessions, to play or delete, and the original demos (D). Watching one, P pauses and Esc goes back.",
         "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
+        "F4 (pad: Triangle / Y): the debug menu: the game's powers and save values, who uses them, switches. The game holds while it is open; W / S choose, A / D change, Space or E switch.",
     ]
 
     override init(frame: NSRect) {
