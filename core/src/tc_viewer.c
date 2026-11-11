@@ -1010,6 +1010,12 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     if (desc->carry && desc->carry->orbit_distance > 0) v->orbit_distance = desc->carry->orbit_distance;
     if (desc->carry) v->cam.closeup = desc->carry->closeup != 0;
     if (desc->carry && v->play) arrive(v, desc->carry);
+    /* Port (the user's, 2026-11-11): a run that starts at retail Totalski (picked, or after the intro movie) is the
+     * game's start: no powers. Every other fresh start keeps them all on (TC_AI_POWERS_ALL), and a level change carries
+     * them as they are. */
+    if (v->play && v->play->has_cast && !(desc->carry && desc->carry->has_progress) && desc->level &&
+        desc->level->edition == 0 && same_text(v->play->level_name, "Totalski"))
+        v->play->cast.globals.powers = 0;
     v->rec = desc->recorder;
     if (v->rec) tc_rec_begin(v->rec, v, desc);
     return TC_OK;

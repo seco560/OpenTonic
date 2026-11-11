@@ -227,6 +227,18 @@ void tc_cast_detach_main(tc_cast *c) {
     c->main = NULL;
 }
 
+/* Where the fix Ed stands for the main actor (CAST main_alias), his dsgvars are his ghost's (tc_ai.h alias_dsg). */
+static void link_alias(tc_cast *c) {
+    int32_t id = c->level->cast.main_alias, k;
+    if (!c->main) return;
+    c->main->alias_id = 0;
+    c->main->alias_dsg = NULL;
+    if (id <= 0 || (uint32_t)id >= c->id_count || (k = c->by_id[id]) < (int32_t)c->count ||
+        (uint32_t)(k - (int32_t)c->count) >= c->ghost_count) return;
+    c->main->alias_id = id;
+    c->main->alias_dsg = &c->ghosts[k - (int32_t)c->count].ai;
+}
+
 void tc_cast_set_main(tc_cast *c, tc_ai_perso *main) {
     uint32_t i, k;
     if (!c) return;
@@ -249,7 +261,7 @@ void tc_cast_set_main(tc_cast *c, tc_ai_perso *main) {
             g->main_other = (int32_t)k;
             break;
         }
-    }
+    }    link_alias(c);
 }
 
 tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
@@ -352,6 +364,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
         if (g->id < c->id_count && c->by_id[g->id] < 0) c->by_id[g->id] = (int32_t)(c->count + c->ghost_count);
         c->ghost_count++;
     }
+    link_alias(c);
     return TC_OK;
 oom:
     c->count = n;
@@ -521,6 +534,9 @@ static void begin_step(tc_cast *c) {
     uint32_t i;
     c->sounds_out_count = 0;
     c->awake = c->thinking = 0;
+    for (i = 0; i < c->count; i++) /* the zones each hit test sees this tick: the states the tick began in (tc_ai.h) */
+        c->actors[i].ai.zone_state = (uint16_t)(c->actors[i].ai.state + 1u);
+    if (c->main) c->main->zone_state = (uint16_t)(c->main->state + 1u);
     for (i = 0; i < c->ghost_count; i++) /* the shared ones: where the main actor's host says they are (the camera's eye) */
         if (c->ghosts[i].main_other >= 0 && c->main && c->main->other_positions)
             c->ghosts[i].ai.position = c->main->other_positions[c->ghosts[i].main_other];

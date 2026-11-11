@@ -53,11 +53,20 @@ EXCLUDED_FAMILIES = {'Camera', 'GenD_Cam', 'gen_cheatCode', 'gen_arche'}
 # talking characters, Agent XYZ, the cutscene and trap triggers) hand Ed to behaviours that wait for conversations,
 # cameras and cutscenes the port does not run yet: he would stand there for good. Checked headless (castcheck).
 MAY_FORCE_MAIN = {'sud_mecalevier', 'distrib',  # the levers; the popcorn (Crunch) machines: Super Ed
-                  'World'}  # the game flow: north's fall height (R0: z < -105 -> Ed's B60), the collect-N reward (B41)
+                  'World',  # the game flow: north's fall height (R0: z < -105 -> Ed's B60), the collect-N reward (B41)
+                  'grille',  # cavedoc's popcorn grille: Super Ed holding Action in its zone works it (Ed's dsg58 = 1)
+                  'mais',  # cavedoc's corn cob boss: its intro / end hold Ed (B15 + R4, then B103), as the robot's
+                  'genski'}  # the ski levels' flow: the finish (SYM_Gen_Arrivee, NBD_Arrivee_Et_Retry) writes the
+#                              skier's arrival waypoints and next / retry (dsg35 / 36 / 40) and the fix Ed's dsg148 = 3,
+#                              which start his own finish (B19: state 321, stepping off); the start (PAT_DEPARTESSAI)
 # ... and these AI models, whatever their family: the "holes of nothingness" (genplainesud; 11 on carota, cock01, Land,
 # sud0, one script): when Ed drops below the marker, his falling death (B15, then B60: falling 1 s, then B73's cover),
 # his hit points 0, the camera frozen watching him (docs/NOTES.md "Falling into pits").
-MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn'}
+MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn',
+                         # cavedoc's robot (FRB_RoBneus), the power 7 boss: its intro holds Ed (B15 + R4, B103 after
+                         # its line); beaten, it ends his Super Ed (dsg15 := 0), sends him to take the power (B76 sets
+                         # his dsg58 = 1) and gives power 7 (its B11). Kept off Ed, the fight ran but gave nothing.
+                         'FRB_RoboBne'}
 # ... but not these instances: marmite's magnet switch keeps Ed holding it (his dsg3 = 1: Jump and Shoot steer the
 # magnet; leaning it to let go with Action does not take in the port yet, castcheck 2026-11-02): he would be stuck.
 MAY_NOT_FORCE_MAIN = {'JET_SwAimant'}
@@ -406,7 +415,9 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     # character's hit points (FUNC_Counter34Etc_0049ad30, the global table): an alias of the main actor, not a ghost
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
     alias = donor_alias if d.se else idx_of.get(fix_ed, 0) if fix_ed and fix_ed != player else 0
-    running = {idx_of[loc] for loc, _, _ in cast} | {main, alias}
+    # ... whose dsgvars are still his own (Totalski's race: dsg148 / 149 / 150): retail writes his ghost too (core
+    # tc_ai.h alias_dsg); the Special Edition's donor numbering keeps the old way
+    running = {idx_of[loc] for loc, _, _ in cast} | {main} | ({alias} if d.se else set())
     named = set()
     for _, _, a in cast:
         for n in a.nodes():
@@ -417,7 +428,7 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     gblock = struct.pack('<HH', len(ghosts), 0)
     for gid in ghosts:
         loc = loc_of[gid]
-        dsg, _ = ai.perso_dsg_block(d, loc)
+        dsg, _ = ai.perso_dsg_block(d, loc, idx_of)
         w = by_loc[loc].world
         gblock += struct.pack('<HH3fI', gid, 0, w[3], w[7], w[11], len(dsg)) + dsg
     head = struct.pack('<4H', main, len(fam_blocks), len(entries), alias) + zblock + gblock

@@ -405,6 +405,17 @@ struct tc_ai_perso {
     /* AI -> host. */
     uint16_t state;              /* state whose animation plays (a transition's intermediate, a next state ...) */
     uint16_t wanted_state;       /* state the scripts last asked for (InState); animation chaining keeps it */
+    /* host-fed (the cast, on the main actor where another perso is the player: the skier): the fix Ed's id and his own
+     * dsgvars. His id stands for the main actor (hit points, position: CAST main_alias), but his dsgvars are his own,
+     * as in the exe (Totalski's race: dsg148 the stage, dsg149 the best time, dsg150): Dot(alias, k) goes there. */
+    int32_t alias_id;
+    struct tc_ai_perso *alias_dsg;
+    uint16_t zone_state;         /* host-fed (the cast, each tick before any AI runs): 1 + the state whose ZDE zones the
+                                    hit tests see this tick; 0: `state`. The exe applies a script's state change after
+                                    every AI of the frame has run (the animation player), so each perso tests the zones of
+                                    the state it began the frame in: cavedoc's targets go to their hit state (zones off)
+                                    on the corn's kernel in the same tick the kernel tests them for its rebound. Port
+                                    approximation of that order (read: the effect, not the exe's code path) */
     float state_frame;           /* animation frames into the playing state */
     uint8_t frame_rate;          /* frames per second: the state's, scaled by Proc10 (exe +0x163) */
     uint8_t repeats_left;

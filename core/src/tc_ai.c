@@ -654,7 +654,11 @@ static uint8_t *dsg_mem(const tc_ai_perso *p, int32_t perso, const tc_ai_dsg_def
     int o;
     tc_ai_perso *q;
     if (perso == 0) { *def = &p->model->dsg; return p->dsg; }
-    if ((q = live(p, perso)) != NULL) { *def = &q->model->dsg; return q->dsg; }
+    if ((q = live(p, perso)) != NULL) {
+        if (q->alias_dsg && perso == q->alias_id && q->alias_dsg->model) q = q->alias_dsg; /* the fix Ed's own (tc_ai.h) */
+        *def = &q->model->dsg;
+        return q->dsg;
+    }
     o = other_index(p, perso);
     if (o < 0) return NULL;
     *def = &p->model->others[o].dsg;
@@ -861,8 +865,9 @@ static int way_back(const tc_way *w, uint8_t *c, int go_on) {
 /* Zone k of q, when active in its playing state (GAM_PersoActiveZones_0041f280). */
 static const tc_zde_zone *zde_zone(const tc_ai_perso *q, int32_t k) {
     const tc_zde_set *z = q && q->model ? &q->model->zde : NULL;
-    if (!z || k < 0 || k >= (int32_t)z->zone_count || k >= 32 || q->state >= z->state_count) return NULL;
-    return (z->active[q->state] >> k) & 1u ? &z->zones[k] : NULL;
+    uint32_t st = q && q->zone_state ? q->zone_state - 1u : q ? q->state : 0; /* the tick's (zone_state), else now */
+    if (!z || k < 0 || k >= (int32_t)z->zone_count || k >= 32 || st >= z->state_count) return NULL;
+    return (z->active[st] >> k) & 1u ? &z->zones[k] : NULL;
 }
 
 /* Whether the zone holds an element of that type (GAM_0041f060: flags & mask == mask; mask 0: any). */

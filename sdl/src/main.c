@@ -33,7 +33,7 @@ static const char *controls_text =
     "  Simple controller:  hold Shift to run\n"
     "  Camera:  the mouse, the right stick, the arrow keys or Numpad 4 / 6 turn it round Ed (up / down raise or lower\n"
     "    it); it stays while he stands and eases back behind him once he moves  -  X (middle mouse, L2) recentres it\n"
-    "    5 close-up, 0 first person (number row or numpad; L3)  -  ; less / ' more look sensitivity  -  Y invert\n"
+    "    5 close-up (Triangle), 0 first person (number row or numpad; L3)  -  ; less / ' more look sensitivity  -  Y invert\n"
     "    up / down  -  the mouse looks from the start of a level (Esc releases it, a click takes it again)\n"
     "    (TONIC_LOOK=percent and TONIC_INVERT=x|y|xy set where they start)\n"
     "  (simple collision and physics, not the original game's)\n"
@@ -50,7 +50,7 @@ static const char *controls_text =
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
     "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special / Cutscenes)  -  Ctrl+L from a level  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
-    "Debug menu:  F4 (pad: Triangle)  the game's powers and save values, who uses them, switches; the game holds while it\n"
+    "Debug menu:  F4  the game's powers and save values, who uses them, switches; the game holds while it\n"
     "  is open  -  W / S or up / down choose, A / D or left / right change, Space or E switch\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
     "Replays:  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
@@ -60,7 +60,7 @@ static const char *controls_text =
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
-    "  R2:  fly faster  -  L2:  recentre the camera  -  L3 (click):  first person\n"
+    "  R2:  fly faster  -  L2:  recentre the camera  -  Triangle:  close-up  -  L3 (click):  first person\n"
     "  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
     "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
@@ -958,12 +958,15 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     if (a->view) {
         if (button == SDL_GAMEPAD_BUTTON_TOUCHPAD) { mark_moment(a); return; }  /* F9 */
         if (button == SDL_GAMEPAD_BUTTON_START) { show_picker(a); return; }  /* level select (Ctrl+L) */
-        if (button == SDL_GAMEPAD_BUTTON_NORTH && !a->replaying) {  /* Triangle: the debug menu (F4) */
-            tc_viewer_toggle_debug(&a->view->viewer);
+        if (tc_viewer_debug_open(&a->view->viewer)) {  /* the menu (F4) takes the held actions and nothing else */
+            pad_actions(a, input_pad_actions(button), true);
             return;
         }
-        if (tc_viewer_debug_open(&a->view->viewer)) {  /* the menu takes the held actions and nothing else */
-            pad_actions(a, input_pad_actions(button), true);
+        if (button == SDL_GAMEPAD_BUTTON_NORTH) {  /* Triangle: the close-up camera (5) */
+            if (!a->replaying) {
+                tc_viewer_toggle_closeup(&a->view->viewer);
+                update_title(a);
+            }
             return;
         }
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {  /* L3: first person (0) */

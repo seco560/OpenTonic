@@ -344,6 +344,13 @@ static void level(const char *dir, const char *name) {
         int side, k, taken_over = 0;
         unsigned forced_into = 0, held_on, state_before, state_after;
         if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai.active || a->entry->prso == 0xFFFF) continue;
+        /* each from a fresh level: an earlier visit can leave Ed in another behaviour (Action by a grille he cannot
+         * work yet: B69), and the next machine then never takes him (Land: the grille 53 beside the machine 54) */
+        tc_viewer_free(&v);
+        if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "the viewer starts again"); free(ai); tc_level_free(&lv); return; }
+        c = tc_viewer_cast(&v);
+        a = &c->actors[i];
+        run(&v, 1, 0);
         for (side = 0; side < 4 && !taken_over; side++) {
             float h = side * TC_PI / 2;
             tc_player_teleport((tc_player *)tc_viewer_player(&v),

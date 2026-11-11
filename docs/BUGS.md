@@ -76,3 +76,85 @@ its fog and lights; the story walls are open (to be handled as the game does onc
     frames, was 963). Recordings made before will not replay the same.
 16. **The ski camera:** still odd. The original demos' camera looked more faithful, but sat too far behind Ed (why is
     open: the field of view, the aspect, the physics).
+
+## cavedoc playtest (2026-11-11, later; the user on Linux, no powers set in the debug menu)
+
+The debug menu works. With it the user played cavedoc from no powers: Suzy's line, through the level, the robot fight.
+Reported: (a) Ed does not get the power at the end of the boss fight; (b) the crate puzzle does not trigger; (c) the
+popcorn machine never starts; (d) the corn cob's shots never rebound from the targets, they go through.
+
+**Changed the same day (Claude), headless only, needs a reinstall (the levels re-export):**
+- **Perso references in dsgvars were dead in every level.** A level designer's perso dsgvar (type 10) holds the
+  perso's SuperObject in the snapshot; the exporter wrote that pointer raw and the core reads a perso id there, so it
+  named no one (tc_ai.c dsg_get says as much). Now ai.perso_dsg_block writes the id the scripts' perso nodes use
+  (the SuperObject's +4 is the perso). cavedoc alone has 42: the crate's snap marker BEM_RecaleCaisse and its
+  reset BEM_RemetCaissePositionOrigine (their crate), the falling platforms' chain (BEM_PFDes1-8), the toaster
+  cameras' toasters, the rock generators, the chameleon mine. **(b), and so (c):** the crate pushed within 2 of the
+  marker is now snapped into place (crate B0 -> B2); JET_AReparer, on Action, gives Super Ed only while the crate is
+  in its B2 (scratch probe: before, the marker stayed in B1 for good). Other levels: same kind of fix, unseen.
+- **(a)** cavedoc's robot FRB_RoBneus gives power 7 in its B11, after it ends Ed's Super Ed (his dsg15 := 0), sends him
+  to take it (forces his B76, which sets his dsg58 = 1) and waits for that. cast.py kept it off Ed (MAY_FORCE_MAIN),
+  so it waited for good. Now allowed (MAY_FORCE_MAIN_MODELS). Probe, from powers 0, the robot beaten: Ed's B76,
+  dsg58 = 1, **powers 0x7** 6.75 s later, Ed back in his play behaviour (B87).
+- Also allowed: `grille` (the popcorn grille: Super Ed holding Action in its zone works it) and `mais` (the corn cob:
+  its intro and end hold Ed and let him go, as the robot's). Not seen working: no probe for either.
+
+- **Elsewhere, from the same dsgvar fix (headless, unseen):** sud0's HEG_PlateFormeTour01-03 (the platforms on the way
+  to the north plain: queue item 6, "missing") now move in movecheck (99 / 7 / 82 % of frames; were still). The
+  `grille` persos are on Land (SDO_GrilleDebut, SDO_GrilleGrotteD1 / D2) and north (ARG_GrilleTour) too: they now may
+  take Ed, with Super Ed. **Unexplained:** pyramide's walker 335 (YAS_Actor2, the false teeth) walked 35 in movecheck
+  and now stands; movecheck visits 4 more pyramide persos first (318-321) in the same run, so it may be the order. Watch it.
+- **Gate:** `make -C core checkall`'s checks, run on a full re-export (scratch) and on a clean export of the commit
+  before, all pass on both; viewcheck, camcheck, replaycheck and debugcheck print the same. castcheck now starts each
+  lever / machine visit from a fresh level: a grille visited first left Ed in B69, and Land's popcorn machine (54) then
+  never took him, so its Super Ed check silently dropped out.
+
+**Open:**
+- **(d) The corn's rebound: prototype fix, same day (Claude), headless.** The targets (glac_cible, JET_CibleSalleMais) carry
+  the 0x8000 zone; Ed, the corn, the robot and the duck carry 0x1 (the kernel bursts on them). The cause: the target's
+  own R0 notices the kernel first and goes to its hit state (B1, state 4), whose zones are off, and the port applied
+  that at once, so the kernel's test the same tick found no zone and it flew on. The exe applies a script's state
+  change after every AI of the frame has run, so all of them see the zones of the state the frame began in. Port:
+  tc_ai_perso.zone_state, set by the cast for every actor and Ed at the start of each tick (tc_cast.c begin_step);
+  tc_ai.c zde_zone reads it. Probe: Ed 1.8 behind target 63, a kernel from the corn: before, it passed 0.27 from the
+  zone's centre and flew through; now it turns back at 1.66 and flies past the corn. **Not shown:** the corn losing a
+  hit point (the probe could not stage the fight: the corn never moves sideways to line up with Ed, its B1
+  SetMoveDirection under mode 12 leaves it in place, and teleported Ed lands at z -3, so most shots aim into the floor).
+  The general rule holds for every ZDE test (shots, stick hits, pickups): the whole gate prints the same.
+- **The corn does not move** (found on the way, open): B1 slides it along x to line up with Ed (SetMoveDirection,
+  SetMechMode12, its card) and it stays put; then it never shoots unless Ed walks into its line himself.
+- **Was (d):** the rebound is the kernel's (BNE_GrainMais, STH_tir_mais, spawned by the corn): its R0 sends it back
+  along its path (B1) when its ZDE zone 1 meets a ZDE zone of type mask 0x8000
+  (Cond_CollidePersoZDENoWithTypeZDE); the corn's R0 takes 1 hit point when a kernel's family touches it. To read:
+  which persos carry 0x8000 zones (the targets? Ed's stick?) and why the port's test never fires.
+- **The allow list itself.** cavedoc has 17 kinds of persos that force Ed; 7 may (after today). Allowing them all
+  (tried on a scratch export) holds Ed for good at the spies (espion, MAD_EspionCanard: the hint conversations), as
+  feared when the list was made. Still kept off: the cage lift (ascens), Doc's end door (doc_porte), Doc (docfou), the
+  mines (glac_mine), the popcorn cutscene (FRB_PopCine), MAD_GenEdContent, the inventory and thermometer explainers
+  (genplainesud). Each needs its own look; castcheck finds pit markers and levers by the same flag, so it must learn
+  another way before the list grows much.
+
+## Totalski (2026-11-11, late; the user: start text, the finish animations; begin with no powers)
+
+**Changed (Claude), headless only; needs a reinstall (Totalski and skymap re-export):**
+- **No powers at the game's start.** A fresh run that starts at retail Totalski (picked, or after the intro movie)
+  starts with powers 0 (tc_viewer.c, after `arrive`); every other fresh start keeps them all on, and a level change
+  carries them. Checked: Totalski 0, sud0 / cavedoc 0xFFFF, SE Totalski 0xFFFF.
+- **The finish runs as in the game.** The chain, read from the scripts: the finish gates (genski: SYM_Gen_Arrivee
+  "next", NBD_Arrivee_Et_Retry "retry", box zones across the run) set the fix Ed's dsg148 = 3 and the skier's
+  arrival waypoints (dsg35 / 36) and next / retry (dsg40); Totalski's World (WSki) R0, while its dsg25 = 1 (set by
+  "press Jump to start"), runs the race clock and on dsg148 = 3 forces the skier's B19. Two port faults broke it:
+  `genski` was kept off the player (cast.py MAY_FORCE_MAIN: now allowed), and the fix Ed was a pure alias of the
+  skier, so his dsgvars (148 the stage, 149 the best time, 150) went to the skier, who has fewer, and were lost. Now
+  the fix Ed is exported as a ghost with his own dsgvars and the alias sends dsgvar access there (tc_ai.h
+  alias_dsg; hit points and position still the skier's). Probe, the skier slid through the retry gate: B19 at 11.6 s,
+  **B13 state 321 (stepping off), B14 state 298 for 5.6 s (likely the animation the demo shows near its end)**, B18
+  state 319, B7 the walk-in (228) to the arch, back at the top. Through the "next" gate it should go on to sud0: not
+  probed. The gate's checks print the same.
+
+**Open:**
+- **The start text and the clock.** "Press 'Jump' to start" is game.dsb's TXTTOTALSKI; NBD_PRESSZTOSTART blinks two
+  strings (Proc_DisplayString, T30 0x31 and 0x250, every 300 ms) and World draws the run time and best time
+  (Proc_DisplayChrono, T30 0x5 / 0x6). T30's numbers do not index game.dsb's strings in file order: the table is to
+  read. Then the core keeps HUD text slots (ClearText clears one) and both frontends draw them in the game's font.
+- skymap has the same genski persos: unprobed.

@@ -186,6 +186,7 @@ the screen is covered (`SetPositionFrom(KW_5, dsg30)`, states 309 / 363, back to
 which our body cannot follow), a teleport reveals only when the screen is covered.
 
 ## Totalski's finish in the game (looked at 2026-10-24)
+**2026-11-11: runs from the scripts now (docs/BUGS.md "Totalski"); the notes below are the first reading.**
 In the original, after the striped finish flags Ed steps off the board and walks into the exit arch on his own.
 Found so far: the finish persos `SYM_Gen_Arrivee` (110, -929, -3093) and `NBD_Arrivee_Et_Retry` (86, -873, -3102)
 (zone tests COND_13 on the skier, set `Ed.dsg148 = 3`, its dsg40 = 1 "next" / 0 "retry" and its arrival waypoints

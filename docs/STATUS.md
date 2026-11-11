@@ -34,9 +34,9 @@ Edition's sectors).
 | Water | jumping in is mostly fine. Ed clips through the bottom of water bodies. The underwater camera sits too high and is hard to steer |
 | Ledge hang | Ed hangs at odd angles, or clips instead of grabbing |
 | Pickups | some thermometers do not work (sud0, by the portal to the Special Edition's sud0). The antidotes play the wrong sound |
-| Machines and puzzles | missing: the platforms on sud0's way to the north plain, pushing the boulders there, cavedoc's popcorn machine |
+| Machines and puzzles | missing: the platforms on sud0's way to the north plain, pushing the boulders there, cavedoc's popcorn machine. 2026-11-11 later, headless: sud0's platforms move and cavedoc's crate snaps into place (docs/BUGS.md "cavedoc playtest"); not seen |
 | Dying | in some pits Ed hits the bottom; some pits do nothing; after a respawn he is shown falling for half a second; lava and deadly water do not kill |
-| Pushed things | cavedoc's crate moves but does not start the machine. marmite's boxes fly off one way without colliding |
+| Pushed things | cavedoc's crate moves but does not start the machine (fixed headless 2026-11-11 later: its snap marker's reference to it was dead; docs/BUGS.md "cavedoc playtest"). marmite's boxes fly off one way without colliding |
 | Enemies | they can be killed and they hurt Ed; no proper sounds or collision |
 | Shooting | aiming in first person does not tilt the blowpipe. "No shot leaves while one is in the air" (what the exe does there is not read) |
 | Stick attacks | they hit, with no sound and no other feedback |
@@ -51,7 +51,7 @@ Edition's sectors).
 | Ski physics against walls (second pass, 2026-10-31) | checked headless (skicheck); no remark from the user since |
 | How the cast moves (2026-11-06: walking to points, turning, lobbed and homing things) | headless: more characters move and turn than before (movecheck). Which of it the user has seen is not known |
 | Powers as real state (2026-11-11) | they start all on, so nothing should look different, and the user's test said "basically nothing has changed". A game with a power missing has never been seen in the app |
-| The debug menu (2026-11-11, F4 or Triangle; docs/ENGINE.md "The debug menu") | built the same day, checked headless (debugcheck: power 7 off, reload, the river wall then stands). Never seen in the app; needs a reinstall (it also makes the survey the menu shows). The SDL build's part is type-checked only |
+| The debug menu (2026-11-11, F4, keyboard only; docs/ENGINE.md "The debug menu") | built the same day, checked headless (debugcheck: power 7 off, reload, the river wall then stands). Never seen in the app; needs a reinstall (it also makes the survey the menu shows). The SDL build's part is type-checked only |
 | Powers, lives and save values kept through a portal | checked headless (replaycheck) |
 | Moving sectors, sud0's river wall (2026-11-11) | with all powers on Suzy drops the wall at the level's start, so the way is open as before; the user reported nothing wrong. The wall standing has never been seen. Not done: the characters inside a moved sector do not move with it; the turning sense is not verified |
 

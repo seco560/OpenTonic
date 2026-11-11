@@ -527,7 +527,7 @@ power 7 it stands, with it Suzy drops it 50 at the level's start and the way is 
 export from before prints an info line instead.
 
 ## The debug menu (2026-11-11; **port**)
-F4, or Triangle on a pad: the game's progress at a glance, and switches for it (tc_debug.h; the user's wish: "see flags at a
+F4 (keyboard only; Triangle on a pad is the close-up camera since 2026-11-11): the game's progress at a glance, and switches for it (tc_debug.h; the user's wish: "see flags at a
 glance, what they affect, being able to trigger them on/off"). The game holds while it is open, as under a scripted picture.
 - **Two pages.** Powers: a row per mask the scripts use (7, 8, 0x70, 0x80, 0x100, 0x200), ON / off / part, then "all on",
   "story start" (no powers, every save value 0), whose uses to show, and "reload the level". Save values: the 31 slots.

@@ -63,7 +63,7 @@ final class ControlsView: NSView {
     private static let notes = [
         "Mouse: click the view to capture it and look around, Esc releases it; or drag. Scroll: camera zoom (as Ed) / fly speed (free-fly).",
         "Camera: mouse, arrows, right stick or Numpad 4 / 6 turn it round Ed; it stays while he stands, follows as he moves.",
-        "X / middle button / L2 recentre; 5 close-up, 0 first person (number row or numpad).",
+        "X / middle button / L2 recentre; 5 (Triangle / Y) close-up, 0 (L3) first person (number row or numpad).",
         "As Ed with his AI (the default): he runs, Shift walks. Simple controller (I): Shift runs. Portals: walk into them.",
         "Cmd-L level select · Cmd-/ this help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 lighting variants (day / night levels), ⌥0 the level's own",
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
@@ -72,7 +72,7 @@ final class ControlsView: NSView {
         "R (or Replays) on the level select screen: your recorded sessions, to play or delete, and the original demos (D). Watching one, P pauses and Esc goes back.",
         "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
-        "F4 (pad: Triangle / Y): the debug menu: the game's powers and save values, who uses them, switches. The game holds while it is open; W / S choose, A / D change, Space or E switch.",
+        "F4: the debug menu: the game's powers and save values, who uses them, switches. The game holds while it is open; W / S choose, A / D change, Space or E switch.",
     ]
 
     override init(frame: NSRect) {

@@ -790,9 +790,9 @@ final class GameView: MTKView {
         alert.messageText = "Open Tonic Controls"
         alert.informativeText = "Coloured keys are bound to their respective functions\n\n"
             + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera round him "
-            + "(L2 recentres it, L3 first person), R3 (click) free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, "
+            + "(L2 recentres it, Triangle / Y close-up, L3 first person), R3 (click) free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, "
             + "R1 lateral (free-fly: up), L1 free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, "
-            + "Start level select, Select / Options these controls, Triangle / Y the debug menu."
+            + "Start level select, Select / Options these controls; the debug menu is F4 on the keyboard."
         alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
@@ -875,8 +875,11 @@ final class GameView: MTKView {
                         tc_viewer_recenter_camera(v)
                         view?.updateTitle()
                     }
-                case .debugMenu:
-                    if let v = view?.renderer?.viewer?.raw { tc_viewer_toggle_debug(v) }
+                case .closeup:  // as 5 on the keyboard, which the debug menu takes while it is open
+                    if let v = view?.renderer?.viewer?.raw, !tc_viewer_debug_open(v) {
+                        tc_viewer_toggle_closeup(v)
+                        view?.updateTitle()
+                    }
                 case .press, .pausePlayback: break
                 }
             }

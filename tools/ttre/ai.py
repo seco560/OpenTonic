@@ -1276,20 +1276,30 @@ def ways_chunk(d):
     return bytes(out)
 
 
-def perso_dsg_block(d, perso):
+def perso_dsg_block(d, perso, ids=None):
     """A perso's dsgvars as the .ttai writes them (u16 count, u16 0, u32 size, count x {u32 offset, u8 type, 3 pad}, the
     buffer padded to 4), and the count. mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def
     {ptr default buffer, ptr infos (16 B {u32 offset, u32 type, ...}), u32 buffer size, u32 count}. A waypoint (type 8)
-    holds its number in the level's table (waypoints(): 1-based, 0 none) instead of the snapshot's pointer."""
+    holds its number in the level's table (waypoints(): 1-based, 0 none) instead of the snapshot's pointer.
+    A perso (type 10) holds its id as the scripts' perso nodes number them (ids: {perso location: id}, default
+    LevelData.perso_ids(); 0 none) instead of the snapshot's pointer, which is the perso's SuperObject (its +4 is the
+    perso; a few point at the perso itself). Before 2026-11-11 the pointer went out raw and named no perso: every
+    reference a level designer stored in a dsgvar was dead (cavedoc: the crate helpers' crate, the falling platforms'
+    chain, the toaster cameras' toasters). The Special Edition keeps the raw pointers (its id range is cast.py's)."""
     dsg, buf = [], b''
     parts = _dsg_parts(d, perso)
     if parts:
         dsg, src, size = parts
         buf = bytearray(d.un(f'{size}B', src))
         table = {} if d.se else waypoints(d)  # the Special Edition's ways: not exported (0: none)
+        ids = None if d.se else ids if ids is not None else d.perso_ids()
         for off, typ in dsg:
             if typ == 8 and off + 4 <= size:
                 struct.pack_into('<I', buf, off, table.get(d.lv.ptr(src, off), 0))
+            elif typ == 10 and ids is not None and off + 4 <= size:
+                ptr = d.lv.ptr(src, off)
+                so = d.lv.ptr(ptr, 4) if ptr else None
+                struct.pack_into('<I', buf, off, ids.get(ptr) or ids.get(so) or 0)
         buf = bytes(buf)
     out = struct.pack('<HHI', len(dsg), 0, len(buf))
     for off, typ in dsg:
@@ -1420,8 +1430,10 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
         if ref in beh_index:
             initial[k] = beh_index[ref] & 0xFFFF
 
+    ids = dict(perso_ids) if perso_ids else d.perso_ids()  # perso dsgvars: as the perso nodes (not 0 = Me: an id)
+
     def dsg_block(perso):
-        return perso_dsg_block(d, perso)
+        return perso_dsg_block(d, perso, ids)
     own_dsg, n_dsg = dsg_block(ai.perso)
 
     out, parts = bytearray(), []
