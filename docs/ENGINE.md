@@ -556,7 +556,7 @@ glance, what they affect, being able to trigger them on/off"). The game holds wh
 
 Gameplay Tonic Trouble never had is kept apart from the game's, so it can't be mistaken for it (the user's rule). In the
 core: `core/src/custom/` and `core/include/tonic/custom/`, everything named `tcx_*`; the rest of the core calls in only
-through `custom/tcx.h` (a handful of hooks in tc_viewer.c and one in tc_level.c: grep `tcx_`), and the level's custom data
+through `custom/tcx.h` (a handful of hooks in tc_viewer.c and tc_level.c: grep `tcx_`, `TCX_`), and the level's custom data
 hangs off one pointer (`tc_level.custom`). `make CUSTOM=0` builds the core without any of it (the hooks become no-ops,
 the custom layer's chunks are skipped) into `core/build-nocustom`; `make -C core CUSTOM=0 checkall` passing shows the
 game doesn't lean on it (2026-11-12: both builds pass, camcheck the same). Without it a level the custom layer gave a
@@ -615,27 +615,59 @@ unlicensed: read, not copied); the details are in the module's docstrings.
   coefficients, front = dS/dt x dS/ds), models (PS2 packets: strips, uv, normals, positions; per object matrices) and
   instances (row-vector matrices: checked, 1985 of 1997 Aloha instances land in their own stored box); the .ssf's
   per-instance properties (visible, solid, surface, collision mode) and triangle-proxy collision models; textures
-  (8-bit + a CSM1 palette, colours stored 0..127), lightmaps, the sky (<course>_sky.pbd / .ssh), the start gates.
+  (8-bit + a palette in plain order, colours stored 0..127), lightmaps, the sky (<course>_sky.pbd / .ssh), the start
+  gates. The palette: until 2026-11-12 it went through the PS2's CSM1 shuffle, which these files don't use: every
+  texture came out speckled (the user's "rough" screenshot; on all 11 courses neighbouring pixels are closer in colour
+  unshuffled on every texture but two near-flat ones).
 - **Lighting:** the PS2 draws a patch as (texture - L.rgb) x L.a / 128 (L its lightmap texel; SSX-Library's
   TrickyLightmapConverter). The first pass multiplied by L.rgb (~0.1): everything black (user, 11-12). Now the textures
   are doubled to full range and each vertex gets (1 - L / texture mean) x L.a / 256: exact on flat textures (port
   choice; SSX-Library least-squares fits per texel instead). Models: ambient + their instance's three directional
-  lights (PS2 0x80 = 1) against the doubled textures (port choice: so they match the snow; not checked).
-- **Collision:** patches (type 17 not solid); instances by the .ssf: mode 1 its triangle proxy, 2 the model's box,
-  0 / 3 (moving props, left static) none; invisible solid ones = the course's walls. Floors (ssx.FLOORS): snow, ice,
+  lights, whose vectors are in the model's own space (turned by the instance's matrix, Alaska's 1390 sunlit instances
+  give one sun; until 2026-11-12 they were used as world vectors), light / 256 on the doubled textures (PS2: texture x
+  light / 128; it was / 128 here, twice too bright: props flat white). The shader stops at 1.0, so the brightest
+  ~40 % of a sunlit face over the texture's own colour is lost. Textures with no opaque texel are blended (glass).
+- **Collision:** patches (type 17 not solid; wall patches, type 10, slick: without a material they had grip 1, which
+  stops the skier dead, and a third of Alaska's lie flatter than 60 degrees); instances by the .ssf: solid = flag 0x80
+  ("Player Bounce" in SSX-Library's notes), mode 1 its triangle proxy, 2 the model's box, 0 / 3 (moving props, left
+  static) none; invisible solid ones = the course's walls. Flag 0x20 alone ("Player Collision Detect") is not solid:
+  flags and banners he rides through, invisible boxes that fire effects (boosts, sounds, resets; not read). Until
+  2026-11-12 0x20 counted as solid and such a box across Alaska's racing line stopped him; on the 11 courses the AI
+  paths run through the box of 261 of the 2863 mode 2 instances without 0x80, and of 1 of the 2467 with it (for mode
+  1 the same rule is applied on thinner evidence: the paths cross 13 of 658 proxies without 0x80, 48 of 11271 with). Floors (ssx.FLOORS): snow, ice,
   wood, metal grip 0; off-track, powder, rock, sand 0.04-0.08; props' tops 0.1, their steep faces 0 (friction acts on
   every contact: at 0.1 the skier stalled against walls). The start gates' barriers (instances round the gate) are
   drawn but not solid: SSX opens them at the race start, which there isn't.
 - **Start:** down the middle gate's path to the first place with ground just under it whose own normal slopes down
   the path (>= ~5 deg). The .ttai carries AUTO (tc_ai.h `auto_start`): the driver presses Jump until the skier leaves
   his starting behaviour B2, so he sets off by himself (Totalski / skymap had that by level name already).
-- **Sky:** the dome (one model, ~28 m, camera-centred in SSX) scaled to 1.3 x the course's half-diagonal round its
-  middle, faces turned inwards, unlit (vertex alpha TC_SKY_ALPHA), not solid (port choice: it doesn't follow the camera).
+- **Sky:** one model, the same on every course: a cylinder 14 m in radius, a panorama from 5 m under the eye to 5 m
+  over it, nearer ground under that down to a floor at -10 m, open at the top. Drawn round the camera as SSX draws it:
+  surface flag TCX_FLAG_ROUND_CAMERA (tcx.h; tcx_mesh_model gives the draw its matrix, tc_level_bounds leaves the mesh
+  out), vertices relative to the eye, scaled to 1.1 x the course's diagonal so nothing of the course is behind it,
+  unlit at the doubled textures' full brightness (vertex alpha TC_SKY_ALPHA), clamped, the open top closed by a cone
+  that carries each panel's top row of texels on (port choices; SSX's clear colour and sky tint are not read). Until
+  2026-11-12 a static copy round the course: its top lay under the upper third of the tall courses (no sky at
+  Alaska's start).
+- **Cruise push (custom gameplay, port choice):** .ttlv SKIA (cruise 14 u/s, push 6 u/s^2: ssx.CRUISE / PUSH) ->
+  tcx_ski_tick before each tick of the skier's mechanics: on the ground and slower than the cruise speed along the
+  board, a push along its front, fading out over the upper half of that speed. SSX's riders propel themselves over
+  the flats and dips; the skier has gravity only and sat still on them (Untracked's start is a plateau).
 - **Port choices:** 1 SSX unit = 1 cm (Eddie's bone chain is ~182), scaled 1.25x so a rider would be ~2.28 to Ed's
   2.17 (user: size felt fine); 8 x 8 quads a patch. Music: Totalski's track for now (tools/music.tsv).
 - **Headless (aicheck AI_SCRIPT=ski, all 11):** he sets off by himself, 5-41 u/s at 2 s, 0 frames into the snow on
   every course. The script's timed hard turns run him into the course walls on four (Aloha, Elysium, Mesablanca,
   Snowdream), where he ends slow or stopped: needs a playtest with real steering.
+- **Headless, 2026-11-12 (a scratch autopilot: the stick steers his travel direction at a point 25 units on along
+  the AI paths chained from the middle gate; the chain is my own guess, 250-5500 m of each course):** nine courses
+  ride to the end of the chain or keep moving, 28-49 u/s on average (about 80-140 km/h at 1 unit = 80 cm), at the
+  card's 70 u/s cap at times, 18-31 % of the frames in the air, the board's up axis turning 1-3 degrees a frame (the
+  8 x 8 facets and the props; not smoothed). Untracked: 4.9 km in 167 s with the cruise push, stuck at the start
+  without. Alaska and Tokyo Megaplex: the autopilot leaves the racing line and he ends at rest wedged between a slope
+  and a wall facing it (ground + wall contact, no speed, the collide loop not blocked: the skier's own mechanics);
+  a push three times his gravity down the crease frees him in the probe, not built in. None of it played yet.
 - **Not done:** SSX music; out-of-bounds (Reset, type 0) surfaces don't respawn (falling out of the world does, 20
-  below the lowest geometry); animated / moving props stand still; LODs, flipbooks, UV scrolling, particles; rails
-  (splines, no grinding); no tricks / boost. Nothing seen in the app since the lighting fix.
+  below the lowest geometry), and nothing puts a wedged or stopped skier back on the track (SSX does); the .ssf's
+  effects (boost boxes, resets); animated / moving props stand still; LODs, flipbooks, UV scrolling, particles; rails
+  (splines, no grinding); no tricks / boost. The 2026-11-12 fixes above (palette, model light, sky, collision rules,
+  cruise push) are not seen in the app yet.

@@ -1468,6 +1468,12 @@ static void step_ai(tc_viewer *v, float dt) {
         /* port: in first person Ed faces where the player looks (the original's stick mode turns him with the stick, B29),
          * so what he shoots goes where the gunsight is */
         if (v->cam.first_person && !v->director) p->player.heading = TC_PI - v->camera.yaw;
+        if (p->driver.card_type == 2 && v->level->custom) { /* custom gameplay: the skier's cruise push (tcx.h) */
+            const tc_ai_state *ski_state = &p->driver.ai.model->states[p->driver.ai.state];
+            if (ski_state->card != TC_AI_NONE16)
+                tcx_ski_tick(v->level->custom, &p->driver.ski, p->player.velocity, p->driver.contacts,
+                             tc_ai_card_f32(&p->driver.ai.model->cards[ski_state->card], 4));
+        }
         tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, held_back ? 0 : ai_inputs(v), still ? 0 : v->move_x,
                       still ? 0 : v->move_y, v->camera.position);
         if (p->driver.events.restarted) {
@@ -2681,8 +2687,11 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     uint16_t sec;
     v->ed_draw_count = 0;
 
-    for (i = 0; i < l->mesh_count; i++)
-        if (!v->split || !v->split[i]) add_mesh(v, &dl, i, &identity, shown, water); /* split ones: as their pieces */
+    for (i = 0; i < l->mesh_count; i++) {
+        tc_mat4 round; /* a custom sky, drawn round the camera (tcx.h) */
+        if (v->split && v->split[i]) continue; /* split ones: as their pieces */
+        add_mesh(v, &dl, i, tcx_mesh_model(v->meshes[i], v->camera.position, &round) ? &round : &identity, shown, water);
+    }
     for (i = 0; i < v->piece_count; i++) add_mesh(v, &dl, v->piece_first + i, &identity, shown, water);
 
     for (i = 0; i < l->perso_count; first += l->persos[i].part_count, i++) {

@@ -11,7 +11,7 @@ code is our own):
 - <course>.pbd (magic 00 15 1B 01): a header of 15 counts and 18 offsets; we read the patches (448 bytes each), the
   world's ground: a bicubic patch as 16 polynomial coefficients S(s, t) = sum c[r][k] t^r s^k (stored last row first),
   four corner UVs, a lightmap rectangle + lightmap id, a surface type (snow, ice, rock, ...), a texture index.
-  Instances (models: buildings, trees, rails) are NOT read yet: their meshes are PS2 VIF packets (next step).
+  Also the models (PS2 packets) and their instances, with the .ssf's collision properties (read_models, read_ssf).
 - <course>.ssh: SHPS textures, 8-bit indexed + a 256-colour palette (block 0x21); <course>_L.ssh: the lightmaps
   (32-bit, 128 x 128). PS2 colours: 0x80 = full, alpha 0x80 = opaque.
 - <course>.aip: the AI paths; its start list = the start gates (we take the middle one's path: the first place down it
@@ -49,7 +49,9 @@ TITLES = {'alaska': 'Alaska', 'aloha': 'AlohaIceJam', 'elysium': 'ElysiumAlps', 
 
 # Patch surface types (SSX-Library TrickySurfaceType) -> (grip, rebound) for the skier's card type 2: friction is
 # -m grip^2 / dt x v (docs/NOTES.md "Skiing"), so grip 0 = retail snow, which never slows him; small grips brake gently
-# (0.05: about 7 % of his speed a second at 30 Hz). Walls keep no material (grip 1): steep faces only push him away.
+# (0.05: about 7 % of his speed a second at 30 Hz). Walls (10) are slick: a face without a material has grip 1, which
+# stops the skier dead when it is all he touches (the integrator's friction, tc_mec_ski_velocity), and a third of
+# Alaska's wall patches lie flatter than 60 degrees (until 2026-11-12 they had none).
 SNOW = (0.0, 0.8)
 FLOORS = {
     0: SNOW,             # reset (out of bounds in SSX: respawns the rider; here only snow)
@@ -62,6 +64,7 @@ FLOORS = {
     7: SNOW,             # ice / water, no trail
     8: SNOW,             # glidy snow
     9: (0.08, 0.8),      # rock
+    10: (0.0, 0.5),      # wall
     11: SNOW,            # ice crunch
     12: SNOW,            # wood
     13: SNOW,            # off-track metal
@@ -70,7 +73,13 @@ FLOORS = {
     16: (0.08, 0.8),     # sand
     18: SNOW, 19: SNOW,  # show-off ramp metal
 }
-WALL, NO_COLLISION = 10, 17
+NO_COLLISION = 17
+
+# The skier's cruise push on these courses (.ttlv SKIA; core tcx_ski_tick: custom gameplay, port choice): SSX's riders
+# propel themselves over the flats and dips, Tonic Trouble's skier has gravity only. Slower than CRUISE (TT units a
+# second; 14 = 11 m/s = 40 km/h at 1 unit = 80 cm, a slow SSX pace) along the board and on the ground, he is pushed
+# with up to PUSH (u/s^2; his gravity down a 9 degree slope).
+CRUISE, PUSH = 14.0, 6.0
 
 
 # ---- the disc ----
@@ -238,8 +247,10 @@ def read_ssh(raw, convert=True):
             nxt = int.from_bytes(raw[o + 1:o + 4], 'little')
         if kind == 2 and 0x21 in blocks:
             po = blocks[0x21]
+            # the palette as stored: these files keep it in plain order (not the PS2's CSM1 shuffle: applying that
+            # speckled every texture, the "grime" of 2026-11-12; checked on all 11 courses: neighbouring pixels are
+            # closer in colour with the plain order on every texture but two near-flat ones in merquer)
             pal = [conv(raw[po + 16 + 4 * k:po + 20 + 4 * k]) for k in range(256)]
-            pal = [pal[csm1(k)] for k in range(256)]
             rgba = b''.join(pal[c] for c in pixels)
         elif kind == 5:
             rgba = b''.join(conv(pixels[4 * k:4 * k + 4]) for k in range(w * h))
@@ -247,11 +258,6 @@ def read_ssh(raw, convert=True):
             rgba = None
         out.append((w, h, rgba))
     return out
-
-
-def csm1(k):
-    """The PS2's CSM1 palette order: in every 32 entries, the second and third runs of 8 are swapped."""
-    return k ^ 0x18 if (k & 0x18) in (0x08, 0x10) else k
 
 
 def ps2_rgba(px):
@@ -397,7 +403,11 @@ def read_instances(pbd):
 def read_ssf(ssf):
     """(per instance: dict(visible, solid, mode, surface, collision) or None, collision models [[(indices, vertices,
     face normals)]]). Modes: 0 none, 1 triangle proxy (collision model `collision`), 2 the model's box, 3 physics
-    spheres (moving props)."""
+    spheres (moving props). solid = flag 0x80, the rider bounces off it (SSX-Library: "Player Bounce"); 0x20 alone
+    ("Player Collision Detect") only tells the game he touched it: flags and banners he rides through, the invisible
+    boxes that fire effects (boosts, sounds, resets). Until 2026-11-12 0x20 counted as solid, and one such box across
+    Alaska's racing line stopped him. Checked on the 11 courses: the AI paths run through the box of 261 of the 2863
+    mode 2 instances without 0x80, and of 1 of the 2467 with it."""
     if ssf is None or len(ssf) < 76:
         return [], []
     hdr = struct.unpack_from('<16I', ssf, 12)
@@ -405,7 +415,7 @@ def read_ssf(ssf):
     props = []
     for i in range(op_n):
         _mass, _bounce, _u, flags, surface, mode, index = struct.unpack_from('<ffHHihh', ssf, op_o + 24 * i)
-        props.append(dict(visible=bool(flags & 1), solid=bool(flags & 32), mode=mode, surface=surface,
+        props.append(dict(visible=bool(flags & 1), solid=bool(flags & 0x80), mode=mode, surface=surface,
                           collision=index if mode != 3 else -1))
     states = struct.unpack_from(f'<{in_n}i', ssf, in_o)
     per_instance = [props[s] if 0 <= s < len(props) else None for s in states]
@@ -566,10 +576,12 @@ def convert(iso, course, name=None):
                 if not os.path.exists(path) or open(path, 'rb').read() != data:
                     with open(path, 'wb') as f:
                         f.write(data)
-                cut = any(rgba[k] < 128 for k in range(3, len(rgba), 4))
+                # alpha: some of it see-through = a cut-out; none of it opaque (glass, glows) = blended
+                alpha = rgba[3::4]
+                flags = ig.TRANSPARENT if max(alpha) < 240 else ig.ALPHA_TEST if min(alpha) < 128 else 0
                 n = w * h
                 mean = tuple(max(1.0, sum(rgba[c::4]) / n / 2) for c in range(3))  # in the PS2's 0..127
-                pngs[i] = (path, ig.ALPHA_TEST if cut else 0, mean)
+                pngs[i] = (path, flags, mean)
         return pngs[i]
 
     def light(p, s, t, mean):
@@ -653,9 +665,9 @@ def convert(iso, course, name=None):
                     tri_floors.append(floor_ids[f])
 
     path = start_path(aip) if aip else None
+    add_models(pbd, member(files, course, '.ssf'), texture, to_tt, groups, tris, tri_floors, floors, floor_ids, lo, hi,
+               gate=path[0] if path else None)
     sky = add_sky(files, tex_dir, groups, lo, hi)
-    n_models = add_models(pbd, member(files, course, '.ssf'), texture, to_tt, groups, tris, tri_floors, floors,
-                          floor_ids, lo, hi, gate=path[0] if path else None)
 
     gate = start(tris, aip)
     if gate:
@@ -668,69 +680,83 @@ def convert(iso, course, name=None):
         se.write_ttai(src, dst, extra=[('AUTO', struct.pack('<BBH', 1, 0, 0))])  # he sets off by himself
 
     ig.write_level(name, groups, tris, spawn, donor=DONOR, heading=heading, floors=floors, tri_floors=tri_floors,
-                   ttai=ttai, textures=sum(1 for v in pngs.values() if v), failed=missing, bounds=(lo, hi), quiet=True)
+                   ttai=ttai, textures=sum(1 for v in pngs.values() if v), failed=missing, bounds=(lo, hi), quiet=True,
+                   extra=[('SKIA', struct.pack('<2f', CRUISE, PUSH))])
     problems = ([f'{missing} patches without a texture'] if missing else []) + \
                ([f'no start found ({how})'] if not gate else []) + ([f'sky: {sky}'] if 'triangles' not in sky else [])
     print(f'{name}.ttlv: ' + ('; '.join(problems) if problems else 'ok'))
     return name
 
 
-SKY_ROOM = 1.3     # the sky dome scaled to this much of the course's half-diagonal
+SKY_ROOM = 1.1     # the sky's radius: this much of the course's diagonal, so the whole course is always nearer
+SKY_CAP = 0.6      # the cap's apex: this much of the radius above the sky's top ring
 SKY_ALPHA = 128    # the .ttlv vertex alpha of a sky's baked light (ttlv.SKY_ALPHA): unlit, flagged as sky
+ROUND_CAMERA = 1 << 8  # TCX_FLAG_ROUND_CAMERA (core/include/tonic/custom/tcx.h): the mesh is drawn round the camera
 
 
 def add_sky(files, tex_dir, groups, lo, hi):
-    """The course's sky (<course>_sky.pbd: one dome model, ~28 m, drawn round the camera in SSX; its textures in
-    <course>_sky.ssh) as a static dome round the course (port choice: the engine's skies are level geometry, as Tonic
-    Trouble's are): centred on the course, scaled to SKY_ROOM of its half-diagonal, its horizon at the course's middle
-    height, not solid. Call it after the patches and models: it reads their bounds (lo / hi) and leaves them as they are."""
+    """The course's sky (<course>_sky.pbd: one model, the same on every course: a cylinder 14 m in radius, a panorama
+    from 5 m under the eye to 5 m over it, a band of nearer ground under that down to a floor at -10 m, open at the top;
+    its textures in <course>_sky.ssh), drawn round the camera as SSX draws it (ROUND_CAMERA: its vertices relative to
+    the eye; until 2026-11-12 a static copy scaled round the course, whose top sat under the upper third of the tall
+    courses: no sky from Alaska's start). Port choices: scaled to SKY_ROOM of the course's diagonal (lo / hi: call it
+    after the patches and models), so the far plane (3 diagonals) holds it and it hides nothing; the open top closed
+    by a cone that carries each panel's top row of texels on (SSX: the frame's clear colour, not read); the textures
+    clamped (uv 0..1 on every course) and at their full stored-and-doubled brightness (SSX's own sky colour not read)."""
     pbd = next((v for k, v in files.items() if k.endswith('_sky.pbd')), None)
     ssh = next((v for k, v in files.items() if k.endswith('_sky.ssh')), None)
     if pbd is None or ssh is None:
         return 'none on the disc'
     models, blocks, textures = read_models(pbd), model_textures(pbd), read_ssh(ssh)
-    pts = [p for _, ob in models for _, me in ob for _, t in me for tri in t for p, _, _ in tri]
-    if not pts:
-        return 'empty'
-    radius = max(math.hypot(p[0], p[1]) for p in pts) or 1.0
-    centre = ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2)
-    k = SKY_ROOM * math.hypot(hi[0] - lo[0], hi[1] - lo[1]) / 2 / radius
-    pngs = {}
-    n = 0
+    faces = []  # (texture, [(position, uv) x 3])
     for block, objects in models:
         for matrix, meshes in objects:
             for slot, tris in meshes:
                 t = blocks[block][slot] if block < len(blocks) and slot < len(blocks[block]) else -1
-                if t not in pngs:
-                    pngs[t] = None
-                    if 0 <= t < len(textures) and textures[t][2]:
-                        w, h, rgba = textures[t]
-                        path = os.path.join(tex_dir, f'sky_{t:04d}.png')
-                        data = png(w, h, rgba)
-                        if not os.path.exists(path) or open(path, 'rb').read() != data:
-                            with open(path, 'wb') as f:
-                                f.write(data)
-                        pngs[t] = path
-                verts, indices = groups.setdefault((pngs[t], ig.WRAP_U | ig.WRAP_V), ([], []))
-                # unlit: the texture as stored (PS2 0x80 = 1 = the PNG's doubled colours / 2)
-                light = ig.baked_light((0.5, 0.5, 0.5), SKY_ALPHA)
-                for tri in tris:
-                    pos = [tuple(centre[a] + (transform(matrix, p) if matrix is not None else p)[a] * k
-                                 for a in range(3)) for p, _, _ in tri]
-                    u = [pos[1][a] - pos[0][a] for a in range(3)]
-                    v = [pos[2][a] - pos[0][a] for a in range(3)]
-                    fn = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
-                    mid = [sum(q[a] for q in pos) / 3 for a in range(3)]
-                    inward = [centre[a] - mid[a] for a in range(3)]
-                    order = (0, 1, 2) if sum(fn[a] * inward[a] for a in range(3)) >= 0 else (0, 2, 1)  # seen from inside
-                    l = math.sqrt(sum(x * x for x in fn)) or 1.0
-                    sign = 1 if order == (0, 1, 2) else -1
-                    first = len(verts)
-                    for j in order:
-                        verts.append((pos[j], tuple(sign * x / l for x in fn), tri[j][2], light))
-                    indices += [first, first + 1, first + 2]
-                    n += 1
-    return f'{n} triangles, {k / SCALE:.0f} x its size in SSX, round the course'
+                faces += [(t, [(transform(matrix, p) if matrix is not None else p, uv) for p, _, uv in tri])
+                          for tri in tris]
+    pts = [p for _, tri in faces for p, _ in tri]
+    if not pts:
+        return 'empty'
+    radius = max(math.hypot(p[0], p[1]) for p in pts) or 1.0
+    top = max(p[2] for p in pts)
+    k = SKY_ROOM * math.dist(lo, hi) / radius
+    # the cap: every edge along the top ring up to one apex, the edge's own uv carried up
+    apex = (0.0, 0.0, top + SKY_CAP * radius)
+    cap = []
+    for t, tri in faces:
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            if tri[a][0][2] > top - 1 and tri[b][0][2] > top - 1:
+                mid = tuple((tri[a][1][x] + tri[b][1][x]) / 2 for x in range(2))
+                cap.append((t, [tri[a], tri[b], (apex, mid)]))
+    pngs = {}
+    light = ig.baked_light((1.0, 1.0, 1.0), SKY_ALPHA)
+    eye = (0.0, 0.0, 0.0)
+    for t, tri in faces + cap:
+        if t not in pngs:
+            pngs[t] = None
+            if 0 <= t < len(textures) and textures[t][2]:
+                w, h, rgba = textures[t]
+                path = os.path.join(tex_dir, f'sky_{t:04d}.png')
+                data = png(w, h, rgba)
+                if not os.path.exists(path) or open(path, 'rb').read() != data:
+                    with open(path, 'wb') as f:
+                        f.write(data)
+                pngs[t] = path
+        verts, indices = groups.setdefault((pngs[t], ROUND_CAMERA), ([], []))
+        pos = [tuple(x * k for x in p) for p, _ in tri]
+        u = [pos[1][a] - pos[0][a] for a in range(3)]
+        v = [pos[2][a] - pos[0][a] for a in range(3)]
+        fn = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+        mid = [sum(q[a] for q in pos) / 3 for a in range(3)]
+        seen = sum(fn[a] * (eye[a] - mid[a]) for a in range(3)) >= 0  # from inside, where the camera is
+        order, sign = ((0, 1, 2), 1) if seen else ((0, 2, 1), -1)
+        l = math.sqrt(sum(x * x for x in fn)) or 1.0
+        first = len(verts)
+        for j in order:
+            verts.append((pos[j], tuple(sign * x / l for x in fn), tri[j][1], light))
+        indices += [first, first + 1, first + 2]
+    return f'{len(faces)} + {len(cap)} cap triangles, radius {radius * k:.0f}, round the camera'
 
 
 WALL_FLOOR = (0.0, 0.5)  # a prop's steep faces (more than 60 deg): slick
@@ -751,8 +777,10 @@ GATE_MARGIN = 100  # SSX units (1 m) round the start gate's point: what encloses
 
 def add_models(pbd, ssf, texture, to_tt, groups, tris, tri_floors, floors, floor_ids, lo, hi, gate=None):
     """The instances: their models drawn (the ones the .ssf marks visible; lit per vertex by the instance's three
-    lights and ambient: PS2 0x80 = 1, as the patches' light against the doubled textures), their collision from the
-    .ssf (mode 1: its triangle proxy; 2: the model's box; 0 / 3 or not solid: none; invisible solid ones = walls).
+    lights and ambient: the light vectors are in the model's own space (turned into the world by the instance's
+    matrix, Alaska's 1390 sunlit instances all give one sun), colours PS2 0x80 = 1 against the stored 0..127 texture), their collision from the
+    .ssf (mode 1: its triangle proxy; 2: the model's box; 0 / 3 or not solid (read_ssf): none; invisible solid ones =
+    walls).
     The start gates' barriers (instances whose box holds `gate`, the middle gate's point, SSX units) are drawn but not
     solid: SSX opens them at the race's start, which there isn't here. Returns counts for the report."""
     models = read_models(pbd)
@@ -802,9 +830,11 @@ def add_models(pbd, ssf, texture, to_tt, groups, tris, tri_floors, floors, floor
                     for p, n, uv in t:
                         if matrix is not None:
                             p, n = transform(matrix, p), transform(matrix, n, 0.0)
+                        k = math.sqrt(sum(x * x for x in n)) or 1.0
+                        own = tuple(x / k for x in n)  # in the model's space: the instance's lights are stored in it
                         p, n = transform(m, p), transform(m, n, 0.0)
                         k = math.sqrt(sum(x * x for x in n)) or 1.0
-                        pts.append((p, tuple(x / k for x in n), uv))
+                        pts.append((p, tuple(x / k for x in n), uv, own))
                     out.append(pts)
                 world.append((tex, out))
         if visible:
@@ -821,14 +851,16 @@ def add_models(pbd, ssf, texture, to_tt, groups, tris, tri_floors, floors, floor
                     if sum(fn[x] * (tri[0][1][x] + tri[1][1][x] + tri[2][1][x]) for x in range(3)) < 0:
                         tri = (tri[0], tri[2], tri[1])  # face the way its normals do
                     first = len(verts)
-                    for p, n, uv in tri:
+                    for p, n, uv, own in tri:
                         light = list(inst['ambient'])
                         for d, col in inst['lights']:
-                            f = max(0.0, n[0] * d[0] + n[1] * d[1] + n[2] * d[2])
+                            f = max(0.0, own[0] * d[0] + own[1] * d[1] + own[2] * d[2])
                             for x in range(3):
                                 light[x] += f * col[x]
                         pos = to_tt(p)
-                        verts.append((pos, n, uv, ig.baked_light([min(2.0, x / 128) for x in light])))
+                        # PS2: texture (0..127) x light / 128; the PNG holds the texture x 2, so light / 256 (the
+                        # shader stops at 1.0: a sunlit face's last ~40 % over the texture's own colour is lost)
+                        verts.append((pos, n, uv, ig.baked_light([x / 256 for x in light])))
                         for x in range(3):
                             lo[x], hi[x] = min(lo[x], pos[x]), max(hi[x], pos[x])
                     indices += [first, first + 1, first + 2]

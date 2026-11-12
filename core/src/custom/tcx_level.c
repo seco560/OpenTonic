@@ -49,8 +49,16 @@ static void read_vehicles(tcx_level *x, const tc_level *level, reader *r) {
 tc_result tcx_level_read(tc_level *level, const char tag[4], const uint8_t *data, size_t size) {
     reader rr = {data, size, 0, TC_OK}, *r = &rr;
     tcx_level *x = level->custom;
-    if (memcmp(tag, "VEHI", 4) != 0) return TC_OK;
+    bool ski = memcmp(tag, "SKIA", 4) == 0;
+    if (!ski && memcmp(tag, "VEHI", 4) != 0) return TC_OK;
     if (!x && !(x = level->custom = (tcx_level *)tc_calloc(1, sizeof(*x)))) return TC_ERR_OUT_OF_MEMORY;
+    if (ski) { /* .ttlv SKIA (tools/ttre/ssx.py): f32 cruise speed, f32 push */
+        x->ski_cruise = rd_f32(r);
+        x->ski_push = rd_f32(r);
+        if (!(x->ski_cruise > 0 && x->ski_cruise < 1000 && x->ski_push > 0 && x->ski_push < 1000))
+            x->ski_cruise = x->ski_push = 0;
+        return r->error || r->offset != r->size ? TC_ERR_STALE : TC_OK;
+    }
     tc_free(x->vehicles);
     x->vehicles = NULL;
     x->vehicle_count = 0;
@@ -63,4 +71,23 @@ void tcx_level_free(tcx_level *x) {
     if (!x) return;
     tc_free(x->vehicles);
     tc_free(x);
+}
+
+bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model) {
+    if (!(mesh->surface.flags & TCX_FLAG_ROUND_CAMERA)) return false;
+    *model = tc_mat4_identity();
+    model->m[12] = eye.x, model->m[13] = eye.y, model->m[14] = eye.z;
+    return true;
+}
+
+void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, float mass) {
+    tc_vec3 front;
+    float along, k;
+    if (!l || !(l->ski_cruise > 0) || !(mass > 0)) return;
+    if (!(contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE))) return; /* in the air: nothing to push against */
+    front = tc_v3_scale(ski->y, -1);
+    along = tc_v3_dot(velocity, front);
+    if (along >= l->ski_cruise) return;
+    k = fminf(1, (l->ski_cruise - along) / (0.5f * l->ski_cruise));
+    ski->force = tc_v3_add(ski->force, tc_v3_scale(front, mass * l->ski_push * k));
 }

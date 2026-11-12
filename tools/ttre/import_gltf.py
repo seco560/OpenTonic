@@ -288,11 +288,12 @@ def main(argv):
 
 
 def write_level(name, groups, tris, spawn, donor='bar', heading=None, floors=None, tri_floors=None, ttai=None,
-                textures=0, failed=0, bounds=((0, 0, 0), (0, 0, 0)), ttlv_dir=None, quiet=False):
+                textures=0, failed=0, bounds=((0, 0, 0), (0, 0, 0)), ttlv_dir=None, quiet=False, extra=()):
     """files/out/ttlv/NAME.ttlv (+ NAME.ttai from the donor): groups {(texture path, flags): (verts [(pos, normal, uv,
     light)], indices)}, tris the collision [9 floats], spawn Ed's start (TT axes), heading the direction he faces
     (radians from +X; None = the donor's), floors [(grip, rebound)] with tri_floors one index per collision triangle
-    (0xFFFF = none; None = no floors), ttai(src, dst) writes the .ttai from the donor's (None = a plain copy)."""
+    (0xFFFF = none; None = no floors), ttai(src, dst) writes the .ttai from the donor's (None = a plain copy), extra
+    more chunks [(tag, bytes)] (the custom layer's)."""
     ttlv_dir = ttlv_dir or os.path.join(OUT, 'ttlv')
     tex_paths, tex_ids = [], {}
 
@@ -342,7 +343,7 @@ def write_level(name, groups, tris, spawn, donor='bar', heading=None, floors=Non
     out = os.path.join(ttlv_dir, f'{name}.ttlv')
     chunks.write(out, 'TTLV', [('LEVL', struct.pack('<I5f', 1, 0, 0, 0, 0, 0)), ('TEXS', texs),
                                ('MESH', struct.pack('<I', len(groups)) + meshes), ('PRSO', struct.pack('<I', 0)),
-                               ('COLL', coll), ('FLOR', flor)] + ([('EDPL', edpl)] if edpl else []))
+                               ('COLL', coll), ('FLOR', flor)] + ([('EDPL', edpl)] if edpl else []) + list(extra))
     if quiet:
         return
     n_tri = sum(len(i) // 3 for _, i in groups.values())

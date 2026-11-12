@@ -6,7 +6,8 @@
  * `make CUSTOM=0` builds the core without it (TC_NO_CUSTOM: core/src/custom left out, the calls below inline no-ops, the
  * custom layer's chunks skipped), into build-nocustom: its checkall shows the game doesn't lean on any of it.
  *
- * So far: the cars of the imported levels (tcx_vehicle.h: a toy car Ed drives; the user, 2026-11-12). */
+ * So far: the cars of the imported levels (tcx_vehicle.h: a toy car Ed drives; the user, 2026-11-12); skies drawn round
+ * the camera (TCX_FLAG_ROUND_CAMERA: the SSX courses'); the skier's cruise push on those courses (tcx_ski_tick). */
 #ifndef TONIC_TCX_H
 #define TONIC_TCX_H
 #include <stdbool.h>
@@ -15,16 +16,23 @@
 #include "../tc_level.h"
 #include "../tc_player.h"
 #include "../tc_cam.h"
+#include "../tc_mec.h"
 #include "tcx_vehicle.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* A tc_surface flag of the custom layer (above the game's TC_FLAG_*; the renderers test their own bits only): the mesh is a sky drawn round the
+ * camera, its vertices relative to the eye (SSX Tricky's skies are: tools/ttre/ssx.py add_sky; Tonic Trouble's are
+ * level geometry). Without the custom layer it stays where its vertices are: round the origin. */
+#define TCX_FLAG_ROUND_CAMERA (1u << 8)
+
 /* The custom layer's data in a level (tc_level.custom; NULL: none). */
 typedef struct tcx_level {
     uint32_t vehicle_count;          /* .ttlv VEHI (tcx_vehicle.h) */
     tcx_vehicle_data *vehicles;
+    float ski_cruise, ski_push;      /* .ttlv SKIA (tcx_ski_tick); 0: none */
 } tcx_level;
 
 /* A play session's custom gameplay (opaque; tc_viewer_custom). */
@@ -60,6 +68,17 @@ typedef struct tcx_ed {
 tc_result tcx_level_read(tc_level *level, const char tag[4], const uint8_t *data, size_t size);
 void tcx_level_free(tcx_level *l);
 
+/* A level mesh the custom layer places itself (TCX_FLAG_ROUND_CAMERA): its model matrix for a camera at eye. false:
+ * the mesh stays where it is. */
+bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model);
+
+/* Before a tick of the skier's mechanics (Ed on a type 2 card), on a level with SKIA (the SSX Tricky courses): on the
+ * ground and slower along the board than ski_cruise (u/s), a push along its front of up to ski_push (u/s^2), fading out
+ * over the upper half of that speed. SSX's riders propel themselves over the flats and dips their courses are built
+ * with; Tonic Trouble's skier has gravity only (his slopes never level out), and sat still on them. Added to the
+ * board's force list, which the integrator takes with this tick. l NULL or no SKIA: nothing. */
+void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, float mass);
+
 /* Made with the play session (NULL: the level has nothing custom, or out of memory); every call below takes NULL. */
 tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles, uint32_t perso_first);
 void tcx_play_free(tcx_play *x);
@@ -93,6 +112,13 @@ static inline tc_result tcx_level_read(tc_level *level, const char tag[4], const
     return TC_OK;
 }
 static inline void tcx_level_free(tcx_level *l) { (void)l; }
+static inline bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model) {
+    (void)mesh, (void)eye, (void)model;
+    return false;
+}
+static inline void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, float mass) {
+    (void)l, (void)ski, (void)velocity, (void)contacts, (void)mass;
+}
 static inline tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles,
                                         uint32_t perso_first) {
     (void)level, (void)world, (void)obstacles, (void)perso_first;

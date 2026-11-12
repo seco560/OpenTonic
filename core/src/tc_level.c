@@ -945,6 +945,10 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         if ((e = tcx_level_read(level, "VEHI", r->data, r->size)) != TC_OK) goto fail;
         r->offset = r->size;
     }
+    if (chunk_need(&cs, "SKIA", r)) { /* optional: custom gameplay's too */
+        if ((e = tcx_level_read(level, "SKIA", r->data, r->size)) != TC_OK) goto fail;
+        r->offset = r->size;
+    }
 
     if (chunk_need(&cs, "LITE", r)) {
         read_lite(level, r);
@@ -969,6 +973,7 @@ void tc_level_bounds(const tc_level *level, tc_vec3 *lo, tc_vec3 *hi) {
     for (i = 0; i < level->mesh_count; i++)
         for (k = 0; k < level->meshes[i].vertex_count; k++) {
             const float *p = level->meshes[i].vertices[k].position;
+            if (level->meshes[i].surface.flags & TCX_FLAG_ROUND_CAMERA) break; /* a custom sky: not a place (tcx.h) */
             tc_vec3 v = tc_v3(p[0], p[1], p[2]);
             a = tc_v3_min(a, v);
             b = tc_v3_max(b, v);
