@@ -84,6 +84,11 @@ final class Viewer {
             let sr = survey.withUnsafeBytes { tc_viewer_set_survey(v, $0.baseAddress, survey.count) }
             if sr != TC_OK { print("progress.ttpg: \(String(cString: tc_result_string(sr)))") }
         }
+        // The game's HUD: its texts, fonts and atlas, from the levels' folder (tools/ttre/hud.py; none: no HUD).
+        if let hud = try? Data(contentsOf: level.folder.appendingPathComponent("hud.tthd")) {
+            let hr = hud.withUnsafeBytes { tc_viewer_set_hud(v, $0.baseAddress, hud.count) }
+            if hr != TC_OK { print("hud.tthd: \(String(cString: tc_result_string(hr)))") }
+        }
     }
 
     deinit { tc_viewer_free(raw); raw.deallocate() }

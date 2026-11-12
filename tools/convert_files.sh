@@ -247,6 +247,13 @@ if outdated progress "$OUT/ttlv/progress.ttpg" progress; then
   if python3 -m tools.ttre.progress "$OUT"; then record progress; else echo "progress survey: failed (skipped)" >&2; fi
 else echo "== progress survey: current (skip)"; fi
 
+# ---- 5d. the HUD: the game's texts, its fonts and their glyphs drawn into one atlas (docs/ENGINE.md "The HUD") ----
+if [ "$RETAIL" = 1 ]; then
+  if outdated hud "$OUT/ttlv/hud.tthd" hud; then
+    if python3 -m tools.ttre.hud "$OUT"; then record hud; else echo "HUD: failed (skipped)" >&2; fi
+  else echo "== HUD: current (skip)"; fi
+fi
+
 # ---- 5b. intro movie (needs the disc's Videos folder) ----
 if [ ! -e "$SRC/Videos/EDPROL.AVI" ]; then echo "== intro movie: $SRC/Videos/EDPROL.AVI not found (optional, skip)"
 elif ! has ffmpeg || ! has vgmstream-cli; then echo "== intro movie: needs ffmpeg and vgmstream-cli (optional, skip)"
@@ -275,7 +282,7 @@ if [ -z "$(python3 -c 'from tools.ttre import ssx; print(ssx.find_iso() or "")' 
   echo "== SSX Tricky courses: no disc image (optional, skip)"
 elif [ ! -e "$OUT/ttlv/Totalski.ttlv" ]; then echo "== SSX Tricky courses: need the retail Totalski (skip)"
 elif outdated ssx "$OUT/ttlv/SSX_AlohaIceJam.ttlv" ssx; then
-  echo "== SSX Tricky courses (about a minute)"
+  echo "== SSX Tricky courses conversion"
   if python3 -m tools.ttre.ssx all; then record ssx; else echo "SSX Tricky courses: failed (skipped)" >&2; fi
 else echo "== SSX Tricky courses: current (skip)"; fi
 

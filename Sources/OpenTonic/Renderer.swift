@@ -502,6 +502,7 @@ import TonicCore
         for i in Int(opaque)..<Int(count) { drawMesh(draws[i]) }
         drawOverlay(enc, viewer!)
         drawCrosshair(enc, v, Float(size.width / max(size.height, 1)))
+        drawHud(enc, v, Float(size.width / max(size.height, 1)))
         drawSpeech(enc, v, Float(size.width / max(size.height, 1)))
         drawDebug(enc, v, Float(size.width / max(size.height, 1)))
         enc.endEncoding()
@@ -567,6 +568,46 @@ import TonicCore
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
     }
     private struct OverlayParams { var mode: UInt32; var threshold: Float }
+
+    /// The game's HUD (tc_viewer_hud): the core's quads over its atlas. The atlas never changes for a viewer: it is
+    /// uploaded when its bytes are another viewer's.
+    private var hudTexture: MTLTexture?
+    private var hudAtlas: UnsafePointer<UInt8>?
+    private func drawHud(_ enc: MTLRenderCommandEncoder, _ v: UnsafeMutablePointer<tc_viewer>, _ aspect: Float) {
+        var h = tc_view_hud()
+        guard tc_viewer_hud(v, aspect, &h), let rgba = h.rgba, let quads = h.quads, h.count > 0 else { return }
+        if hudTexture == nil || hudAtlas != rgba || hudTexture?.width != Int(h.width) || hudTexture?.height != Int(h.height) {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: Int(h.width), height: Int(h.height),
+                                                             mipmapped: false)
+            guard let t = device.makeTexture(descriptor: d) else { return }
+            t.replace(region: MTLRegionMake2D(0, 0, Int(h.width), Int(h.height)), mipmapLevel: 0, withBytes: rgba,
+                      bytesPerRow: Int(h.width) * 4)
+            hudTexture = t
+            hudAtlas = rgba
+        }
+        guard let tex = hudTexture else { return }
+        var verts: [OverlayVertex] = []
+        verts.reserveCapacity(Int(h.count) * 6)
+        for k in 0..<Int(h.count) {
+            let r = quads[k].rect, t = quads[k].uv
+            verts.append(OverlayVertex(position: [r.0, r.1], uv: [t.0, t.1]))
+            verts.append(OverlayVertex(position: [r.2, r.1], uv: [t.2, t.1]))
+            verts.append(OverlayVertex(position: [r.0, r.3], uv: [t.0, t.3]))
+            verts.append(OverlayVertex(position: [r.2, r.1], uv: [t.2, t.1]))
+            verts.append(OverlayVertex(position: [r.2, r.3], uv: [t.2, t.3]))
+            verts.append(OverlayVertex(position: [r.0, r.3], uv: [t.0, t.3]))
+        }
+        // more than setVertexBytes takes (4 KB): a buffer for this frame
+        guard let buffer = device.makeBuffer(bytes: verts, length: MemoryLayout<OverlayVertex>.stride * verts.count,
+                                             options: .storageModeShared) else { return }
+        var params = OverlayParams(mode: 3, threshold: 0)
+        enc.setRenderPipelineState(overlayPipeline)
+        enc.setDepthStencilState(overlayDepthState)
+        enc.setVertexBuffer(buffer, offset: 0, index: 0)
+        enc.setFragmentBytes(&params, length: MemoryLayout<OverlayParams>.stride, index: 0)
+        enc.setFragmentTexture(tex, index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+    }
 
     /// What a character is saying (tc_viewer_speech_panel): the core's picture of the text window, over the frame. Three
     /// textures in turn: a frame still in flight may be reading the last one while the text scrolls.

@@ -156,7 +156,7 @@ const char *tc_rec_door_name(uint32_t door) {
     static const char *const names[TC_RD_COUNT] = {
         "?", "step speed", "pause", "recentre camera", "close-up", "first person", "look settings", "step look",
         "invert y", "light set", "follow light", "step gamma", "step fov", "fog", "lighting", "sectors", "wheel",
-        "play / free-fly", "AI / simple controller", "demo on", "demo off", "debug menu"
+        "play / free-fly", "AI / simple controller", "demo on", "demo off", "debug menu", "hud"
     };
     return door < TC_RD_COUNT ? names[door] : "?";
 }
@@ -665,6 +665,7 @@ void tc_replay_begin(tc_replay *r, uint32_t segment, tc_viewer *v, bool verify) 
     r->held = 0;
     r->move[0] = r->move[1] = r->look[0] = r->look[1] = 0;
     r->paused = r->drawn = false;
+    tc_viewer_hud_waits(v, false); /* the recording says whether its run had the HUD (TC_RD_HUD) */
     memset(&r->drift, 0, sizeof r->drift);
 }
 
@@ -711,6 +712,7 @@ static void apply_door(tc_viewer *v, uint32_t door, int32_t a, float x) {
     case TC_RD_TOGGLE_PLAY: tc_viewer_toggle_play(v); break;
     case TC_RD_TOGGLE_AI: tc_viewer_toggle_ai(v); break;
     case TC_RD_DEBUG: tc_viewer_toggle_debug(v); break;
+    case TC_RD_HUD: tc_viewer_hud_waits(v, true); break;
     case TC_RD_DEMO_ON: case TC_RD_DEMO_OFF: case TC_RD_COUNT: break;
     }
 }

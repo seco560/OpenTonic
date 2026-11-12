@@ -1310,6 +1310,36 @@ static tc_ai_perso *who_arg(run *r, uint32_t i, int k) {
     return v.i == 0 ? r->p : live(r->p, v.i);
 }
 
+/* The inventory object of a perso value (Me: the caller), when its slot is one of the 31 save values (the exe's test in
+ * 0x419310 / GAM_00419440 / GAM_004193d0); NULL: none. By the level's table (.ttlv INVT), so the perso need not run. */
+static const tc_ai_inv_entry *inv_of(const tc_ai_perso *p, const tc_ai_globals *g, value who) {
+    int32_t id = who.type == V_PERSO ? who.i : -1;
+    uint16_t k;
+    if (id == 0) id = p->self_id;
+    if (id <= 0) return NULL;
+    for (k = 0; g->inv && k < g->inv_count; k++)
+        if (g->inv[k].id == id) return g->inv[k].slot >= 0 && g->inv[k].slot < 31 ? &g->inv[k] : NULL;
+    return NULL;
+}
+
+/* 0x41c010, called after every write of a save value: slots 1-6 are Doc's six objects. One that reads 0 becomes 1, and
+ * the HUD shows the object and its count (tc_hud.c). */
+static void doc_note(tc_ai_globals *g, int32_t slot) {
+    if (slot < 1 || slot > 6) return;
+    if (g->values[slot] == 0) g->values[slot] = 1;
+    g->hud_doc = (uint8_t)slot;
+    g->hud_doc_serial++;
+}
+
+void tc_ai_globals_new_game(tc_ai_globals *g) {
+    int k;
+    g->powers = 0;
+    memset(g->values, 0, sizeof(g->values));
+    for (k = 1; k <= 6; k++) g->values[k] = -1;
+}
+
+static tc_ai_hud_slot *hud_slot(tc_ai_globals *g, int32_t k) { return k >= 0 && k < TC_AI_HUD_SLOTS ? &g->hud[k] : NULL; }
+
 static bool condition(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     uint32_t c = N(r, i)->param;
@@ -1556,13 +1586,26 @@ static value function(run *r, uint32_t i) {
         int32_t n = as_int(arg(r, i, 0));
         return v_int(n >= 0 && n < 31 ? g->values[n] : -1);
     }
-    /* The inventory (GAM_00419440 / GAM_004193d0: the save values by the object model's slot, perso +0x34 -> u16 +2):
-     * port stub, the user's choice (2026-11-05): the main actor always holds one of everything (Ed's bees: he shoots
-     * as often as his scripts let him), the others nothing, as before. 96 / 97 take one: the object stays. */
-    case 95: return v_int(p->main_actor == 0 ? 1 : 0);
+    /* The inventory (FUNC_93Etc_0049b740): a perso's object names a save value (perso +0x34 -> its slot), and that
+     * value is how many the player holds. 95 Func_GetObjectNumberInInventory(perso) (GAM_00419440: -1 without an
+     * object); 96 Func_UseObjectFromInventory(perso) (GAM_004193d0: with one or more, one less, and the perso comes
+     * back; else 0); 97 Func_UseNObjectsFromInventory(perso, n): n times, the last one's result; 94 reads 0. */
+    case 94: return v_int(0);
+    case 95: {
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        const tc_ai_inv_entry *e = inv_of(p, g, arg(r, i, 0));
+        return v_int(e ? g->values[e->slot] : -1);
+    }
     case 96: case 97: {
-        value v = arg(r, i, 0);
-        return p->main_actor == 0 ? v : v_int(0);
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        value who = arg(r, i, 0), got = v_int(0);
+        const tc_ai_inv_entry *e = inv_of(p, g, who);
+        int32_t n = N(r, i)->param == 97 ? as_int(arg(r, i, 1)) : 1;
+        do {
+            got = v_int(0);
+            if (e && g->values[e->slot] > 0) { g->values[e->slot]--; got = who; }
+        } while (--n > 0);
+        return got;
     }
     case 164: return v_int(0); /* the control type (0x8C175C): the port runs type 0 (docs/DECOMP.md) */
     case 40: case 41: case 42: { /* FUNC_40Etc_0049aff0: the lives byte; 41 adds one, 42 takes one first */
@@ -1914,10 +1957,64 @@ static uint32_t procedure(run *r, uint32_t i) {
         }
         return 0;
     }
-    case 143: case 144: { /* PROC_142Etc_0048ac30: a save value + 1 / := v (GAM_00419620) */
+    case 143: case 144: { /* PROC_142Etc_0048ac30: a save value + 1 / := v (GAM_00419620), then the note (0x41c010) */
         tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
         int32_t n = as_int(arg(r, i, 0));
         if (n >= 0 && n < 31) g->values[n] = (int16_t)(c == 143 ? g->values[n] + 1 : as_int(arg(r, i, 1)));
+        doc_note(g, n);
+        return 0;
+    }
+    case 142: { /* Proc_AddObjectInInventory(perso) (0x419310): the object's amount onto its save value, 255 at most */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        const tc_ai_inv_entry *e = inv_of(p, g, arg(r, i, 0));
+        if (e) {
+            int32_t n = g->values[e->slot] + (int16_t)e->amount;
+            g->values[e->slot] = (int16_t)(n > 0xFF ? 0xFF : n);
+            doc_note(g, e->slot);
+        }
+        return 0;
+    }
+    /* The HUD's text slots (PROC_149Etc_0048ad10, PROC_ShowTextEtc_0048af30; docs/ENGINE.md "The HUD"). All but 149,
+     * 154 and 155 take (slot, where, ...): 150 a boss's life bar (perso, the text with its head: GAM_00418c00), 151 a
+     * number (value, text, font: GAM_00418a80), 152 Proc_DisplayChrono (milliseconds, text, font: GAM_00418b00), 153
+     * Proc_DisplayString (text, font: GAM_004188e0, with the text window's box behind it). 149 takes the box off
+     * (GAM_00418d50), 154 shows the slot again (0x418d10), 155 clears it (GAM_00418cb0). */
+    case 149: case 154: case 155: {
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        tc_ai_hud_slot *s = hud_slot(g, as_int(arg(r, i, 0)));
+        if (!s) return 0;
+        if (c == 149) s->backdrop = 0;
+        else s->active = c == 154;
+        return 0;
+    }
+    case 150: case 151: case 152: case 153: {
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        tc_ai_hud_slot *s = hud_slot(g, as_int(arg(r, i, 0)));
+        tc_vec3 at = argv3(r, i, 1);
+        value a2 = arg(r, i, 2), a3 = arg(r, i, 3);
+        if (!s) return 0;
+        s->active = 1;
+        s->frames = -1;
+        s->x = at.x;
+        s->y = at.y;
+        s->backdrop = c == 153;
+        s->font = 0xFF;
+        s->owner = p->self_id;
+        if (c == 150) {
+            s->kind = TC_AI_HUD_BOSS;
+            s->value = a2.type == V_PERSO ? a2.i : -1;
+            s->head = (uint16_t)a3.i;
+        } else if (c == 153) {
+            s->kind = TC_AI_HUD_STRING;
+            s->text = (uint16_t)a2.i;
+            s->font = (uint8_t)(a3.i >= 0 && a3.i < 0xFF ? a3.i : 0xFF);
+        } else {
+            value a4 = arg(r, i, 4);
+            s->kind = c == 151 ? TC_AI_HUD_NUMBER : TC_AI_HUD_CLOCK;
+            s->value = as_int(a2);
+            s->text = (uint16_t)a3.i;
+            s->font = (uint8_t)(a4.i >= 0 && a4.i < 0xFF ? a4.i : 0xFF);
+        }
         return 0;
     }
     case 77: case 78: case 79: { /* PROC_77Etc_004899e0: the lives byte := n, + 1, - 1 (GAM_00437a00 / a10 / a30) */
@@ -2102,7 +2199,7 @@ static uint32_t procedure(run *r, uint32_t i) {
     case 16: p->motion.detach = true; return 0; /* PROC_12Etc_00488340 -> GAM_00428ea0: off its carrier */
     case 25: case 26: case 32: case 33: case 70: case 71: case 80:
     case 105: case 106: case 107: case 108:
-    case 154: case 155: case 236: case 278: case 279: case 291: case 292:
+    case 236: case 278: case 279: case 291: case 292:
         return 0; /* world, sound, text, camera and channel effects: no-ops for now */
     default: unknown(r, i); return 0;
     }

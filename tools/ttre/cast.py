@@ -274,10 +274,26 @@ def freeze_story_removals(a):
     return count
 
 
-def zones(d, loc, a):
-    """The ZDD zones its scripts test with COND_13(Me, k, ...) (1-based k): [(k, primitives)] (ai.zdd_zone: spheres and
-    boxes in the perso's axes; triangle zones are left out)."""
-    ks = set()
+def named_zones(cast):
+    """{perso location: {k}}: the ZDD zones the cast's scripts test by naming their perso (COND_13(perso, k, ...)), its
+    own scripts included: Totalski's start gate PAT_DEPARTESSAI names itself, not Me, and without its zone the race's
+    clock never started."""
+    out = {}
+    for _, _, a in cast:
+        for b in a.behaviours:
+            for sc in b.scripts + ([b.schedule] if b.schedule else []):
+                for n in ai.walk_nodes(sc):
+                    c = n.children
+                    if n.type == 1 and n.param == 13 and len(c) == 3 and c[0].type == 24 and c[0].ref and c[1].type == 12:
+                        out.setdefault(c[0].ref, set()).add(c[1].param)
+    return out
+
+
+def zones(d, loc, a, named=()):
+    """The ZDD zones its scripts test with COND_13(Me, k, ...) (1-based k), and those the cast names it by (named:
+    named_zones()[loc]): [(k, primitives)] (ai.zdd_zone: spheres and boxes in the perso's axes; triangle zones are
+    left out)."""
+    ks = set(named)
     for b in a.behaviours:
         for sc in b.scripts + ([b.schedule] if b.schedule else []):
             for n in ai.walk_nodes(sc):
@@ -335,6 +351,7 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     world_loc = d.engine_lists()[2]
     world_id = idx_of.get(world_loc) or next((idx_of[p.loc] for p in persos if d.perso_names(p.loc)[0] == 'World'), 0)
     main_buttons = ai.button_order(ai.AI(d, player)) if player else {}
+    zones_named = named_zones(cast)
     families, fam_blocks, entries, listing = {}, [], [], []
     cards, fam_cards = {}, []  # CMEC: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
     fam_walk = []  # CMEC's walker tail: each family's root motion and ZDM bodies (walk_block)
@@ -388,7 +405,7 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         if loc in spawn_locs:
             flags |= SPAWN
         flags |= TABLES
-        zs = zones(d, loc, a)
+        zs = zones(d, loc, a, zones_named.get(loc, ()))
         zone_block = struct.pack('<HH', len(zs), 0)
         if zs:
             zone_block += struct.pack('<12f', *ai.mat_inverse(world))

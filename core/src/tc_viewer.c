@@ -982,6 +982,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->ed_clip = ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
     tc_speech_init(&v->speech, &l->speech);
+    tc_hud_init(&v->hud);
     {
         bool oom;
         v->light = light_create(v, l, &oom);
@@ -1023,7 +1024,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
      * them as they are. */
     if (v->play && v->play->has_cast && !(desc->carry && desc->carry->has_progress) && desc->level &&
         desc->level->edition == 0 && same_text(v->play->level_name, "Totalski"))
-        v->play->cast.globals.powers = 0;
+        tc_ai_globals_new_game(&v->play->cast.globals); /* GAM_00419290: no powers, a new game's save values */
     v->rec = desc->recorder;
     if (v->rec) tc_rec_begin(v->rec, v, desc);
     return TC_OK;
@@ -1037,6 +1038,7 @@ void tc_viewer_free(tc_viewer *v) {
     tape_free(v);
     tc_speech_free(&v->speech);
     tc_debug_free(&v->debug);
+    tc_hud_free(&v->hud);
     play_destroy(v->play);
     light_destroy(v->light);
     tc_free((void *)v->effects);
@@ -1439,6 +1441,32 @@ static bool take_picture(tc_viewer *v) {
     return true;
 }
 
+/* The HUD's tick (tc_hud.h), after the cast's: what the standard elements show comes from Ed and the save values. The
+ * level's bonuses count on the World perso's save value and the one after it (FUN_0043bc00, GAM_00419490: the exe
+ * reads them through perso 0x8c1744's inventory object). */
+static void hud_tick(tc_viewer *v) {
+    tc_viewer_play *p = v->play;
+    tc_ai_globals *g = &p->cast.globals;
+    tc_hud_values now;
+    uint16_t k;
+    memset(&now, 0, sizeof(now));
+    now.hit_points = p->driver.ai.hit_points;
+    now.hit_points_max = p->driver.ai.hit_points_max;
+    now.lives = g->lives;
+    now.bees = g->values[0];
+    now.tings = now.spade = -1;
+    for (k = 0; k < g->inv_count; k++)
+        if (g->inv[k].id == v->level->cast.world && g->inv[k].slot >= 0 && g->inv[k].slot < 31) {
+            now.tings = g->values[g->inv[k].slot] & 0xFF;
+            now.spade = g->inv[k].slot + 1 < 31 ? g->values[g->inv[k].slot + 1] & 0xFF : -1;
+        }
+    now.doc_slot = g->hud_doc;
+    now.doc_count = g->hud_doc >= 1 && g->hud_doc <= 6 ? g->values[g->hud_doc] : 0;
+    now.doc_serial = g->hud_doc_serial;
+    now.show_all = !v->hud.auto_hide;
+    tc_hud_tick(&v->hud, g, &now);
+}
+
 static void step_ai(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     float t;
@@ -1474,8 +1502,22 @@ static void step_ai(tc_viewer *v, float dt) {
                 tcx_ski_tick(v->level->custom, &p->driver.ski, p->player.velocity, p->driver.contacts,
                              tc_ai_card_f32(&p->driver.ai.model->cards[ski_state->card], 4));
         }
-        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, held_back ? 0 : ai_inputs(v), still ? 0 : v->move_x,
-                      still ? 0 : v->move_y, v->camera.position);
+        /* the start text shows: the player presses Jump. Not where the level itself asks for the automatic start
+         * (.ttai AUTO: the Special Edition's Totalski, imported courses), which have no such text */
+        p->driver.wait_start = v->hud_waits && !p->driver.ai.model->auto_start;
+        {
+            /* Port, a stand-in: waiting behind the start text the skier stands still, as in the game. Here his waiting
+             * state is a walker's on snow whose grip is 0, which the walker's forces as read (DNM_WalkForces_004c41c5)
+             * make frictionless, so he crept down the slope. Why the exe's does not is open (docs/ENGINE.md "The HUD"). */
+            bool waiting = p->driver.wait_start && p->driver.auto_start && (p->driver.contacts & TC_AI_CONTACT_GROUND);
+            tc_vec3 at = p->player.position;
+            tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, held_back ? 0 : ai_inputs(v), still ? 0 : v->move_x,
+                          still ? 0 : v->move_y, v->camera.position);
+            if (waiting && p->driver.auto_start) {
+                p->player.position = at;
+                p->player.velocity = tc_v3(0, 0, 0);
+            }
+        }
         if (p->driver.events.restarted) {
             p->driver.events.restarted = false;
             if (p->has_cast) tc_cast_respawn(&p->cast);
@@ -1487,6 +1529,7 @@ static void step_ai(tc_viewer *v, float dt) {
             tc_cast_step_rest(&p->cast, TC_ED_AI_TICK, v->sectors, p->driver.sector.sector);
             for (n = 0; n < p->cast.sounds_out_count && v->sound_count < TC_AI_MAX_SOUNDS; n++)
                 v->sounds[v->sound_count++] = p->cast.sounds_out[n];
+            hud_tick(v);
         }
         if (p->has_cast && p->cast.talk_cover) { /* a speaker's way out (docs/ENGINE.md "Walkable scenes") */
             p->cast.talk_cover = false;
@@ -2202,6 +2245,41 @@ void tc_viewer_toggle_debug(tc_viewer *v) {
 }
 
 bool tc_viewer_debug_open(const tc_viewer *v) { return v->debug.open; }
+
+void tc_viewer_hud_waits(tc_viewer *v, bool on) {
+    if (on) REC_DOOR(TC_RD_HUD, 0, 0);
+    v->hud_waits = on;
+}
+
+tc_result tc_viewer_set_hud(tc_viewer *v, const void *data, size_t size) {
+    tc_result r = tc_hud_load(&v->hud, data, size);
+    if (r == TC_OK && v->level && v->level->edition == 0) tc_viewer_hud_waits(v, true);
+    return r;
+}
+
+bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
+    tc_viewer_play *p = v->play;
+    uint8_t points[TC_AI_HUD_SLOTS] = {0}, max[TC_AI_HUD_SLOTS] = {0};
+    const tc_ai_globals *g;
+    uint32_t k;
+    if (!v->hud.loaded || !v->playing || !p || !p->has_driver || !p->has_cast || !p->use_ai || v->tape) return false;
+    g = &p->cast.globals;
+    for (k = 0; k < TC_AI_HUD_SLOTS; k++) { /* a boss's life bar: its perso's hit points (GAM_00418d70) */
+        const tc_ai_hud_slot *s = &g->hud[k];
+        int32_t hp = 0, top = 0;
+        if (!s->active || s->kind != TC_AI_HUD_BOSS) continue;
+        if (!tc_cast_hit_points(&p->cast, s->value > 0 ? s->value : s->owner, &hp, &top)) continue;
+        points[k] = (uint8_t)(hp < 0 ? 0 : hp > 255 ? 255 : hp);
+        max[k] = (uint8_t)(top < 0 ? 0 : top > 255 ? 255 : top);
+    }
+    if (!tc_hud_build(&v->hud, g, points, max, true, aspect > 0 ? aspect : 4.0f / 3)) return false;
+    out->rgba = v->hud.data.atlas;
+    out->width = v->hud.data.atlas_width;
+    out->height = v->hud.data.atlas_height;
+    out->quads = v->hud.quads;
+    out->count = v->hud.quad_count;
+    return true;
+}
 
 tc_result tc_viewer_set_survey(tc_viewer *v, const void *data, size_t size) {
     return tc_debug_load_survey(&v->debug, data, size);

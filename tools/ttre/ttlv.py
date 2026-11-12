@@ -519,6 +519,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('COLL', coll), ('FLOR', flor), ('EDPL', edpl) if edpl is not None else None,
            ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
            ('CAST', cast_body) if cast_body else None,  # this level's cast, else the one passed in
+           ('INVT', invt(data)) if cast_body and not data.se else None,
            ('CMEC', cmec) if cmec else None,
            ('PCOL', pcol) if pcol else None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
@@ -602,6 +603,19 @@ def perso_collision(data, cast_locs, prso_index, skip_decals=False):
     if data.se:  # the SE plays the borrowed retail Ed: his collide set (priority 127, meets persos, floor_ok)
         mp, mf = 127, 1 | 2 | 8
     return struct.pack('<H2B', len(rows), mp, mf) + b''.join(rows)
+
+
+def invt(data):
+    """INVT: u32 n, n x { u16 perso id, i16 slot, u16 amount }: each perso's inventory object (perso +0x34 ->
+    { u16 amount, i16 slot }: GAM_0042f780 / GAM_0042f770). Picked up (PROC 142, 0x419310), the amount goes onto that
+    save value: a level's bonuses and its World share one slot (docs/ENGINE.md "The HUD")."""
+    out = []
+    for loc, pid in sorted(data.perso_ids().items(), key=lambda kv: kv[1]):
+        o = data.lv.ptr(loc, 0x34)
+        if o and 0 < pid < 0x10000:
+            amount, slot = data.un('Hh', o)
+            out.append(struct.pack('<HhH', pid, slot, amount))
+    return struct.pack('<I', len(out)) + b''.join(out)
 
 
 def lite(data, sectors, meshes, raw=()):

@@ -311,6 +311,23 @@ typedef struct tc_ai_light_call { int32_t set, duration_ms; bool absolute; } tc_
 #define TC_AI_MAX_SECTOR_ORDERS 8
 enum { TC_AI_SECTOR_TO, TC_AI_SECTOR_BY, TC_AI_SECTOR_TURN };
 typedef struct tc_ai_sector_order { uint16_t sector; uint8_t kind; tc_vec3 a, b; float angle; int32_t ms; } tc_ai_sector_order;
+/* The HUD's text slots (docs/ENGINE.md "The HUD"): the exe's twenty records at DAT_008a36c0 (0x24 each), written by
+ * PROC 149-155 and drawn each frame by GAM_00418d70. The host draws them (tc_hud.h). */
+#define TC_AI_HUD_SLOTS 20
+enum { TC_AI_HUD_STRING = 0, TC_AI_HUD_NUMBER = 1, TC_AI_HUD_BOSS = 2, TC_AI_HUD_CLOCK = 4 };
+typedef struct tc_ai_hud_slot {
+    uint8_t kind;                /* TC_AI_HUD_* (record +0) */
+    uint8_t active;              /* +4: shown */
+    uint8_t backdrop;            /* +0x20: the text window's box behind it (a string's, until PROC 149 takes it off) */
+    uint8_t font;                /* the font's rank in the fix's list (hud.tthd FONT), 0xFF: the text's own */
+    uint16_t text;               /* +0x18: the text (game.dsb's record) */
+    int32_t frames;              /* +0x14: frames left, counted down as it is drawn; the scripts give -1 */
+    float x, y;                  /* +0xC, +0x10: where, font units about the screen's middle */
+    int32_t value;               /* a number's value, a clock's milliseconds; a boss bar: the perso id (0 Me = owner) */
+    int32_t owner;               /* a boss bar: the perso that asked (its id), to resolve value 0 */
+    uint16_t head;               /* a boss bar: the text whose first letter is the head beside the points */
+} tc_ai_hud_slot;
+
 typedef struct tc_ai_globals {
     uint8_t lives;
     /* Ed's powers: the u16 at *DAT_004ec6d4, a set of masks (7, 8, 0x70, 0x80, 0x100, 0x200 in the scripts). COND 90
@@ -351,7 +368,18 @@ typedef struct tc_ai_globals {
     struct tc_ai_perso *speaker;
     bool speech_host;
     bool speech_stop;            /* PROC 104 Proc_StopSpeech (GAM_00418790): the host ends the line */
+    /* The HUD (docs/ENGINE.md "The HUD"): the text slots, and the note the exe shows when one of Doc's six objects
+     * (save values 1-6) changes (0x41c010): which, and a count of the notes. */
+    tc_ai_hud_slot hud[TC_AI_HUD_SLOTS];
+    uint8_t hud_doc;
+    uint32_t hud_doc_serial;
+    /* The level's inventory objects by perso id (host-fed: tc_level.cast.inv), NULL none. */
+    const tc_ai_inv_entry *inv;
+    uint16_t inv_count;
 } tc_ai_globals;
+
+/* A new game's progress (GAM_00419290): no powers; save value 0 (the bees) 0, 1-6 (Doc's six objects) -1, the rest 0. */
+void tc_ai_globals_new_game(tc_ai_globals *g);
 
 #define TC_AI_MAX_WAYS 8 /* ways per perso (the 21 retail levels: 3 at most) */
 /* A perso list dsgvar (type 11: byte 0 its count, byte 1 its capacity, then the persos; CollectNearby fills one): the

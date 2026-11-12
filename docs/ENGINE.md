@@ -459,9 +459,9 @@ flat, within TC_CAST_HEARING), animation sound events, DisplayVignetteDuring (PR
 (META 7, above).
 | primitive | uses | what it is | status |
 |---|---|---|---|
-| PROC 142 AddObjectInInventory | 344 | the inventory (`0x419310`) | **no-op**, with FUNC 95's stub (Ed has one of everything) |
-| PROC 153 / 154 / 155 Display / Show / EraseString | 133 / 0 / 72 | HUD text slots (20, `DAT_008a36c0`), font text | **skipped** |
-| PROC 149-152 DisplayChrono etc. | 47 | boss life bars (`GAM_00418c00`: "FixHitPoints"), the chrono | **skipped**; 152 runs every frame |
+| PROC 142 AddObjectInInventory | 344 | the inventory (`0x419310`) | **works** since 2026-11-12 ("The HUD") |
+| PROC 153 / 154 / 155 Display / Show / EraseString | 133 / 0 / 72 | HUD text slots (20, `DAT_008a36c0`), font text | **works** since 2026-11-12 ("The HUD") |
+| PROC 149-152 DisplayChrono etc. | 47 | boss life bars (`GAM_00418c00`: "FixHitPoints"), the chrono | **works** since 2026-11-12; boss bars never seen |
 | PROC 201 / 202 (and COND 90 TestPower, 82 uses, which the interpreter has) | 21 | Ed's powers | PROC 201 / 202 **skipped** |
 | PROC 118 SaveGame | 21 | | **skipped** |
 | PROC 126-128 PersoLight | 77 | a light carried by a perso (lightning, glows) | **skipped**, purely visual |
@@ -551,6 +551,55 @@ glance, what they affect, being able to trigger them on/off"). The game holds wh
   do not compile on this machine).
 - **Not done:** what 7, 8, 0x70, 0x100, 0x200 are (the menu says "not read"); the lives; the camera-key settings and the
   close-up key's remap (the user's step 2); labels for save values 7-30.
+
+## The HUD (2026-11-12; **read** unless marked)
+Everything the exe shows over the picture is a "text": a string of game.dsb in one of the fonts of fix.sna, drawn by
+`FON_004cdd10` through a camera. A font's glyph is a small object: a textured quad (FixFont, FixHitPoints, FontLips), a
+sprite, or a 3D model (FontPC, the counters' extruded digits; FontFix3D, the spade, the bee and Doc's six objects).
+**Texts.** game.dsb's records in file order, all three kinds: "NewString", "NewUpperString", and "NewStringLenght" (an
+empty buffer the game prints numbers into). A script's text node (type 30) is that index (0x250 = TXTTOTALSKI; 5 / 6 =
+IA_CHRONOVALUE / 2); a font node (type 31) points at a font of the list `FON_fonfont_004cd410` walks.
+**The slots.** Twenty records at `DAT_008a36c0` (0x24 each: kind, shown, where, frames left, text, perso, box), drawn
+each frame by `GAM_00418d70`. PROC 153 Proc_DisplayString(slot, where, text, font) (with the text window's box, 5-95 %
+by 75-95 % of the screen, until PROC 149 takes it off), 151 a number, 152 Proc_DisplayChrono (milliseconds as
+mm:ss:hh), 150 a boss's life bar (a head's letter, then 'P' per point left and 'V' per point lost, font FixHitPoints),
+154 shows a slot again, 155 clears it. A line wider than 8.2 breaks at its last space that fits. Texts are centred on
+their place.
+**The standard HUD** is engine code, not scripts: `GAM_0041a720`, its texts named in fix.gpt's block (+0x5E0, the
+exe's `DAT_008bc820`). Life: the thermometer, a drop of mercury every 0.04 up to the step of each life point
+(0x4da350), a graduation per point of the maximum; Ed's head (the HUD perso's channel 0x38 object, else channel 3,
+turned 35 degrees and scaled 0.73) and "x" lives; the level's two counters (the World perso's save value and the one
+after it: `FUN_0043bc00`, `GAM_00419490`); the bees (save value 0); and the latest of Doc's six objects with its
+count, when one changes (`0x41c010`: slots 1-6). Each element slides in (x 0.5 a frame) and out (x 2; 2 out: gone)
+and, in the hiding mode, is asked for five seconds after its value changes.
+**The inventory.** A perso's object (perso +0x34 -> { u16 amount, i16 slot }) names a save value. PROC 142
+Proc_AddObjectInInventory(perso) (`0x419310`) adds the amount, 255 at most; FUNC 95 reads the value, 96 / 97 take
+one / n. A level's bonuses share the slot of its World perso; the bee Ed shoots is slot 0, and each shot takes one.
+A new game (`GAM_00419290`): no powers, slot 0 = 0, slots 1-6 = -1, the rest 0.
+**Port** (tools/ttre/hud.py -> hud.tthd; .ttlv INVT; core tc_hud.c; `make hudcheck`):
+- The converter renders every glyph once, front-on, into one atlas (the 3D ones lit from the upper left: the exe's
+  own light for texts is not read), and Ed's head from his first state's first frame. The core lays the texts out in
+  the exe's units and gives the frontends flat quads (tc_viewer_hud).
+- **Any screen shape.** The layout stays 7 units high. An element by the left or right edge of the 4:3 frame keeps its
+  distance to that edge of the real screen; the standard HUD's by which side they are on, a slot's text when it is
+  more than 1.5 from the middle.
+- **Inferred, not read:** the texts' camera. It stands 5 away with half the screen 3.5 high: three icon and number
+  pairs (depths 12, 5 and 6 against 0) then line up at x = 4.0, and a string at y = -2.5 sits in the middle of its box.
+- **The HUD stays on screen** (the user: the game's default; hiding was on one of its F keys). tc_hud.auto_hide is
+  the other mode, with nothing setting it yet. Which key, and where the exe keeps the choice (`DAT_008bd07a`), is open.
+- **Three lives** at a fresh start (the user); the exe's start value is not read.
+- **The sliding stages' start.** With the HUD, Totalski and skymap wait behind "Press 'Jump' to start"
+  (tc_viewer_hud_waits; a recording keeps it as door TC_RD_HUD); without it, and where the level asks (.ttai AUTO: the
+  Special Edition's Totalski, imported courses), the driver still presses Jump itself. **Stand-in:** waiting, the
+  skier is held where he stands. His waiting state is a walker's (card type 0) on snow of grip 0, which
+  `DNM_WalkForces_004c41c5` as read makes frictionless, so he crept downhill; he also drops 0.78 onto the snow at the
+  start. Why the exe's stands still is **open** (a start platform the port lacks would explain both).
+- **The race clock** never ran: Totalski's start gate (PAT_DEPARTESSAI) tests its own zone by naming itself, not Me,
+  and only Me's zones were exported (cast.py named_zones). The finish's bonus compared against a time of 0.
+- **Not done:** the head as his animation has it each frame; the letters' effects (`FUN_004cbf50`: the counters
+  bounce and are lit when they change); the mercury's rise and fall over time (`GAM_0041a360`); slot kind 3
+  (`GAM_004189e0`, drawn by `GAM_00419070`); saving; what gives the first life count. Seen in sud0: a scarab hive
+  (HEG_RucheScarab01) starts by itself a few seconds in and gives a bee; its ZDE test against Ed is the suspect.
 
 ## Custom gameplay (2026-11-12)
 

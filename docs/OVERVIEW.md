@@ -94,8 +94,8 @@ The direction is to fold each back into the cast, one subsystem at a time (docs/
 
 ## How it is checked
 
-`make -C core checkall` is the gate: thirteen headless checks on the real levels (walking, skiing, portals, sectors, the
-camera, the cast, replays, the debug menu). They prove the build has not changed against what was measured before; they do not prove it
+`make -C core checkall` is the gate: fourteen headless checks on the real levels (walking, skiing, portals, sectors, the
+camera, the cast, replays, the debug menu, the HUD). They prove the build has not changed against what was measured before; they do not prove it
 looks or feels right. Only a playtest does.
 
 ## Where to read more

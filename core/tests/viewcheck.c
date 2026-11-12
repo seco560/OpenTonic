@@ -702,6 +702,7 @@ static void shoot_scenario(const char *dir) {
         if ((c->actors[i].entry->flags & TC_CAST_SPAWN) && c->actors[i].model.zde.zone_count && !bee) bee = &c->actors[i];
     }
     if (!guard || !bee) { printf("  (north has no spawnable bee / guard 46, an older export: shooting skipped)\n"); tc_viewer_free(&v); tc_level_free(&level); return; }
+    ((tc_cast *)c)->globals.values[0] = 20; /* bees to shoot: the inventory is real since 2026-11-12, and he starts with none */
     run(&v, 1, 0);
     run(&v, 0.2f, BIT(TC_VA_ACTION));
     run(&v, 1, 0);

@@ -16,6 +16,7 @@
 #include "tc_transition.h"
 #include "tc_speech.h"
 #include "tc_debug.h"
+#include "tc_hud.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -327,6 +328,9 @@ typedef struct tc_viewer {
     /* The debug menu (tc_debug.h; F4). While it is open the game holds, as under a scripted picture, and the held
      * actions move the menu instead (tc_viewer_toggle_debug). */
     tc_debug debug;
+    /* The game's HUD (tc_hud.h): the scripts' text slots and the standard elements, stepped each game tick. */
+    tc_hud hud;
+    bool hud_waits;               /* tc_viewer_hud_waits */
 
     tc_recorder *rec;             /* tc_viewer_desc.recorder */
     tc_viewer_tape *tape;         /* an original demo playing (tc_viewer_play_tape), NULL none */
@@ -476,6 +480,22 @@ tc_result tc_viewer_set_survey(tc_viewer *v, const void *data, size_t size);
 /* The menu's picture this frame for a viewport of this aspect, TC_DEBUG_PANEL_W x _H, drawn as the speech panel is
  * (over everything else). False: closed. */
 bool tc_viewer_debug_panel(tc_viewer *v, float aspect, tc_view_speech_panel *out);
+/* The game's HUD (tc_hud.h; docs/ENGINE.md "The HUD"). tc_viewer_set_hud: the bytes of hud.tthd from the levels'
+ * folder (copied); without it there is no HUD. tc_viewer_hud: this frame's quads over the atlas (`rgba`, straight
+ * alpha, never changes once set: upload it once), for a viewport of this aspect; drawn over the frame, under the
+ * speech and debug panels. False: nothing to draw. */
+typedef struct tc_view_hud {
+    const uint8_t *rgba;
+    uint32_t width, height;
+    const tc_hud_quad *quads;
+    uint32_t count;
+} tc_view_hud;
+tc_result tc_viewer_set_hud(tc_viewer *v, const void *data, size_t size);
+bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out);
+/* The sliding stages (Totalski, skymap) begin behind "Press 'Jump' to start". Without the HUD nothing shows it, and the
+ * driver presses Jump itself (tc_ed_ai.auto_start, a stand-in); with the HUD the skier waits for the player, as in the
+ * game. tc_viewer_set_hud turns the wait on (retail levels); a recording keeps it (a replay begins with it off). */
+void tc_viewer_hud_waits(tc_viewer *v, bool on);
 /* The line on show, or NULL. */
 const tc_dialogue *tc_viewer_speech(const tc_viewer *v);
 /* The level persos running their own AI while playing (tc_cast.h), or NULL (no CAST chunk, no Ed AI). */

@@ -124,6 +124,17 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *ca
     SDL_free(survey);
     SDL_free(survey_path);
 
+    /* The game's HUD: its texts, fonts and atlas, from the levels' folder (tools/ttre/hud.py; none: no HUD). */
+    char *hud_path = path_join(v->level.folder, "hud.tthd");
+    size_t hud_size = 0;
+    void *hud = hud_path ? SDL_LoadFile(hud_path, &hud_size) : NULL;
+    if (hud) {
+        tc_result hr = tc_viewer_set_hud(&v->viewer, hud, hud_size);
+        if (hr != TC_OK) SDL_Log("%s: %s", hud_path, tc_result_string(hr));
+    }
+    SDL_free(hud);
+    SDL_free(hud_path);
+
     gpu_upload up;
     if (!gpu_upload_begin(g, &up)) {
         SDL_snprintf(err, err_size, "GPU upload: %s", SDL_GetError());

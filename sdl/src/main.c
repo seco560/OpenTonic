@@ -104,6 +104,10 @@ typedef struct app {
     SDL_GPUTexture *debug;       /* the debug menu's picture (tc_viewer_debug_panel), remade when it changes */
     uint32_t debug_version;
     bool debug_on;
+    SDL_GPUTexture *hud;         /* the HUD's atlas (tc_viewer_hud), uploaded when a viewer brings its own */
+    const uint8_t *hud_atlas;
+    tc_view_hud hud_view;        /* this frame's quads */
+    bool hud_on;
     float debug_rect[4];
     Uint64 loading_start_ns;     /* when the level last changed: the bar's animation clock */
     SDL_GPUTexture *loading_bar; /* the bar's rainbow pool (Textures/Sud0/o_zarbi_auntxy.png), loaded once */
@@ -200,6 +204,10 @@ static void loading_free(app *a) {
     if (a->debug) SDL_ReleaseGPUTexture(a->g.device, a->debug);
     a->debug = NULL;
     a->debug_on = false;
+    if (a->hud) SDL_ReleaseGPUTexture(a->g.device, a->hud);
+    a->hud = NULL;
+    a->hud_atlas = NULL;
+    a->hud_on = false;
 }
 
 static void close_level(app *a) {
@@ -1300,6 +1308,34 @@ static void speech_prepare(app *a) {
     SDL_DestroySurface(s);
 }
 
+/* The game's HUD: this frame's quads, and its atlas uploaded once per viewer (before the frame: uploads). */
+static void hud_prepare(app *a) {
+    int w = 1, h = 1;
+    SDL_GetWindowSizeInPixels(a->window, &w, &h);
+    a->hud_on = tc_viewer_hud(&a->view->viewer, h ? (float)w / (float)h : 1, &a->hud_view);
+    if (!a->hud_on || (a->hud && a->hud_atlas == a->hud_view.rgba)) return;
+    SDL_Surface *s = SDL_CreateSurfaceFrom((int)a->hud_view.width, (int)a->hud_view.height, SDL_PIXELFORMAT_RGBA32,
+                                           (void *)a->hud_view.rgba, (int)a->hud_view.width * 4);
+    gpu_upload u;
+    if (s && gpu_upload_begin(&a->g, &u)) {
+        if (a->hud) SDL_ReleaseGPUTexture(a->g.device, a->hud);
+        a->hud = gpu_upload_surface(&a->g, &u, s, false);
+        a->hud_atlas = a->hud_view.rgba;
+        gpu_upload_end(&a->g, &u);
+    }
+    SDL_DestroySurface(s);
+}
+
+static void draw_hud(app *a, gpu_frame *f, SDL_GPURenderPass *pass) {
+    float W = (float)f->width, H = (float)f->height;
+    for (uint32_t k = 0; k < a->hud_view.count; k++) {
+        const float *r = a->hud_view.quads[k].rect, *t = a->hud_view.quads[k].uv;
+        SDL_FRect uv = {t[0], t[1], t[2] - t[0], t[3] - t[1]};
+        gpu_quad(&a->g, f, pass, a->hud, (SDL_FRect){r[0] * W, r[1] * H, (r[2] - r[0]) * W, (r[3] - r[1]) * H}, &uv,
+                 (SDL_FColor){1, 1, 1, 1});
+    }
+}
+
 /* The debug menu's picture, as the text window's. */
 static void debug_prepare(app *a) {
     tc_view_speech_panel p;
@@ -1368,6 +1404,7 @@ static void draw(app *a) {
         tc_viewer_overlay(&a->view->viewer, &o);
         if (o.kind == TC_VO_LOADING) loading_prepare(a, o.level);
         if (o.kind == TC_VO_PICTURE) picture_prepare(a, o.picture);
+        hud_prepare(a);
         speech_prepare(a);
         debug_prepare(a);
     } else if (a->next_level) {
@@ -1388,12 +1425,13 @@ static void draw(app *a) {
     } else if (a->view) {
         view_draw_frame(a->view, &f);
         bool sight = view_draw_crosshair(a->view, &f, NULL);
-        bool speech = a->speech_on && a->speech, menu = a->debug_on && a->debug;
-        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu) {  /* screen transition or loading screen, the gunsight, the controls */
+        bool speech = a->speech_on && a->speech, menu = a->debug_on && a->debug, hud = a->hud_on && a->hud;
+        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu || hud) {  /* screen transition or loading screen, the gunsight, the controls */
             SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, false, (SDL_FColor){0, 0, 0, 1});
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
                 if (sight) view_draw_crosshair(a->view, &f, pass);
+                if (hud) draw_hud(a, &f, pass);
                 if (speech) draw_speech(a, &f, pass);
                 if (o.kind == TC_VO_LOADING) draw_loading(a, &f, pass, o.progress);
                 if (o.kind == TC_VO_PICTURE) draw_picture(a, &f, pass);

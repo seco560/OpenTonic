@@ -222,6 +222,10 @@ typedef struct tc_cast_entry {
                                      removals and deactivations take wherever the main actor is (no removal guard) */
 #define TC_CAST_SPAWN 64u         /* a spawnable template (LevelData.spawnables): out until a script instances it (META 11) */
 #define TC_CAST_TABLES 32u        /* the entry carries its scripts' strings and constant vectors (tables_size, tables) */
+/* A perso's inventory object (perso +0x34 -> { u16 amount, i16 slot }; .ttlv INVT): picked up, `amount` goes onto
+ * save value `slot` (PROC 142, 0x419310). */
+typedef struct tc_ai_inv_entry { uint16_t id; int16_t slot; uint16_t amount; } tc_ai_inv_entry;
+
 typedef struct tc_cast_data {
     uint16_t main_actor;         /* the player's perso id */
     uint16_t main_alias;         /* the fix Ed where another perso is the player (the skier): the same as him, 0 none */
@@ -229,6 +233,8 @@ typedef struct tc_cast_data {
     uint16_t family_count, count;
     tc_cast_family *families;
     tc_cast_entry *entries;
+    uint16_t inv_count;          /* .ttlv INVT: the persos' inventory objects (tc_ai.h), by perso id */
+    tc_ai_inv_entry *inv;
     tc_cast_entry main_zones;    /* the main actor's ZDD zones (zones, zone_count only: in his moving axes) */
     uint16_t ghost_count;        /* the persos the cast's scripts name that do not run: their dsgvars, shared */
     struct tc_cast_ghost { uint16_t id; tc_vec3 position; uint32_t size; uint8_t *dsg; } *ghosts;

@@ -51,6 +51,7 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     tc_mec_walk_reset(&e->walk);
     e->contacts = 0;
     e->auto_start = false;
+    e->wait_start = false;
     e->time = 0;
     e->trigger_wake = NULL;
     e->triggers_fired = 0;
@@ -533,8 +534,9 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     run_triggers(e);
     run_portals(e);
     a->screen_covered = e->screen_covered;
-    if (e->auto_start && a->normal.behaviour == a->model->initial_normal) inputs |= 1u << TC_AI_IN_JUMP;
-    else e->auto_start = false;
+    if (e->auto_start && a->normal.behaviour == a->model->initial_normal) {
+        if (!e->wait_start) inputs |= 1u << TC_AI_IN_JUMP;
+    } else e->auto_start = false;
     a->inputs = inputs;
     a->stick_x = stick_x;
     a->stick_y = stick_y;

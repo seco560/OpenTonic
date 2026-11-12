@@ -62,10 +62,10 @@ These are not bugs: they are parts of the game that are faked or missing.
 | what | today |
 |---|---|
 | Story progress | powers all on; removals under a story test are turned into frozen props at export; four of sud0's five gates are left out at export |
-| Inventory | a stub: Ed has one of everything |
+| Inventory | real since 2026-11-12 (docs/ENGINE.md "The HUD"): pickups count on the save values, Ed's shots take bees, and he starts with none |
 | Saving | the scripts' SaveGame is skipped |
 | What the powers 7, 8, 0x70, 0x100 and 0x200 are | not read (0x80 is flying) |
-| HUD: counters, boss bars, strings | not built |
+| HUD: counters, boss bars, strings | built 2026-11-12, first pass seen by the user the same day; boss bars never seen; Ed's head is one still frame |
 | Lip sync | read, not built |
 | Card types 8 and 9 (some props' physics) | they only turn in place |
 | The camera's "watch him fall" mode; fixed shots at a ski finish | not ported |

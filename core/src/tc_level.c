@@ -142,6 +142,7 @@ void tc_level_free(tc_level *level) {
         tc_free(level->cast.entries[i].zones);
     }
     tc_free(level->cast.entries);
+    tc_free(level->cast.inv);
     tc_free(level->cast.main_zones.zones);
     for (i = 0; level->cast.ghosts && i < level->cast.ghost_count; i++) tc_free(level->cast.ghosts[i].dsg);
     tc_free(level->cast.ghosts);
@@ -913,6 +914,18 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 
     if (chunk_need(&cs, "CAST", r)) {
         read_cast(&level->cast, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "INVT", r)) { /* optional: the persos' inventory objects (absent: nothing can be picked up) */
+        uint32_t k, n = rd_u32(r);
+        level->cast.inv = (tc_ai_inv_entry *)rd_array(r, n, sizeof(tc_ai_inv_entry), 6);
+        level->cast.inv_count = level->cast.inv ? (uint16_t)n : 0;
+        for (k = 0; level->cast.inv && k < n; k++) {
+            level->cast.inv[k].id = rd_u16(r);
+            level->cast.inv[k].slot = rd_i16(r);
+            level->cast.inv[k].amount = rd_u16(r);
+        }
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 

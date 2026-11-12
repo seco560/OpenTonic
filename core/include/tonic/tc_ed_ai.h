@@ -53,6 +53,9 @@ typedef struct tc_ed_ai {
     /* Totalski / skymap: the skier starts in a behaviour that waits for Jump behind a text box (B2); with auto_start
      * (default on those levels) the driver presses Jump until that behaviour is left, so the ride starts at once. */
     bool auto_start;
+    /* Host-set: the start text is on screen (the HUD), so the player presses Jump himself: no automatic press. While
+     * auto_start is still set he is waiting behind the text. */
+    bool wait_start;
     tc_mec_env env;
     /* Ed's sector (tc_sector.h): where his water is looked up, which triangles he collides with (tc_sectors_solid). Set the level's sectors with tc_ed_ai_set_sectors (NULL:
      * none, no water); each step moves it on through the portals, and looks it up again after the player was placed

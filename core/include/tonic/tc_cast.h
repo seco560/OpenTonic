@@ -156,6 +156,8 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o);
 /* Where perso `id` is now (an actor, a ghost, the main actor), or where the level data places it (a ghost or an
  * actor's CAST record: the camera's snapshot position); false when the cast does not know it. */
 bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out);
+/* Perso `id`'s hit points and their maximum (a boss's life bar: tc_hud.h); false when the cast does not run it. */
+bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *max);
 bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out);
 /* The matrix of a sector the scripts have moved (the identity: where the export has it), NULL for one they have not.
  * The static world's triangles follow it (c->world); the host draws the sector's geometry with it. */

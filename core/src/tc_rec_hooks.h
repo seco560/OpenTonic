@@ -10,6 +10,7 @@ typedef enum tc_rec_door {
     TC_RD_STEP_LOOK, TC_RD_INVERT_Y, TC_RD_LIGHT_SET, TC_RD_FOLLOW_LIGHT, TC_RD_STEP_GAMMA, TC_RD_STEP_FOV, TC_RD_FOG,
     TC_RD_LIGHTING, TC_RD_SECTORS, TC_RD_WHEEL, TC_RD_TOGGLE_PLAY, TC_RD_TOGGLE_AI, TC_RD_DEMO_ON, TC_RD_DEMO_OFF,
     TC_RD_DEBUG, /* the debug menu opened or closed; its moves are the frames' held actions */
+    TC_RD_HUD,   /* the HUD is there (tc_viewer_set_hud): a sliding stage waits for Jump behind its start text */
     TC_RD_COUNT
 } tc_rec_door_id;
 

@@ -253,8 +253,8 @@ void tc_debug_input(tc_debug *d, uint32_t buttons, float dt, tc_ai_globals *g) {
     if (act == TC_DEBUG_ACT_RELOAD) d->reload = true;
     if (!g) return;
     if (act == TC_DEBUG_ACT_ALL_ON) g->powers = TC_AI_POWERS_ALL;
-    if (act == TC_DEBUG_ACT_STORY_START) g->powers = 0;
-    if (act == TC_DEBUG_ACT_STORY_START || act == 100) memset(g->values, 0, sizeof(g->values));
+    if (act == 100) memset(g->values, 0, sizeof(g->values));
+    if (act == TC_DEBUG_ACT_STORY_START) tc_ai_globals_new_game(g); /* GAM_00419290 */
 }
 
 /* ---- the screen ---- */
@@ -403,7 +403,7 @@ static void layout(const tc_debug *d, const tc_ai_globals *g, const char *level,
                 act = act == TC_DEBUG_ACT_ZERO ? 100 : act == TC_DEBUG_ACT_VALUE_SCOPE ? TC_DEBUG_ACT_SCOPE : TC_DEBUG_ACT_RELOAD;
             put(s, line, 3, LEFT_W - 3, a,
                 act == TC_DEBUG_ACT_ALL_ON ? "All powers on" :
-                act == TC_DEBUG_ACT_STORY_START ? "Story start: no powers, values 0" :
+                act == TC_DEBUG_ACT_STORY_START ? "Story start: a new game's values" :
                 act == 100 ? "All values to 0" :
                 act == TC_DEBUG_ACT_SCOPE ? (d->all_levels ? "Uses shown:  < every level >" : "Uses shown:  < this level >") :
                 "Reload the level with these");
@@ -450,7 +450,7 @@ static void layout(const tc_debug *d, const tc_ai_globals *g, const char *level,
             act = act == TC_DEBUG_ACT_ZERO ? 100 : act == TC_DEBUG_ACT_VALUE_SCOPE ? TC_DEBUG_ACT_SCOPE : TC_DEBUG_ACT_RELOAD;
         pane_add(&p, A_TEXT, 0,
                  act == TC_DEBUG_ACT_ALL_ON ? "Every power on (0xFFFF): how the port has started every level so far." :
-                 act == TC_DEBUG_ACT_STORY_START ? "No powers and every save value 0. Then reload the level: expect every "
+                 act == TC_DEBUG_ACT_STORY_START ? "A new game: no powers, no bees, none of Doc's six objects (-1). Then reload the level: expect every "
                                                    "gate shut and every missing-power bug at once." :
                  act == 100 ? "Every save value to 0. The powers stay." :
                  act == TC_DEBUG_ACT_SCOPE ? "Whose uses the lines here list: this level's characters, or every level's." :

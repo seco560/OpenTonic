@@ -269,6 +269,9 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
     uint32_t i, n = 0;
     memset(c, 0, sizeof(*c));
     c->globals.powers = TC_AI_POWERS_ALL; /* port: every power from the start (tc_ai.h) */
+    c->globals.lives = 3; /* a new game's (the user, 2026-11-12; the exe's start value is not read); a level change carries them */
+    c->globals.inv = d->inv; /* the inventory objects (PROC 142, FUNC 95-97) */
+    c->globals.inv_count = d->inv_count;
     c->level = l;
     c->main = main;
     c->main_id = d->main_actor;
@@ -661,6 +664,14 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o) {
         if (a->obstacle && !(a->obstacle->flags & TC_PCOL_CAST)) a->obstacle = NULL; /* posed once, by the export */
         pose_obstacle(c, a);
     }
+}
+
+bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *max) {
+    tc_ai_perso *q = c && c->by_id ? cast_find((void *)c, id) : (c && id == c->main_id ? c->main : NULL);
+    if (!q) return false;
+    *points = q->hit_points;
+    *max = q->hit_points_max;
+    return true;
 }
 
 bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
