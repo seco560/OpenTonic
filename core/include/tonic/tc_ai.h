@@ -42,7 +42,12 @@ enum { TC_AI_ANALOG_NONE, TC_AI_ANALOG_ANGLE, TC_AI_ANALOG_MAGNITUDE, TC_AI_ANAL
 
 typedef struct tc_ai_node { uint32_t param; uint8_t type, depth; } tc_ai_node;
 typedef struct tc_ai_behaviour { int32_t schedule; uint16_t first_script, script_count; } tc_ai_behaviour;
-typedef struct tc_ai_dsgvar { uint32_t offset; uint8_t type; } tc_ai_dsgvar;
+/* save: how the game saves the variable (tools/ttre/ai.py dsg_save_flags, the exe's save module flags): with the
+ * player's save, or with the level's own file, written on the way out of a level and read back on the way in. */
+#define TC_AI_DSG_SAVE_PLAYER 1
+#define TC_AI_DSG_SAVE_LEVEL 2
+typedef struct tc_ai_dsgvar { uint32_t offset; uint8_t type; uint8_t save; } tc_ai_dsgvar;
+int tc_ai_dsg_width(uint8_t type); /* bytes of a dsgvar of this type in the buffers */
 typedef struct tc_ai_dsg_def { uint16_t count; uint32_t size; tc_ai_dsgvar *vars; uint8_t *initial; } tc_ai_dsg_def;
 typedef struct tc_ai_transition { uint16_t target, via; } tc_ai_transition;
 typedef struct tc_ai_state {
@@ -239,6 +244,10 @@ typedef struct tc_ai_model {
     uint32_t link_triangles, link_crc;
     /* Optional (Special Edition levels that switch walking / skiing): MODZ, and ALTM = a whole second .ttai (the
      * skier), a copy of its bytes for tc_ai_model_load. */
+    /* .ttai STRT: the normal behaviours another perso's takeover puts this one in before the initial one, a tick each
+     * (the skier's B4, whose schedule sets him up, before B2 waits for Jump: tools/ttre/ai.py start_chain) */
+    uint16_t start_chain[4];
+    uint8_t start_chain_count;
     bool auto_start;             /* .ttai AUTO: the driver presses Jump until the initial behaviour is left (tc_ed_ai) */
     uint16_t mode_zone_count;
     tc_ai_mode_zone *mode_zones;
@@ -515,6 +524,9 @@ struct tc_ai_perso {
      * the target lately (near_main_ms, host-fed: within the last TC_AI_REMOVAL_MS): the pickups. Otherwise (a story
      * check: Doc already rescued as the port's flags say) the target stays as a prop: frozen, drawn, not thinking. */
     bool removal_guard;
+    bool level_restored;         /* host-set (tc_cast.c load_actor): a level-saved dsgvar came back changed from an earlier
+                                    visit, so taking itself out is its own saved state's doing (a pickup already taken),
+                                    not a story check: the removal guard lets it go */
     uint32_t near_main_ms;       /* host-fed: the clock when the main actor was last within reach (0 never) */
     bool frozen;
     uint32_t removals_kept;      /* diagnostics */

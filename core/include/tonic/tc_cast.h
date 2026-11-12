@@ -107,6 +107,9 @@ typedef struct tc_cast {
     int32_t *by_prso;            /* tc_level.persos index -> actor index, -1 */
     tc_ai_perso *main;
     int32_t main_id;
+    uint8_t *alias_saved;        /* the fix Ed's dsgvars at the level's start, where he stands for the main actor (the ski
+                                    levels): his player-saved ones go back to these at a restart (tc_cast_respawn) */
+    uint32_t alias_saved_size;
     tc_ai_globals globals;
     uint16_t sounds_out[TC_AI_MAX_SOUNDS]; /* this step's sound events (global indices) */
     uint8_t sounds_out_count;
@@ -170,10 +173,17 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
                   tc_sample *s);
 /* Diagnostics: the primitives the cast's scripts skipped, summed (as tc_ai_perso.unknown, 10 * TC_AI_UNKNOWN_STRIDE). */
 void tc_cast_unknown(const tc_cast *c, uint32_t *out);
-/* After the main actor's death and the port's respawn: the original reloads the level, so the level logic that took
- * itself out comes back. Port: the undrawn persos that started active and are out (or frozen by the removal guard)
- * now (the pit markers: they fire once and RemovePerso themselves) start again; drawn ones (the pickups) stay as they are. */
+/* After the main actor's death (or the ski levels' retry) and the port's respawn: the original initialises the map
+ * again (GameAction0), so its level logic starts over. Port: the undrawn persos that started active start again, with
+ * their level-saved variables as they are (the start text, World and its race clock, the finish gates, the pit markers
+ * that fire once and RemovePerso themselves); drawn ones (the pickups, the characters) stay as they are. Before
+ * 2026-11-13 only those that were out came back, and after a retry the start text and the clock did not. */
 void tc_cast_respawn(tc_cast *c);
+/* The level's saved values (tc_ai_dsgvar.save & TC_AI_DSG_SAVE_LEVEL: a pickup's "still here"): the exe writes them to
+ * the level's own file on the way out of a level and reads them on the way in. Port: kept in memory for the run.
+ * tc_cast_level_save on the way out (the actors' current values); an actor's start takes them back; a new run clears. */
+void tc_cast_level_save(const tc_cast *c);
+void tc_cast_level_saves_clear(void);
 
 #ifdef __cplusplus
 }

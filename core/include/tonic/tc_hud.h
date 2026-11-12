@@ -87,6 +87,9 @@ void tc_hud_free(tc_hud *h);
 tc_result tc_hud_load(tc_hud *h, const void *data, size_t size);
 /* One game tick (1/30 s): the standard HUD's timers and slides, and the text slots' frame counts. */
 void tc_hud_tick(tc_hud *h, tc_ai_globals *g, const tc_hud_values *now);
+/* Port: the standard elements off the screen at once (behind a covered screen or a loading screen: tc_viewer); the
+ * next ticks slide them in again. */
+void tc_hud_away(tc_hud *h);
 /* The quads of this frame for a viewport of this aspect (width / height): the text slots (boss_points /
  * boss_max: per slot, a boss bar's hit points, from the host), then the standard HUD when `standard`. */
 uint32_t tc_hud_build(tc_hud *h, const tc_ai_globals *g, const uint8_t *boss_points, const uint8_t *boss_max,

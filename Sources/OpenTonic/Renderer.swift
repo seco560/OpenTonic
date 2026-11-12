@@ -86,11 +86,11 @@ import TonicCore
     }
     /// Supersampling, percent of the drawable's pixels per axis: 100 (off), 150, 200; F3 cycles it. The level is drawn
     /// at that size (on top of the MSAA) into `scaled`, then filtered down into the drawable (at 200 a 2 x 2 box
-    /// filter). Kept across levels and launches (UserDefaults "supersampling", default 200); off for this run when its
+    /// filter). Kept across levels and launches (UserDefaults "supersampling", default 150); off for this run when its
     /// targets can't be made.
     private(set) var scale = 100
     static var preferredScale: Int {
-        get { UserDefaults.standard.object(forKey: "supersampling") as? Int ?? 200 }
+        get { UserDefaults.standard.object(forKey: "supersampling") as? Int ?? 150 }
         set { UserDefaults.standard.set(newValue, forKey: "supersampling") }
     }
     var nextScale: Int { scale >= 200 ? 100 : scale >= 150 ? 200 : 150 }

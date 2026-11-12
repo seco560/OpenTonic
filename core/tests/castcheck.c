@@ -552,6 +552,111 @@ static void river_wall(const char *dir) {
     check(moved_with && fabsf(z_with + 50) < 0.01f && !hit_with, "with power 7 Suzy drops it 50: the way is open");
 }
 
+/* The level's saved values (tc_cast.h): a pickup taken on one visit is not there on the next (the user, 2026-11-13:
+ * "antidotes respawn BUT they still count as picked up"), and is there again in a new run. Totalski: the skier is put on
+ * a bonus while he waits at the start. The way out is the viewer's own step (tc_cast_level_save, as its level change and
+ * the debug menu's reload call it), then a viewer that arrives with a carry. */
+static bool saves_open(const char *dir, const tc_viewer_carry *carry, tc_level *lv, tc_viewer *v, uint8_t **ai) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data;
+    tc_viewer_desc desc;
+    snprintf(path, sizeof(path), "%s/Totalski.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(lv, data, size) != TC_OK) { free(data); return false; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/Totalski.ttai", dir);
+    *ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = lv;
+    desc.level_name = "Totalski";
+    desc.ai_data = *ai;
+    desc.ai_size = ai_size;
+    desc.carry = carry;
+    desc.seed = 7;
+    if (tc_viewer_init(v, &desc) != TC_OK) { free(*ai); tc_level_free(lv); return false; }
+    if (!v->playing && tc_viewer_can_play(v)) tc_viewer_toggle_play(v);
+    return true;
+}
+
+static const tc_cast_actor *actor_of(const tc_cast *c, int32_t id) {
+    return c && id > 0 && (uint32_t)id < c->id_count && c->by_id[id] >= 0 && (uint32_t)c->by_id[id] < c->count
+               ? &c->actors[c->by_id[id]] : NULL;
+}
+
+static bool level_saved(const tc_cast_actor *a) {
+    uint16_t k;
+    for (k = 0; a->model.dsg.vars && k < a->model.dsg.count; k++)
+        if (a->model.dsg.vars[k].save & TC_AI_DSG_SAVE_LEVEL) return true;
+    return false;
+}
+
+static void taken_stays_taken(const char *dir) {
+    tc_level lv;
+    tc_viewer v;
+    tc_viewer_carry *carry;
+    uint8_t *ai;
+    const tc_cast *c;
+    const tc_cast_actor *a;
+    int32_t taken = 0, other = 0, count_before = 0;
+    uint32_t i, saved = 0;
+    char what[256];
+    int k;
+    if (!saves_open(dir, NULL, &lv, &v, &ai)) return;
+    printf("Totalski, a bonus taken and the level entered again:\n");
+    c = tc_viewer_cast(&v);
+    for (i = 0; c && i < c->count; i++) saved += level_saved(&c->actors[i]);
+    if (!saved) {
+        printf("  info  this export does not say which variables the level saves (made before 2026-11-13: reinstall)\n");
+        tc_viewer_free(&v); free(ai); tc_level_free(&lv);
+        return;
+    }
+    for (k = 0; k < 30; k++) frame(&v);
+    for (i = 0; i < c->count && !taken; i++) { /* the first drawn, level-saved pickup that goes when the skier is on it */
+        const tc_cast_actor *b = &c->actors[i];
+        if (b->entry->prso == 0xFFFF || !b->ai.active || !level_saved(b) || !b->ai.removal_guard) continue;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), b->ai.position, 0);
+        for (k = 0; k < 240 && b->ai.active; k++) frame(&v);
+        if (!b->ai.active) taken = b->entry->id;
+    }
+    for (i = 0; i < c->count && !other; i++) {
+        const tc_cast_actor *b = &c->actors[i];
+        if (b->entry->prso != 0xFFFF && b->ai.active && !b->ai.frozen && level_saved(b) && b->entry->id != taken) other = b->entry->id;
+    }
+    snprintf(what, sizeof(what), "the skier takes a pickup (perso %d); another (perso %d) is left", taken, other);
+    check(taken && other, what);
+    for (k = 0; k < 31; k++) count_before += c->globals.values[k] > 0 ? c->globals.values[k] : 0;
+    carry = (tc_viewer_carry *)calloc(1, sizeof(*carry));
+    snprintf(carry->level, sizeof(carry->level), "totalski");
+    carry->has_progress = 1;
+    carry->lives = c->globals.lives;
+    carry->powers = c->globals.powers;
+    memcpy(carry->values, c->globals.values, sizeof(carry->values));
+    tc_cast_level_save(c);
+    tc_viewer_free(&v); free(ai); tc_level_free(&lv);
+    if (!taken || !other) { free(carry); return; }
+
+    if (!saves_open(dir, carry, &lv, &v, &ai)) { check(0, "Totalski opens again"); free(carry); return; }
+    for (k = 0; k < 90; k++) frame(&v);
+    c = tc_viewer_cast(&v);
+    a = actor_of(c, taken);
+    snprintf(what, sizeof(what), "back in the level it is gone: active %d, frozen %d (it was %.0f away from the start)",
+             a ? a->ai.active : -1, a ? a->ai.frozen : -1,
+             a ? (double)tc_v3_distance(a->ai.position, tc_viewer_player(&v)->position) : 0.0);
+    check(a && !a->ai.active && !a->ai.frozen, what);
+    a = actor_of(c, other);
+    check(a && a->ai.active && !a->ai.frozen, "the one not taken is still there");
+    { int now = 0; for (k = 0; k < 31; k++) now += c->globals.values[k] > 0 ? c->globals.values[k] : 0;
+      check(now == count_before, "and the counts are as they were"); }
+    tc_viewer_free(&v); free(ai); tc_level_free(&lv);
+    free(carry);
+
+    if (!saves_open(dir, NULL, &lv, &v, &ai)) { check(0, "Totalski opens a third time"); return; }
+    for (k = 0; k < 90; k++) frame(&v);
+    a = actor_of(tc_viewer_cast(&v), taken);
+    check(a && a->ai.active, "a new run (no carry): it is there again");
+    tc_viewer_free(&v); free(ai); tc_level_free(&lv);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv";
     static const char *defaults[] = {"sud0", "north", "Land"};
@@ -561,6 +666,7 @@ int main(int argc, char **argv) {
     else
         for (i = 0; i < 3; i++) level(dir, defaults[i]);
     if (argc <= 2) river_wall(dir);
+    if (argc <= 2) taken_stays_taken(dir);
     printf(failures ? "FAIL (%d)\n" : "ok\n", failures);
     return failures ? 1 : 0;
 }

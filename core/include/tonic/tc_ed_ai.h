@@ -56,6 +56,9 @@ typedef struct tc_ed_ai {
     /* Host-set: the start text is on screen (the HUD), so the player presses Jump himself: no automatic press. While
      * auto_start is still set he is waiting behind the text. */
     bool wait_start;
+    /* The takeover's first behaviours (tc_ai_model.start_chain): how many are still to come + 1 while it runs, 0 after.
+     * Set at the start and at a restart; each step then forces the next, and the initial behaviour last. */
+    uint8_t start_step;
     tc_mec_env env;
     /* Ed's sector (tc_sector.h): where his water is looked up, which triangles he collides with (tc_sectors_solid). Set the level's sectors with tc_ed_ai_set_sectors (NULL:
      * none, no water); each step moves it on through the portals, and looks it up again after the player was placed

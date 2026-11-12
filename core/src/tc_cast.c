@@ -1,4 +1,5 @@
 #include "tc_internal.h"
+#include <ctype.h>
 #include <string.h>
 #include "tonic/tc_cast.h"
 #include "tonic/tc_alloc.h"
@@ -133,6 +134,94 @@ static void detach(tc_ai_model *m) { /* the borrowed family arrays, before tc_ai
     m->sound_count = 0;
 }
 
+/* ---- The level's saved values ----
+ * Read: a dsgvar's info names how the game saves it (tc_ai_dsgvar.save). The level-saved ones go to the level's own file
+ * on the way out of a level (GAM_00421500: "<level>.sav") and come back on the way in (GAM_004219e0), and a map's
+ * re-initialisation does not put them back to their first values (their init flag is 1, the others' 4). A bonus's
+ * dsg0 is one: it sets it to 0 when taken, and its first rule takes it out again when it starts with 0.
+ * Port: the files are a table in memory, for the run (tc_cast_level_saves_clear starts a new one): the port has no save
+ * games yet. Only the actors' variables are kept (not the ghosts'). */
+typedef struct level_save {
+    uint32_t level;              /* hash of the edition and the level's name */
+    uint16_t perso, var;
+    uint8_t size, bytes[12];
+} level_save;
+static level_save *g_saves;
+static uint32_t g_save_count, g_save_room;
+
+void tc_cast_level_saves_clear(void) {
+    tc_free(g_saves);
+    g_saves = NULL;
+    g_save_count = g_save_room = 0;
+}
+
+static uint32_t level_key(const tc_cast *c) {
+    const char *s = c->main ? c->main->level_name : NULL;
+    uint32_t h = 2166136261u ^ (c->level ? c->level->edition : 0);
+    for (; s && *s; s++) h = (h ^ (uint32_t)tolower((unsigned char)*s)) * 16777619u;
+    return h;
+}
+
+static level_save *find_save(uint32_t level, uint16_t perso, uint16_t var) {
+    uint32_t i;
+    for (i = 0; i < g_save_count; i++)
+        if (g_saves[i].level == level && g_saves[i].perso == perso && g_saves[i].var == var) return &g_saves[i];
+    return NULL;
+}
+
+static void save_actor(uint32_t level, const tc_cast_actor *a) {
+    const tc_ai_dsg_def *d = &a->model.dsg;
+    uint16_t k;
+    if (!a->ai.model || !a->ai.dsg) return;
+    for (k = 0; d->vars && k < d->count; k++) {
+        int w = tc_ai_dsg_width(d->vars[k].type);
+        level_save *s;
+        if (!(d->vars[k].save & TC_AI_DSG_SAVE_LEVEL) || d->vars[k].offset + (uint32_t)w > d->size) continue;
+        s = find_save(level, a->entry->id, k);
+        if (!s) {
+            if (g_save_count == g_save_room) {
+                uint32_t room = g_save_room ? g_save_room * 2 : 256;
+                level_save *more = (level_save *)tc_calloc(room, sizeof(*more));
+                if (!more) return; /* out of memory: this one is not kept */
+                if (g_saves) memcpy(more, g_saves, g_save_count * sizeof(*more));
+                tc_free(g_saves);
+                g_saves = more;
+                g_save_room = room;
+            }
+            s = &g_saves[g_save_count++];
+            s->level = level;
+            s->perso = a->entry->id;
+            s->var = k;
+        }
+        s->size = (uint8_t)w;
+        memcpy(s->bytes, a->ai.dsg + d->vars[k].offset, (size_t)w);
+    }
+}
+
+void tc_cast_level_save(const tc_cast *c) {
+    uint32_t i, level = level_key(c);
+    for (i = 0; i < c->count; i++) save_actor(level, &c->actors[i]);
+}
+
+/* An actor's start: what an earlier visit (or this one, before a restart) left in its level-saved variables. */
+static void load_actor(const tc_cast *c, tc_cast_actor *a) {
+    const tc_ai_dsg_def *d = &a->model.dsg;
+    uint32_t level;
+    uint16_t k;
+    if (!g_save_count || !a->ai.dsg) return;
+    level = level_key(c);
+    for (k = 0; d->vars && k < d->count; k++) {
+        const level_save *s;
+        if (!(d->vars[k].save & TC_AI_DSG_SAVE_LEVEL)) continue;
+        s = find_save(level, a->entry->id, k);
+        if (!s || s->size != tc_ai_dsg_width(d->vars[k].type) || d->vars[k].offset + s->size > d->size) continue;
+        /* only a value the visit changed marks it: most of these persos are story characters whose saved flags never
+         * moved, and for them the removal guard stays as it was on the first visit */
+        if (memcmp(a->ai.dsg + d->vars[k].offset, s->bytes, s->size) != 0) a->ai.level_restored = true;
+        memcpy(a->ai.dsg + d->vars[k].offset, s->bytes, s->size);
+    }
+}
+
 /* The AI's start (tc_ai_init) with the cast's links and the entry's std game. */
 static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     const tc_cast_entry *e = a->entry;
@@ -178,6 +267,7 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     a->sector.sector = e->sector;
     a->sector.position = p->position;
     a->sector.placed = 0;
+    load_actor(c, a);
     return TC_OK;
 }
 
@@ -378,6 +468,8 @@ oom:
 void tc_cast_free(tc_cast *c) {
     uint32_t i, k;
     if (!c) return;
+    tc_free(c->alias_saved);
+    c->alias_saved = NULL;
     for (i = 0; c->actors && i < c->count; i++) {
         tc_ai_free(&c->actors[i].ai);
         detach(&c->actors[i].model);
@@ -560,7 +652,10 @@ static void step_pass(tc_cast *c, bool first, float dt, const tc_sectors *s, uin
  * crates) before the dynamic world's walk (GAM_00428550). Port: within each pass in level perso order (the exe walks
  * the list's order, then the tree's). tc_viewer steps the main actor between the two (tc_cast_step_first, his step,
  * tc_cast_step_rest), so what he stands on has moved first; tc_cast_step runs both passes. */
+static void keep_alias(tc_cast *c);
+
 void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
+    keep_alias(c); /* once, before the first tick */
     c->main_sector = main_sector;
     begin_step(c);
     step_pass(c, true, dt, s, main_sector);
@@ -754,12 +849,40 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
     return true;
 }
 
+/* The fix Ed's variables as the level's start has them (the ski levels, where he is not the player: main_alias). */
+static void keep_alias(tc_cast *c) {
+    const tc_ai_perso *g = c->main ? c->main->alias_dsg : NULL;
+    if (c->alias_saved || !g || !g->model || !g->dsg || !g->model->dsg.size) return;
+    c->alias_saved = (uint8_t *)tc_alloc(g->model->dsg.size);
+    if (!c->alias_saved) return;
+    memcpy(c->alias_saved, g->dsg, g->model->dsg.size);
+    c->alias_saved_size = g->model->dsg.size;
+}
+
 void tc_cast_respawn(tc_cast *c) {
     uint32_t i;
+    /* Read: GameAction0 goes back to the last save (engine state 9), and the fix Ed's progress variables are saved
+     * with the player (TC_AI_DSG_SAVE_PLAYER), so they come back as saved: the ski levels' stage (dsg148, 3 at the
+     * finish) is not the finish's any more when World starts again and tests it. Port: there are no saves, so they go
+     * back to the level's start; and only where the fix Ed is not the player himself (on the other levels his death's
+     * own flags live among his dsgvars: not looked at one by one). */
+    if (c->alias_saved && c->main && c->main->alias_dsg && c->main->alias_dsg->model && c->main->alias_dsg->dsg &&
+        c->main->alias_dsg->model->dsg.size == c->alias_saved_size) {
+        const tc_ai_dsg_def *d = &c->main->alias_dsg->model->dsg;
+        uint16_t k;
+        for (k = 0; d->vars && k < d->count; k++) {
+            uint32_t w = (uint32_t)tc_ai_dsg_width(d->vars[k].type);
+            if ((d->vars[k].save & TC_AI_DSG_SAVE_PLAYER) && d->vars[k].offset + w <= d->size)
+                memcpy(c->main->alias_dsg->dsg + d->vars[k].offset, c->alias_saved + d->vars[k].offset, w);
+        }
+    }
+    tc_cast_level_save(c); /* the level-saved variables are not put back (their init flag): start_actor returns them */
     for (i = 0; i < c->count; i++) {
         tc_cast_actor *a = &c->actors[i];
-        /* out, or kept frozen by the removal guard (a removal with the main actor further than TC_CAST_NEAR) */
-        if (a->entry->prso != 0xFFFF || !a->entry->active || (a->ai.active && !a->ai.frozen) || !a->ai.model) continue;
+        /* The undrawn persos that started active: the level's logic (the start text and the race clock's World, the
+         * finish gates, the pit markers), whether it took itself out or runs on. Not the templates, nor a scene's. */
+        if (a->entry->prso != 0xFFFF || !a->entry->active || !a->ai.model) continue;
+        if (a->entry->flags & (TC_CAST_SPAWN | TC_CAST_TALK | TC_CAST_SCENE)) continue;
         tc_ai_free(&a->ai);
         if (start_actor(c, a) != TC_OK) memset(&a->ai, 0, sizeof(a->ai));
     }

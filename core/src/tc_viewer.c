@@ -110,7 +110,10 @@ static tc_viewer_play *play_create(tc_viewer *v, const tc_viewer_desc *desc) {
         if (p->has_driver && p->has_alt) p->driver.walk.firm_floors = true;
     }
     if (p->has_driver && l->cast.count) {
-        tc_result r = tc_cast_init(&p->cast, l, &p->driver.ai);
+        tc_result r;
+        /* Not through a portal: a new run, and no level has been visited in it (the level's saved values, tc_cast.h) */
+        if (!desc->carry) tc_cast_level_saves_clear();
+        r = tc_cast_init(&p->cast, l, &p->driver.ai);
         p->has_cast = r == TC_OK;
         if (r != TC_OK) v->ai_result = r;
         p->cast.globals.speech_host = l->speech.dialogue_count != 0; /* update_speech */
@@ -423,6 +426,7 @@ static void update_portals(tc_viewer *v, float dt) {
             c->orbit_distance = v->orbit_distance;
             c->closeup = v->cam.closeup;
             c->has_progress = v->play->has_cast;
+            if (c->has_progress) tc_cast_level_save(&v->play->cast); /* the way out: the level's saved values */
             if (c->has_progress) {
                 const tc_ai_globals *g = &v->play->cast.globals;
                 c->lives = g->lives;
@@ -1441,6 +1445,12 @@ static bool take_picture(tc_viewer *v) {
     return true;
 }
 
+/* Port (the user, 2026-11-13): no HUD over a covered screen or the loading screen (the frontends draw it last, over
+ * the overlay); it comes back, sliding in, with the reveal. */
+static bool hud_covered(const tc_viewer *v) {
+    return v->phase == TC_VP_BLACK || v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING;
+}
+
 /* The HUD's tick (tc_hud.h), after the cast's: what the standard elements show comes from Ed and the save values. The
  * level's bonuses count on the World perso's save value and the one after it (FUN_0043bc00, GAM_00419490: the exe
  * reads them through perso 0x8c1744's inventory object). */
@@ -1453,7 +1463,11 @@ static void hud_tick(tc_viewer *v) {
     now.hit_points = p->driver.ai.hit_points;
     now.hit_points_max = p->driver.ai.hit_points_max;
     now.lives = g->lives;
-    now.bees = g->values[0];
+    /* Port (the user, 2026-11-13: no ammunition counter before Ed has the peashooter): the bees show with power 8,
+     * which Ed's own scripts test before Action takes the blowgun out (B86 / B87: Cond_TestPower(8) -> B72) and which
+     * sud0's Doc gives. The exe's HUD has no such test (GAM_0041a720 only leaves the counter out at -1): there it comes
+     * when the count changes, or always under two of the four display options (GAM_00411c50: masks 0x5b, 0xdf). */
+    now.bees = (g->powers & 8) == 8 ? g->values[0] : -1;
     now.tings = now.spade = -1;
     for (k = 0; k < g->inv_count; k++)
         if (g->inv[k].id == v->level->cast.world && g->inv[k].slot >= 0 && g->inv[k].slot < 31) {
@@ -1465,6 +1479,7 @@ static void hud_tick(tc_viewer *v) {
     now.doc_serial = g->hud_doc_serial;
     now.show_all = !v->hud.auto_hide;
     tc_hud_tick(&v->hud, g, &now);
+    if (hud_covered(v)) tc_hud_away(&v->hud); /* they slide in again once the screen opens */
 }
 
 static void step_ai(tc_viewer *v, float dt) {
@@ -1505,19 +1520,9 @@ static void step_ai(tc_viewer *v, float dt) {
         /* the start text shows: the player presses Jump. Not where the level itself asks for the automatic start
          * (.ttai AUTO: the Special Edition's Totalski, imported courses), which have no such text */
         p->driver.wait_start = v->hud_waits && !p->driver.ai.model->auto_start;
-        {
-            /* Port, a stand-in: waiting behind the start text the skier stands still, as in the game. Here his waiting
-             * state is a walker's on snow whose grip is 0, which the walker's forces as read (DNM_WalkForces_004c41c5)
-             * make frictionless, so he crept down the slope. Why the exe's does not is open (docs/ENGINE.md "The HUD"). */
-            bool waiting = p->driver.wait_start && p->driver.auto_start && (p->driver.contacts & TC_AI_CONTACT_GROUND);
-            tc_vec3 at = p->player.position;
-            tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, held_back ? 0 : ai_inputs(v), still ? 0 : v->move_x,
-                          still ? 0 : v->move_y, v->camera.position);
-            if (waiting && p->driver.auto_start) {
-                p->player.position = at;
-                p->player.velocity = tc_v3(0, 0, 0);
-            }
-        }
+        /* (Waiting there the skier sits still by his own state: 119, a card of type 6, set by the start's B4.) */
+        tc_ed_ai_step(&p->driver, TC_ED_AI_TICK, held_back ? 0 : ai_inputs(v), still ? 0 : v->move_x,
+                      still ? 0 : v->move_y, v->camera.position);
         if (p->driver.events.restarted) {
             p->driver.events.restarted = false;
             if (p->has_cast) tc_cast_respawn(&p->cast);
@@ -2263,6 +2268,10 @@ bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
     const tc_ai_globals *g;
     uint32_t k;
     if (!v->hud.loaded || !v->playing || !p || !p->has_driver || !p->has_cast || !p->use_ai || v->tape) return false;
+    if (hud_covered(v)) return false;
+    /* Port (the user, 2026-11-13, a stand-in for a photo mode): no HUD while paused, live (P) or in a paused playback
+     * (tc_replay_pause): both set the pause's look round. It comes back as it was. */
+    if (v->paused || v->inspecting) return false;
     g = &p->cast.globals;
     for (k = 0; k < TC_AI_HUD_SLOTS; k++) { /* a boss's life bar: its perso's hit points (GAM_00418d70) */
         const tc_ai_hud_slot *s = &g->hud[k];
@@ -2295,6 +2304,7 @@ static void debug_reload(tc_viewer *v) {
     c = v->carry ? v->carry : (tc_viewer_carry *)tc_calloc(1, sizeof(*c));
     if (!c) return;
     memset(c, 0, sizeof(*c));
+    if (p->has_cast) tc_cast_level_save(&p->cast); /* as on any way out of the level */
     copy_text(c->level, sizeof(c->level), p->level_name);
     c->vertical_fov = v->camera.vertical_fov;
     c->orbit_distance = v->orbit_distance;

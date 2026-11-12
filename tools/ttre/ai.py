@@ -262,6 +262,8 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
   ZDES  his ZDE zones (the hits: COND 18-29, CollectNearby) and which are active per state (zde_block)
   AUTO  (optional) u8 1, u8 0, u16 0: the driver presses Jump until the initial behaviour is left (a level without
           the start trigger that sends the skier off: tools/ttre/ssx.py; Totalski / skymap get it by name, tc_ed_ai)
+  STRT  (optional) u16 n, u16 0, n x u16 normal behaviour, padded to 4: the behaviours another perso's takeover puts
+          this one in before the initial one, a tick each (start_chain: the skier's B4 before B2)
   TRIG  u16 n, u16 0, n x { f32 position[3], f32 radius, u16 behaviour, u16 guard dsgvar, u32 sleep ms }
           (ai.proximity_triggers)
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
@@ -1012,7 +1014,7 @@ def ski_portals(ai, strings):
     """Totalski and skymap, played as the skier: a stand-in for the game's finish (there the arches capture the skier by a
     zone test and his own scripts walk him in, B7, and change level, B22, after the finish markers' cutscene-like
     sequence). The holes (SYM_GenTrou) work as in the game, their zone test (COND_13) exported as their ZDD box
-    (portal_zones; the radius 8 is only the fallback): they set the skier's respawn point and fall flag, his own scripts do the rest. The arch named *Retry teleports the skier back to the start of the run (cover, reveal); the others
+    (portal_zones; the radius 8 is only the fallback): they set the skier's respawn point and fall flag, his own scripts do the rest. The arch named *Retry is the scripts' own (no record); the others
     lead to sud0 at the place the skier's B22 names for this level. Same records as portals()."""
     d, lv = ai.d, ai.lv
     persos = {p.loc: k + 1 for k, p in enumerate(d.persos())}
@@ -1079,8 +1081,11 @@ def ski_portals(ai, strings):
         if model not in ('SYM_Arche_Ski', 'NBD_ArcheSpePourSkiEtSky'):
             continue
         if inst.lower().endswith('retry'):
-            heading = math.atan2(-start[1], start[5])
-            fire = [(POP_TELEPORT, 1, 0, 0, struct.unpack('<I', struct.pack('<f', heading))[0], tuple(start[3::4][:3]))]
+            # No stand-in since 2026-11-13: the skier's own scripts run the retry (the finish gate's dsg40 = 0; B18 walks
+            # him to the arch, B7 steps in (state 228) and covers, B22 behind the cover calls GameAction0: the map starts
+            # again, tc_ed_ai's restart). The stand-in's capture (radius 6) cut into that walk: its cover and teleport came
+            # first, the step-in went on at the top of the run, then the scripts' own cover and restart followed.
+            continue
         else:
             fire = [(POP_LEVEL, 0, sid(arrival[1]), sid('sud0'), sid(arrival[0]), (0, 0, 0))]
         rows = (p.world[0:3], p.world[4:7], p.world[8:11])
@@ -1156,10 +1161,24 @@ def started_by_others(ai):
     PROC_238 (set the normal / reflex behaviour of a perso; the last call wins). Totalski's start trigger (perso
     0x60ae7, its first schedule) and skymap's (0x6bc43, B2) send the skier to its riding start this way; the
     skier's own initial behaviour B0 is empty."""
-    d, found = ai.d, [None, None]
+    return _takeover(ai)[0]
+
+
+def start_chain(ai):
+    """The normal behaviours the takeover (started_by_others) puts this perso in before the last one, in order, as
+    locations. Totalski's and skymap's start triggers run ForceBehaviour(skier, B4), Proc9(1), ForceReflex(skier, R1),
+    ForceBehaviour(skier, B2): Proc9(1) ends the trigger's frame after the next statement (AI_0048eab0), so the skier
+    thinks once in B4, whose schedule sets him up (his turn rates, the fix Ed's hit points, state 119: sitting on the
+    board at the gate) before B2 waits for Jump. The .ttai's STRT; before 2026-11-13 only the last call counted, B4
+    never ran and he waited in state 0, a walker's."""
+    return _takeover(ai)[1]
+
+
+def _takeover(ai):
+    d, found, chain = ai.d, [None, None], []
     fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
     if ai.perso == fix_ed:
-        return found
+        return found, chain
     for p in d.persos():
         if p.loc == ai.perso:
             continue
@@ -1169,8 +1188,10 @@ def started_by_others(ai):
                 continue
             for n in calls:
                 if n.param in (237, 238) and len(n.children) == 2 and n.children[0].ref == ai.perso:
+                    if n.param == 237 and found[0] is not None:
+                        chain.append(found[0])
                     found[n.param - 237] = n.children[1].ref
-    return found
+    return found, chain
 
 
 def _dsg_parts(d, perso):
@@ -1185,6 +1206,29 @@ def _dsg_parts(d, perso):
     infos, (size, count) = lv.ptr(dfn, 4), d.un('2I', dfn, 8)
     src = lv.ptr(dm, 4) or lv.ptr(dfn)
     return [d.un('2I', infos, 16 * i) for i in range(count)], src, size
+
+
+DSG_SAVE_PLAYER, DSG_SAVE_LEVEL = 1, 2
+
+
+def dsg_save_flags(d, perso):
+    """Per dsgvar, how the game saves it (perso_dsg_block's fifth byte): the info's third word is the save module's
+    flags (SAI_SAI_Save_00481b90 tests 0xA00: "save the current value"): 0x200 with the player's save (the fix Ed's
+    progress variables), 0x800 with the level's own file (GAM_00421500 writes <level>.sav on the way out of a level,
+    GAM_004219e0 reads it back on the way in): a pickup's "still here" (the bonuses' dsg0), World's counts. The fourth
+    word says when the variable goes back to its initial value (4 for nearly all; 1 for the level-saved ones: not on a
+    level's reload)."""
+    parts = _dsg_parts(d, perso)
+    if not parts:
+        return []
+    lv = d.lv
+    dm = lv.ptr(lv.ptr(lv.ptr(perso, 0xC)), 0xC)  # as _dsg_parts: brain -> mind -> dsgMem
+    infos = lv.ptr(lv.ptr(lv.ptr(dm)), 4)
+    out = []
+    for i in range(len(parts[0])):
+        save = d.un('I', infos, 16 * i + 8)[0]
+        out.append((DSG_SAVE_PLAYER if save & 0x200 else 0) | (DSG_SAVE_LEVEL if save & 0x800 else 0))
+    return out
 
 
 def _perso_ways(d, perso):
@@ -1279,8 +1323,8 @@ def ways_chunk(d):
 
 
 def perso_dsg_block(d, perso, ids=None):
-    """A perso's dsgvars as the .ttai writes them (u16 count, u16 0, u32 size, count x {u32 offset, u8 type, 3 pad}, the
-    buffer padded to 4), and the count. mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def
+    """A perso's dsgvars as the .ttai writes them (u16 count, u16 0, u32 size, count x {u32 offset, u8 type, u8 save
+    (dsg_save_flags; 0 before 2026-11-13), 2 pad}, the buffer padded to 4), and the count. mind +0xC dsgMem {ptr -> ptr def, ptr initial buffer, ptr current buffer}; def
     {ptr default buffer, ptr infos (16 B {u32 offset, u32 type, ...}), u32 buffer size, u32 count}. A waypoint (type 8)
     holds its number in the level's table (waypoints(): 1-based, 0 none) instead of the snapshot's pointer.
     A perso (type 10) holds its id as the scripts' perso nodes number them (ids: {perso location: id}, default
@@ -1304,8 +1348,9 @@ def perso_dsg_block(d, perso, ids=None):
                 struct.pack_into('<I', buf, off, ids.get(ptr) or ids.get(so) or 0)
         buf = bytes(buf)
     out = struct.pack('<HHI', len(dsg), 0, len(buf))
-    for off, typ in dsg:
-        out += struct.pack('<IB3x', off, typ)
+    saves = dsg_save_flags(d, perso) if dsg and not d.se else []
+    for k, (off, typ) in enumerate(dsg):
+        out += struct.pack('<IBB2x', off, typ, saves[k] if k < len(saves) else 0)
     return out + buf + b'\0' * (-len(buf) % 4), len(dsg)
 
 
@@ -1641,6 +1686,11 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     out += struct.pack('<II', len(tris), zlib.crc32(coll))  # the .ttlv's COLL chunk, byte for byte
     cut('LINK')
+    chain = [beh_index[ref] & 0xFFFF for ref in start_chain(ai) if ref in beh_index]
+    if chain:  # optional: the behaviours the takeover passes through first
+        out += struct.pack('<HH', len(chain), 0) + b''.join(struct.pack('<H', b) for b in chain)
+        out += b'\0' * (-len(out) % 4)
+        cut('STRT')
     chunks.write(path, 'TTAI', parts)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
         f.write('\n'.join(listing) + '\n')

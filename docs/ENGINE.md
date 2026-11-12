@@ -601,6 +601,36 @@ A new game (`GAM_00419290`): no powers, slot 0 = 0, slots 1-6 = -1, the rest 0.
   (`GAM_004189e0`, drawn by `GAM_00419070`); saving; what gives the first life count. Seen in sud0: a scarab hive
   (HEG_RucheScarab01) starts by itself a few seconds in and gives a bee; its ZDE test against Ed is the suspect.
 
+## Saved variables, the skier's start, restarts (2026-11-13; **read** unless marked)
+- **A dsgvar's info says how it is saved** (third word: the save module's flags; `SAI_SAI_Save_00481b90` tests 0xA00 =
+  "the current value"): 0x200 with the player's save (the fix Ed's dsg133, 135-151), 0x800 with the level's own file,
+  written on the way out of a level (`GAM_00421500`, "<level>.sav") and read on the way in (`GAM_004219e0`). Fourth word:
+  when it is initialised again (4 nearly all; 1 the level-saved ones). A bonus's dsg0 is level-saved: 0 once taken, and
+  its first rule takes it out when it starts at 0. PROC 281 is an empty stub. sud0's story characters (Suzy, Doc, the
+  bridges, doors) have such flags too.
+  **Port:** .ttai / CAST dsgvar blocks carry the flags (ai.py `dsg_save_flags`); tc_cast.c keeps the level-saved values
+  of the actors in memory for the run (`tc_cast_level_save` on a level change and the debug reload; an actor's start
+  takes them back; a viewer without a carry clears them). An actor whose saved value came back changed may take itself
+  out past the removal guard. Not kept: the ghosts' values; nothing is written to disk. castcheck `taken_stays_taken`.
+- **The skier's start.** The start trigger runs ForceBehaviour(skier, B4), Proc9(1), ForceReflex, ForceBehaviour(skier,
+  B2): Proc9 ends its frame, so the skier thinks once in B4 (state 119, sitting on the board) before B2 waits for Jump.
+  States 118 / 119 have a card of type 6, whose integrator does nothing: he does not move. **Port:** .ttai STRT
+  (`start_chain`), tc_ed_ai `start_step`, card type 6 holds still (also Ed's states 142 / 143); the viewer's hold of
+  2026-11-12 is gone, and with it the open question of why he crept and dropped.
+- **Retry.** The scripts' own (B18 walks to the arch, B7 steps in and covers, B22 calls GameAction0). The stand-in
+  portal on the Retry arch (ai.py `ski_portals`) cut into it and is gone; the arch to sud0 keeps its stand-in (the
+  skier's PROC 29 is still not run).
+- **A restart (GameAction0). Port, the exe's map re-initialisation is not read in full:** every undrawn perso that
+  started active starts again (was: only those that were out), keeping its level-saved values; on the ski levels the fix
+  Ed's player-saved dsgvars go back to the level's start (Totalski's save point is at the start gate). **Open:** whether
+  the original keeps the best time (dsg149) across a retry: here it goes back too.
+- **HUD.** Nothing is drawn behind a covered screen or the loading screen; the elements slide in with the reveal. The
+  bee counter shows with power 8 (**port rule**; power 8 is what Ed's B86 / B87 test before Action takes the blowgun
+  out). The exe's `GAM_0041a720` has no power test: it leaves the counter out at -1, shows it for 5 s when the count
+  changes, or always under display options 2 / 3 (`GAM_00411c50`: masks 0x42, 0x43, 0x5b, 0xdf; fix default 0x1b).
+  **Open (the user: the original hides it until Doc gives the peashooter; Transit has the tutorial):** the real gate.
+  Seen so far: sud0's Doc sets save value 0 to 255 and back to his dsg4 around the training.
+
 ## Custom gameplay (2026-11-12)
 
 Gameplay Tonic Trouble never had is kept apart from the game's, so it can't be mistaken for it (the user's rule). In the

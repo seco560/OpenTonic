@@ -26,6 +26,10 @@ void tc_hud_init(tc_hud *h) {
     h->out_life = h->out_lives = h->out_spade = h->out_tings = h->out_doc = h->out_bees = GONE; /* GAM_0041bf90 */
 }
 
+void tc_hud_away(tc_hud *h) {
+    h->out_life = h->out_lives = h->out_spade = h->out_tings = h->out_doc = h->out_bees = GONE;
+}
+
 static void data_free(tc_hud_data *d) {
     uint32_t i;
     for (i = 0; d->fonts && i < d->font_count; i++) tc_free(d->fonts[i].glyphs);

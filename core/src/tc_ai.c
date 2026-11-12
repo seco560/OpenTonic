@@ -15,7 +15,8 @@ static void rd_dsg_def(reader *r, tc_ai_dsg_def *d) {
     for (i = 0; d->vars && i < d->count; i++) {
         d->vars[i].offset = rd_u32(r);
         d->vars[i].type = rd_u8(r);
-        r->offset += have(r, 3) ? 3 : 0;
+        d->vars[i].save = rd_u8(r); /* 0 in an export from before 2026-11-13 */
+        r->offset += have(r, 2) ? 2 : 0;
     }
     d->initial = (uint8_t *)rd_array(r, d->size, 1, 1);
     if (d->initial && have(r, d->size)) {
@@ -419,6 +420,17 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         if (r->error || m->zde.state_count != m->state_count) tc_zde_set_free(&m->zde);
     }
 
+    if (chunk_need(&cs, "STRT", r)) { /* optional: the takeover's first behaviours (older files: none) */
+        uint16_t k, n = rd_u16(r);
+        (void)rd_u16(r);
+        for (k = 0; k < n; k++) {
+            uint16_t b = rd_u16(r);
+            if (b < m->normal_count && m->start_chain_count < 4) m->start_chain[m->start_chain_count++] = b;
+        }
+        if (n & 1) (void)rd_u16(r);
+        CHUNK_END(r);
+    }
+
     if (chunk_need(&cs, "AUTO", r)) { /* optional: start by pressing Jump (a level whose start trigger is not there) */
         m->auto_start = rd_u8(r) != 0;
         (void)rd_u8(r), (void)rd_u16(r);
@@ -681,6 +693,7 @@ static void wr_le(uint8_t *b, uint32_t v, int n) {
     for (i = 0; i < n; i++) b[i] = (uint8_t)(v >> (8 * i));
 }
 static int dsg_width(uint8_t type) { return type <= 2 ? 1 : type <= 4 ? 2 : type == 12 ? 12 : 4; }
+int tc_ai_dsg_width(uint8_t type) { return dsg_width(type); }
 
 static value dsg_get(const tc_ai_perso *p, int32_t perso, uint32_t i) {
     const tc_ai_dsg_def *def;
@@ -1755,6 +1768,7 @@ static value eval(run *r, uint32_t i) {
 /* The removal guard (tc_ai_perso.removal_guard): q stays, frozen, unless the main actor was near it lately. */
 static bool kept_as_prop(tc_ai_perso *p, tc_ai_perso *q) {
     if (!p->removal_guard || q->main_actor == 0) return false;
+    if (q == p && p->level_restored) return false; /* its own saved state: a pickup taken on an earlier visit */
     if (q->near_main_ms && q->time_ms - q->near_main_ms <= TC_AI_REMOVAL_MS) return false;
     q->frozen = true;
     p->removals_kept++;

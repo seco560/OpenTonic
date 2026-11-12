@@ -28,6 +28,16 @@ static bool portal_inside(const tc_ai_portal *g, tc_vec3 p) {
     return false;
 }
 
+/* The takeover's first behaviour (tc_ai_model.start_chain), at the start and at a restart: the exe's start trigger runs
+ * again when the map is initialised again. step() goes on to the next ones, then to the initial behaviour. */
+static void start_chain(tc_ed_ai *e) {
+    const tc_ai_model *m = e->ai.model;
+    e->start_step = 0;
+    if (!m->start_chain_count) return;
+    tc_ai_force_behaviour(&e->ai, m->start_chain[0]);
+    e->start_step = 1;
+}
+
 tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player, const char *level_name) {
     tc_result r = tc_ai_init(&e->ai, model);
     uint32_t i;
@@ -85,6 +95,7 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
                     model->auto_start;
     for (i = 0; i < model->other_count; i++)
         if (model->others[i].role == 1) e->camera = (int)i;
+    start_chain(e);
     return TC_OK;
 }
 
@@ -534,7 +545,7 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     run_triggers(e);
     run_portals(e);
     a->screen_covered = e->screen_covered;
-    if (e->auto_start && a->normal.behaviour == a->model->initial_normal) {
+    if (e->auto_start && (e->start_step || a->normal.behaviour == a->model->initial_normal)) {
         if (!e->wait_start) inputs |= 1u << TC_AI_IN_JUMP;
     } else e->auto_start = false;
     a->inputs = inputs;
@@ -567,6 +578,13 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     track_sector(e); /* after the portals: one may have moved him */
     water_zones(e);
     tc_ai_step(a, dt);
+    if (e->start_step) { /* the takeover's next ForceBehaviour, a frame after the last (Proc9(1) ended its frame) */
+        if (e->start_step < a->model->start_chain_count) tc_ai_force_behaviour(a, a->model->start_chain[e->start_step++]);
+        else {
+            tc_ai_force_behaviour(a, a->model->initial_normal);
+            e->start_step = 0;
+        }
+    }
     footsteps(e);
     /* Port: dying (B73 -> B99: cover, HP refilled, then GameAction0, or ChangeLevel('death') without lives) restarts Ed
      * where the last save point was (tc_ai_globals.checkpoint) or at his start: his start behaviour and reflex (B63
@@ -591,6 +609,7 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
         a->transparency = 255;
         tc_ai_force_behaviour(a, a->model->initial_normal);
         if (a->model->initial_reflex < a->model->reflex_count) tc_ai_force_reflex(a, a->model->initial_reflex);
+        start_chain(e);
         e->restarts++;
         e->events.teleported = true; /* the host reveals */
     }
@@ -724,6 +743,16 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
         e->card_type = type;
         return;
     }
+    if (type == 6) {
+        /* Card type 6 (DNM_IntegrateType6_004aca45 only shifts the snapshots; DNM_RequestType6_004b11ea moves on the
+         * MoveLift modes 14 / 15 alone, which Ed's scripts never ask for): no gravity, no collision, he stays where he
+         * is. The skier sitting at the start gate (states 118 / 119) and Ed's states 142 / 143. The collision report
+         * is not touched either: the contacts stay the last state's. Before 2026-11-13 these ran as a walker without
+         * a card, and the skier crept down the slope while he waited. */
+        p->velocity = tc_v3(0, 0, 0); /* port: the exe keeps the last state's, unused while here */
+        e->card_type = type;
+        return;
+    }
     if (type == 11 && st->spheres != TC_AI_NONE16) {
         hang(e, &a->model->sphere_sets[st->spheres], dt);
         e->card_type = type;
@@ -735,8 +764,8 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
         return;
     }
     if (st->spheres != TC_AI_NONE16) {
-        /* Types 0 / 4; other card types (6, 7: the skier's parked and finish states) are not decoded and
-         * run the same way without their card, so the body and its origin stay the same. */
+        /* Types 0 / 4; other card types are not decoded and run the same way without their card, so the body and its
+         * origin stay the same. */
         walk(e, type == 0 || type == 4 ? card : NULL, &a->model->sphere_sets[st->spheres], dt);
         e->card_type = type;
         return;
