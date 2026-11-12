@@ -25,6 +25,7 @@ import subprocess
 import sys
 
 from tools.ttre import chunks
+from tools.ttre.edpl import read_ed  # noqa: F401 (also used by callers as import_gltf.read_ed)
 
 ALPHA_TEST, TRANSPARENT, WRAP_U, WRAP_V = 1, 2, 1 << 4, 1 << 5  # TC_FLAG_* (ttlv.py)
 OUT = 'files/out'
@@ -160,40 +161,7 @@ def material_texture(doc, base, mi, tex_dir, cache, buffers):
     return cache[key], flags
 
 
-# ---- Ed from a donor .ttlv ----
-
-def read_ed(donor):
-    """(texture paths relative to the donor's folder, Ed record split into (start, parts [(object, surface tuple,
-    geometry bytes)], anim bytes)) of a .ttlv, or None when it has no player."""
-    c = chunks.read(donor, 'TTLV')
-    if c is None:
-        raise SystemExit(f'{donor}: not a current .ttlv (re-run the conversion)')
-    if 'EDPL' not in c:
-        return None
-    t, o = c['TEXS'], 4
-    textures = []
-    for _ in range(struct.unpack_from('<I', t)[0]):
-        n, = struct.unpack_from('<H', t, o)
-        textures.append(t[o + 2:o + 2 + n].decode())
-        o += 2 + n
-    d, o = c['EDPL'], 0
-    start = struct.unpack_from('<12f', d, o)
-    o += 48
-    o += 4  # static perso
-    n_parts, = struct.unpack_from('<I', d, o)
-    o += 4
-    parts = []
-    for _ in range(n_parts):
-        obj, = struct.unpack_from('<H', d, o)
-        o += 4
-        tex, flags, su, sv, n_frames = struct.unpack_from('<iI2fH', d, o)
-        frames = [struct.unpack_from('<if', d, o + 20 + 8 * k) for k in range(n_frames)]
-        o += 20 + 8 * n_frames
-        nv, ni = struct.unpack_from('<II', d, o)
-        size = 8 + 52 * nv + 4 * ni
-        parts.append((obj, (tex, flags, su, sv, frames), d[o:o + size]))
-        o += size
-    return textures, start, parts, d[o:]
+# ---- Ed from a donor .ttlv: edpl.read_ed ----
 
 
 # ---- writer ----
@@ -203,9 +171,12 @@ def surface(tex, flags, scroll=(0, 0), frames=()):
         struct.pack('<if', t, s) for t, s in frames)
 
 
-def baked_light(c):
-    """glTF vertex colour (1.0 = texture unchanged) -> .ttlv rgba8 baked light (rgb / 128, see level.RADIOSITY_ONE)."""
-    return struct.unpack('<I', bytes([min(255, max(0, round(x * 128))) for x in c[:3]] + [255]))[0]
+def baked_light(c, alpha=255):
+    """A light multiplier per channel (1.0 = texture unchanged, up to ~2) -> .ttlv rgba8 baked light. The byte is the
+    exe's radiosity R as (R + 256) / 2 (tc_level.h), which the game formula turns into 2 x R / 256 when nothing else
+    lights the level (an import: no ambient, no lights; Shaders.metal game_light): light L = byte 128 + 64 L. (Until
+    2026-11-12 this wrote 128 L: 1.0 drew black, the SSX courses' "all black" playtest.)"""
+    return struct.unpack('<I', bytes([min(255, max(0, round(128 + 64 * x))) for x in c[:3]] + [alpha]))[0]
 
 
 def geometry(verts, indices):
@@ -281,26 +252,10 @@ def main(argv):
     if not groups:
         raise SystemExit(f'{src}: no triangles')
 
-    # textures: this model's, then Ed's (re-rooted from the donor's folder)
-    tex_paths, tex_ids = [], {}
-
-    def tex_id(path):
-        if path is None:
-            return -1
-        rel = os.path.relpath(os.path.abspath(path), os.path.abspath(ttlv_dir)).replace(os.sep, '/')
-        if rel not in tex_ids:
-            tex_ids[rel] = len(tex_paths)
-            tex_paths.append(rel)
-        return tex_ids[rel]
-
-    meshes = b''
     tris = []
     lo = [math.inf] * 3
     hi = [-math.inf] * 3
     for (png, flags), (verts, indices) in groups.items():
-        for i in range(0, len(indices), 0xFFFFFF):  # one mesh per material
-            meshes += surface(tex_id(png), flags) + geometry(verts, indices)
-            break
         for p, *_ in verts:
             for k in range(3):
                 lo[k], hi[k] = min(lo[k], p[k]), max(hi[k], p[k])
@@ -328,14 +283,48 @@ def main(argv):
                 best = z if best is None else max(best, z)
         spawn = (cx, cy, (best if best is not None else hi[2]) + 0.3)
 
+    write_level(name, groups, tris, spawn, donor=donor, textures=len(cache),
+                failed=sum(1 for v in cache.values() if v is None), bounds=(lo, hi))
+
+
+def write_level(name, groups, tris, spawn, donor='bar', heading=None, floors=None, tri_floors=None, ttai=None,
+                textures=0, failed=0, bounds=((0, 0, 0), (0, 0, 0)), ttlv_dir=None, quiet=False):
+    """files/out/ttlv/NAME.ttlv (+ NAME.ttai from the donor): groups {(texture path, flags): (verts [(pos, normal, uv,
+    light)], indices)}, tris the collision [9 floats], spawn Ed's start (TT axes), heading the direction he faces
+    (radians from +X; None = the donor's), floors [(grip, rebound)] with tri_floors one index per collision triangle
+    (0xFFFF = none; None = no floors), ttai(src, dst) writes the .ttai from the donor's (None = a plain copy)."""
+    ttlv_dir = ttlv_dir or os.path.join(OUT, 'ttlv')
+    tex_paths, tex_ids = [], {}
+
+    def tex_id(path):
+        if path is None:
+            return -1
+        rel = os.path.relpath(os.path.abspath(path), os.path.abspath(ttlv_dir)).replace(os.sep, '/')
+        if rel not in tex_ids:
+            tex_ids[rel] = len(tex_paths)
+            tex_paths.append(rel)
+        return tex_ids[rel]
+
+    meshes = b''
+    for (png, flags), (verts, indices) in groups.items():
+        meshes += surface(tex_id(png), flags) + geometry(verts, indices)
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *t) for t in tris)
-    flor = struct.pack('<HH', 0, 0) + struct.pack(f'<{len(tris)}H', *([0xFFFF] * len(tris)))
+    if floors is None:
+        floors, tri_floors = [], [0xFFFF] * len(tris)
+    flor = (struct.pack('<HH', len(floors), 0) + b''.join(struct.pack('<2f', *f) for f in floors) +
+            struct.pack(f'<{len(tris)}H', *tri_floors))
     ed = read_ed(os.path.join(ttlv_dir, f'{donor}.ttlv'))
     edpl = None
     if ed:
         donor_tex, start, parts, anims = ed
         start = list(start)
         start[3], start[7], start[11] = spawn
+        if heading is not None:  # he faces local -Y: columns X = (-fy, fx, 0), Y = -f, Z = up; the donor's scale kept
+            fx, fy = math.cos(heading), math.sin(heading)
+            for col, axis in enumerate(((-fy, fx, 0.0), (-fx, -fy, 0.0), (0.0, 0.0, 1.0))):
+                k = math.sqrt(sum(start[r * 4 + col] ** 2 for r in range(3))) or 1.0
+                for r in range(3):
+                    start[r * 4 + col] = axis[r] * k
         ed_parts = b''
         for obj, (tex, flags, su, sv, frames), geo in parts:
             def remap(t):
@@ -344,19 +333,26 @@ def main(argv):
                                                               [(remap(t), s) for t, s in frames]) + geo
         edpl = struct.pack('<12fiI', *start, -1, len(parts)) + ed_parts + anims
         if os.path.exists(os.path.join(ttlv_dir, f'{donor}.ttai')):
-            shutil.copyfile(os.path.join(ttlv_dir, f'{donor}.ttai'), os.path.join(ttlv_dir, f'{name}.ttai'))
+            if ttai is not None:
+                ttai(os.path.join(ttlv_dir, f'{donor}.ttai'), os.path.join(ttlv_dir, f'{name}.ttai'))
+            else:
+                shutil.copyfile(os.path.join(ttlv_dir, f'{donor}.ttai'), os.path.join(ttlv_dir, f'{name}.ttai'))
 
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(p.encode())) + p.encode() for p in tex_paths)
     out = os.path.join(ttlv_dir, f'{name}.ttlv')
     chunks.write(out, 'TTLV', [('LEVL', struct.pack('<I5f', 1, 0, 0, 0, 0, 0)), ('TEXS', texs),
                                ('MESH', struct.pack('<I', len(groups)) + meshes), ('PRSO', struct.pack('<I', 0)),
                                ('COLL', coll), ('FLOR', flor)] + ([('EDPL', edpl)] if edpl else []))
+    if quiet:
+        return
     n_tri = sum(len(i) // 3 for _, i in groups.values())
-    print(f'wrote {out}: {len(groups)} meshes, {n_tri} triangles, {len(cache)} textures '
-          f'({sum(1 for v in cache.values() if v is None)} failed), {len(tris)} collision triangles, Ed '
+    lo, hi = bounds
+    print(f'wrote {out}: {len(groups)} meshes, {n_tri} triangles, {textures} textures '
+          f'({failed} failed), {len(tris)} collision triangles, Ed '
           f'{"from " + donor if ed else "none"} at ({spawn[0]:.1f}, {spawn[1]:.1f}, {spawn[2]:.1f}); '
           f'bounds ({lo[0]:.0f}, {lo[1]:.0f}, {lo[2]:.0f})..({hi[0]:.0f}, {hi[1]:.0f}, {hi[2]:.0f})')
 
 
 if __name__ == '__main__':
+    chunks.KIND = 'gltf'
     main(sys.argv[1:])

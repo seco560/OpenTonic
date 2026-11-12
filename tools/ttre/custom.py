@@ -31,7 +31,7 @@ import shutil
 import struct
 import sys
 
-from . import chunks
+from . import chunks, imports
 
 POP_GUARD, POP_SET, POP_FORCE, POP_FORCE_REFLEX, POP_LEVEL = 1, 2, 3, 4, 9
 TWO_SIDED = 1
@@ -57,11 +57,46 @@ EDITS = [
 ]
 
 # (level under out, model under files/sources, paint (R, G, B), position, heading). The core drops a car onto the ground
-# below its position.
+# below its position. Positions on an imported level (imports.py) are given at its scale 1 and scaled by the scale
+# it was imported with (imports.applied_scale: 1 for a hand-made import).
 VEHICLES = [
     # Ed's car: the Mazda MX-5 (NB) mod for GTA III (replaces the Manana), in the parking lot where Ed stood at the end of
-    # the user's recording of 2026-11-12 (2026-11-12_002726_metal.ttrec), facing his way
-    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (168, 18, 24), (-127.325, 641.63, -5.06258), 1.56694),
+    # the user's recording of 2026-11-12 (2026-11-12_002726_metal.ttrec, made at scale 1), facing his way
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (168, 18, 24),
+     (-127.325, 641.63, -5.06258), 1.56694),
+    # 30 more, parked round the city (user, 2026-11-12): street-level spots picked from the collision (scale 1) by a
+    # scratch script: flat, level 14 x 14 open squares, no drop within 7, within 3 of the low end of the 120-unit area
+    # round them, spread by farthest-point sampling (none closer than ~140 to another), along the longer street axis
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (73, 222, 149), (-912.45, 301.72, -7.28), 1.5708),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (72, 117, 229), (677.55, 369.72, -6.78), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (207, 83, 174), (23.55, -48.28, 0.43), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (49, 214, 82), (-686.45, 955.72, -10.9), 0.0),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (131, 110, 65), (393.55, 837.72, -7.8), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (223, 141, 158), (-432.45, 281.72, -9.04), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (73, 79, 146), (-660.45, 579.72, -7.14), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (130, 131, 26), (-316.45, 969.72, 19.09), 0.0),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (153, 97, 43), (305.55, 479.72, -5.04), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (155, 196, 83), (-76.45, 305.72, 0.43), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (191, 50, 107), (77.55, 861.72, -4.7), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (206, 234, 158), (-226.45, 61.72, -9.82), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (24, 47, 179), (657.55, 811.72, -8.05), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (103, 68, 125), (425.55, 243.72, -6.09), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (116, 95, 32), (-464.45, 769.72, -10.9), 0.0),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (33, 125, 211), (-670.45, 335.72, -7.14), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (181, 188, 91), (111.55, 621.72, -2.1), 1.5708),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (63, 130, 37), (171.55, 123.72, -4.57), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (71, 188, 188), (-476.45, 495.72, -8.36), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (163, 220, 39), (497.55, 443.72, -5.15), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (106, 173, 125), (127.55, 405.72, -4.57), 0.0),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (87, 78, 92), (431.55, 619.72, -5.26), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (76, 203, 186), (-16.45, 131.72, 0.43), 1.5708),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (53, 182, 20), (-40.45, 483.72, 0.43), 0.0),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (51, 162, 157), (-792.45, 463.72, -7.14), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (81, 174, 140), (-668.45, 745.72, 9.68), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (137, 141, 187), (-84.45, 845.72, -4.57), 4.7124),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (30, 129, 197), (-316.45, 805.72, -10.9), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (198, 56, 223), (-176.45, 199.72, 0.43), 3.1416),
+    ('ttlv/LibertyCity2001', 'Vehicles/manana/manana.dff', (91, 186, 47), (-782.45, 245.72, -7.27), 1.5708),
 ]
 
 
@@ -334,7 +369,9 @@ def run(out):
     sources = os.path.join(os.path.dirname(os.path.abspath(out)), 'sources')
     for level in dict.fromkeys([e[0] for e in EDITS] + [v[0] for v in VEHICLES]):  # a level's edits go on together
         edits = [(i, e) for i, e in enumerate(EDITS) if e[0] == level]
-        cars = [v for v in VEHICLES if v[0] == level]
+        # a car's spot scales with the imported level under it (the scale its import was made with)
+        k = imports.applied_scale(out, os.path.basename(level))
+        cars = [(v[0], v[1], v[2], tuple(x * k for x in v[3]), v[4]) for v in VEHICLES if v[0] == level]
         ttlv_path, ttai_path = os.path.join(out, level + '.ttlv'), os.path.join(out, level + '.ttai')
         needed = [ttlv_path] + ([ttai_path] if edits else []) + [os.path.join(out, e[2][0] + '.ttlv') for _, e in edits]
         missing = [os.path.join(sources, v[1]) for v in cars if not os.path.exists(os.path.join(sources, v[1]))]

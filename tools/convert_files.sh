@@ -94,9 +94,11 @@ extract() {
   mv "$2.partial" "$2"
 }
 
-# Levels (both editions) carry the converter's stamp: stale() when a file's differs from the current one.
-STAMP=$(python3 -m tools.ttre.chunks)
-stale() { [ "$(python3 -c 'import sys; from tools.ttre.chunks import file_stamp; print(file_stamp(sys.argv[1]))' "$1")" != "$STAMP" ]; }
+# Levels (both editions) carry the converter's stamp, each edition its own (tools/ttre/chunks.py KINDS: only the code
+# that exports it counts): stale FILE [STAMP] when a file's differs from the current retail one (or STAMP).
+STAMP=$(python3 -m tools.ttre.chunks --kind retail)
+SE_STAMP=$(python3 -m tools.ttre.chunks --kind se)
+stale() { [ "$(python3 -c 'import sys; from tools.ttre.chunks import file_stamp; print(file_stamp(sys.argv[1]))' "$1")" != "${2:-$STAMP}" ]; }
 
 if [ "$RETAIL" = 0 ]; then echo "== retail edition: not in $SRC (skip textures, levels, music, sounds, intro)"; else
 # ---- 3. textures and loading screens ----
@@ -177,7 +179,7 @@ else
   python3 -m tools.ttre se-levels > "$SE_OUT/levels.tsv"
   while IFS="$(printf '\t')" read -r l name; do
     t="$SE_OUT/ttlv/$name.ttlv" a="$SE_OUT/ttlv/$name.ttai"
-    if need "$t" || stale "$t" || { [ -e "$a" ] && stale "$a"; }; then
+    if need "$t" || stale "$t" "$SE_STAMP" || { [ -e "$a" ] && stale "$a" "$SE_STAMP"; }; then
       line=$(python3 -m tools.ttre se-ttlv "$l" "$t" 2>/dev/null | grep '^wrote' || true)
       [ -n "$line" ] || { echo "special edition level $l: export failed (run: python3 -m tools.ttre se-ttlv $l $t)" >&2; exit 1; }
       [ -e "$a" ] || echo "special edition level $name: no Ed (no retail $name to borrow him from: Tonic Viewer only)"
@@ -266,6 +268,20 @@ elif outdated icon "$OUT/icon/OpenTonic.png" tools/make_icon.sh; then
   tools/make_icon.sh
   record icon
 else echo "== icon: current (skip)"; fi
+
+# ---- 6b. SSX Tricky courses (custom layer: your own PS2 disc image, an .iso under files/sources; tools/ttre/ssx.py),
+# ridden by the retail skier, so they need Totalski converted first ----
+if [ -z "$(python3 -c 'from tools.ttre import ssx; print(ssx.find_iso() or "")' 2>/dev/null)" ]; then
+  echo "== SSX Tricky courses: no disc image (optional, skip)"
+elif [ ! -e "$OUT/ttlv/Totalski.ttlv" ]; then echo "== SSX Tricky courses: need the retail Totalski (skip)"
+elif outdated ssx "$OUT/ttlv/SSX_AlohaIceJam.ttlv" ssx; then
+  echo "== SSX Tricky courses (about a minute)"
+  if python3 -m tools.ttre.ssx all; then record ssx; else echo "SSX Tricky courses: failed (skipped)" >&2; fi
+else echo "== SSX Tricky courses: current (skip)"; fi
+
+# ---- 6c. the custom layer's glTF imports (tools/ttre/imports.py: LibertyCity2001 from the GTA III map under
+# files/sources/GLTF Imports), redone only when missing or changed; Ed comes from bar ----
+[ -e "$OUT/ttlv/bar.ttlv" ] && python3 -m tools.ttre.imports "$OUT"
 
 # ---- 7. the custom layer: our own edits on top of the levels (tools/ttre/custom.py; every run, it is quick) ----
 python3 -m tools.ttre.custom "$OUT"

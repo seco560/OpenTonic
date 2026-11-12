@@ -11,8 +11,8 @@ needs to read an old one. The tags are the schema:
 - New data goes in a new chunk. A chunk whose layout changes gets a new tag, so the old reader sees it as missing.
 Each format lists its chunks in its own module docstring (ttlv.py, ai.py).
 
-Every file starts with a STMP chunk: the converter's stamp (`stamp()`), a hash of the tools/ttre sources that wrote
-it (comments and docstrings aside). tools/convert_files.sh regenerates a level whose stamp differs from the current one, and the core keeps it for log
+Every file starts with a STMP chunk: the converter's stamp (`kind_stamp()`), a hash of the tools/ttre sources that
+wrote it (comments and docstrings aside; per kind of file: KINDS). tools/convert_files.sh regenerates a level whose stamp differs from the current one, and the core keeps it for log
 lines. CONTAINER (100) changes only if the framing above changes. The numbered formats before it used 1-12 at that
 offset, so the core reports those files as stale too.
 """
@@ -65,7 +65,23 @@ def _code(path):
     return ''.join(l.rstrip() + '\n' for l in lines if l.strip())
 
 
-def stamp(modules=('__init__', '__main__'), files=()):
+# What each kind of converted file's stamp covers: (root modules, modules left out). A change elsewhere in tools/ttre
+# doesn't make that kind stale, so editing an importer no longer re-exports every Tonic Trouble level.
+# - retail: the level commands' modules (level-ttlv: ttlv, level-ttai: ai) and what they import, but not se: ttlv imports
+#   it only for a Special Edition level's borrowed Ed (ttlv.py, `ed_donor`), which a retail export never takes;
+# - se: the same plus se.py (tools/ttre __main__ se-ttlv);
+# - ssx, gltf: the custom layer's imports (ssx.py, import_gltf.py); convert_files.sh checks SSX by .stamps/ssx instead.
+KINDS = {'retail': (('ttlv', 'ai'), ('se',)), 'se': (('ttlv', 'ai', 'se'), ()), 'ssx': (('ssx',), ()),
+         'gltf': (('import_gltf',), ())}
+KIND = 'retail'  # what write() stamps: the entry points set it (__main__ for se-*, ssx.py, import_gltf.py)
+
+
+def kind_stamp(kind=None):
+    roots, left_out = KINDS[kind or KIND]
+    return stamp(roots, exclude=left_out)
+
+
+def stamp(modules=('__init__', '__main__'), files=(), exclude=()):
     """12 hex digits: a hash of the code that decides a build output's contents, without comments, docstrings and blank
     lines. By default the levels': the package, the converter's entry point (__main__.py) and every tools/ttre module
     they import, directly or not (so import_gltf.py, which doesn't feed them, doesn't count). `modules` picks other
@@ -76,7 +92,7 @@ def stamp(modules=('__init__', '__main__'), files=()):
     while todo:
         m = todo.pop()
         p = os.path.join(here, m + '.py')
-        if m in seen or not os.path.exists(p):
+        if m in seen or m in exclude or not os.path.exists(p):
             continue
         seen.add(m)
         todo.extend(_imports(p))
@@ -97,7 +113,7 @@ def chunk(tag, payload):
 def write(path, magic, chunks):
     """chunks: [(tag, payload bytes)] in file order; the STMP chunk is added first. Written next to `path` and renamed
     over it, so an interrupted run never leaves a cut-off file carrying a current stamp."""
-    s = stamp().encode()
+    s = kind_stamp().encode()
     tmp = path + '.partial'
     with open(tmp, 'wb') as f:
         f.write(magic.encode() + struct.pack('<I', CONTAINER) + chunk('STMP', struct.pack('<H', len(s)) + s)
@@ -140,10 +156,14 @@ if __name__ == '__main__':
         names = sys.argv[2:]
         print(stamp([n for n in names if '/' not in n], [n for n in names if '/' in n]))
         sys.exit()
+    # python3 -m tools.ttre.chunks --kind KIND: that kind's stamp (KINDS)
+    if sys.argv[1:2] == ['--kind'] and len(sys.argv) == 3:
+        print(kind_stamp(sys.argv[2]))
+        sys.exit()
     if len(sys.argv) == 1:
-        print(stamp())
+        print(kind_stamp())
     for p in sys.argv[1:]:
         c = read(p)
         print(p, 'not a container file (old format?)' if c is None else
-              f'stamp {file_stamp(p)}' + (' (current)' if file_stamp(p) == stamp() else ' (stale)') + ': '
+              f'stamp {file_stamp(p)}' + (' (current)' if file_stamp(p) in {kind_stamp(k) for k in KINDS} else ' (stale)') + ': '
               + ', '.join(f'{t} {len(v)}' for t, v in c.items()))

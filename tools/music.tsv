@@ -44,3 +44,17 @@ spynorth	Bnk_21_2.wav
 sud0	Bnk_9_8.wav
 Totalski	Bnk_80_1.wav
 Transit	Bnk_21_2.wav
+# Imported levels (the custom layer's; names as their .ttlv)
+LibertyCity2001	Bnk_9_8.wav
+# SSX Tricky courses (tools/ttre/ssx.py): Totalski's track until their own music is converted
+SSX_Alaska	Bnk_80_1.wav
+SSX_AlohaIceJam	Bnk_80_1.wav
+SSX_ElysiumAlps	Bnk_80_1.wav
+SSX_Garibaldi	Bnk_80_1.wav
+SSX_MerquryCityMeltdown	Bnk_80_1.wav
+SSX_Mesablanca	Bnk_80_1.wav
+SSX_Pipedream	Bnk_80_1.wav
+SSX_Snowdream	Bnk_80_1.wav
+SSX_TokyoMegaplex	Bnk_80_1.wav
+SSX_Trick	Bnk_80_1.wav
+SSX_Untracked	Bnk_80_1.wav

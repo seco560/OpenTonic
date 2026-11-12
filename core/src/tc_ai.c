@@ -419,6 +419,12 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         if (r->error || m->zde.state_count != m->state_count) tc_zde_set_free(&m->zde);
     }
 
+    if (chunk_need(&cs, "AUTO", r)) { /* optional: start by pressing Jump (a level whose start trigger is not there) */
+        m->auto_start = rd_u8(r) != 0;
+        (void)rd_u8(r), (void)rd_u16(r);
+        CHUNK_END(r);
+    }
+
     if (chunk_need(&cs, "MODZ", r)) { /* optional: a Special Edition level's walk / ski switches (tc_ai_mode_zone) */
         m->mode_zone_count = rd_u16(r);
         (void)rd_u16(r);

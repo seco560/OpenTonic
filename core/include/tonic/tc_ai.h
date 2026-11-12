@@ -239,6 +239,7 @@ typedef struct tc_ai_model {
     uint32_t link_triangles, link_crc;
     /* Optional (Special Edition levels that switch walking / skiing): MODZ, and ALTM = a whole second .ttai (the
      * skier), a copy of its bytes for tc_ai_model_load. */
+    bool auto_start;             /* .ttai AUTO: the driver presses Jump until the initial behaviour is left (tc_ed_ai) */
     uint16_t mode_zone_count;
     tc_ai_mode_zone *mode_zones;
     uint8_t *alt_data;

@@ -61,10 +61,11 @@ mkdir -p "$OUT/ttlv"  # the apps' levels folder, also when only the Special Edit
 # Levels from another converter version may not load ("re-run the conversion") or load outdated data: without a
 # conversion, say which.
 if [ "$CONVERTED" = 0 ]; then
-  STAMP=$(python3 -m tools.ttre.chunks)
+  STAMP=$(python3 -m tools.ttre.chunks --kind retail)
   stale=""
   for f in "$OUT"/ttlv/*.ttlv "$OUT"/ttlv/*.ttai; do
     [ -e "$f" ] || continue
+    n=$(basename "$f"); [ -d "$OUT/Imported/${n%.*}" ] && continue  # imports (glTF, SSX) carry their own stamps
     s=$(python3 -c 'import sys; from tools.ttre.chunks import file_stamp; print(file_stamp(sys.argv[1]))' "$f")
     [ "$s" = "$STAMP" ] || stale="$stale $(basename "$f")"
   done

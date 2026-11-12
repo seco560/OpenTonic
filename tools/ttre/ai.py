@@ -260,6 +260,8 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           n x { u16 flags, u16 collide element type (7 sphere, 5 point: radius 0 in BODY), f32 rebound, f32 grip
           (its own mechanics material: the responses multiply them with the obstacle's) } (ai.zone_parts)
   ZDES  his ZDE zones (the hits: COND 18-29, CollectNearby) and which are active per state (zde_block)
+  AUTO  (optional) u8 1, u8 0, u16 0: the driver presses Jump until the initial behaviour is left (a level without
+          the start trigger that sends the skier off: tools/ttre/ssx.py; Totalski / skymap get it by name, tc_ed_ai)
   TRIG  u16 n, u16 0, n x { f32 position[3], f32 radius, u16 behaviour, u16 guard dsgvar, u32 sleep ms }
           (ai.proximity_triggers)
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major

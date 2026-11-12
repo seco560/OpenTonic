@@ -80,7 +80,8 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
             e->portal_armed[i] = !portal_inside(&model->portals[i], player->position);
     }
     e->ai.level_name = level_name;
-    e->auto_start = level_name && (same_name(level_name, "totalski") || same_name(level_name, "skymap"));
+    e->auto_start = (level_name && (same_name(level_name, "totalski") || same_name(level_name, "skymap"))) ||
+                    model->auto_start;
     for (i = 0; i < model->other_count; i++)
         if (model->others[i].role == 1) e->camera = (int)i;
     return TC_OK;

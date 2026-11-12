@@ -222,7 +222,7 @@ def level_data(level, levels_dir=LEVELS, skier=False):
 def read_donor(path):
     """(texture paths, absolute; start; EDPL parts [(object, surface fields, geometry bytes)]; the EDPL bytes after
     the parts (animations); LITE records of the EDPL parts) of a retail .ttlv, or None without a player."""
-    from .import_gltf import read_ed
+    from .edpl import read_ed
     ed = read_ed(path)
     if ed is None:
         return None

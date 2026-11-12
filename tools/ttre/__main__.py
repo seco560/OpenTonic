@@ -108,6 +108,9 @@ def level_cmd(cmd, argv):
 
 
 def se_cmd(cmd, argv):
+    if cmd.startswith('se-'):
+        from . import chunks
+        chunks.KIND = 'se'
     if cmd == 'se-extract':
         disc = argv[0] if argv else se.find_disc()
         if not disc:

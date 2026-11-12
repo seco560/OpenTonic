@@ -561,7 +561,7 @@ hangs off one pointer (`tc_level.custom`). `make CUSTOM=0` builds the core witho
 the custom layer's chunks are skipped) into `core/build-nocustom`; `make -C core CUSTOM=0 checkall` passing shows the
 game doesn't lean on it (2026-11-12: both builds pass, camcheck the same). Without it a level the custom layer gave a
 car still loads, the car standing as a plain perso. On the tools side the custom layer is `tools/ttre/custom.py` and its
-helpers (`vehicle.py`, `dff2gltf.py`, `rw.py`). Not yet sorted (another session): what the port added on top of the game
+helpers (`vehicle.py`, `dff2gltf.py`, `rw.py`), and the SSX Tricky import (`ssx.py`, below). Not yet sorted (another session): what the port added on top of the game
 elsewhere (the walkable hint scenes, the arches between editions, the camera's own passes) against what is the game's.
 
 ## Vehicles (custom gameplay, 2026-11-12)
@@ -601,3 +601,41 @@ LibertyCity2001 is a GTA III car mod (files/sources/Vehicles/manana: the Mazda M
   test. Title bar: "driving N km/h".
 - **Not done:** collisions with persos or other cars, damage, sounds, lights, a sitting pose for Ed, a prompt (the
   imported levels have no font), the cast running while he drives.
+
+## SSX Tricky courses (custom layer, 2026-11-12)
+
+The user's wish: ride SSX Tricky's courses (PS2, 2001) as the retail skier. `tools/ttre/ssx.py` reads their own disc
+image (an .iso under files/sources) and writes each course as an imported level, SSX_<Course>.ttlv + .ttai, its textures
+in files/out/Imported/SSX_<Course>/ (the pickers file it under "Imported"; the checks pass it by). tools/convert_files.sh
+step 6b runs it after the levels (it needs Totalski: the skier is borrowed from there). About two minutes for all 11.
+Format notes come from the SSX modding community (GlitcherOG's SSX-Library, SsxMapper's map extractor, both GPL or
+unlicensed: read, not copied); the details are in the module's docstrings.
+
+- **Read:** the ISO 9660 volume, the C0FB archives (RefPack); the .pbd's patches (bicubic, stored as polynomial
+  coefficients, front = dS/dt x dS/ds), models (PS2 packets: strips, uv, normals, positions; per object matrices) and
+  instances (row-vector matrices: checked, 1985 of 1997 Aloha instances land in their own stored box); the .ssf's
+  per-instance properties (visible, solid, surface, collision mode) and triangle-proxy collision models; textures
+  (8-bit + a CSM1 palette, colours stored 0..127), lightmaps, the sky (<course>_sky.pbd / .ssh), the start gates.
+- **Lighting:** the PS2 draws a patch as (texture - L.rgb) x L.a / 128 (L its lightmap texel; SSX-Library's
+  TrickyLightmapConverter). The first pass multiplied by L.rgb (~0.1): everything black (user, 11-12). Now the textures
+  are doubled to full range and each vertex gets (1 - L / texture mean) x L.a / 256: exact on flat textures (port
+  choice; SSX-Library least-squares fits per texel instead). Models: ambient + their instance's three directional
+  lights (PS2 0x80 = 1) against the doubled textures (port choice: so they match the snow; not checked).
+- **Collision:** patches (type 17 not solid); instances by the .ssf: mode 1 its triangle proxy, 2 the model's box,
+  0 / 3 (moving props, left static) none; invisible solid ones = the course's walls. Floors (ssx.FLOORS): snow, ice,
+  wood, metal grip 0; off-track, powder, rock, sand 0.04-0.08; props' tops 0.1, their steep faces 0 (friction acts on
+  every contact: at 0.1 the skier stalled against walls). The start gates' barriers (instances round the gate) are
+  drawn but not solid: SSX opens them at the race start, which there isn't.
+- **Start:** down the middle gate's path to the first place with ground just under it whose own normal slopes down
+  the path (>= ~5 deg). The .ttai carries AUTO (tc_ai.h `auto_start`): the driver presses Jump until the skier leaves
+  his starting behaviour B2, so he sets off by himself (Totalski / skymap had that by level name already).
+- **Sky:** the dome (one model, ~28 m, camera-centred in SSX) scaled to 1.3 x the course's half-diagonal round its
+  middle, faces turned inwards, unlit (vertex alpha TC_SKY_ALPHA), not solid (port choice: it doesn't follow the camera).
+- **Port choices:** 1 SSX unit = 1 cm (Eddie's bone chain is ~182), scaled 1.25x so a rider would be ~2.28 to Ed's
+  2.17 (user: size felt fine); 8 x 8 quads a patch. Music: Totalski's track for now (tools/music.tsv).
+- **Headless (aicheck AI_SCRIPT=ski, all 11):** he sets off by himself, 5-41 u/s at 2 s, 0 frames into the snow on
+  every course. The script's timed hard turns run him into the course walls on four (Aloha, Elysium, Mesablanca,
+  Snowdream), where he ends slow or stopped: needs a playtest with real steering.
+- **Not done:** SSX music; out-of-bounds (Reset, type 0) surfaces don't respawn (falling out of the world does, 20
+  below the lowest geometry); animated / moving props stand still; LODs, flipbooks, UV scrolling, particles; rails
+  (splines, no grinding); no tricks / boost. Nothing seen in the app since the lighting fix.
