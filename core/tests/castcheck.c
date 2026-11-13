@@ -66,6 +66,16 @@ static float pose_gap(tc_viewer *v) {
     return gap;
 }
 
+/* A portal or level changer the cast runs (TC_CAST2_MOVES_MAIN: an arch, a zone teleport, a walk-in passage, Doc's way
+ * home ...; portalcheck tests those): not one of the levers, machines or pit markers below, though it may force Ed too. */
+static bool cast_portal(const tc_viewer *v, uint32_t id) {
+    const tc_cast *c = tc_viewer_cast(v);
+    uint32_t i;
+    for (i = 0; c && i < c->count; i++)
+        if (c->actors[i].entry->id == id) return (c->actors[i].entry->flags2 & TC_CAST2_MOVES_MAIN) != 0;
+    return false;
+}
+
 static void save_draws(tc_viewer *v) {
     uint32_t count, opaque;
     const tc_view_draw *d = tc_viewer_draws(v, &count, &opaque);
@@ -343,7 +353,9 @@ static void level(const char *dir, const char *name) {
         const tc_cast_actor *a = &c->actors[i];
         int side, k, taken_over = 0;
         unsigned forced_into = 0, held_on, state_before, state_after;
-        if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai->active || a->entry->prso == 0xFFFF) continue;
+        if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai->active || a->entry->prso == 0xFFFF ||
+            cast_portal(&v, a->entry->id))
+            continue;
         /* each from a fresh level: an earlier visit can leave Ed in another behaviour (Action by a grille he cannot
          * work yet: B69), and the next machine then never takes him (Land: the grille 53 beside the machine 54) */
         tc_viewer_free(&v);
@@ -456,7 +468,7 @@ static void level(const char *dir, const char *name) {
         if (i == 0) second_fall = 0;
         if (a) {
             if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || (a->entry->flags & TC_CAST_ALWAYS_AWAKE) ||
-                a->entry->prso != 0xFFFF || !a->ai->active)
+                a->entry->prso != 0xFFFF || !a->ai->active || cast_portal(&v, a->entry->id))
                 continue;
             at = tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f));
         } else if (strcmp(name, "north") == 0 && lv.edition == 0) { /* retail north (the SE's is another map) */

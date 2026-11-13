@@ -850,6 +850,196 @@ static void level_jitter(const char *dir, const char *name) {
     tc_level_free(&level);
 }
 
+/* Walking into characters (docs/BUGS.md "Camera Inside Persos": the user, walking into Suzy or the tomato in sud0, saw
+ * their insides): Ed starts 4 from each, from 8 sides, facing it, the camera behind him, and walks into it for 3 s; then
+ * the same walking away from the camera towards it (the character behind the camera). Counted as level_clip does: a
+ * perso's drawn triangle within the near plane, or between Ed's head and the eye. */
+static void walk_into(const char *dir, const char *name, const uint32_t *ids, int n, clip_stats *st, int *passed) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_collision col;
+    int i, k, f;
+    *passed = 0;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); return; }
+    free(data);
+    if (tc_collision_init(&col, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) {
+        tc_level_free(&level);
+        return;
+    }
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = name;
+    if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_collision_free(&col); tc_level_free(&level); return; }
+    for (i = 0; i < n; i++) {
+        const tc_cast *c = tc_viewer_cast(&v);
+        const tc_cast_actor *a = NULL;
+        uint32_t j;
+        for (j = 0; c && j < c->count; j++)
+            if (c->actors[j].entry->id == ids[i]) a = &c->actors[j];
+        if (!a || !a->ai->active) continue;
+        for (k = 0; k < 16; k++) {
+            float ang = (float)(k % 8) * TC_PI / 4;
+            bool away = k >= 8; /* Ed backs into it: it is between him and the camera's side */
+            tc_vec3 out = tc_v3(cosf(ang), sinf(ang), 0), start = tc_v3_add(a->ai->position, tc_v3_scale(out, 4));
+            tc_vec3 ed0, ed1;
+            tc_hit hit;
+            if (tc_collision_raycast(&col, tc_v3_add(start, tc_v3(0, 0, 3)), tc_v3(0, 0, -1), 8, &hit))
+                start.z = start.z + 3 - hit.distance + 0.05f;
+            else continue;
+            /* facing it: heading h faces (sin h, -cos h) = -out; backing in: facing away, walking back */
+            tc_player_teleport((tc_player *)tc_viewer_player(&v), start,
+                               away ? atan2f(out.x, -out.y) : atan2f(-out.x, out.y));
+            tc_viewer_release_all(&v);
+            for (f = 0; f < 30; f++) tc_viewer_update(&v, 1.0f / 60);
+            ed0 = tc_viewer_player(&v)->position;
+            for (f = 0; f < 180; f++) {
+                tc_viewer_set_action(&v, away ? TC_VA_BACK : TC_VA_FORWARD, true);
+                tc_viewer_update(&v, 1.0f / 60);
+                { uint32_t cn, co; tc_viewer_draws(&v, &cn, &co); }
+                if (v.ed_draw_count == 0) continue;
+                clip_frame(&v, &col, pivot_of(tc_viewer_player(&v)->position), st);
+            }
+            tc_viewer_release_all(&v);
+            ed1 = tc_viewer_player(&v)->position;
+            /* went through it: from one side of it to the other */
+            if (tc_v3_dot(tc_v3_sub(ed0, a->ai->position), tc_v3_sub(ed1, a->ai->position)) < 0) (*passed)++;
+        }
+    }
+    tc_viewer_free(&v);
+    free(ai);
+    tc_collision_free(&col);
+    tc_level_free(&level);
+}
+
+/* The camera directors (docs/CAMERA.md "The directors' shots"): on each level, Ed put at each director (TC_CAST2_DIRECTOR)
+ * in turn for 2 s; the shots they pick are counted (most trigger on Ed within a radius of themselves; others on a
+ * waypoint, not met here). The camera must stay a number all along, and turning it gives it back (a director's
+ * follow drops its axis, the eye of a fixed or rail shot goes back to the follow). Returns the directors that picked a
+ * shot; *visited the directors. Port (the user, 2026-11-13): turning the camera turns the shot's camera; it stays. */
+static int directors(const char *dir, const char *name, int *visited, int shots[16], int *gave_back, int *bad) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tc_cast *c;
+    uint32_t i, n;
+    int took = 0, f;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = name;
+    if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_level_free(&level); return 0; }
+    for (f = 0; f < 60; f++) tc_viewer_update(&v, 1.0f / 60);
+    c = tc_viewer_cast(&v);
+    n = c ? c->count : 0;
+    for (i = 0; i < n; i++) {
+        const tc_cast_actor *a = &c->actors[i];
+        int before, seen = 0;
+        if (!(a->entry->flags2 & TC_CAST2_DIRECTOR)) continue;
+        (*visited)++;
+        before = tc_viewer_camera_shot(&v);
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f)), 0);
+        for (f = 0; f < 120; f++) {
+            int shot;
+            tc_viewer_update(&v, 1.0f / 60);
+            shot = tc_viewer_camera_shot(&v);
+            if (!(v.camera.position.x == v.camera.position.x) || !(v.camera.yaw == v.camera.yaw)) (*bad)++;
+            if (shot != before && shot >= 0 && shot < 16 && !seen && shot != 0 && shot != 255) {
+                seen = 1;
+                shots[shot]++;
+            }
+            if (seen == 1 && tc_viewer_fixed_shot(&v) && f > 60) { /* the player turns it: the shot stays, turned */
+                float yaw0 = v.camera.yaw;
+                int k;
+                tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, true);
+                for (k = 0; k < 20; k++) tc_viewer_update(&v, 1.0f / 60);
+                tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, false);
+                *gave_back += tc_viewer_fixed_shot(&v) && fabsf(remainderf(v.camera.yaw - yaw0, 2 * TC_PI)) > 0.05f;
+                seen = 2;
+            }
+        }
+        took += seen != 0;
+    }
+    tc_viewer_free(&v);
+    free(ai);
+    tc_level_free(&level);
+    return took;
+}
+
+/* cavedoc's ruby lifts (the user, 2026-11-13: after the ride "it gets stuck in a top-down state"): SDO_PFCaveDoc2 (167)
+ * carries Ed under the diamond cut's fixed shot, then picks shot 7 with the camera's default distance and elevation
+ * (Function_Camera_GetDistMax / GetTeta, FUNC 60 / 65: 8 and 0.6 rad). They were not modelled (a number that is not
+ * one), which the follow kept for good. Returns 0 on a load error. */
+static int ruby(const char *dir, int *shot7, float *elevation, float *distance, int *bad) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tc_cast *c;
+    const tc_cast_actor *lift = NULL;
+    uint32_t i;
+    int f, tap = 0;
+    *shot7 = *bad = 0;
+    snprintf(path, sizeof(path), "%s/cavedoc.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/cavedoc.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "cavedoc";
+    if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_level_free(&level); return 0; }
+    for (f = 0; f < 600; f++) { /* the spy's welcome, its line taken away */
+        if (tc_viewer_speech(&v) || tap) {
+            tap = !tap && tc_viewer_speech(&v);
+            tc_viewer_set_action(&v, TC_VA_JUMP, tap);
+        }
+        tc_viewer_update(&v, 1.0f / 60);
+    }
+    c = tc_viewer_cast(&v);
+    for (i = 0; c && i < c->count; i++)
+        if (c->actors[i].entry->id == 167) lift = &c->actors[i];
+    if (lift) {
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(lift->ai->position, tc_v3(0, 0, 1.5f)), 0);
+        for (f = 0; f < 60 * 12; f++) {
+            if (f == 60 * 9) tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, true); /* and the player turns it */
+            if (f == 60 * 9 + 20) tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, false);
+            tc_viewer_update(&v, 1.0f / 60);
+            if (!(isfinite(v.camera.pitch) && isfinite(v.camera.yaw) && isfinite(v.cam.elevation) &&
+                  isfinite(v.camera.position.x)))
+                (*bad)++;
+            *shot7 |= tc_viewer_camera_shot(&v) == 7;
+        }
+        *elevation = v.cam.elevation;
+        *distance = v.cam.distance;
+    }
+    tc_viewer_free(&v);
+    free(ai);
+    tc_level_free(&level);
+    return lift != NULL;
+}
+
 int main(int argc, char **argv) {
     field_of_view();
     synthetic();
@@ -865,6 +1055,43 @@ int main(int argc, char **argv) {
         level_jitter(argv[1], "north");
         printf("clipping (what is drawn against the eye, not only the collision):\n");
         for (k = 0; k < sizeof(clip_levels) / sizeof(clip_levels[0]); k++) level_clip(argv[1], clip_levels[k]);
+        {
+            const char *dl[] = {"sud0", "cavedoc", "carota", "cock01", "Land", "LeCanyon", "marmite", "north", "pyramide",
+                                "BigBoss", "Transit", "skymap"};
+            int visited = 0, took = 0, shots[16] = {0}, gave_back = 0, bad = 0;
+            char what[200];
+            printf("the camera directors (Ed put at each for 2 s):\n");
+            for (k = 0; k < sizeof(dl) / sizeof(dl[0]); k++) {
+                int v0 = visited, t = directors(argv[1], dl[k], &visited, shots, &gave_back, &bad);
+                took += t;
+                printf("  %-9s %d of %d directors picked a shot\n", dl[k], t, visited - v0);
+            }
+            printf("  shots picked: 2 near %d, 4 rail %d, 6 fixed %d, 7 axis %d, 8 mirror %d; turned by the player, the shot kept %d\n",
+                   shots[2], shots[4], shots[6], shots[7], shots[8], gave_back);
+            snprintf(what, sizeof(what), "the directors take the camera (%d of %d), the player turns their shots' camera "
+                     "and the shot stays (%d), the camera always a number (%d bad frames)", took, visited, gave_back, bad);
+            check(visited > 0 && took > visited / 3 && gave_back > 0 && bad == 0, what);
+        }
+        {
+            static const uint32_t sud0_chars[] = {89, 185, 186, 187, 251}; /* the tomato, Suzy (as she stands in sud0) */
+            clip_stats st;
+            int passed;
+            memset(&st, 0, sizeof(st));
+            st.nearest = 1e9f;
+            walk_into(argv[1], "sud0", sud0_chars, 5, &st, &passed);
+            clip_report("sud0", "walking into Suzy and the tomato (follow camera)", &st);
+            printf("  info  sud0: Ed went through them %d times\n", passed);
+        }
+        {
+            int shot7, bad;
+            float elevation = 0, distance = 0;
+            char what[200];
+            if (ruby(argv[1], &shot7, &elevation, &distance, &bad)) {
+                snprintf(what, sizeof(what), "cavedoc's ruby lift: its shot 7 at the camera's defaults (elevation %.2f, "
+                         "distance %.1f), the camera always a number (%d bad frames)", (double)elevation, (double)distance, bad);
+                check(shot7 && bad == 0 && fabsf(elevation - 0.6f) < 0.01f && fabsf(distance - 8) < 0.1f, what);
+            } else printf("  (no cavedoc ruby lift: skipped)\n");
+        }
     }
     printf(failures ? "FAIL\n" : "ok\n");
     return failures ? 1 : 0;

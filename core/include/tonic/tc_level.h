@@ -195,6 +195,7 @@ typedef struct tc_cast_entry {
     uint16_t family, sector, initial_state;
     uint8_t hit_points, hit_points_max, active, dead, mechanics, animation, reinit; /* std game +0x14 ... +0x2B */
     uint8_t flags;               /* TC_CAST_MAY_FORCE_MAIN, _SAVE_POINT, _ALWAYS_AWAKE, _RUN_FIRST, _SCENE */
+    uint16_t flags2;             /* TC_CAST2_MOVES_MAIN, _DIRECTOR (0 in exports before 2026-11-13) */
     float radius2;               /* std game +0x2C: -1 always, else the squared activation radius */
     tc_mat34 world;
     uint16_t zone_count;
@@ -221,6 +222,11 @@ typedef struct tc_cast_entry {
 #define TC_CAST_SCENE 16u         /* port: a scene's actor (the Special Edition's outro, cast.py SE_CAST_LEVELS): its
                                      removals and deactivations take wherever the main actor is (no removal guard) */
 #define TC_CAST_SPAWN 64u         /* a spawnable template (LevelData.spawnables): out until a script instances it (META 11) */
+#define TC_CAST2_MOVES_MAIN 1u    /* flags2: a portal or level changer (an arch, a passage, a zone teleport, Doc's way
+                                     home ...: tools/ttre/cast.py portal_ids, level_changer_ids): it moves the main actor
+                                     elsewhere, by its own scripts (docs/PORTALS.md "The arches run themselves") */
+#define TC_CAST2_DIRECTOR 2u       /* flags2: a camera director (GenD_Cam): it picks the camera's shots (docs/CAMERA.md
+                                     "The directors' shots") */
 #define TC_CAST_TABLES 32u        /* the entry carries its scripts' strings and constant vectors (tables_size, tables) */
 /* A perso's inventory object (perso +0x34 -> { u16 amount, i16 slot }; .ttlv INVT): picked up, `amount` goes onto
  * save value `slot` (PROC 142, 0x419310). */

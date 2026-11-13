@@ -38,6 +38,8 @@ static void start_chain(tc_ed_ai *e) {
     e->start_step = 1;
 }
 
+static void find_walk_in(tc_ed_ai *e);
+
 tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player, const char *level_name) {
     tc_result r = tc_ai_init(&e->ai, model);
     uint32_t i;
@@ -45,6 +47,7 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     e->player = player;
     e->mechanics = NULL;
     e->mechanics_user = NULL;
+    e->cast_portals = false;
     e->camera = -1;
     e->run_scale = 2.0f;  /* run (state 10) 4.5 -> 9.0 u/s: a little under the old controller's 9.9 (user) */
     e->walk_scale = 1;    /* walk (state 1) 3.5 u/s, already close to the old 3.3 */
@@ -97,6 +100,7 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
                     model->auto_start;
     for (i = 0; i < model->other_count; i++)
         if (model->others[i].role == 1) e->camera = (int)i;
+    find_walk_in(e);
     start_chain(e);
     return TC_OK;
 }
@@ -130,6 +134,45 @@ static void run_triggers(tc_ed_ai *e) {
         }
         e->trigger_wake[i] = t->sleep_ms ? e->time + (float)t->sleep_ms / 1000 : -1;
     }
+}
+
+/* His walk into an arch (tc_ed_ai.walk_in): the normal behaviour the portals' capture forces (B66), and the first other
+ * normal behaviour its scripts change to (B68). */
+static void find_walk_in(tc_ed_ai *e) {
+    const tc_ai_model *m = e->ai.model;
+    uint16_t i, k;
+    int32_t s;
+    e->walk_in[0] = e->walk_in[1] = TC_AI_NONE16;
+    for (i = 0; i < m->portal_count && e->walk_in[0] == TC_AI_NONE16; i++) {
+        const tc_ai_portal *g = &m->portals[i];
+        uint16_t force = TC_AI_NONE16;
+        bool cover = false;
+        for (k = 0; k < g->capture_count; k++) { /* an arch: it forces the walk-in, which ends in the cover (a zone
+                                                  * teleport covers at once and holds him in a wait, B15) */
+            if (g->ops[k].op == TC_AI_POP_COVER) cover = true;
+            if (g->ops[k].op == TC_AI_POP_FORCE && g->ops[k].a < m->normal_count && force == TC_AI_NONE16) force = g->ops[k].a;
+        }
+        if (!cover) e->walk_in[0] = force;
+    }
+    if (e->walk_in[0] == TC_AI_NONE16) return;
+    {
+        const tc_ai_behaviour *b = &m->behaviours[e->walk_in[0]];
+        for (s = b->schedule >= 0 ? -1 : 0; s < (int32_t)b->script_count && e->walk_in[1] == TC_AI_NONE16; s++) {
+            uint32_t n = s < 0 ? m->scripts[b->schedule] : m->scripts[b->first_script + (uint32_t)s];
+            for (; n < m->node_count && m->nodes[n].type != TC_AI_END; n++)
+                if (m->nodes[n].type == TC_AI_BEHAVIOUR && m->nodes[n].param < m->normal_count &&
+                    m->nodes[n].param != e->walk_in[0]) {
+                    e->walk_in[1] = (uint16_t)m->nodes[n].param;
+                    break;
+                }
+        }
+    }
+}
+
+/* In his walk into an arch, the cover not yet done (the cast's arches: tc_ed_ai.walk_in). */
+static bool walking_in(const tc_ed_ai *e) {
+    uint16_t b = e->ai.normal.behaviour;
+    return e->cast_portals && !e->screen_covered && b != TC_AI_NONE16 && (b == e->walk_in[0] || b == e->walk_in[1]);
 }
 
 /* One portal op on the player (capture or fire). Returns false for a wait that has not elapsed. */
@@ -178,7 +221,7 @@ static bool portal_op(tc_ed_ai *e, const tc_ai_portal *g, const tc_ai_portal_op 
  * captures while awake: in Ed's sector or one on its activity list (tc_sectors_active), as the exe runs only those
  * persos' AI. skymap's lava hole (JET_Trou5LaveBouillonnante, sctlavabox) has a zone box reaching ~5 units into
  * sctTunnel20 / 22 beside it; sctTunnel22's list leaves sctlavabox out, so there the hole sleeps. */
-static void run_portals(tc_ed_ai *e) {
+static void run_portals(tc_ed_ai *e, bool all) {
     const tc_ai_model *m = e->ai.model;
     uint16_t i, k;
     for (i = 0; e->portal_armed && i < m->portal_count; i++)
@@ -187,8 +230,8 @@ static void run_portals(tc_ed_ai *e) {
     if (e->portal < 0) {
         for (i = 0; e->portal_armed && i < m->portal_count; i++) {
             const tc_ai_portal *g = &m->portals[i];
-            bool ok = e->portal_armed[i] && tc_sectors_active(e->sectors, e->sector.sector, g->sector) &&
-                      portal_inside(g, e->player->position);
+            bool ok = e->portal_armed[i] && (all || !(g->flags & TC_AI_PORTAL_CAST)) &&
+                      tc_sectors_active(e->sectors, e->sector.sector, g->sector) && portal_inside(g, e->player->position);
             for (k = 0; ok && k < g->capture_count; k++)
                 if (g->ops[k].op == TC_AI_POP_GUARD && (int32_t)tc_ai_dsgvar_float(&e->ai, g->ops[k].a) != (int32_t)g->ops[k].b)
                     ok = false;
@@ -232,7 +275,7 @@ static void run_portals(tc_ed_ai *e) {
 
 void tc_ed_ai_run_portals(tc_ed_ai *e, float dt) {
     e->time += dt;
-    run_portals(e);
+    run_portals(e, true);
 }
 
 /* Units per frame Ed moves forward in state s, tuned. A start-up state (walk 9 -> 1, run 158 -> 10) has no cycle of
@@ -359,8 +402,16 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
         tc_mec_walk_reset(&e->dyn.walk);
         e->dyn.contacts = 0;
     }
+    if (a->place_requested) { /* another perso's SetPositionFrom (an arch's PROC 8, a passage's PROC 27): exactly there,
+                               * off what he rode (AI_00488010); the host reveals after it */
+        a->place_requested = false;
+        tc_player_teleport(p, a->place_at, p->heading);
+        tc_mec_walk_reset(&e->dyn.walk);
+        e->dyn.contacts = 0;
+        e->events.teleported = true;
+    }
     run_triggers(e);
-    run_portals(e);
+    run_portals(e, !e->cast_portals);
     a->screen_covered = e->screen_covered;
     if (e->auto_start && (e->start_step || a->normal.behaviour == a->model->initial_normal)) {
         if (!e->wait_start) inputs |= 1u << TC_AI_IN_JUMP;
@@ -476,7 +527,8 @@ void tc_ed_ai_step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float 
     /* Skipping a portal's walk-in: Ed's own B68 (the walk up to the arch and state 228, stepping in) skips to the cover
      * while Shoot is held or just released. Port choice: Action and Jump do it too, presented to his scripts as Shoot
      * while a portal has captured him and not yet fired. */
-    if (e->portal >= 0 && !e->portal_firing && (inputs & ((1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_JUMP))))
+    if (((e->portal >= 0 && !e->portal_firing) || walking_in(e)) &&
+        (inputs & ((1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_JUMP))))
         inputs |= 1u << TC_AI_IN_SHOOT;
     e->stepping = true;
     set_solid(e);

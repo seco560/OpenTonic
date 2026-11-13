@@ -19,6 +19,26 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
   * **Partly fixed 2026-10-29 (Claude), awaiting a playtest.** Sitting on the bottom and the early (surface) swimming came from the port's water lookup: near a pool's floor the swim forces' probe fell out of the water sector's box, so Ed had no buoyancy and his scripts read "at the surface" (docs/NOTES.md "Water at a pool's floor"). The plunge depth itself (about 2.7 below the surface after a running jump) follows the original's scripts and mechanics as read, so cavedoc's 2.9-deep pool still brings him close to the floor. If the original stops him clearly higher, that's the next thing to trace.
   * **2026-10-30:** the box slack is gone too: a sector's water is an unbounded plane within it, so it no longer ends above a pool's or river's floor. sud0's river dive (aicheck swim) reaches the bed (-11.3) and swims along it again, which the boxes had broken (it surfaced at -9.6); cavedoc's pool jump is unchanged (state 5 at the surface).
 
+* Camera Stuck Top-Down after cavedoc's Ruby Lifts (the user, 2026-11-13, playtesting the camera directors): when Ed
+  steps on the moving rubies of the first lava room the camera takes over as usual, but when it lets go it stays in a
+  top-down state.
+  * **Fixed 2026-11-13 (Claude), awaiting a playtest.** The lift (SDO_PFDeplaceAscenseur) picks the camera's shot 7 with
+    its distance and elevation from Function_Camera_GetDistMax / GetTeta (FUNC 60 / 65), which the port did not model:
+    they gave a number that is not one, and the follow camera kept it for good. Now read from the exe (the camera's
+    record; with 0, the default: 8 units, 0.6 rad), and the camera never keeps such a value (docs/CAMERA.md "The
+    directors' shots"). camcheck rides the lift.
+
+* Camera Inside Persos (the user, 2026-11-13; written down by Claude from the user's report): whenever Ed collides with another perso, the camera clips through it and shows its inside. Try walking into Suzy or the tomato in sud0. An earlier fix (2026-11-11: the sight test puts the eye beyond a character Ed overlaps, `tc_cam_sight_fn`'s `inside`, core/src/tc_viewer_camera.c) did not cover it fully.
+  * **Partly fixed 2026-11-13 (Claude), awaiting a playtest.** Measured (camcheck "walking into Suzy and the tomato": Ed
+    walks into each from 8 sides, and backs into it, 3 s each): Suzy and the tomato have no collision of their own (no
+    ZDR geometry: by the exe's rules, docs/ENGINE.md "Moving collision", Ed walks into them, 30 of 80 walks went right
+    through), and the camera's sight ray stopped the eye where it met them but beside a slanted surface (a shoulder),
+    within the near plane: 11 frames of 12772 showed a perso's surface at the eye. The sight test now also keeps the
+    eye's radius clear of every drawn perso's surface round it (it comes in towards Ed until clear): 4 frames left,
+    the one seen a scripted shot's eye. Left: while Ed stands inside one of them the camera puts itself beyond it,
+    as before (51 frames with the character between his head and the eye). Making Ed collide with characters that have
+    no collision of their own would be a port choice (by the exe's rules as read he walks into them): not done, ask the user.
+
 ## Bigger Areas of Improvement
 
 These might not necessarily be called bugs, but rather more overarching issues with certain parts of the game. Also not including obvious ones, like implementing actual game mechanics, story progression, item collection etc. There's a lot to go still.
@@ -82,6 +102,14 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 **2026-11-13, the user:** cavedoc can be played to its end, but the cutscene that should follow beating the robot
 (FRB_RoBneus) never starts. Open: not traced yet (its B11 gives power 7 through Ed's B76, below; what should start the
 cutscene after that is not read).
+  * **Traced and fixed 2026-11-13 (Claude), awaiting a playtest; needs the re-export your next build does.** The cutscene
+    is cavedoc's Doc (BEM_Doc, FRB_DocCave, 105). The last door (BEM_PorteDeFinDoc, 25) starts it once the lever by the
+    cage (SDO_OuvrePorte, 186) is pulled: it holds Ed, opens, and forces Doc out (B5, then B3). Doc walks out under the
+    fixed shot, his cage fades, he comes to Ed, says his line, then the cover and sud0 before his house
+    (ChangeMapAtPosition: heg_positionedcavedocdevantdoc). Doc was never in the port's cast: his script changes level
+    (PROC 29), and the exporter left every such perso out. He runs now (docs/PORTALS.md "Level changers"); the door may
+    hold Ed. Checked headless from the lever on (portalcheck: sud0 at 20.3 s); not checked: the robot fight leading to
+    the lever.
 
 The debug menu works. With it the user played cavedoc from no powers: Suzy's line, through the level, the robot fight.
 Reported: (a) Ed does not get the power at the end of the boss fight; (b) the crate puzzle does not trigger; (c) the

@@ -136,6 +136,9 @@ typedef struct tc_ai_mode_zone {
 /* A portal entered from either side (the Special Edition's arches, tools/ttre/se.py): at capture its axes turn so that
  * local -Y (where Ed's walk-in B68 takes him, 4.5 in front) is on the side he is on. Retail's arches face one way. */
 #define TC_AI_PORTAL_TWO_SIDED 1u
+/* Its perso runs in the cast (tools/ttre/cast.py portal_ids): its own scripts capture and move the player, so the record
+ * is the simple controller's only (tc_ed_ai_run_portals); the AI's driver leaves it to the cast. */
+#define TC_AI_PORTAL_CAST 2u
 typedef struct tc_ai_portal {
     tc_vec3 position;
     float radius;                /* the capture distance, unless the portal has a zone */
@@ -359,6 +362,12 @@ typedef struct tc_ai_globals {
      * perso id, 0 none), 178 ChangeFocal (record +0x8C: the horizontal field of view, radians; 0 none). The host shoots
      * mode 6 (FUN_004a3130 case 6: no displacement, request flags 0x514: it stays and turns to the target); the
      * others are only recorded. cam_serial counts the writes that change something. */
+    /* FUNC 59-66 (FUNC_58Etc_0049cc70: Function_Camera_GetDistMin, ...Max, GetBoundDistMin, ...Max, GetAlpha,
+     * GetShiftAlpha, GetTeta, GetShiftTeta = the camera record's +0x30 .. +0x4C): with a first argument of 0 the default
+     * record's (TC_AI_CAMERA_DEFAULT_RECORD, the same in every level), else the current one: host-fed here from the
+     * play camera (has_cam_now false: the defaults too). */
+    float cam_now[8];
+    bool has_cam_now;
     int16_t cam_mode;
     int32_t cam_perso;           /* the camera perso PROC 177 named (its first argument), 0 none */
     int32_t cam_target;
@@ -466,6 +475,13 @@ struct tc_ai_perso {
     uint64_t hidden_channels;    /* PROC_120 / PROC_121, bit = channel */
     float float13, float14;      /* FIELD 13 / 14 */
     int32_t change_level;        /* ChangeLevel's string index, -1 none */
+    int32_t change_place;        /* PROC 29 ChangeMapAtPosition's arrival place and camera place (string indexes: level */
+    int32_t change_camera_place; /* persos by instance name), -1 none (ChangeLevel: none) */
+    /* Another perso's SetPositionFrom on this one (PROC 27, or PROC 8's pair: AI_00488010): its host places it (the main
+     * actor's driver at his next step, the cast before this perso's next step, the camera's host its camera). Not when
+     * the asking perso is kept off the main actor (keep_off_main) and this is he. */
+    bool place_requested;
+    tc_vec3 place_at;
     bool cover_requested;        /* GameAction2: start the cover transition; the host clears it */
     bool restart_requested;      /* GameAction0 (GAM_Objinit_00419e50 -> engine state 9: back from the last save); the
                                     host clears it (tc_ed_ai: the port's respawn) */
@@ -567,9 +583,27 @@ float tc_ai_dsgvar_float(const tc_ai_perso *p, uint32_t i);
 /* The camera perso's dsgvar that picks its shot (camera reflex 2: 5 the ski follow, 6 a fixed place; tc_cam.h
  * TC_CAM_SHOT_*): the cast may write it to the camera (read_only_for_cast's exception). */
 #define TC_AI_CAMERA_SHOT_DSG 39
+/* The fixed shot's parameters (shot 6: camera B8 -> B7; docs/CAMERA.md "The fixed shot"): */
+#define TC_AI_CAMERA_SHOT_FIXED 6    /* shot 6: the fixed shot (tc_cam.h TC_CAM_SHOT_FIXED) */
+/* The camera's default parameter record, +0x30 .. +0x4C (docs/CAMERA.md "The parameter record"): distance min / max, the
+ * bound distances, the horizontal angle and its tolerance, the elevation and its tolerance. */
+#define TC_AI_CAMERA_DEFAULT_RECORD {8.0f, 8.0f, 5.0f, 8.5f, 0.0f, 0.15f, 0.6f, 0.0f}
+/* The camera's dsgvars that make its shots (the shot dsg39, its pick-up flags 41 / 44 / 67 / 68, the follows' 76-78, the
+ * rail's 82-85, the fixed shot's 89-96, the axes' 100-110): the cast may write these; the main actor's scripts never
+ * read them (they use 1, 18, 20, 38, 40, 53, 69, 71, 140). */
+#define TC_AI_CAMERA_SHOT_PARAM(i) ((i) == 39 || (i) == 41 || (i) == 44 || (i) == 67 || (i) == 68 || \
+                                    ((i) >= 76 && (i) <= 78) || ((i) >= 82 && (i) <= 96) || ((i) >= 100 && (i) <= 110))
+#define TC_AI_CAMERA_FIXED_GLIDE 89  /* 1: it moves to the place (META 30), 0: it is put there */
+#define TC_AI_CAMERA_FIXED_TARGET 91 /* 1: it looks at its target perso (Ed), 0: at the point */
+#define TC_AI_CAMERA_FIXED_PLACE 92  /* the place (a vector) */
+#define TC_AI_CAMERA_FIXED_POINT 93  /* the point it looks at (a vector) */
+#define TC_AI_CAMERA_FIXED_STEPS 94  /* the point's ease: 1 / this of the way per tick (dsg95 1) */
+#define TC_AI_CAMERA_FIXED_EASE 95
 /* The same for another perso's dsgvar i as this AI holds it (model->others[other]; what this perso's scripts wrote
  * there): 0 when there is no such perso or dsgvar. */
 float tc_ai_other_dsgvar_float(const tc_ai_perso *p, uint32_t other, uint32_t i);
+/* The same as a vector: false when it is not one. */
+bool tc_ai_other_dsgvar_vec(const tc_ai_perso *p, uint32_t other, uint32_t i, tc_vec3 *out);
 /* Another perso writes this one's dsgvar i (Assign(Dot(perso, dsg<i>), ...)); perso ids go in as ints. */
 void tc_ai_dsgvar_set_int(tc_ai_perso *p, uint32_t i, int32_t v);
 void tc_ai_dsgvar_set_float(tc_ai_perso *p, uint32_t i, float v);

@@ -155,6 +155,40 @@ core runs Ed and sequences everything, the frontends draw.
    main.swift's `LoadingScreen` (AppKit views over the Metal view) and `openPortalLevel`.
 5. Docs: this file -> done, NOTES "Level portals" corrected, core/README backend notes.
 
+## The arches run themselves (2026-11-13; docs/ENGINE.md "The port today")
+The portals Ed takes are cast persos now, running their own scripts (the tables above): the arches (blue and red), the
+zone teleports (north, marmite, LeCanyon, cock01, BigBoss) and sud0's walk-in passages. The exporter keeps them in the
+cast (tools/ttre/cast.py `portal_ids`: the perso ids of the records `ai.portals()` makes for the fix Ed, on the retail
+levels he plays) and lets them force him (flag 1); their .ttai records stay, flagged `TC_AI_PORTAL_CAST`, for the simple
+controller only (it runs no cast). The core gained what their scripts need: PROC 8 and SetPositionFrom on another perso
+(Ed placed at his next step, then the reveal; the camera aimed from its new place), ChangeMapAtPosition (PROC 29) and
+the cover from any perso, GameState63 for all (docs/ENGINE.md "The game's requests from any perso").
+- Checked in the game (portalcheck's "in the game" scenarios: a headless viewer, real transitions): sud0's red arch
+  (walk-in, cover, level "bar" at 9.7 s; the records gave 9.55 s), Land's blue arch (the same place at the same tick,
+  6.75 s, then the step-out), north's zone teleport (the same place at 2.08 s), the passage into Doc's house (out at
+  the far end, (7.0, -27.4) against the records' (7.1, -27.4)).
+- The passages no longer cover the screen: the original makes Ed invisible (SetTransparency 0, which the port now
+  honours for Ed: not drawn) and moves him, the camera put at the passage's waypoint (the fixed shot). Ed's falling death sets it too (Land: 158 frames more not drawn, mostly under the
+  cover).
+- Port choice kept: Action and Jump skip the walk-in (as Shoot), now while Ed is in his walk-in behaviours (B66, B68:
+  `tc_ed_ai.walk_in`, from his model's records) and the screen is not yet covered.
+- Still records: the skier's portals (Totalski, skymap: `ski_portals`), the Special Edition's (se.py), the custom
+  layer's arches (custom.py: no perso behind them), and every portal under the simple controller.
+- The arches' camera: the fixed shot, since later that day (docs/CAMERA.md "The fixed shot").
+
+## Level changers (2026-11-13, after the arches)
+The other persos that change level or move Ed (PROC 7 / 8 / 29) run in the cast too, and may force him (tools/ttre/
+cast.py `level_changer_ids`; flags2 TC_CAST2_MOVES_MAIN marks them and the portals): Land's sub-map passages
+(HEG_GenTransitionSubMap: walk in, cover, PROC 8, walk out) and its falls to BigBoss (SDO_GenChangeMapPC), the
+canyon's retry (NBD_TransRetry), pyramide's teleporters (YAS_GenDesactiveEd), cavedoc's Doc (the cutscene after the
+robot: docs/BUGS.md), sud0's Doc (his lines and the Transit trainings, by his own story state), Transit's spies,
+BigBoss's end (HEG_TourGroghFinale), BigBoss's sub-map passage, the game over (death). Left out: the hint scenes'
+"press Start" (NBD_TestAppuisurlatoucheStart: Jump, Action or Shoot leave the scene, and the port's scenes start their
+speaker on Action), the light persos (LAIS), the skier's levels (Totalski, skymap) and the Special Edition. Checked:
+cavedoc's Doc (portalcheck); the others by the gate only (castcheck no longer takes them for pit markers or levers).
+Not checked one by one: sud0's Doc (where he sends Ed depends on the story values, which the port starts at 0 with every
+power on), the spies, the final boss.
+
 ## Cutscene levels: no longer skipped (2026-11-06; docs/ENGINE.md "Walkable scenes")
 Ed now walks into the scene and its speaker's script hands over; an export without SPCH still passes it by. Before:
 Six of sud0's red arches lead to a cutscene level whose character then changes level (`tc_level_after_cutscene`: bar ->

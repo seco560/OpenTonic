@@ -142,6 +142,10 @@ static float clear_distance(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, 
 static void preset(const tc_cam *c, const tc_cam_target *t, float *distance, float *elevation, float *stretch) {
     float zoom = t->distance / TC_CAM_DISTANCE;
     *distance = t->distance, *elevation = TC_CAM_ELEVATION, *stretch = TC_CAM_FRONT_STRETCH;
+    if (t->shot_distance > 0 && isfinite(t->shot_distance) && isfinite(t->shot_elevation)) { /* a director's follow (shots 2, 7, 8) */
+        *distance = t->shot_distance * zoom, *elevation = t->shot_elevation, *stretch = 1;
+        return;
+    }
     if (t->shot == TC_CAM_SHOT_SKI && !c->closeup) { /* the slides: further back as he speeds up, lower, no stretch */
         *distance = (TC_CAM_SKI_DISTANCE + fminf(TC_CAM_SKI_PULLBACK_MAX, t->speed * TC_CAM_SKI_PULLBACK)) * zoom;
         *elevation = TC_CAM_SKI_ELEVATION, *stretch = 1;
@@ -229,7 +233,13 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
             view->yaw = wrap(view->yaw + (c->swing_rate + r) * 0.5f * dt);
             c->swing_rate = fabsf(r) < 1e-3f ? 0 : r;
         }
-        if (t->chase > 0 && t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE) {
+        if (t->shot_axis && c->since_look >= TC_CAM_GRACE) {
+            /* a director's axis (shots 7, 8): onto it, critically damped, whatever Ed does */
+            float d = wrap(t->shot_yaw - view->yaw), w = 1 / TC_CAM_AXIS_TIME, h = fminf(dt, 1.0f / 30);
+            c->chase_rate += (w * w * d - 2 * w * c->chase_rate) * h;
+            view->yaw = wrap(view->yaw + c->chase_rate * h);
+            c->rope_gain = 0;
+        } else if (t->chase > 0 && t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE) {
             /* the chase (a car's): in behind it, critically damped (from standing: no jolt as it starts); the rope's
              * gain starts over for when it ends */
             float d = wrap(t->behind - view->yaw), w = 1 / t->chase, h = fminf(dt, 1.0f / 30);
@@ -245,7 +255,9 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
             across = across > 0 ? fmaxf(0, across - dead) : fminf(0, across + dead);
             view->yaw = wrap(view->yaw + c->rope_gain * TC_CAM_ROPE * across / c->distance * dt);
         } else if (c->since_look < TC_CAM_GRACE) c->rope_gain = 0; /* the player has it: fade in afresh after */
-        if (!(t->chase > 0 && t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE)) c->chase_rate = 0;
+        if (!(t->shot_axis && c->since_look >= TC_CAM_GRACE) &&
+            !(t->chase > 0 && t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE))
+            c->chase_rate = 0;
     }
     if (t->speed > TC_CAM_MOVING_SPEED && c->since_look >= TC_CAM_GRACE) c->rise -= c->rise * ease(dt, TC_CAM_RELAX_TIME);
 }
@@ -262,6 +274,12 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
         return;
     }
     if (c->placed && tc_v3_distance(pivot, c->pivot) > TC_CAM_TELEPORT) c->placed = false; /* a respawn, a portal */
+    /* never kept: a value that is not a number (it would stay in the eased state for good) */
+    if (c->placed && !(isfinite(c->distance) && isfinite(c->elevation) && isfinite(c->rise) && isfinite(view->yaw) &&
+                       isfinite(c->height1) && isfinite(c->height2) && isfinite(c->stretch) && isfinite(c->pull)))
+        c->placed = false;
+    if (!isfinite(view->yaw)) view->yaw = t->behind;
+    if (!isfinite(c->rise)) c->rise = 0;
     first = !c->placed;
     c->pivot = pivot;
     preset(c, t, &distance, &elevation, &stretch);

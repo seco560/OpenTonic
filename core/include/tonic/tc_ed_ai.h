@@ -75,6 +75,11 @@ typedef struct tc_ed_ai {
     uint16_t portal_op;
     float portal_wait;
     uint8_t *portal_armed;
+    /* Host-set: a cast runs (tc_main): the portals whose perso it runs (TC_AI_PORTAL_CAST) are its, not the driver's. */
+    bool cast_portals;
+    /* His walk into an arch (B66, the lead-in its capture forces, then B68: the walk up and the step in), from his
+     * model's portal records (TC_AI_NONE16 none): the Action / Jump skip (tc_ed_ai_step) holds while he is in them. */
+    uint16_t walk_in[2];
     bool screen_covered;         /* host -> driver: the cover transition has finished (GameState63) */
     tc_ed_ai_events events;      /* driver -> host */
 } tc_ed_ai;

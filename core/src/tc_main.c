@@ -167,6 +167,34 @@ static void ride_step(void *self, float dt) {
 
 static const tc_cast_main_ops ride_ops = {ride_step, ed_sector};
 
+/* What the cast's scripts asked of the game this tick, as the host's events (tc_ed_ai_events): a cover (GameAction2), a
+ * level change (ChangeLevel, PROC 29 with its places: a speaker's way out, docs/ENGINE.md "Walkable scenes"; the arches,
+ * docs/PORTALS.md), and where a perso put the camera (PROC 8's second pair, SetPositionFrom on it: the host's camera
+ * looks at Ed from there). */
+static void take_requests(tc_main *m, tc_cast *cast) {
+    tc_ed_ai_events *ev = &m->driver.events;
+    const tc_ai_model *model = m->driver.ai.model;
+    if (cast->game_cover) {
+        cast->game_cover = false;
+        ev->cover = true;
+        m->driver.screen_covered = false;
+    }
+    if (cast->game_level) {
+        ev->level = cast->game_level;
+        ev->place = cast->game_place;
+        ev->camera_place = cast->game_camera_place;
+        cast->game_level = cast->game_place = cast->game_camera_place = NULL;
+    }
+    if (m->driver.camera >= 0 && (uint32_t)m->driver.camera < model->other_count && m->driver.ai.find) {
+        tc_ai_perso *cam = m->driver.ai.find(m->driver.ai.find_user, (int32_t)model->others[m->driver.camera].id);
+        if (cam && cam->place_requested) {
+            cam->place_requested = false;
+            ev->camera_set = true;
+            ev->camera = cam->place_at;
+        }
+    }
+}
+
 /* A tick while another character holds the slot: the cast's passes round Ed riding it. */
 static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, uint32_t *count, uint32_t cap) {
     ed_tick x;
@@ -182,15 +210,7 @@ static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, uint32_t *cou
     cast->talk_press = false; /* his Action is its own (getting out) */
     tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors, &ride_ops, &x);
     for (n = 0; n < cast->sounds_out_count && *count < cap; n++) sounds[(*count)++] = cast->sounds_out[n];
-    if (cast->talk_cover) {
-        cast->talk_cover = false;
-        m->driver.events.cover = true;
-        m->driver.screen_covered = false;
-    }
-    if (cast->talk_level) {
-        m->driver.events.level = cast->talk_level;
-        cast->talk_level = NULL;
-    }
+    take_requests(m, cast);
     return true;
 }
 
@@ -212,21 +232,14 @@ bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *
         cast->main_mass = st->card != TC_AI_NONE16 ? tc_ai_card_f32(&m->driver.ai.model->cards[st->card], 4) : 0;
         /* he is the cast's actor: his record, and his mechanics through the cast's (again after a walk / ski switch) */
         tc_cast_attach_main(cast, &m->driver.ai, &m->driver.dyn, &m->player);
+        m->driver.cast_portals = true; /* the portals it runs are its (TC_AI_PORTAL_CAST) */
         m->driver.mechanics = cast_mechanics;
         m->driver.mechanics_user = cast;
         /* the exe's frame (docs/ENGINE.md): the run-first persos (platforms, lifts) move before the rest, so Ed rides
          * and collides with them where they are this tick; then Ed, then the other persos */
         tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors, &ed_ops, &x);
         for (n = 0; n < cast->sounds_out_count && *count < cap; n++) sounds[(*count)++] = cast->sounds_out[n];
-        if (cast->talk_cover) { /* a speaker's way out (docs/ENGINE.md "Walkable scenes") */
-            cast->talk_cover = false;
-            m->driver.events.cover = true;
-            m->driver.screen_covered = false;
-        }
-        if (cast->talk_level) {
-            m->driver.events.level = cast->talk_level;
-            cast->talk_level = NULL;
-        }
+        take_requests(m, cast);
     } else
         ed_step(&x, TC_ED_AI_TICK);
     tc_main_capture(m);

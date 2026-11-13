@@ -630,3 +630,64 @@ teleport), viewcheck (bar keeps sud0's close-up through the portal).
    the eye over his head when a wall pulls it in close, instead of hiding him.
 
 **2026-11-06:** Ed's autopilot is removed, and with it the `manual` camera input it used. The demo measurements above are history: camcheck's line of sight and clipping reports now come from its scripted walk (the real follow camera; the autopilot had its own direction), and the walk and jitter results did not change.
+
+### The fixed shot (2026-11-13; the user: "do the camera fixed shot", then "make it possible to move it around still")
+The camera's shot 6 (its dsg39; camera reflex 2 -> B8, then B7 each tick), read from the fix camera's scripts:
+- B8: dsg89 1 -> it moves to the place dsg92 (B7's Action_Camera_GoToPosition, META 30 = META_30Cont_0049daf0: while
+  further than 0.1, the place goes to the camera's cine record, GAM_cineinfo_00426f20, and its own mechanics carry it);
+  dsg89 0 -> mode 3, put at dsg92 at once. dsg91 1 -> it looks at its target perso (Function_Camera_GetTargetCamera:
+  Ed, his origin), else at dsg93; dsg95 1 (and dsg91 0) -> the look point eases to dsg93 by 1 / dsg94 of the way per
+  tick. Reflex 2 leaves it when dsg39 changes.
+- Who picks it, and the place: the arches (glide to the arch's waypoint, look at the arch, while Ed walks in), the walk-in
+  passages (put at the far end's waypoint, look at Ed: the passages into Doc's house, the tower, the ice; three ends,
+  TransMaison03 and the stairs Nik_Actor2/3, never give it back: in the original the camera stays there until a camera
+  director or another passage changes it), Land's sub-map passages, pyramide's teleporters, cavedoc's Doc, the ski
+  finish and retry, the pits.
+- Port (tc_viewer_camera.c `update_fixed`): the glide is an ease (TC_VIEW_FIXED_GLIDE_TIME 0.35 s; the camera's
+  mechanics' speed is not read). The player's camera: see "The directors' shots" below (turning moves the shot's
+  camera; a fresh Jump, Action or Shoot gives the follow back).
+- Who may pick it: since the camera directors run (below), every cast perso; the refusal of the characters' fixed
+  shots (Suzy, sud0's Doc in his cage, the chameleons, the levels' entrance cameras ...) of earlier that day is gone.
+- Checked: portalcheck "in the game" (Land's blue arch: the eye glides 6.2 to the waypoint and holds through the cover;
+  turning the camera gives it back and Ed still goes through; sud0's passage: put at the far end's waypoint, 2 s).
+
+### The directors' shots (2026-11-13; the user: "when characters can also take hold of the camera")
+The camera directors (family GenD_Cam, 83 level persos; tools/ttre/cast.py no longer leaves them out; CAST flags2
+TC_CAST2_DIRECTOR) and the characters pick the camera's shots by its dsg39 and write each shot's parameters, which the
+camera's own behaviours read (fix camera, read from its scripts; reflex 2 picks the behaviour by dsg39, 255 = 0):
+| Shot | Camera | Directors | What it is | Port (tc_viewer_camera.c `scripted_shot`) |
+|---|---|---|---|---|
+| 2 | B5 -> B28 | GenCamRap (SDO, MLK), SRU's tunnels | the follow at base distance (dsg76 + dsg77) / 2, elevation dsg78 (B28's `If dsg39 == 2`) | the follow's preset replaced (tc_cam_target.shot_distance / shot_elevation), no front stretch |
+| 4 | B22 -> B21 | YBA Rail | mode 3: the eye on dsg82 -> dsg83 at Ed's projection (clamped, + dsg85), eased by dsg84 ((1.95 - 0.15 dsg84) / 9 a tick), looking at him; a zero segment ends it | as read |
+| 6 | B8 -> B7 | Cut, ReOrient, the characters | the fixed shot (above) | as above |
+| 7 | B10 -> B9 | YBA Orient | the follow at dsg102 (>= 1.6), elevation dsg103, its reference direction dsg106 = dsg100 (turned round at the start with dsg104 when Ed faces along it): SetCameraPivotOffset op 100 stores it (DAT_0051af90, flag DAT_004ffd00) and FUN_004a1310 takes -it for the target's front, so the camera sits on the dsg100 side | the follow's yaw eased onto it (TC_CAM_AXIS_TIME 0.3 s, critically damped), the director's distance and elevation |
+| 8 | B20 -> B19 | JFR Mirroir | as 7, along dsg100 or its mirror in dsg107 (B20's formula, dsg108) by which way Ed faces against dsg107, switching after 600 ms (the camera's flag word 2 not read: its 600 ms default) | as read |
+- The cast may write the camera's shot dsgvars (TC_AI_CAMERA_SHOT_PARAM: 39, 41, 44, 67, 68, 76-78, 82-96, 100-110);
+  the ones the main actor's scripts use (1, 18, 20, 38, 40, 53, 69, 71, 140) stay his.
+- Port (the user, 2026-11-13: first "give me the free camera", then "don't just give me back my regular camera; make
+  it possible to move around the custom camera"): turning the camera (look keys, right stick, mouse) turns the shot's
+  own camera and the shot stays: a fixed or rail eye orbits its look point (yaw, and rise within 1.2 rad; pulled in
+  before a surface, as the follow's), a director's follow keeps the player's turn on top of its direction. From the
+  fixed and rail shots a fresh Jump, Action or Shoot gives the follow back. A new shot, or the same with another
+  place, rail, distance or axis, starts from the scripts' framing again.
+- FUNC 59-66 (FUNC_58Etc_0049cc70: Function_Camera_GetDistMin ... GetShiftTeta, the camera record's +0x30 .. +0x4C):
+  with 0 the default record (8, 8, 5, 8.5, 0, 0.15, 0.6, 0: the same in every level), else the current one (the
+  port's follow: its distance -0.3 / +0.3, -1.3 / +3, elevation). Before, not modelled: cavedoc's ruby lifts
+  (SDO_PFDeplaceAscenseur) took shot 7's distance and elevation from them, a number that was not one, and the follow
+  kept it for good (the user: "stuck in a top-down state"). The camera now never keeps such a value (tc_cam.c: placed
+  afresh; the viewer reads one as none). camcheck rides the lift.
+- At the levels' starts: Land's entrance camera (POC_CameraEntree, 7 s), cavedoc's and Transit's spies, cock01's
+  armour room (SLY_CamOriente, 12 s), pyramide's slide projector (Gun_ProjecteurDiapo, 13.6 s), BigBoss's intro then
+  an Orient director; each gives the camera back by itself (its line taken away with Jump: headless, 30 s each).
+  camcheck's Land walk now heads into the return arch by Ed's start (his controls follow the entrance camera).
+- The hint scenes (docs/ENGINE.md "Walkable scenes": bar, mammyon, pharmmap, pyr_fou, SpyCarota, spynorth): Ed still
+  walks about freely until he talks; then the speaker and the scene's own camera perso (JFR_cam*) take the camera (the
+  fixed shot; pharmmap's an orientation too) until the line hands over to the next level: bar 6.3 s to cock01,
+  mammyon 23.1 s to lecanyon, pharmmap 8.1 s to marmite, pyr_fou 6.0 s to pyramide, SpyCarota 8.2 s to carota,
+  spynorth 5.7 s to north (headless, the line taken away with Jump). viewcheck checks bar's.
+- Checked (camcheck "the camera directors"): Ed put at each of the 83 directors for 2 s on 12 levels: 46 pick a shot
+  (2: 13, 4: 2, 6: 16, 7: 11, 8: 4; the others trigger on waypoints or other conditions, not met there), the camera a
+  number all along, turning it turns the shot's camera and the shot stays (45 of 45). Values seen: shot 7 at 10-20 units and 0.2-1.0 rad, shot 2 at
+  3-9 units and 0.3 rad. Not read: the camera's speed caps and smoothing in these shots (the follow's own are used),
+  PROC 165 (the speed record), the directors' force on Ed (SRU_ForceToWalkToWayPoint: kept off the main actor).
+

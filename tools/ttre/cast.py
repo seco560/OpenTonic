@@ -3,11 +3,12 @@ core/src/tc_cast.c). docs/NOTES.md "The cast".
 
 Every level perso with an AI model runs its scripts in the original. The port runs them too, except:
   - the player, the fix persos (Ed, the camera: their own code paths) and the families in EXCLUDED_FAMILIES (the
-    camera directors and the cheat-code reader, whose effects the port does not model). World (the level's game flow:
+    cheat-code reader, whose effects the port does not model; the camera directors run since 2026-11-13). World (the level's game flow:
     the collect-N rewards, north's fall height) runs since 2026-11-04; the respawn after a death stays the port's;
-  - the persos the converter already reduced to data: the portals (ai.portals: the arches, the walk-in passages) and
-    level changers (scripts that teleport or change level: PROC 7 / 8 / 29; .ttai PORT), the skier's start (PROC 6 deactivates the fix Ed), the light persos (PROC 283;
-    .ttlv LAIS), Totalski's obstacles (.ttai TRIG).
+  - the persos the converter already reduced to data: the skier's start (PROC 6 deactivates the fix Ed), the light
+    persos (PROC 283; .ttlv LAIS), Totalski's obstacles (.ttai TRIG), and on the skier's levels and the Special
+    Edition's the portals and level changers (.ttai PORT). Since 2026-11-13 the portals Ed takes (the arches, the zone
+    teleports, sud0's walk-in passages: portal_ids) and the other level changers (level_changer_ids) run in the cast.
 
 Per perso the std game's activity fields are exported as the snapshot holds them (GAM_00428070 / GAM_PersoFrame_0042b520):
 +0x14 hit points, +0x15 their maximum, +0x17 "dead" (PROC 5 cannot wake it), +0x18 active, +0x20 1 = re-initialised
@@ -36,7 +37,9 @@ CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes; 
     u8 flags (1: may force the main actor's behaviours, MAY_FORCE_MAIN; 2: a save point, SAVE_POINTS; 4: on the engine's
       always-awake list, 8: on its run-first list: LevelData.engine_lists; 16: a scene's actor, SCENE; 32: TABLES;
       64: a spawnable template, SPAWN, out until instanced),
-    u16 0, f32 radius2 (raw +0x2C), f32 world[12] (row-major 3x4),
+    u16 flags2 (1: a portal or level changer the cast runs, MOVES_MAIN: portal_ids, level_changer_ids; 2: a camera
+      director, DIRECTOR), f32 radius2 (raw
+      +0x2C), f32 world[12] (row-major 3x4),
     u16 n_zones, u16 0, [n_zones > 0: f32 inverse world[12]], n_zones x { u16 k (1-based ZDD zone of COND_13(Me, k, ..)),
       u16 n_prims, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3] } },
     u32 size, size bytes = a .ttai SCPT body (ai.py; buttons index the main actor's), padded to 4,
@@ -48,7 +51,9 @@ import struct
 
 from . import ai
 
-EXCLUDED_FAMILIES = {'Camera', 'GenD_Cam', 'gen_cheatCode', 'gen_arche'}
+# Since 2026-11-13 the camera directors (GenD_Cam) run: they pick the camera's shots (docs/CAMERA.md "The directors'
+# shots"). 'Camera': the fix camera's family (carota's IVP_Cam_Fixe, a level perso of it, writes nothing).
+EXCLUDED_FAMILIES = {'Camera', 'gen_cheatCode', 'gen_arche'}
 # Port choice: only these families may force the main actor's behaviour or reflex (PROC 237 / 238). The others (the
 # talking characters, Agent XYZ, the cutscene and trap triggers) hand Ed to behaviours that wait for conversations,
 # cameras and cutscenes the port does not run yet: he would stand there for good. Checked headless (castcheck).
@@ -66,7 +71,11 @@ MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn',
                          # cavedoc's robot (FRB_RoBneus), the power 7 boss: its intro holds Ed (B15 + R4, B103 after
                          # its line); beaten, it ends his Super Ed (dsg15 := 0), sends him to take the power (B76 sets
                          # his dsg58 = 1) and gives power 7 (its B11). Kept off Ed, the fight ran but gave nothing.
-                         'FRB_RoboBne'}
+                         'FRB_RoboBne',
+                         # cavedoc's last door (BEM_PorteDeFinDoc): its lever pulled (SDO_OuvrePorte's dsg0 1 or 2), it
+                         # holds Ed (B?: his wait, R4) while it opens and starts Doc's way home (BEM_Doc B5, B3: the
+                         # cutscene after the robot; Doc runs since 2026-11-13, level_changer_ids)
+                         'BEM_DocPorteFin'}
 # ... but not these instances: marmite's magnet switch keeps Ed holding it (his dsg3 = 1: Jump and Shoot steer the
 # magnet; leaning it to let go with Action does not take in the port yet, castcheck 2026-11-02): he would be stuck.
 MAY_NOT_FORCE_MAIN = {'JET_SwAimant'}
@@ -89,6 +98,9 @@ SE_ITEM_FAMILIES = {'gen_icon_argen', 'gen_icon_or', 'gen_icon3', 'gen_ruche_j',
                     'doc_plum', 'doc_ressor', 'doc_kyou', 'World'}
 SE_SAVE_MODELS = {'ARG_Sauvegarde', 'JOB_Sauvegarde', 'POC_POC'}  # genplainenord: Proc_SaveGame within dsg0, then out
 SCENE = 16  # entry flag: core tc_level.h TC_CAST_SCENE
+MOVES_MAIN = 1  # entry flags2 (the u16 after flags): a portal or level changer (portal_ids, level_changer_ids); core
+                # TC_CAST2_MOVES_MAIN
+DIRECTOR = 2  # entry flags2: a camera director (GenD_Cam: it picks the camera's shots); core TC_CAST2_DIRECTOR
 TALK = 128  # entry flag (TC_CAST_TALK): a hint scene's speaker: asleep until Ed talks to it
 # The hint scenes (docs/ENGINE.md "Walkable scenes"): a level of one speaker who tells the scene's own Ed a hint, then hands
 # over to the main level. Port: Ed walks in himself, so the speaker runs (its ChangeLevel is the way out), and the scene's
@@ -99,6 +111,66 @@ SCENE_ED = 'PAT_Ed_Map_Astuce'
 SPAWN = 64  # entry flag (TC_CAST_SPAWN): a spawnable template (LevelData.spawnables), out until META 11 instances it
 TABLES = 32  # entry flag (TC_CAST_TABLES): its scripts' strings and constant vectors follow them (the STRS and VECS
              # bodies of a .ttai), which the cast had none of before 2026-11-05 (every string and vector read as nothing)
+
+
+def portal_ids(d):
+    """The portals the cast runs (since 2026-11-13; docs/PORTALS.md "The arches run themselves"): the perso ids of the
+    portal records ai.portals() makes for the fix Ed (the arches, the zone teleports, sud0's walk-in passages), on the
+    retail levels he plays. Their own scripts capture him, cover the screen and move him (PROC 8 / 27 / 29, ChangeLevel),
+    so they may force him (flag 1); the .ttai still has their records (flag 2: the cast runs it) for the simple
+    controller, which runs no cast. Not the skier's levels (Totalski, skymap: ski_portals, the skier's start and finish
+    stand-ins) nor the Special Edition's (se.py)."""
+    cached = getattr(d, '_cast_portal_ids', None)
+    if cached is not None:
+        return cached
+    out = set()
+    player = d.player()
+    fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
+    if not d.se and player and player == fix_ed:
+        try:
+            out = {g[3] for g in ai.portals(ai.AI(d, player), {})}
+        except Exception:
+            out = set()
+    d._cast_portal_ids = out
+    return out
+
+
+# Persos that change level or move the player (PROC 7 / 8 / 29) left out where the rest run (level_changer_ids): the hint
+# scenes' "press Start" (any of Jump, Action, Shoot covers and leaves: the port's scenes start the speaker on Action).
+LEVEL_CHANGERS_LEFT_OUT = {'NBD_TestAppuisurlatoucheStart'}
+
+
+def level_changer_ids(d):
+    """The level changers the cast runs (since 2026-11-13, after the portals): on the retail levels the fix Ed plays (as
+    portal_ids), every perso whose scripts change level or move the player (PROC 7 / 8 / 29; ChangeLevel,
+    ChangeMapAtPosition, the teleport), but not a light perso (PROC 283: LAIS), the skier's start (PROC 6 on the fix Ed),
+    the scene's Ed, an excluded family or LEVEL_CHANGERS_LEFT_OUT: Land's sub-map passages and its falls to BigBoss,
+    the canyon's retry, pyramide's teleporters, cavedoc's Doc (after the robot: back to sud0 before his house), sud0's
+    Doc (the trainings), Transit's spies, BigBoss's end, the game over. They may force the player (flag 1): their
+    effect on him is what they are for."""
+    cached = getattr(d, '_cast_level_changer_ids', None)
+    if cached is not None:
+        return cached
+    out = set()
+    player = d.player()
+    fix = {x[0] for x in d.perso_in_fix if x and x[0]}
+    fix_ed = d.perso_in_fix[0][0] if d.perso_in_fix else None
+    if not d.se and player and player == fix_ed:
+        for k, p in enumerate(d.persos()):
+            if p.loc == player or p.loc in fix or not d.lv.ptr(p.loc, 0xC):
+                continue
+            names = d.perso_names(p.loc)
+            if names[0] in EXCLUDED_FAMILIES or names[1] in LEVEL_CHANGERS_LEFT_OUT or names[1] == SCENE_ED \
+                    or names[1] in SCENE_SPEAKERS:
+                continue
+            try:
+                a = ai.AI(d, p.loc)
+            except Exception:
+                continue
+            if a.behaviours and _calls(a, {7, 8, 29}) and not _calls(a, {6, 283}, frozenset(fix)):
+                out.add(k + 1)
+    d._cast_level_changer_ids = out
+    return out
 
 
 def _calls(a, procs, fix=frozenset()):
@@ -134,11 +206,20 @@ def select(d):
         except Exception:
             pass
     out = []
+    run_portals = portal_ids(d) | level_changer_ids(d)
     for k, p in enumerate(d.persos()):
         if p.loc == player or p.loc in fix or not lv.ptr(p.loc, 0xC):
             continue
         names = d.perso_names(p.loc)
         reason = None
+        if k + 1 in run_portals:  # the portals run themselves (portal_ids)
+            try:
+                a = ai.AI(d, p.loc)
+            except Exception:
+                a = None
+            if a is not None and a.behaviours:
+                out.append((p.loc, k + 1, a))
+                continue
         if d.se and d.lv.name.lower() not in SE_CAST_LEVELS and names[0] not in SE_ITEM_FAMILIES \
                 and names[1] not in SE_SAVE_MODELS:
             skipped['special edition: not an item'] = skipped.get('special edition: not an item', 0) + 1
@@ -392,6 +473,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         world = by_loc[loc].world
         names = d.perso_names(loc)
         flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
+        if pid in portal_ids(d) or pid in level_changer_ids(d):
+            flags |= 1  # a portal or a level changer: it moves the player (portal_ids, level_changer_ids)
         if names[1] in SCENE_SPEAKERS:
             flags |= TALK
         if d.se:  # SE_CAST_LEVELS: a scene; elsewhere the items, and the save points as retail's DFM_Save
@@ -413,7 +496,9 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
                 zone_block += struct.pack('<HH', k, len(prims)) + b''.join(struct.pack('<I3f3f', t, *x, *y) for t, x, y in prims)
         entries.append(struct.pack('<5H6B2BHf12f', pid, prso_index.get(loc, 0xFFFF), families[fam],
                                    0xFFFF if sector is None else sector, init_state, hp, hp_max, active, dead, mech,
-                                   anim, int(reinit), flags, 0, radius2, *world)
+                                   anim, int(reinit), flags, (MOVES_MAIN if pid in portal_ids(d) | level_changer_ids(d) else 0) |
+                                   (DIRECTOR if names[0] == 'GenD_Cam' else 0),
+                                   radius2, *world)
                        + zone_block + struct.pack('<I', len(body)) + body + b'\0' * (-len(body) % 4)
                        + struct.pack('<I', len(tables)) + tables + b'\0' * (-len(tables) % 4))
         listing.append(f'{pid:5d} {names[0]:24s} {names[2]:32s} family {families[fam]:3d} states {len(a.states):3d} '

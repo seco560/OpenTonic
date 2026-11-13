@@ -677,6 +677,7 @@ void tc_replay_pause(tc_replay *r, bool on) {
         r->was_inspecting = v->inspecting;
         r->saved_camera = v->camera;
         r->saved_cam = v->cam;
+        r->saved_shot = v->shot;
         r->saved_orbit = v->orbit_distance;
         v->inspecting = true;
         return;
@@ -684,6 +685,7 @@ void tc_replay_pause(tc_replay *r, bool on) {
     v->inspecting = r->was_inspecting;
     v->camera = r->saved_camera;
     v->cam = r->saved_cam;
+    v->shot = r->saved_shot;
     v->orbit_distance = r->saved_orbit;
     if (r->drawn) { /* the camera's sight reads the last draw list: this camera's isn't the run's */
         uint32_t count, opaque;

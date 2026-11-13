@@ -269,7 +269,8 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
           as stored), u16 perso (as perso nodes), u8 fire (0: when Ed's dsgvar fire_dsg == fire_value, 1: when the
           screen is covered, 2: never, capture only: the player's scripts do the rest), u8 flags (1: two-sided, the
-          SE's arches: se.py), u16 fire_dsg, u16 0,
+          SE's arches: se.py; 2: its perso runs in the cast, cast.portal_ids: only the simple controller uses the
+          record), u16 fire_dsg, u16 0,
           i32 fire_value, u16 sector (the perso's, as in the .ttlv's SECT; 0xFFFF unknown: always awake), u16 0,
           u16 n_capture, u16 n_fire, (n_capture + n_fire) x op { u8 op, u8 kind, u16 a, u32 b, u32 c, f32 v[3] } }
           (ops: ai.POP_*, see portals());
@@ -772,6 +773,7 @@ def perso_dsg(d, perso, k):
 # Portal ops (reader: core/src/tc_ai.c, TC_AI_POP_*). Fixed 24-byte records { u8 op, u8 kind, u16 a, u32 b, u32 c,
 # f32 v[3] }.
 POP_GUARD, POP_SET, POP_FORCE, POP_FORCE_REFLEX, POP_COVER, POP_WAIT, POP_TELEPORT, POP_CAMERA, POP_LEVEL = range(1, 10)
+PORTAL_CAST = 2  # PORT flags: the record's perso runs in the cast (cast.portal_ids); core TC_AI_PORTAL_CAST
 
 
 def portals(ai, strings):
@@ -1605,10 +1607,13 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
     cut('TRIG')
     names = {}
     gates = portals(ai, names)
+    from . import cast as cast_mod
+    in_cast = cast_mod.portal_ids(d) if ai.perso == d.player() else set()
     out += struct.pack('<HH', len(gates), 0)
     for pos, radius, rows, perso, fire, fire_dsg, fire_value, cap, fire_ops, _ in gates:
         sector = d.perso_sector(d.persos()[perso - 1].loc)
-        out += struct.pack('<4f9fHBBHHiHH', *pos, radius, *[x for r in rows for x in r], perso, fire, 0, fire_dsg, 0,
+        out += struct.pack('<4f9fHBBHHiHH', *pos, radius, *[x for r in rows for x in r], perso, fire,
+                           PORTAL_CAST if perso in in_cast else 0, fire_dsg, 0,
                            struct.unpack('<i', struct.pack('<I', fire_value & 0xFFFFFFFF))[0],
                            0xFFFF if sector is None else sector, 0)
         out += struct.pack('<HH', len(cap), len(fire_ops))

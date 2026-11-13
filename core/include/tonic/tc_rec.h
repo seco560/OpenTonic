@@ -169,6 +169,7 @@ typedef struct tc_replay {
     bool was_inspecting;         /* the viewer's own, before it: a recorded pause */
     tc_camera saved_camera;      /* what a resume puts back */
     tc_cam saved_cam;
+    tc_viewer_shot saved_shot;   /* the scripted shot as it was (the player may turn its camera while paused) */
     float saved_orbit;
     tc_replay_drift drift;
 } tc_replay;

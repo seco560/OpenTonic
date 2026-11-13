@@ -121,6 +121,9 @@ void tcv_look(tc_viewer *v, float dt) {
     if (v->invert_x) yaw = -yaw;
     if (v->invert_y) pitch = -pitch;
     if (v->playing && v->play) {
+        v->looked = true; /* a scripted shot's camera turns with it (tc_viewer.shot.look_*) */
+        v->look_yaw_frame += yaw;
+        v->look_rise_frame += -pitch;
         tc_cam_look(&v->cam, c, yaw, -pitch); /* looking up: the camera lower, looking up at him */
         return;
     }

@@ -124,9 +124,13 @@ typedef struct tc_cast {
     int32_t main_carrier;        /* host-fed: the perso the main actor rides (tc_mec_walk.carrier), -1 none */
     uint16_t main_sector;        /* the main actor's sector, as the last step got it (a spawn by him starts there) */
     uint32_t spawned;            /* diagnostics: META 11's instances */
+    uint32_t placed;             /* diagnostics: SetPositionFrom placements of actors (PROC 27 / 8) */
     bool talk_press;             /* host-fed: a fresh Action this tick (TC_CAST_TALK) */
-    bool talk_cover;             /* a speaker's GameAction2: the host starts the cover */
-    const char *talk_level;      /* a speaker's ChangeLevel: the host goes there, NULL none */
+    /* The game's requests of the host from the actors' scripts this tick (the engine states they set): GameAction2 starts
+     * the cover; ChangeLevel / PROC 29 change level (lowercase as the scripts give it; NULL none), with PROC 29's arrival
+     * place and camera place (level persos by instance name; NULL none). The host clears them. */
+    bool game_cover;
+    const char *game_level, *game_place, *game_camera_place;
     float main_mass;             /* host-fed: his mass (his card's +4): what he weighs on what he rides (FUN_004c32f6) */
     tc_cast_moving_sector moving_sectors[TC_CAST_MAX_MOVING_SECTORS]; /* in the order the scripts first moved them */
     uint32_t moving_sector_count;

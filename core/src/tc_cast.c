@@ -560,6 +560,27 @@ static void root_to_proposal(tc_ai_perso *p) {
     pr[10] = len;
 }
 
+/* AI_00488010 SetPositionFrom on an actor (its own PROC 27, or another's PROC 27 / 8: tc_ai_perso.place_requested): one
+ * with dynamics (a family with cards: AI_00492010 / AI_00491f80 return without) is put there, off its carrier
+ * (GAM_00428ea0), its sector looked up again (the exe's two calls put it 0.5 higher, then at the place: DAT_004d2cc0 =
+ * -0.5, DAT_004d2cc8 = 0.5). The activation (GAM_Objinit_004199f0) is the interpreter's. */
+static void place_actor(tc_cast *c, tc_cast_actor *a, tc_vec3 at, const tc_sectors *s) {
+    const tc_cast_family *f = &c->level->cast.families[a->entry->family];
+    tc_ai_perso *p = a->ai;
+    if (!f->cards) return;
+    p->position = a->position_prev = at;
+    if (a->has_body && a->body) {
+        a->body->position = at;
+        a->body->velocity = tc_v3(0, 0, 0);
+        a->body->placed++;
+    }
+    a->dyn->velocity = tc_v3(0, 0, 0);
+    tc_mec_walk_reset(&a->dyn->walk);
+    a->dyn->walk.carrier = -1;
+    if (s && a->sector.sector != TC_SECTOR_NONE) tc_sector_place(&a->sector, s, at);
+    c->placed++;
+}
+
 /* One perso's frame (GAM_00428070 for a marked perso): awake when the main character's sector or its activity list
  * (+0x64) holds it (GAM_00428490), or it is on the engine's always-awake list (0x8c172c, marked every frame by the
  * main loop at 0x428a8f); then its AI within the activation radius, its animation (docs/ENGINE.md). */
@@ -580,6 +601,11 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
             if (start_actor(c, a) != TC_OK) { memset(p, 0, sizeof(*p)); return; }
             p->active = false;
         }
+        if (p->place_requested) { /* another perso's SetPositionFrom, since its last step */
+            p->place_requested = false;
+            place_actor(c, a, p->place_at, s);
+        }
+        if (c->main) p->screen_covered = c->main->screen_covered; /* GameState63: the engine's */
         if (!p->model || !p->active) { a->awake = false; return; }
         a->awake = (a->entry->flags & TC_CAST_ALWAYS_AWAKE) || !s || main_sector == TC_SECTOR_NONE ||
                    a->sector.sector == TC_SECTOR_NONE || tc_sectors_active(s, main_sector, a->sector.sector);
@@ -606,14 +632,19 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
             c->globals.checkpoint = c->main->position;
             c->globals.checkpoint_heading = c->main->heading;
         }
-        if (a->entry->flags & TC_CAST_TALK) { /* its scene's way out is the main actor's: the cover, then the level */
-            if (p->cover_requested) p->cover_requested = false, c->talk_cover = true;
-            if (c->main) p->screen_covered = c->main->screen_covered;
-            if (p->change_level >= 0) {
-                if ((uint32_t)p->change_level < p->model->string_count) c->talk_level = p->model->strings[p->change_level];
-                p->change_level = -1;
+        /* the game's requests (the engine states the scripts set): the cover, a level change */
+        if (p->cover_requested) p->cover_requested = false, c->game_cover = true;
+        if (p->change_level >= 0) {
+            const tc_ai_model *m = p->model;
+            if ((uint32_t)p->change_level < m->string_count) {
+                c->game_level = m->strings[p->change_level];
+                c->game_place = (uint32_t)p->change_place < m->string_count ? m->strings[p->change_place] : NULL;
+                c->game_camera_place = (uint32_t)p->change_camera_place < m->string_count ? m->strings[p->change_camera_place]
+                                                                                       : NULL;
             }
+            p->change_level = p->change_place = p->change_camera_place = -1;
         }
+        if (p->motion.teleport_set) place_actor(c, a, p->motion.teleport, s); /* its own SetPositionFrom */
         a->thought = think;
         c->thinking += think;
         if (p->run_mechanics && !tc_cast_mechanics(c, a, dt)) { /* port: turning in place stands in for the others */

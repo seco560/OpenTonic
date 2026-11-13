@@ -1096,6 +1096,8 @@ static void scene_scenario(const char *dir) {
     check(!tc_viewer_talk_prompt(&v), "bar: the prompt goes when he talks");
     for (i = 0; i < 60 * 15 && !tc_viewer_speech(&v); i++) frame(&v, 1.0f / 60);
     check(tc_viewer_speech(&v) != NULL, "bar: the barman speaks");
+    check(tc_viewer_camera_shot(&v) == TC_CAM_SHOT_FIXED && tc_viewer_fixed_shot(&v),
+          "bar: the scene's camera has the shot while he speaks (the fixed shot: docs/CAMERA.md)");
     run(&v, 6, 0); /* more than five lines rise from below: by now they show */
     if (tc_viewer_speech_panel(&v, 16.0f / 9, &panel)) {
         for (i = 0; i < panel.width * panel.height; i++) lit += panel.rgba[i * 4 + 1] > 128;

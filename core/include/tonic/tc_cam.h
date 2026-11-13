@@ -81,6 +81,16 @@ tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);
  * the finish / retry triggers, the skier's crash and respawn and skymap's arrival cut set 6 with a place (dsg92). */
 #define TC_CAM_SHOT_SKI 5           /* camera B6 -> B23: the original's ski follow (docs/CAMERA.md "Seventh pass"; its port
                                        was dropped after the playtest) */
+#define TC_CAM_SHOT_NEAR 2           /* camera B5 -> B28: the follow at the director's distance (dsg76 .. 77) and
+                                       the camera's own elevation (dsg78) (MLK / SDO GenCamRap, SRU's tunnels) */
+#define TC_CAM_SHOT_RAIL 4           /* camera B22 -> B21: the eye on the segment dsg82 -> dsg83 abreast of Ed, looking
+                                       at him (YBA_GenD_Cam_Rail) */
+#define TC_CAM_SHOT_AXIS 7           /* camera B10 -> B9: the follow on the director's side of Ed (dsg100, turned behind
+                                       him with dsg104), distance dsg102, elevation dsg103 (YBA_GenD_Cam_Orient) */
+#define TC_CAM_SHOT_MIRROR 8         /* camera B20 -> B19: the same, along dsg100 or its mirror in dsg107 by which way
+                                       Ed faces (JFR_GenD_Cam_Mirroir) */
+#define TC_CAM_AXIS_TIME 0.3f        /* s, the turn to a director's axis (the port's ease: the follow's speed caps not
+                                       read for it) */
 #define TC_CAM_SHOT_FIXED 6         /* camera B8 -> B7: a fixed place looking at the target (mode 3, PROC 183 / 192 / 194):
                                        not ported */
 /* The ski preset (the port's, 2026-11-04, after the B6 port's playtest: this camera tuned for the slides, not the
@@ -190,6 +200,13 @@ typedef struct tc_cam_target {
                              player leaves the camera alone, it turns in behind (`behind`), critically damped with this
                              time constant in seconds (gathering speed and slowing down smoothly, as the watchdog's
                              swing), instead of the rope; 0: the rope (Ed on foot) */
+    /* A director's follow (the camera's shots 2, 7, 8: docs/CAMERA.md "The directors' shots"): shot_distance > 0
+     * replaces the preset's distance (scaled by the zoom) and elevation (shot_elevation, rad), with no front stretch;
+     * shot_axis also turns the camera, once the player leaves it alone, to shot_yaw (tc_camera convention): the
+     * direction the director gave (SetCameraPivotOffset op 100), critically damped (TC_CAM_AXIS_TIME). */
+    float shot_distance, shot_elevation;
+    bool shot_axis;
+    float shot_yaw;
     tc_collision *world;  /* NULL: no collision. Its solid row is honoured as set (the caller's choice) */
     tc_cam_sight_fn sight;   /* NULL: none. The eye stays this side of what it reports too */
     void *sight_user;

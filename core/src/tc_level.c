@@ -367,7 +367,7 @@ static void read_cast(tc_cast_data *c, reader *r) {
         e->animation = rd_u8(r);
         e->reinit = rd_u8(r);
         e->flags = rd_u8(r);
-        (void)rd_u16(r);
+        e->flags2 = rd_u16(r);
         e->radius2 = rd_f32(r);
         rd_mat34(r, &e->world);
         e->zone_count = rd_u16(r);

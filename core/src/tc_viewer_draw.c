@@ -525,8 +525,12 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         }
     }
 
-    /* first person, or the camera pushed into him by a wall (tc_cam.hide_target): not drawn */
-    if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target) {
+    /* first person, or the camera pushed into him by a wall (tc_cam.hide_target): not drawn. Nor made wholly see-through
+     * by his scripts (SetTransparency 0: sud0's walk-in passages, HEG_GenTransitionFade, while they move him; the port
+     * draws no partial transparency) */
+    bool see_through = v->playing && v->play && v->play->use_ai && v->play->main.has_driver && tc_main_is_ed(&v->play->main) &&
+                       v->play->main.driver.ai.transparency == 0;
+    if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target && !see_through) {
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;

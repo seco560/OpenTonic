@@ -243,6 +243,259 @@ static int holes(const char *dir, int *inside, int *outside) {
     return n;
 }
 
+static int look_away; /* in_game: turn the camera 0.5 s into the fixed shot */
+
+/* The same portals in the game (since 2026-11-13 the cast runs them: their own scripts capture Ed, cover the screen and
+ * move him; docs/PORTALS.md "The arches run themselves"): a headless viewer at 60 frames per second with its real
+ * screen transitions; Ed walks at the portal until it captures him (his normal behaviour changes: forced), then the
+ * player lets go. Outcomes as run()'s; capture = his walk-in (or a zone portal's wait) began. 0 on a load error. */
+typedef struct game_result {
+    int captured, saw_228, saw_229, covers, record_driven, hidden_left, fixed_frames;
+    float fixed_eye_moved; /* how far the fixed shot's eye travelled (a glide) */
+    int looked_back;       /* with look_away: the shot dropped while the player turned its camera */
+    float turned;          /* ... how far its eye moved meanwhile (it orbits the look point) */
+    float teleport_at;
+    char level[64];
+    tc_vec3 end;
+} game_result;
+
+static int in_game_at(const char *dir, const char *name, int op, const char *level, int nth, const tc_vec3 *near,
+                      game_result *res);
+static int in_game(const char *dir, const char *name, int op, const char *level, int nth, game_result *res) {
+    return in_game_at(dir, name, op, level, nth, NULL, res);
+}
+
+/* near: the portal at that place instead (x, y within 0.5), approached from behind (its local +Y, 6 away: a passage). */
+static int in_game_at(const char *dir, const char *name, int op, const char *level, int nth, const tc_vec3 *near,
+                      game_result *res) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level lv;
+    tc_ai_model probe;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_vec3 front, start, last;
+    const tc_ai_portal *g;
+    const tc_ed_ai *e;
+    tc_viewer_phase phase = TC_VP_PLAY;
+    int i, k, last_beh = -1, last_state = -1, flags = 0;
+    int32_t first_forced;
+    memset(res, 0, sizeof(*res));
+    res->teleport_at = -1;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    if (!ai || tc_ai_model_load(&probe, ai, ai_size) != TC_OK) { free(ai); tc_level_free(&lv); return 0; }
+    k = find_portal(&probe, op, level, nth);
+    if (near)
+        for (k = -1, i = 0; i < probe.portal_count; i++)
+            if (fabsf(probe.portals[i].position.x - near->x) < 0.5f && fabsf(probe.portals[i].position.y - near->y) < 0.5f) k = i;
+    if (k < 0) { tc_ai_model_free(&probe); free(ai); tc_level_free(&lv); return 0; }
+    g = &probe.portals[k];
+    flags = g->flags;
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &lv;
+    desc.level_name = name;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.seed = 7;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { tc_ai_model_free(&probe); free(ai); tc_level_free(&lv); return 0; }
+    if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+    if (near) { /* behind it, 6 away, 1 up, facing it (as passage()) */
+        front = tc_v3_normalize(tc_v3(g->rows[1], g->rows[4], 0));
+        start = tc_v3_add(g->position, tc_v3_scale(front, 6));
+        start.z += 1;
+    } else { /* 8 in front of it on the ground, facing it (as run()) */
+        tc_hit hit;
+        tc_collision *world = tc_viewer_player(&v)->world;
+        front = tc_v3_normalize(tc_v3(-g->rows[1], -g->rows[4], 0));
+        start = g->position;
+        for (k = 0; k < 17; k++) {
+            float a = (float)(k - 1) * TC_PI / 8;
+            tc_vec3 dir = k == 0 ? front : tc_v3(cosf(a), sinf(a), 0), o = tc_v3_add(g->position, tc_v3_scale(dir, 8));
+            if (tc_collision_raycast(world, tc_v3_add(o, tc_v3(0, 0, 3)), tc_v3(0, 0, -1), 6, &hit)) {
+                start = tc_v3(o.x, o.y, o.z + 3 - hit.distance + 0.05f);
+                front = dir;
+                break;
+            }
+        }
+    }
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), start, atan2f(-front.x, front.y));
+    for (i = 0; i < 30; i++) tc_viewer_update(&v, 1.0f / 60); /* settle; the camera behind him */
+    e = tc_viewer_driver(&v);
+    first_forced = e ? e->ai.forced_by : 0;
+    printf("%s (in the game): portal %d (perso %u%s) @(%.1f, %.1f, %.1f), Ed starts at (%.1f, %.1f, %.1f)\n", name,
+           find_portal(&probe, op, level, nth), (unsigned)g->perso, flags & TC_AI_PORTAL_CAST ? ", the cast's" : "",
+           (double)g->position.x, (double)g->position.y, (double)g->position.z, (double)start.x, (double)start.y,
+           (double)start.z);
+    res->record_driven = !(flags & TC_AI_PORTAL_CAST);
+    last = tc_viewer_player(&v)->position;
+    for (i = 0; i < 60 * 25 && e; i++) {
+        const tc_viewer_carry *c;
+        float t = (float)i / 60;
+        tc_vec3 now;
+        if (!res->captured && (e->portal >= 0 || e->ai.forced_by != first_forced ||
+                               (e->walk_in[0] != TC_AI_NONE16 && e->ai.normal.behaviour == e->walk_in[0])))
+            res->captured = 1;
+        tc_viewer_set_action(&v, TC_VA_FORWARD, !res->captured);
+        {
+            int turning = look_away && res->fixed_frames >= 30 && res->fixed_frames < 60; /* half a second */
+            tc_vec3 eye0 = v.camera.position;
+            tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, turning);
+            tc_viewer_update(&v, 1.0f / 60);
+            if (turning && tc_viewer_fixed_shot(&v)) res->turned += tc_v3_distance(eye0, v.camera.position);
+            if (turning && !tc_viewer_fixed_shot(&v)) res->looked_back = 1; /* the shot dropped: not wanted */
+        }
+        e = tc_viewer_driver(&v);
+        if (!e) break;
+        now = tc_viewer_player(&v)->position;
+        if (tc_viewer_fixed_shot(&v)) {
+            static tc_vec3 prev_eye;
+            if (res->fixed_frames++ == 0) printf("  %5.2f  fixed shot from (%.1f, %.1f, %.1f)\n", (double)t,
+                                                 (double)v.camera.position.x, (double)v.camera.position.y,
+                                                 (double)v.camera.position.z);
+            else res->fixed_eye_moved += tc_v3_distance(prev_eye, v.camera.position);
+            prev_eye = v.camera.position;
+        }
+        if (e->ai.state == 228) res->saw_228 = 1;
+        if (e->ai.state == 229 && res->teleport_at >= 0) res->saw_229 = 1;
+        if ((int)e->ai.normal.behaviour != last_beh || (int)e->ai.state != last_state) {
+            last_beh = e->ai.normal.behaviour;
+            last_state = e->ai.state;
+            printf("  %5.2f  B%d state %d  (%.1f, %.1f, %.1f)\n", (double)t, last_beh, last_state, (double)now.x,
+                   (double)now.y, (double)now.z);
+        }
+        if (v.phase != phase) {
+            if (v.phase == TC_VP_COVER || (v.phase == TC_VP_BLACK && phase == TC_VP_PLAY)) {
+                res->covers++;
+                printf("  %5.2f  cover\n", (double)t);
+            }
+            phase = v.phase;
+        }
+        if (tc_v3_distance(now, last) > 5 && res->teleport_at < 0) {
+            res->teleport_at = t;
+            printf("  %5.2f  moved to (%.1f, %.1f, %.1f)\n", (double)t, (double)now.x, (double)now.y, (double)now.z);
+        }
+        last = now;
+        if ((c = tc_viewer_pending_level(&v)) != NULL) {
+            snprintf(res->level, sizeof(res->level), "%s", c->level);
+            printf("  %5.2f  level %s%s%s\n", (double)t, c->level, c->place[0] ? " at " : "", c->place);
+            break;
+        }
+        if (res->teleport_at >= 0 && t > res->teleport_at + 4) break;
+    }
+    res->end = tc_viewer_player(&v)->position;
+    res->hidden_left = e && e->ai.transparency == 0;
+    tc_viewer_free(&v);
+    tc_ai_model_free(&probe);
+    free(ai);
+    tc_level_free(&lv);
+    return 1;
+}
+
+/* cavedoc after the robot (docs/BUGS.md: the cutscene that never came): the lever by Doc's cage (SDO_OuvrePorte, 186)
+ * pulled, its dsg0 1, with Ed by the last door (BEM_PorteDeFinDoc, 25): the door holds him and starts Doc (FRB_DocCave,
+ * 105, running since 2026-11-13); Doc walks out (the fixed shot), comes to Ed, says his line (the player takes it away
+ * with Jump), the cover, then sud0 before his house (PROC 29: heg_positionedcavedocdevantdoc). 0 on a load error. */
+typedef struct doc_result { int doc_moved, fixed_frames, lines; char level[64], place[64]; float level_at; } doc_result;
+
+static const tc_cast_actor *by_id(const tc_cast *c, uint32_t id) {
+    return c && id < c->id_count && c->by_id[id] >= 0 && (uint32_t)c->by_id[id] < c->count ? &c->actors[c->by_id[id]] : NULL;
+}
+
+static int cavedoc_doc(const char *dir, doc_result *res) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level lv;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tc_cast *c;
+    const tc_cast_actor *door, *doc, *lever;
+    tc_vec3 doc_start;
+    int i, tapped = 0, last_doc = -1;
+    memset(res, 0, sizeof(*res));
+    res->level_at = -1;
+    snprintf(path, sizeof(path), "%s/cavedoc.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/cavedoc.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &lv;
+    desc.level_name = "cavedoc";
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.seed = 7;
+    if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_level_free(&lv); return 0; }
+    if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+    c = tc_viewer_cast(&v);
+    door = by_id(c, 25), doc = by_id(c, 105), lever = by_id(c, 186);
+    if (!door || !doc || !lever) {
+        printf("  cavedoc: door %s, Doc %s, lever %s in the cast\n", door ? "yes" : "no", doc ? "yes" : "no", lever ? "yes" : "no");
+        tc_viewer_free(&v);
+        free(ai);
+        tc_level_free(&lv);
+        return 1;
+    }
+    { /* in front of the door, away from Doc's cell, on the ground */
+        tc_vec3 out = tc_v3_sub(door->ai->position, doc->ai->position), at;
+        tc_hit hit;
+        out.z = 0;
+        out = tc_v3_normalize(out);
+        at = tc_v3_add(door->ai->position, tc_v3_scale(out, 3));
+        if (tc_collision_raycast(tc_viewer_player(&v)->world, tc_v3_add(at, tc_v3(0, 0, 3)), tc_v3(0, 0, -1), 10, &hit))
+            at.z = at.z + 3 - hit.distance + 0.05f;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), at, atan2f(out.x, -out.y) + TC_PI);
+    }
+    for (i = 0; i < 60; i++) tc_viewer_update(&v, 1.0f / 60);
+    doc_start = doc->ai->position;
+    tc_ai_dsgvar_set_int(lever->ai, 0, 1); /* the lever pulled (its own scripts set it so when Ed works it) */
+    printf("cavedoc (in the game): door at (%.1f, %.1f, %.1f), Doc at (%.1f, %.1f, %.1f)\n", (double)door->ai->position.x,
+           (double)door->ai->position.y, (double)door->ai->position.z, (double)doc_start.x, (double)doc_start.y,
+           (double)doc_start.z);
+    for (i = 0; i < 60 * 60; i++) {
+        const tc_viewer_carry *carry;
+        float t = (float)i / 60;
+        if (tc_viewer_speech(&v) || tapped) { /* the player takes each line away */
+            tapped = !tapped && tc_viewer_speech(&v);
+            res->lines += tapped;
+            tc_viewer_set_action(&v, TC_VA_JUMP, tapped);
+        }
+        tc_viewer_update(&v, 1.0f / 60);
+        c = tc_viewer_cast(&v);
+        doc = by_id(c, 105);
+        if (!doc) break;
+        if ((int)doc->ai->normal.behaviour != last_doc) {
+            last_doc = doc->ai->normal.behaviour;
+            printf("  %5.2f  Doc B%d at (%.1f, %.1f, %.1f)\n", (double)t, last_doc, (double)doc->ai->position.x,
+                   (double)doc->ai->position.y, (double)doc->ai->position.z);
+        }
+        if (tc_v3_distance(doc->ai->position, doc_start) > 1) res->doc_moved = 1;
+        res->fixed_frames += tc_viewer_fixed_shot(&v);
+        if ((carry = tc_viewer_pending_level(&v)) != NULL) {
+            snprintf(res->level, sizeof(res->level), "%s", carry->level);
+            snprintf(res->place, sizeof(res->place), "%s", carry->place);
+            res->level_at = t;
+            printf("  %5.2f  level %s at %s\n", (double)t, carry->level, carry->place);
+            break;
+        }
+    }
+    tc_viewer_free(&v);
+    free(ai);
+    tc_level_free(&lv);
+    return 1;
+}
+
+static int tcv_same(const char *a, const char *b) {
+    for (; *a && *b; a++, b++)
+        if ((*a | 32) != (*b | 32)) return 0;
+    return *a == *b;
+}
+
 static int failures;
 static void check(int ok, const char *what) {
     printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);
@@ -268,6 +521,53 @@ int main(int argc, char **argv) {
         int r = passage(dir);
         if (r < 0) printf("  (sud0 has no walk-in passages yet: re-export it; passage check skipped)\n");
         else check(r, "sud0 passage into Doc's house: cover, then out at the far end (HEG_TransMaison02)");
+    }
+    {
+        game_result g;
+        if (in_game(dir, "sud0", TC_AI_POP_LEVEL, "bar", 0, &g)) {
+            check(!g.record_driven, "sud0 red arch: the cast runs it (TC_AI_PORTAL_CAST)");
+            check(g.captured && g.saw_228, "sud0 red arch, in the game: captured, steps in (state 228)");
+            check(g.covers >= 1 && strcmp(g.level, "bar") == 0, "sud0 red arch, in the game: cover, then the level \"bar\"");
+        } else failures++;
+        if (in_game(dir, "Land", TC_AI_POP_TELEPORT, NULL, 0, &g)) {
+            check(g.captured && g.saw_228 && g.covers >= 1, "Land blue arch, in the game: walk-in and cover");
+            check(g.teleport_at >= 0 && g.saw_229, "Land blue arch, in the game: teleported, steps out (state 229)");
+            printf("  Land blue arch: the fixed shot %d frames, its eye moved %.1f\n", g.fixed_frames, (double)g.fixed_eye_moved);
+            check(g.fixed_frames > 0 && g.fixed_eye_moved > 0.5f,
+                  "Land blue arch, in the game: the camera glides to the arch's waypoint (the fixed shot)");
+        } else failures++;
+        { /* the passage into Doc's house: HEG_TransMaison01 -> 02 (11.6, -28.5); no cover in the game (Ed is made
+           * invisible, SetTransparency 0, and put at the far end; the record's cover stands in for it) */
+            tc_vec3 at = tc_v3(32.3f, -29.0f, 0);
+            if (in_game_at(dir, "sud0", 0, NULL, 0, &at, &g)) {
+                check(!g.record_driven && g.teleport_at >= 0 && g.end.x < 12 && g.end.x > 0 && fabsf(g.end.y + 28) < 3 &&
+                      !g.hidden_left, "sud0 passage into Doc's house, in the game: out at the far end, seen again");
+                printf("  sud0 passage: the fixed shot %d frames\n", g.fixed_frames);
+                check(g.fixed_frames > 0, "sud0 passage into Doc's house, in the game: the fixed shot at the far end");
+            } else failures++;
+        }
+        look_away = 1;
+        if (in_game(dir, "Land", TC_AI_POP_TELEPORT, NULL, 0, &g)) {
+            printf("  Land blue arch: turned for 0.5 s, the shot's eye moved %.1f\n", (double)g.turned);
+            check(!g.looked_back && g.turned > 1,
+                  "Land blue arch, in the game: turning the camera moves the fixed shot's eye, the shot stays (port)");
+            check(g.teleport_at >= 0 && g.saw_229, "Land blue arch, in the game: the camera turned, Ed still goes through");
+        } else failures++;
+        look_away = 0;
+        if (in_game(dir, "north", TC_AI_POP_TELEPORT, NULL, 2, &g)) {
+            check(g.captured && !g.saw_228 && g.covers >= 1 && g.teleport_at >= 0,
+                  "north zone portal, in the game: cover, no walk-in, teleport");
+        } else failures++;
+    }
+    {
+        doc_result d;
+        if (cavedoc_doc(dir, &d)) {
+            printf("  cavedoc: Doc moved %d, the fixed shot %d frames, %d lines\n", d.doc_moved, d.fixed_frames, d.lines);
+            check(d.doc_moved && d.fixed_frames > 0 && d.lines >= 1,
+                  "cavedoc after the robot: the door lets Doc out, he comes to Ed and speaks (the fixed shot)");
+            check(tcv_same(d.level, "sud0") && tcv_same(d.place, "heg_positionedcavedocdevantdoc"),
+                  "cavedoc after the robot: then sud0, before Doc's house");
+        } else failures++;
     }
     {
         int inside, outside, n = holes(dir, &inside, &outside);

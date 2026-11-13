@@ -752,6 +752,14 @@ float tc_ai_other_dsgvar_float(const tc_ai_perso *p, uint32_t other, uint32_t i)
     if (!p->model || other >= p->model->other_count) return 0;
     return as_float(dsg_get(p, p->model->others[other].id, i));
 }
+bool tc_ai_other_dsgvar_vec(const tc_ai_perso *p, uint32_t other, uint32_t i, tc_vec3 *out) {
+    value v;
+    if (!p->model || other >= p->model->other_count) return false;
+    v = dsg_get(p, p->model->others[other].id, i);
+    if (v.type != V_VEC) return false;
+    *out = v.v;
+    return true;
+}
 void tc_ai_dsgvar_set_int(tc_ai_perso *p, uint32_t i, int32_t v) { dsg_set(p, 0, i, v_int(v)); }
 void tc_ai_dsgvar_set_float(tc_ai_perso *p, uint32_t i, float v) { dsg_set(p, 0, i, v_float(v)); }
 void tc_ai_dsgvar_set_vec(tc_ai_perso *p, uint32_t i, tc_vec3 v) { dsg_set(p, 0, i, v_vec(v)); }
@@ -1222,9 +1230,10 @@ static void lval_set(run *r, lval l, value v) {
     }
     if (l.kind == 1 && l.perso > 0 && r->p->keep_off_main) { /* port: nor his dsgvars (they start his own reflexes) */
         const tc_ai_perso *q = live(r->p, l.perso);
-        /* the camera's shot (its dsg39: the sliding stages' start / finish triggers pick the ski camera with it) is
-         * written, never read, by the main actor's scripts: the cast may set it (docs/CAMERA.md "Seventh pass") */
-        bool shot = q && q->read_only_for_cast && l.index == TC_AI_CAMERA_SHOT_DSG && q->main_actor != 0;
+        /* the camera's shots and their parameters (TC_AI_CAMERA_SHOT_PARAM: the directors', the characters', the sliding
+         * stages' start / finish triggers') are written, never read, by the main actor's scripts: the cast may set them
+         * (docs/CAMERA.md "The directors' shots"); his own (dsg1, 18, 20, 38, 40 ...) stay his */
+        bool shot = q && q->read_only_for_cast && q->main_actor != 0 && TC_AI_CAMERA_SHOT_PARAM(l.index);
         if (q && !shot && (q->main_actor == 0 || q->read_only_for_cast)) { r->p->forces_blocked++; return; }
     }
     if (l.kind == 1 && l.perso >= 0) dsg_set(r->p, l.perso, l.index, v);
@@ -1490,6 +1499,14 @@ static bool condition(run *r, uint32_t i) {
 static value function(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     switch (N(r, i)->param) {
+    case 59: case 60: case 61: case 62: case 63: case 64: case 65: case 66: { /* the camera record's +0x30 .. +0x4C
+        * (FUNC_58Etc_0049cc70): (which, camera): 0 the default record, else the current one (host-fed) */
+        static const float defaults[8] = TC_AI_CAMERA_DEFAULT_RECORD;
+        const tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        int32_t which = as_int(arg(r, i, 0));
+        uint32_t k = N(r, i)->param - 59;
+        return v_float(which != 0 && g->has_cam_now ? g->cam_now[k] : defaults[k]);
+    }
     case 0: { /* GetPosition: of OP 24's perso */
         value who = arg(r, i, 0);
         return v_vec(perso_position(p, who.type == V_PERSO ? who.i : r->ctx));
@@ -1781,6 +1798,28 @@ static tc_ai_perso *target(run *r, value who) {
     return who.i == 0 ? r->p : live(r->p, who.i);
 }
 
+/* AI_00488010 SetPositionFrom on `who`: this perso through its own mechanics (motion.teleport), another through its host
+ * (tc_ai_perso.place_requested). */
+static void place_perso(run *r, value who, tc_vec3 at) {
+    tc_ai_perso *p = r->p, *q;
+    if (who.type != V_PERSO) return;
+    if (who.i == 0) {
+        p->motion.teleport_set = true;
+        p->motion.teleport = at;
+        return;
+    }
+    if ((q = live(p, who.i)) == NULL) return;
+    if (q == p) {
+        p->motion.teleport_set = true;
+        p->motion.teleport = at;
+        return;
+    }
+    if (p->keep_off_main && q->main_actor == 0 && !q->read_only_for_cast) { p->forces_blocked++; return; }
+    q->place_requested = true;
+    q->place_at = at;
+    if (q->main_actor != 0 && !q->dead) q->active = true; /* GAM_Objinit_004199f0 (PROC 5's), whatever its dynamics */
+}
+
 static void set_mech_mode(tc_ai_perso *p, int mode) {
     p->motion.mech_mode = mode;
     if (p->motion.mode_count < 8) p->motion.modes[p->motion.mode_count++] = (int8_t)mode; /* full: dropped, as FUN_0047a370 */
@@ -1838,7 +1877,26 @@ static uint32_t procedure(run *r, uint32_t i) {
         p->frame_rate = (uint8_t)rate;
         return 0;
     }
-    case 7: { uint32_t s = arg_param(r, i, 0); p->change_level = s == TC_AI_NONE ? -1 : (int32_t)s; return 0; }
+    case 7: { /* ChangeLevel(name): GAM_Basic_004105f0 (engine state 7) */
+        uint32_t s = arg_param(r, i, 0);
+        p->change_level = s == TC_AI_NONE ? -1 : (int32_t)s;
+        p->change_place = p->change_camera_place = -1;
+        return 0;
+    }
+    case 29: { /* ChangeMapAtPosition(name, n, place, camera place): GAM_Basic_00410640 (the same, and the two names,
+                * GAM_Basic_0040f670); n is read but unused on PC */
+        uint32_t s = arg_param(r, i, 0), a = arg_param(r, i, 2), b = arg_param(r, i, 3);
+        p->change_level = s == TC_AI_NONE ? -1 : (int32_t)s;
+        p->change_place = a == TC_AI_NONE ? -1 : (int32_t)a;
+        p->change_camera_place = b == TC_AI_NONE ? -1 : (int32_t)b;
+        return 0;
+    }
+    case 8: /* (perso, position, perso, position, x): both persos placed at the frame's end (engine state 0x1B:
+             * GAM_Initeng_0040ea30 -> AI_00488010 each), then the reveal (GAM_00410ca0 -> GAM_00429010; the port's host
+             * reveals after the main actor's placement). The fifth argument is evaluated and unused */
+        place_perso(r, arg(r, i, 0), argv3(r, i, 1));
+        place_perso(r, arg(r, i, 2), argv3(r, i, 3));
+        return 0;
     case 34: p->motion.stop = true; return 0; /* the speeds (+0x38.., +0x25C..), not the proposal */
     case 35: { /* PROC_DynamicsOnEtc_00488cd0 case 0x23: the velocity (+0x38), world axes; spin cleared */
         tc_vec3 v = argv3(r, i, 0);
@@ -2164,14 +2222,9 @@ static uint32_t procedure(run *r, uint32_t i) {
         return 0;
     }
     case 145: case 146: case 147: case 148: play_sound(p, arg_param(r, i, 0)); return 0; /* PlaySound3D ... (event) */
-    case 27: { /* SetPositionFrom(perso, position) = AI_00488010: this perso only (the others' AI does not run) */
-        value who = arg(r, i, 0);
-        if (who.type == V_PERSO && who.i == 0) {
-            p->motion.teleport_set = true;
-            p->motion.teleport = argv3(r, i, 1);
-        }
+    case 27: /* SetPositionFrom(perso, position) = AI_00488010 */
+        place_perso(r, arg(r, i, 0), argv3(r, i, 1));
         return 0;
-    }
     case 177: case 178: case 180: { /* the camera's mode (record +0x98), its focal (+0x8C; (cam, 0, angle): the second
                                      * argument not read) and its target (cine +0x10, GAM_004311f0): tc_ai_globals */
         tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
@@ -2629,7 +2682,7 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     p->run_mechanics = p->run_animation = 1;
     p->radius2 = -1;
     p->transparency = 255;
-    p->change_level = -1;
+    p->change_level = p->change_place = p->change_camera_place = -1;
     p->g_flags = 0x20;
     p->g_armed = 1;
     p->state = p->wanted_state = m->initial_state < m->state_count ? m->initial_state : 0;

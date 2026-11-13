@@ -128,9 +128,30 @@ the hook for it.
   `GAM_0042a680` sets), and only in an awake sector (the marks above). Its **mechanics run whatever the radius**
   (`GAM_MecFrame_0042b2b0` after the AI, gated by +0x2A only): a perso out of range keeps what its animation's root
   motion does. tc_cast step_actor: `think` = the radius test, mechanics after it.
-- Left out of the cast (**port**): the camera and its directors, the cheat-code reader, the arches, the persos the
-  exporter reduced to data (portals and walk-in passages: .ttai PORT; Totalski's obstacles: TRIG; the light managers:
-  LAIS). Each is a stopgap to fold back into the cast, one subsystem at a time (docs/DIRECTION.md).
+- Left out of the cast (**port**): the fix camera (its shots are the viewer's: docs/CAMERA.md), the cheat-code reader, the persos the exporter reduced
+  to data (Totalski's obstacles: TRIG; the light managers: LAIS; the skier's portals on Totalski and skymap; the hint
+  scenes' "press Start"). Each is a stopgap to fold back into the cast, one subsystem at a time (docs/DIRECTION.md).
+  **Folded back 2026-11-13:** the portals Ed takes (the arches, the zone teleports, sud0's walk-in passages:
+  docs/PORTALS.md "The arches run themselves") and the other level changers (Doc, Land's passages and falls, the
+  canyon's retry, ...: docs/PORTALS.md "Level changers"); the camera's fixed shot that they pick (docs/CAMERA.md "The
+  fixed shot"); the camera directors and the shots they and the characters pick (docs/CAMERA.md "The directors'
+  shots").
+- **The game's requests from any perso (2026-11-13, read):** GameAction2 (the cover), ChangeLevel (PROC 7) and
+  ChangeMapAtPosition (PROC 29: GAM_Basic_00410640, the level with an arrival place and camera place) from any actor go
+  to the host (tc_cast game_cover / game_level / game_place / game_camera_place), and every actor reads GameState63
+  (before, the hint scenes' speakers only). PROC 8 (0x488580 case 8: two persos, two positions, a fifth argument
+  evaluated and unused) and PROC 27 SetPositionFrom place a perso through AI_00488010: it is put at the position (the
+  exe's two calls, AI_00492010 then AI_00491f80, place it 0.5 higher, then there: DAT_004d2cc0 = -0.5, DAT_004d2cc8 =
+  0.5), taken off what it rides (GAM_00428ea0), and activated (GAM_Objinit_004199f0, PROC 5's); one without dynamics
+  is not moved. Port: this perso's own placement goes through its mechanics (the cast's place_actor; Ed's own keeps
+  the driver's "more than 2" rule); another perso's is tc_ai_perso.place_requested: the cast places an actor before
+  its next step, Ed's driver at his next step (then the reveal, as GAM_00410ca0's), the camera's host aims the camera
+  from there. A perso kept off the main actor (keep_off_main) cannot place him. Before, a cast perso's own
+  SetPositionFrom did nothing: Totalski's icicles fell once and stayed down (now they go back up after 3 s and fall
+  again: checked, movecheck with MOVE_SECONDS=12). About 60 other cast persos call it (marmite's crates and pistons,
+  pyramide's falling stones, north's coins and slabs, Transit's ducks ...): movecheck's rows moved, not checked one by
+  one. Those that would place Ed (pyramide's sarcophagus teleports, YAS_Sarcoport) are not allowed to (keep_off_main):
+  not yet.
 
 ## Moving collision, read (2026-11-05; all **read** unless marked)
 The port's plan for it is at the end of this section.

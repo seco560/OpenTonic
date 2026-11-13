@@ -180,6 +180,22 @@ typedef enum tc_viewer_phase {
     TC_VP_PLAY, TC_VP_COVER, TC_VP_BLACK, TC_VP_LOADING, TC_VP_PENDING, TC_VP_REVEAL
 } tc_viewer_phase;
 
+/* The scripted shot in progress (the camera's shots 2, 4, 6, 7, 8 as the cast picks them; docs/CAMERA.md "The fixed
+ * shot", "The directors' shots"). Port (the user, 2026-11-13: "make it possible to move around the custom camera"): the
+ * player's turn of it (look_yaw, look_rise) is kept while it lasts: the fixed and rail eyes orbit their look point by
+ * it, the directors' follows add it to their direction; a new shot starts from none. */
+typedef struct tc_viewer_shot {
+    bool on;                  /* a scripted shot is on */
+    bool released;            /* the player took the camera back from it (a fresh Jump, Action or Shoot: 4, 6) */
+    int seen;                 /* the shot and its signature (its place, rail, distance or axis) last frame: a change */
+    tc_vec3 sig;              /* gives the camera to the scripts again */
+    tc_vec3 eye, look;        /* the fixed and rail shots' eye and look point */
+    bool axis_flip;           /* shot 7: dsg100 turned round at its start (dsg104) */
+    bool mirror_state;        /* shot 8: dsg109 (1: along the mirror) */
+    float mirror_since;       /* ... and how long Ed has faced the other way (s) */
+    float look_yaw, look_rise;
+} tc_viewer_shot;
+
 typedef struct tc_viewer_play tc_viewer_play;  /* private: collision, Ed's controller and AI at stable addresses */
 typedef struct tc_viewer_light tc_viewer_light; /* private: the light persos' AI */
 typedef struct tc_viewer_tape tc_viewer_tape;   /* private: an original demo tape in progress (tc_viewer_play_tape) */
@@ -291,6 +307,14 @@ typedef struct tc_viewer {
     bool director_released;   /* the player ended it (until the next camera write) */
     tc_vec3 director_eye;
     float director_saved_fov; /* the player's vertical field of view, back when the shot ends */
+    /* The fixed shot (the camera's shot 6, its B8 -> B7: an arch's waypoint while Ed walks in, a passage's far end, the
+     * ski finish; docs/CAMERA.md "The fixed shot"): where the eye is, the point it looks at, whether it is on. Port (the
+     * user, 2026-11-13: the free camera while Ed walks into a portal): turning the camera (looked: the look keys, the
+     * right stick, the mouse this frame) gives it back to the player, the follow round Ed, and so does a fresh Jump,
+     * Action or Shoot, until the scripts pick the shot or another place again. */
+    tc_viewer_shot shot;      /* the scripted shot's state (2, 4, 6, 7, 8: docs/CAMERA.md "The directors' shots") */
+    bool looked;
+    float look_yaw_frame, look_rise_frame; /* the player's turn this frame (tc_cam_look's yaw and rise) */
 
     /* Sectors (tc_sector.h; none: the level has no SECT and everything is drawn). Ed's sector is his AI's (it looks his
      * water up there), else tracked here for the simple controller. */
@@ -473,6 +497,8 @@ void tc_viewer_toggle_play(tc_viewer *v);
 void tc_viewer_toggle_ai(tc_viewer *v);
 /* The director's shot (tc_viewer.director) is on: the camera is the level's, Ed waits. */
 bool tc_viewer_directed(const tc_viewer *v);
+/* The fixed shot (tc_viewer.fixed) is on: the camera is at the place the level's scripts gave it. */
+bool tc_viewer_fixed_shot(const tc_viewer *v);
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */
 /* Custom gameplay in play (core/include/tonic/custom/tcx.h: not the game's; its cars, Ed's ride), NULL: none. */
 struct tcx_play;
