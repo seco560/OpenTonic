@@ -441,3 +441,32 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   falling snow was found in the particle data. The user (2026-11-04): probably not particles but another kind of script; to look for later. Still unconfirmed: whether the 250-entry pool is the flight trail or footprints (which of Ed's six states it lists, and which sprite DAT_008b99c0 is, would settle it).
 - Unrelated table found on the way: `0x432f00` (not in the dump) pairs 22 sud0 sector lists ("-sctsud14-sctsud10-
   sctneige-", ...) with (x, y) points: probably the map screen's marker per region.
+
+## Sound system: 3D sound (plan, 2026-11-14; nothing read or ported yet)
+What the port has: the **triggers** (animation sound rows, PlaySound3D / Other / Global / Global2 = PROC 145-148,
+T34 event nodes, footsteps by floor material: docs/NOTES.md "Sound events") and the **files** (tools/ttre/sfx.py,
+events.tsv: play / loop / stop, volume). What it lacks is the **output stage**. Every cast sound within TC_CAST_HEARING
+(30 units, straight line, through floors) plays flat at full volume, with no falloff, no panning and no emitter
+position (tc_cast.c, tc_viewer_tape.c; the frontends get bare event ids). Ed never showed it, being where the listener
+is. The cast's sounds, switched on later, do.
+
+Plan, in order (read first, then port the exe's model; no tuning of the 30-unit cut):
+1. **Read the bank's event record** (Bnk_0, `_SND_fn_pGetBinEvent`): which fields hold 3D parameters (min / max
+   distance, rolloff curve, priority, a "3D or not" flag, loop / stop pairing). Dump them for every event with sfx.py
+   and check the values against sounds whose range is known by ear (Ed's footsteps, a level's machine loop).
+2. **Read SND_sound3d_00404db0 and its callers**: how the emitter's position, the listener (camera or Ed?) and the
+   bank's parameters become volume and pan. Is it distance only, or do sectors / portals / walls muffle it? How are
+   moving emitters followed? (Is the voice re-positioned per frame from the perso, and what about a perso that stops
+   or is removed?)
+3. **Read the three script paths' differences** (PROC 145-148: 3D on Me, on another perso, global, global 2) and
+   the animation path (FUN_00436560 / FUN_004366c0 -> its sound call): which one is 3D, and what "Global2" is.
+4. **Looping sounds**: how an ambient loop starts, follows its perso and stops (events.tsv's stop event,
+   a perso deactivated or out of an active sector), and how many voices the mixer allows and what it drops.
+5. **Port, core side:** tc_viewer_sounds hands out { event, emitter position or none (2D), the emitter's id for
+   loops }, plus the listener each frame. The bank's 3D fields go in events.tsv. TC_CAST_HEARING goes, replaced by
+   the exe's culling.
+6. **Port, frontends:** attenuation and pan in sdl/src/sfx.c and Sfx.swift from the same table; one shared formula
+   (a core helper), so Mac and Linux sound the same.
+7. **Check:** a headless count of audible sounds per level before / after (replay check on the kept recordings
+   prints the sound stream; it will change, by design), then the user's ears in cavedoc, sud0 and one SE level.
+   Expect every level's soundscape to shift; some "unheard" cast sounds may just have been cut by the 30-unit gate.
