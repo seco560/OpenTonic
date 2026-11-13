@@ -283,15 +283,15 @@ int main(int argc, char **argv) {
                     stalls++;
                     printf("%6.2f  ! stalled 2 s at (%.2f, %.2f, %.2f) state %u contacts %#x\n", (double)t,
                            (double)player.position.x, (double)player.position.y, (double)player.position.z, p->state,
-                           ed.contacts);
+                           ed.dyn.contacts);
                 }
             } else {
                 stalled_for = 0;
             }
         }
-        if (ed.card_type == 2) { /* the board's clearance: snow along its down axis, minus the pose's reach */
+        if (ed.dyn.card_type == 2) { /* the board's clearance: snow along its down axis, minus the pose's reach */
             tc_hit hit;
-            tc_vec3 down = tc_v3_scale(ed.ski.z, -1);
+            tc_vec3 down = tc_v3_scale(ed.dyn.ski.z, -1);
             float drop = model.states[p->state].drop, gap;
             if (tc_collision_raycast(&world, player.position, down, 3, &hit)) {
                 gap = hit.distance - drop;
@@ -304,10 +304,10 @@ int main(int argc, char **argv) {
         if (getenv("AI_FROM") && t >= (float)atof(getenv("AI_FROM")) && t < (float)atof(getenv("AI_FROM")) + 0.25f) {
             printf("%6.3f  state %u frame %.2f rate %u pos (%.3f, %.3f, %.3f) v (%.2f, %.2f, %.2f) contacts %#x passes %u ground n (%.2f, %.2f, %.2f) own %#x wall n (%.2f, %.2f, %.2f) own %#x\n",
                    (double)t, p->state, (double)p->state_frame, p->frame_rate, (double)player.position.x, (double)player.position.y, (double)player.position.z,
-                   (double)player.velocity.x, (double)player.velocity.y, (double)player.velocity.z, ed.contacts, ed.walk.passes,
-                   (double)ed.walk.ground_normal.x, (double)ed.walk.ground_normal.y, (double)ed.walk.ground_normal.z,
-                   ed.walk.ground_own, (double)ed.walk.wall_normal.x, (double)ed.walk.wall_normal.y,
-                   (double)ed.walk.wall_normal.z, ed.walk.wall_own);
+                   (double)player.velocity.x, (double)player.velocity.y, (double)player.velocity.z, ed.dyn.contacts, ed.dyn.walk.passes,
+                   (double)ed.dyn.walk.ground_normal.x, (double)ed.dyn.walk.ground_normal.y, (double)ed.dyn.walk.ground_normal.z,
+                   ed.dyn.walk.ground_own, (double)ed.dyn.walk.wall_normal.x, (double)ed.dyn.walk.wall_normal.y,
+                   (double)ed.dyn.walk.wall_normal.z, ed.dyn.walk.wall_own);
         }
         for (i = 0; i < p->sound_count; i++) { /* footsteps: the generic step, or by floor sound type */
             if (p->sounds[i] == TC_AI_FOOTSTEP_EVENT) steps_generic++;
@@ -349,7 +349,7 @@ int main(int argc, char **argv) {
             printf("%6.2f  mech mode %d\n", (double)t, p->motion.mech_mode);
             last_mode = p->motion.mech_mode;
         }
-        if (ed.card_type == 5 && tc_v3_length(player.velocity) > 1 && !player.grounded && !player.against_wall) {
+        if (ed.dyn.card_type == 5 && tc_v3_length(player.velocity) > 1 && !player.grounded && !player.against_wall) {
             /* the drawn flight pose: head (model z) along the velocity, axes a proper rotation */
             tc_mat4 mm = tc_ed_ai_model_matrix(&ed);
             tc_vec3 mx = tc_v3(mm.m[0], mm.m[1], mm.m[2]), my = tc_v3(mm.m[4], mm.m[5], mm.m[6]);
@@ -366,21 +366,21 @@ int main(int argc, char **argv) {
                    (double)player.position.y, (double)player.position.z, (double)tc_player_horizontal_speed(&player),
                    (double)player.velocity.z, (double)(player.heading * 180 / TC_PI), player.grounded ? "ground" : "air",
                    player.against_wall ? " wall" : "");
-            if (ed.card_type == 2)
-                printf("  ski up (%.2f, %.2f, %.2f) grip %.2f%s", (double)ed.ski.z.x, (double)ed.ski.z.y, (double)ed.ski.z.z, (double)player.ground_grip,
-                       ed.ski.near_ground ? " near" : "");
-            if (ed.card_type == 5)
-                printf("  fly attack %.1f bank %.1f", (double)ed.fly.attack, (double)ed.fly.bank);
-            if (ed.card_type == 1)
-                printf("  swim polar %.0f heading %.0f thrust %.0f", (double)ed.swim.polar, (double)ed.swim.heading,
-                       (double)ed.swim.thrust_lagged);
-            if (ed.env_depth > 0) printf("  depth %.2f", (double)ed.env_depth);
+            if (ed.dyn.card_type == 2)
+                printf("  ski up (%.2f, %.2f, %.2f) grip %.2f%s", (double)ed.dyn.ski.z.x, (double)ed.dyn.ski.z.y, (double)ed.dyn.ski.z.z, (double)player.ground_grip,
+                       ed.dyn.ski.near_ground ? " near" : "");
+            if (ed.dyn.card_type == 5)
+                printf("  fly attack %.1f bank %.1f", (double)ed.dyn.fly.attack, (double)ed.dyn.fly.bank);
+            if (ed.dyn.card_type == 1)
+                printf("  swim polar %.0f heading %.0f thrust %.0f", (double)ed.dyn.swim.polar, (double)ed.dyn.swim.heading,
+                       (double)ed.dyn.swim.thrust_lagged);
+            if (ed.dyn.env_depth > 0) printf("  depth %.2f", (double)ed.dyn.env_depth);
             printf("\n");
         }
     }
     if (quiet)
         printf("wander: travelled %.1f, largest step %.3f, jumps %d, stalls %d, blocked frames %u, end (%.2f, %.2f, %.2f) state %u\n",
-               (double)travelled, (double)max_step, respawns, stalls, ed.walk.blocked, (double)player.position.x,
+               (double)travelled, (double)max_step, respawns, stalls, ed.dyn.walk.blocked, (double)player.position.x,
                (double)player.position.y, (double)player.position.z, p->state);
     if (level.sectors.count)
         printf("sectors: %u changes, end in %s; on %u of %u frames a lookup at Ed's position finds another sector; %u frames "

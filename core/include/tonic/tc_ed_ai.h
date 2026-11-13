@@ -37,13 +37,14 @@ typedef struct tc_ed_ai {
     /* Fallback only (a state without spheres): factors on the stride-derived ground speed, for run cycles (> 4 u/s at their own
      * frame rate: states 10, 25, 30, 96) and the rest (walks). Defaults 2 and 1. */
     float run_scale, walk_scale;
-    uint32_t card_type;          /* type of the playing state's ID card last frame (TC_AI_NONE16: none) */
-    tc_mec_fly fly;
-    tc_mec_swim swim;            /* card type 1 */
-    float env_depth;             /* below a water surface (the scripts' EnvHeight), from last frame's mechanics */
-    tc_mec_ski ski;
-    tc_mec_walk walk;            /* card types 0 / 4 (ground, air) when the .ttai has the state's collision spheres */
-    uint32_t contacts;           /* what the AI sees next frame (TC_AI_CONTACT_*) */
+    /* His dynamics, the record every perso has (tc_mec.h): card_type (the playing state's ID card's type last frame,
+     * TC_AI_NONE16 none), walk (types 0 / 4 when the .ttai has the state's collision spheres), fly, swim, ski, env,
+     * env_depth, contacts (what the AI sees next frame). */
+    tc_mec_dyn dyn;
+    /* Host-set: who runs his mechanics (the cast's, as any actor's: tc_cast_main_mechanics), NULL: the shared step
+     * (tc_mec_perso_step). Cleared by tc_ed_ai_init. */
+    void (*mechanics)(void *user, const tc_mec_perso *x, float dt);
+    void *mechanics_user;
     uint32_t placed_seen;        /* tc_player.placed after the last step: a placement since (the viewer's portal places,
                                     the free-fly drop) clears last frame's contacts, as the driver's own teleports do */
     float time;                  /* seconds since init */

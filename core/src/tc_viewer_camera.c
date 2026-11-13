@@ -212,10 +212,10 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         t.situation = tc_viewer_camera_situation(v);
         /* riding on a sliding stage (the skier is the player there: the cast's main alias; Ed's own slides on the walking
          * levels use the same card and keep the walking camera, his scripts setting the shot to 0): tc_viewer_camera_shot */
-        if (p->use_ai && p->main.has_driver && p->main.driver.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
+        if (p->use_ai && p->main.has_driver && p->main.driver.dyn.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
         t.shot = tc_viewer_camera_shot(v);
         t.chase = 0;
-        tcx_camera_target(p->custom, &t);
+        tc_main_camera_target(&p->main, &t); /* a character in the slot (the car) says where to look */
         t.world = &p->world;
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;

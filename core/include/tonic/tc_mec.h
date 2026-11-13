@@ -246,6 +246,52 @@ void tc_mec_walk_step(tc_mec_walk *w, const tc_ai_card *card, tc_mec_env env, tc
                       const tc_ai_sphere_set *body, float heading, tc_vec3 wanted, bool wanted_in_air,
                       const tc_vec3 *impulse, float dt, tc_vec3 *position, tc_vec3 *velocity);
 
+/* A perso's dynamics (the exe's DynamWork and the integrators' state, one record whatever its card type): every
+ * perso's, Ed's (tc_ed_ai.dyn) and the cast's (tc_cast_actor.dyn) alike. Each mechanics part keeps its own. */
+typedef struct tc_mec_dyn {
+    uint32_t card_type;          /* last step's (0xFFFF none) */
+    tc_vec3 velocity;            /* dynamics +0x38 (linear) */
+    tc_vec3 omega;               /* its angle x axis: angular velocity as a rotation vector (rad/s) */
+    tc_vec3 rot;                 /* the position's angle x axis: the orientation as a rotation vector (type 7 tilts) */
+    bool tilted;                 /* rot is not a turn about up only: the pose uses it whole */
+    bool moving;                 /* velocity_snap != 0 (type 6: on its way; MoveLift's end test) */
+    float lift_s, lift_elapsed, lift_x, lift_rate; /* type 6: +0x2B0 s, +0x2B4, the lag {x, rate} (+0x2BC, +0x2C8) */
+    float unk_70;                /* type 7: < 0 after a move request: the spring's rest is set again */
+    float rest_z;                /* type 7: the spring's rest height (+0x88) */
+    bool substeps;               /* type 7: dynamics flag 0x20000 (5 ms substeps) */
+    tc_vec3 plane_n;             /* type 7 mode 0x15: the plane spring */
+    float plane_k, plane_offset;
+    tc_mec_walk walk;            /* the walkers' collide-and-move (types 0 / 4, Ed's 8 / 11 / 2); type 7: its own sweep's
+                                    contacts (MEC_CollideMoveNoTurn_004bedd6, flags 4) */
+    tc_mec_fly fly;              /* card type 5 */
+    tc_mec_swim swim;            /* card type 1 */
+    tc_mec_ski ski;              /* card type 2 */
+    tc_mec_env env;              /* the mechanical environment at its feet, this step */
+    float env_depth;             /* below a water surface (the scripts' EnvHeight), from last frame's mechanics */
+    uint32_t contacts;           /* what its AI sees next frame (TC_AI_CONTACT_*) */
+} tc_mec_dyn;
+
+/* A perso as its mechanics see it for one step: its AI (the motion requests, the state, the frame rate), its physics
+ * (position, velocity, heading, the capsule's contacts: tc_player), its dynamics, the playing state's ID card (NULL
+ * none) and body (its ZDM spheres, NULL none), this frame's root motion (units per animation frame, its axes) and the
+ * stride the capsule falls back on (units per frame), its sector (swimming looks the water up). */
+struct tc_player;
+typedef struct tc_mec_perso {
+    tc_ai_perso *ai;
+    struct tc_player *body;
+    tc_mec_dyn *dyn;
+    const tc_ai_card *card;
+    const tc_ai_sphere_set *spheres;
+    tc_vec3 root;
+    float ground;
+    const tc_sectors *sectors;
+    uint16_t sector;
+} tc_mec_perso;
+/* Its mechanics for this step, by the card's type. */
+void tc_mec_perso_step(const tc_mec_perso *x, float dt);
+/* The playing state's root motion (units per animation frame, its axes) at the current frame, 0 without one. */
+tc_vec3 tc_mec_root_motion(const tc_ai_perso *a);
+
 #ifdef __cplusplus
 }
 #endif

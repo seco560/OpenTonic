@@ -497,7 +497,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
             for (ch = 0; ch < nch; ch++) {
                 uint16_t obj = an->shown[s.s0 * nch + ch];
                 tc_mat4 m, model;
-                if (obj == TC_HIDDEN || (ch < 64 && (actor->ai.hidden_channels >> ch) & 1u)) continue;
+                if (obj == TC_HIDDEN || (ch < 64 && (actor->ai->hidden_channels >> ch) & 1u)) continue;
                 m = tc_channel_matrix(an->transforms, an->shown, nch, s, ch);
                 model = tc_mat4_mul(&world, &m);
                 /* An object's parts (one per material) under the channel it first appears with: the same geometry
@@ -531,7 +531,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;
         /* The skier's board tilts with the slope; custom gameplay (a car) may pose him. */
-        tc_mat4 model = v->play->ed_posed                           ? v->play->ed_model
+        tc_mat4 model = !tc_main_is_ed(&v->play->main)              ? v->play->main.rider.model
                         : v->play->use_ai && v->play->main.has_driver ? v->play->pose_draw
                                                                  : tc_player_model_matrix(&v->play->main.player);
         sec = tc_viewer_ed_sector(v);
@@ -877,9 +877,9 @@ bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {
     float h, k, s;
     memset(out, 0, sizeof(*out));
     if (!p || !v->playing || v->ed_draw_count == 0) return false;
-    if (p->use_ai && p->main.has_driver && (p->main.driver.card_type == 1 || p->main.driver.card_type == 7)) return false; /* swimming */
+    if (p->use_ai && p->main.has_driver && (p->main.driver.dyn.card_type == 1 || p->main.driver.dyn.card_type == 7)) return false; /* swimming */
     /* Where he is drawn (between the AI's ticks), as the camera's target */
-    o = p->ed_posed ? p->main.player.position /* custom gameplay's place */
+    o = !tc_main_is_ed(&p->main) ? p->main.player.position /* where the character in the slot puts him */
         : p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->main.player.position;
     if (!tc_collision_raycast(&p->world, tc_v3_add(o, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1), TC_VIEW_SHADOW_REACH + 0.5f, &hit))
         return false;

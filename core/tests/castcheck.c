@@ -59,7 +59,7 @@ static float pose_gap(tc_viewer *v) {
             while (pi < v->level->perso_count && m >= v->level->persos[pi].part_count) m -= v->level->persos[pi++].part_count;
             a = c ? tc_cast_actor_of(c, pi) : NULL;
             printf("    gap %.3f: prso %u perso %d state %u frame %.2f\n", (double)best, pi, a ? (int)a->entry->id : -1,
-                   a ? (unsigned)a->ai.state : 0, a ? (double)a->ai.state_frame : 0.0);
+                   a ? (unsigned)a->ai->state : 0, a ? (double)a->ai->state_frame : 0.0);
         }
         if (best < INFINITY) gap = fmaxf(gap, best);
     }
@@ -229,13 +229,13 @@ static void level(const char *dir, const char *name) {
             frame(&v);
             if (c->awake > most_awake) most_awake = c->awake;
             if (c->main->time_ms != ticks_before) /* a tick ran: count its raw sounds once */
-                for (i = 0; i < c->count && i < 2048; i++) raw[i] += c->actors[i].ai.sound_count;
+                for (i = 0; i < c->count && i < 2048; i++) raw[i] += c->actors[i].ai->sound_count;
         }
         frame_ms = (double)(clock() - t0) * 1000 / CLOCKS_PER_SEC / 600;
         for (i = 0; i < c->count && i < 2048; i++) {
             tc_mat34 w; const tc_cast_anim *an; tc_sample sm;
             if (raw[i] > worst) worst = raw[i], worst_id = c->actors[i].entry->id;
-            if (drawn_at_start[i] && !tc_cast_pose(c, &c->actors[i], 0, &w, &an, &sm) && !c->actors[i].ai.near_main_ms) {
+            if (drawn_at_start[i] && !tc_cast_pose(c, &c->actors[i], 0, &w, &an, &sm) && !c->actors[i].ai->near_main_ms) {
                 if (c->actors[i].entry->flags & TC_CAST_SCENE) { scene_out++; continue; } /* the scene's own removals */
                 vanished++;
                 printf("    vanished: perso %u\n", (unsigned)c->actors[i].entry->id);
@@ -249,7 +249,7 @@ static void level(const char *dir, const char *name) {
         check(frame_ms < 4, "the core's frame stays under 4 ms headless");
     }
     for (i = 0; i < c->count; i++) {
-        const tc_ai_perso *p = &c->actors[i].ai;
+        const tc_ai_perso *p = c->actors[i].ai;
         if (!p->active) before_inactive++;
         else if (p->radius2 > 0) sleepers++;
     }
@@ -306,7 +306,7 @@ static void level(const char *dir, const char *name) {
     /* Ed at each sleeper (its origin, 0.5 up), 2 s; pickups take themselves out */
     for (i = 0; i < c->count; i++) {
         const tc_cast_actor *a = &c->actors[i];
-        const tc_ai_perso *p = &a->ai;
+        const tc_ai_perso *p = a->ai;
         uint32_t k, thought = 0;
         if (!p->active || !(p->radius2 > 0)) continue;
         visited++;
@@ -343,7 +343,7 @@ static void level(const char *dir, const char *name) {
         const tc_cast_actor *a = &c->actors[i];
         int side, k, taken_over = 0;
         unsigned forced_into = 0, held_on, state_before, state_after;
-        if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai.active || a->entry->prso == 0xFFFF) continue;
+        if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai->active || a->entry->prso == 0xFFFF) continue;
         /* each from a fresh level: an earlier visit can leave Ed in another behaviour (Action by a grille he cannot
          * work yet: B69), and the next machine then never takes him (Land: the grille 53 beside the machine 54) */
         tc_viewer_free(&v);
@@ -354,7 +354,7 @@ static void level(const char *dir, const char *name) {
         for (side = 0; side < 4 && !taken_over; side++) {
             float h = side * TC_PI / 2;
             tc_player_teleport((tc_player *)tc_viewer_player(&v),
-                               tc_v3_add(a->ai.position, tc_v3(1.2f * sinf(h), -1.2f * cosf(h), 0.3f)), h + TC_PI);
+                               tc_v3_add(a->ai->position, tc_v3(1.2f * sinf(h), -1.2f * cosf(h), 0.3f)), h + TC_PI);
             run(&v, 1, 0);
             run(&v, 0.1f, 1u << TC_VA_ACTION);
             for (k = 0; k < 360; k++) {
@@ -390,10 +390,10 @@ static void level(const char *dir, const char *name) {
         }
         /* holding it (Ed's B48): Action pulls, Jump lets go */
         held_on = c->main->normal.behaviour;
-        state_before = a->ai.state;
+        state_before = a->ai->state;
         run(&v, 0.1f, 1u << TC_VA_ACTION);
         run(&v, 3, 0);
-        state_after = a->ai.state;
+        state_after = a->ai->state;
         run(&v, 0.1f, 1u << TC_VA_JUMP);
         run(&v, 2, 0);
         if (c->main->normal.behaviour == held_on && held_on != 87) { /* still holding: try the other ways out */
@@ -456,9 +456,9 @@ static void level(const char *dir, const char *name) {
         if (i == 0) second_fall = 0;
         if (a) {
             if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || (a->entry->flags & TC_CAST_ALWAYS_AWAKE) ||
-                a->entry->prso != 0xFFFF || !a->ai.active)
+                a->entry->prso != 0xFFFF || !a->ai->active)
                 continue;
-            at = tc_v3_add(a->ai.position, tc_v3(0, 0, 0.5f));
+            at = tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f));
         } else if (strcmp(name, "north") == 0 && lv.edition == 0) { /* retail north (the SE's is another map) */
             at = tc_v3(0, 0, -100); /* World's R0: z < -105 */
         } else continue;
@@ -613,14 +613,14 @@ static void taken_stays_taken(const char *dir) {
     for (k = 0; k < 30; k++) frame(&v);
     for (i = 0; i < c->count && !taken; i++) { /* the first drawn, level-saved pickup that goes when the skier is on it */
         const tc_cast_actor *b = &c->actors[i];
-        if (b->entry->prso == 0xFFFF || !b->ai.active || !level_saved(b) || !b->ai.removal_guard) continue;
-        tc_player_teleport((tc_player *)tc_viewer_player(&v), b->ai.position, 0);
-        for (k = 0; k < 240 && b->ai.active; k++) frame(&v);
-        if (!b->ai.active) taken = b->entry->id;
+        if (b->entry->prso == 0xFFFF || !b->ai->active || !level_saved(b) || !b->ai->removal_guard) continue;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), b->ai->position, 0);
+        for (k = 0; k < 240 && b->ai->active; k++) frame(&v);
+        if (!b->ai->active) taken = b->entry->id;
     }
     for (i = 0; i < c->count && !other; i++) {
         const tc_cast_actor *b = &c->actors[i];
-        if (b->entry->prso != 0xFFFF && b->ai.active && !b->ai.frozen && level_saved(b) && b->entry->id != taken) other = b->entry->id;
+        if (b->entry->prso != 0xFFFF && b->ai->active && !b->ai->frozen && level_saved(b) && b->entry->id != taken) other = b->entry->id;
     }
     snprintf(what, sizeof(what), "the skier takes a pickup (perso %d); another (perso %d) is left", taken, other);
     check(taken && other, what);
@@ -640,11 +640,11 @@ static void taken_stays_taken(const char *dir) {
     c = tc_viewer_cast(&v);
     a = actor_of(c, taken);
     snprintf(what, sizeof(what), "back in the level it is gone: active %d, frozen %d (it was %.0f away from the start)",
-             a ? a->ai.active : -1, a ? a->ai.frozen : -1,
-             a ? (double)tc_v3_distance(a->ai.position, tc_viewer_player(&v)->position) : 0.0);
-    check(a && !a->ai.active && !a->ai.frozen, what);
+             a ? a->ai->active : -1, a ? a->ai->frozen : -1,
+             a ? (double)tc_v3_distance(a->ai->position, tc_viewer_player(&v)->position) : 0.0);
+    check(a && !a->ai->active && !a->ai->frozen, what);
     a = actor_of(c, other);
-    check(a && a->ai.active && !a->ai.frozen, "the one not taken is still there");
+    check(a && a->ai->active && !a->ai->frozen, "the one not taken is still there");
     { int now = 0; for (k = 0; k < 31; k++) now += c->globals.values[k] > 0 ? c->globals.values[k] : 0;
       check(now == count_before, "and the counts are as they were"); }
     tc_viewer_free(&v); free(ai); tc_level_free(&lv);
@@ -653,7 +653,7 @@ static void taken_stays_taken(const char *dir) {
     if (!saves_open(dir, NULL, &lv, &v, &ai)) { check(0, "Totalski opens a third time"); return; }
     for (k = 0; k < 90; k++) frame(&v);
     a = actor_of(tc_viewer_cast(&v), taken);
-    check(a && a->ai.active, "a new run (no carry): it is there again");
+    check(a && a->ai->active, "a new run (no carry): it is there again");
     tc_viewer_free(&v); free(ai); tc_level_free(&lv);
 }
 

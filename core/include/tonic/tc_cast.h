@@ -18,6 +18,7 @@
 #include "tc_anim.h"
 #include "tc_sector.h"
 #include "tc_mec.h"
+#include "tc_player.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,22 +33,8 @@ extern "C" {
 #define TC_CAST_TALK_REACH 7.0f    /* port: how near a speaker Action talks to it, along the ground: the bar's counter keeps Ed
                                       5.8 off the barman, SpyCarota's ledge 6, and the mammoth towers 23 above him */
 
-/* An actor's mechanics (the exe's dynamics, for the card types the cast runs: tc_cast_mec.c). */
-typedef struct tc_cast_dyn {
-    uint32_t card_type;          /* last step's (0xFFFF none) */
-    tc_vec3 velocity;            /* dynamics +0x38 (linear) */
-    tc_vec3 omega;               /* its angle x axis: angular velocity as a rotation vector (rad/s) */
-    tc_vec3 rot;                 /* the position's angle x axis: the orientation as a rotation vector (type 7 tilts) */
-    bool tilted;                 /* rot is not a turn about up only: the pose uses it whole */
-    bool moving;                 /* velocity_snap != 0 (type 6: on its way; MoveLift's end test) */
-    float lift_s, lift_elapsed, lift_x, lift_rate; /* type 6: +0x2B0 s, +0x2B4, the lag {x, rate} (+0x2BC, +0x2C8) */
-    float unk_70;                /* type 7: < 0 after a move request: the spring's rest is set again */
-    float rest_z;                /* type 7: the spring's rest height (+0x88) */
-    bool substeps;               /* type 7: dynamics flag 0x20000 (5 ms substeps) */
-    tc_vec3 plane_n;             /* type 7 mode 0x15: the plane spring */
-    float plane_k, plane_offset;
-    tc_mec_walk walk;            /* type 7: its own sweep's contacts (MEC_CollideMoveNoTurn_004bedd6, flags 4) */
-} tc_cast_dyn;
+/* An actor's mechanics: the perso's dynamics (tc_mec.h). */
+typedef tc_mec_dyn tc_cast_dyn;
 
 /* A sector the scripts move (the exe's table DAT_005212f4, 0x48 a record: GAM_0042a000). world: its matrix, the identity
  * where the export has it (port: the exe's is the sector SuperObject's own, the identity in the levels looked at).
@@ -66,7 +53,8 @@ typedef struct tc_cast_moving_sector {
 typedef struct tc_cast_actor {
     const tc_cast_entry *entry;
     tc_ai_model model;           /* its scripts; the states are its family's (owned by tc_cast) */
-    tc_ai_perso ai;
+    tc_ai_perso *ai;             /* its AI: own_ai, or (the main character's actor) his driver's */
+    tc_ai_perso own_ai;
     float heading0;              /* the placement's (entry->world) */
     bool awake, thought;         /* last tick: its sector awake; its AI ran */
     uint16_t state_prev;         /* the tick before: for drawing between ticks */
@@ -74,12 +62,20 @@ typedef struct tc_cast_actor {
     uint16_t last_sound;         /* the throttle */
     uint32_t last_sound_ms;
     struct tc_obstacle *obstacle; /* its own collision (tc_obstacle.h), posed after each of its steps; NULL none */
-    tc_cast_dyn dyn;
+    tc_cast_dyn *dyn;            /* its dynamics: own_dyn, or (the main character's actor) his driver's */
+    tc_cast_dyn own_dyn;
     tc_sector_track sector;      /* the sector it is in now (GAM_0042c810 moves a perso with mechanics through the
                                     portals every frame); placed at its snapshot sector */
     tc_vec3 position_prev;       /* the tick before: for drawing between ticks */
     tc_vec3 rot_prev;
     bool talking;                /* TC_CAST_TALK: the main actor spoke to it: its scripts run */
+    /* Its physics as the shared mechanics see it (tc_mec_perso: the card types Ed's code brought, 1 2 5 8 11), made at
+     * their first step; position, heading and velocity are the AI's and dyn's, copied in and out round the step. The main
+     * character's is his player (tc_main.player), his capsule: a perso with one falls back on it where it has no body. */
+    tc_player *body;
+    tc_player own_body;
+    bool has_body;
+    bool capsule;
 } tc_cast_actor;
 
 
@@ -107,6 +103,12 @@ typedef struct tc_cast {
     int32_t *by_prso;            /* tc_level.persos index -> actor index, -1 */
     tc_ai_perso *main;
     int32_t main_id;
+    /* The main character as an actor of the cast (actors[count], past the counted ones: no loop over the cast meets
+     * him; tc_cast_tick steps him at his place in the walk): his AI, dynamics and physics are his driver's
+     * (tc_cast_attach_main), his record main_entry (his id, no family: his states, cards and bodies are his model's).
+     * NULL: none attached. */
+    tc_cast_actor *main_actor;
+    tc_cast_entry main_entry;
     uint8_t *alias_saved;        /* the fix Ed's dsgvars at the level's start, where he stands for the main actor (the ski
                                     levels): his player-saved ones go back to these at a restart (tc_cast_respawn) */
     uint32_t alias_saved_size;
@@ -147,6 +149,25 @@ void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_secto
  * (tc_cast_step_rest). */
 void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
 void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
+/* The main character as the cast steps it (tc_cast_tick; tc_main.h): its own tick, and the sector it is in. */
+typedef struct tc_cast_main_ops {
+    void (*step)(void *self, float dt);
+    uint16_t (*sector)(const void *self);    /* TC_SECTOR_NONE: none known */
+} tc_cast_main_ops;
+/* One tick of the game, the exe's frame (docs/ENGINE.md "The frame"): the run-first persos (tc_cast_step_first), then
+ * the dynamic world's walk in tree order with the main character's step (ops->step(self, dt)) at his own place in it
+ * (main_id: the persos before him in the walk run first), each perso from his sector and position as they are when it
+ * runs; then the moved sectors. */
+void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_ops *ops, void *self);
+/* The main character as the cast's actor (tc_main.h): his AI, his dynamics and his physics (his capsule, tc_player) are
+ * his driver's; his record: his id, always awake, his own collide set (the level's PCOL main). Again after his driver is
+ * made anew (the Special Edition's walk / ski switch); a cast without actors has none. */
+void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player *body);
+/* His mechanics for this step, the cast's as any actor's (his driver's step calls it in place of its own: tc_ed_ai's
+ * mechanics hook): by his state's card, the walkers with a body, 6, 7, 10 and 12 through the cast's integrators (his
+ * physics copied in and out), the rest through the shared step (tc_mec_perso_step: 1 2 5 8 11, his capsule). x: his
+ * driver's view of the step. */
+void tc_cast_main_mechanics(tc_cast *c, const tc_mec_perso *x, float dt);
 /* The actor's mechanics for this tick, after its AI (GAM_MecFrame_0042b2b0: the queued requests through the state's
  * card type's request handler, then its integrator). Card types 6 (MoveLift), 7 (pushed and floating things), the
  * walkers 0 / 4 / 12 and the projectiles 10 are ported (docs/ENGINE.md "Moving collision, read", "Walkers",

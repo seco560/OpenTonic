@@ -153,7 +153,7 @@ static void float_forces(tc_cast_dyn *d, const tc_ai_perso *p, const tc_ai_card 
  * It meets the static world of its sector's collide list and the persos its set allows (+0x34, +0x35). */
 static void own_sweep(tc_cast *c, tc_cast_actor *a, tc_vec3 start, float dt) {
     tc_collision *w = c->world;
-    tc_ai_perso *p = &a->ai;
+    tc_ai_perso *p = a->ai;
     tc_ai_sphere_set body;
     tc_vec3 v, end = p->position;
     const uint8_t *solid;
@@ -175,13 +175,13 @@ static void own_sweep(tc_cast *c, tc_cast_actor *a, tc_vec3 start, float dt) {
     w->self_meets = a->entry->own_meets != 0;
     p->position = start;
     v = tc_v3_scale(tc_v3_sub(end, start), 1 / dt);
-    tc_mec_collide_move(&a->dyn.walk, NULL, w, &body, 0, dt, &p->position, &v);
+    tc_mec_collide_move(&a->dyn->walk, NULL, w, &body, 0, dt, &p->position, &v);
     w->solid = solid, w->self = self, w->ignore = ignore, w->self_priority = prio, w->self_meets = meets;
 }
 
 static void float_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, const wanted7 *wanted, float dt) {
-    tc_cast_dyn *d = &a->dyn;
-    tc_ai_perso *p = &a->ai;
+    tc_cast_dyn *d = a->dyn;
+    tc_ai_perso *p = a->ai;
     float left = dt, step, load = 0;
     tc_vec3 load_at = p->position, start = p->position;
     if (c->main && c->main_carrier == a->entry->id) { /* FUN_004c32f6: its riders (the main actor) */
@@ -204,7 +204,13 @@ static void float_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, con
         d->omega = w;
         left -= step;
     }
-    own_sweep(c, a, start, dt);
+    if (a->capsule && dt > 0) { /* its capsule (the main character's: tc_player_move), not a single collide sphere */
+        tc_vec3 end = p->position;
+        a->body->position = start;
+        tc_player_move(a->body, dt, tc_v3_scale(tc_v3_sub(end, start), 1 / dt));
+        p->position = a->body->position;
+    } else
+        own_sweep(c, a, start, dt);
     d->tilted = d->rot.x != 0 || d->rot.y != 0;
     p->heading = d->rot.z;
     d->moving = tc_v3_length_sq(d->velocity) > 0 || tc_v3_length_sq(wanted->v) > 0;
@@ -249,8 +255,8 @@ static float walker_turn(const tc_ai_card *card, float rate) {
  * Suzy and the like stand on their floor in the data), so no collision at all. A perf shortcut of the original (NPCs
  * walking without collision tests); kept as read. */
 static void glide_step(tc_cast_actor *a, const tc_ai_card *card, float dt) {
-    tc_ai_perso *p = &a->ai;
-    tc_cast_dyn *d = &a->dyn;
+    tc_ai_perso *p = a->ai;
+    tc_cast_dyn *d = a->dyn;
     tc_vec3 v = tc_v3(0, 0, 0);
     if (p->motion.turning) p->heading += walker_turn(card, p->motion.turn_speed) * dt;
     if (!p->motion.stop) v = ground_wanted(p, card, dt);
@@ -266,14 +272,12 @@ static void glide_step(tc_cast_actor *a, const tc_ai_card *card, float dt) {
  * in the air), as Ed's (tc_ed_ai.c walk()): its state's ZDM body (CMEC's walker part), riding (tc_mec_walk_carry), the
  * requests or else the animation's root motion, then the collide-and-move of tc_mec_walk_step. Returns false when the
  * state has no body (then glide_step). */
-static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, float dt) {
-    const tc_cast_family *f = &c->level->cast.families[a->entry->family];
-    tc_ai_perso *p = &a->ai;
+static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, const tc_ai_sphere_set *body, float dt) {
+    tc_ai_perso *p = a->ai;
     const tc_ai_motion *m = &p->motion;
     const float *pr = m->proposal;
-    tc_cast_dyn *d = &a->dyn;
+    tc_cast_dyn *d = a->dyn;
     tc_collision *w = c->world;
-    const tc_ai_sphere_set *body;
     tc_vec3 wanted = tc_v3(0, 0, 0), jump = tc_v3(0, 0, 0);
     const tc_vec3 *impulse = NULL;
     const uint8_t *solid;
@@ -281,10 +285,10 @@ static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, floa
     uint8_t prio, k;
     bool meets, air = card->type == 4;
     tc_mec_env env = tc_mec_env_default();
-    if (!w || !f->body || p->state >= f->state_count || f->body[p->state] == 0xFFFF) return false;
-    body = &f->bodies[f->body[p->state]];
+    if (!w || !body) return false;
     solid = w->solid, self = w->self, ignore = w->ignore, prio = w->self_priority, meets = w->self_meets;
-    w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
+    if (a != c->main_actor) /* the main character's are his driver's: his sector's and the one below him (set_solid) */
+        w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
     w->self = a->entry->id;
     w->ignore = -1;
     w->self_priority = a->entry->own_priority;
@@ -375,10 +379,10 @@ static tc_vec3 homing_velocity(tc_vec3 from, tc_vec3 target, tc_vec3 v, float sp
  * +0x10 (a turn of the velocity towards gravity over time) is not ported, and its own sweep (MEC_CollideMoveNoTurn_004bedd6)
  * runs for what gravity pulls: the bees keep ending at the wall their scripts probed. */
 static void projectile_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, float dt) {
-    tc_ai_perso *p = &a->ai;
+    tc_ai_perso *p = a->ai;
     const tc_ai_motion *m = &p->motion;
     const float *pr = m->proposal;
-    tc_cast_dyn *d = &a->dyn;
+    tc_cast_dyn *d = a->dyn;
     tc_vec3 v = d->velocity, va = tc_v3(pr[1], pr[2], pr[3]), start = p->position;
     float g = tc_ai_card_f32(card, 0x08) * 9.81f; /* port: every level's air */
     uint8_t k;
@@ -407,16 +411,66 @@ static void projectile_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card
     d->moving = tc_v3_length_sq(v) > 0;
 }
 
-bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
+/* The card types the cast had no integrator of its own for, and Ed's mechanics have (tc_mec_perso.c: 1 swimming, 2 skiing,
+ * 5 flight, 8 the kinematic, 11 hanging): the shared step, on its state's ZDM body (CMEC's walker part; none: false, it
+ * turns in place as before), in its own sector's collision, with itself left out of the perso obstacles as walk_step
+ * does. Its body carries the position, heading and velocity in and out. Until 2026-11-13 these turned in place. */
+static bool shared_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, float dt) {
     const tc_cast_family *f = &c->level->cast.families[a->entry->family];
-    tc_ai_perso *p = &a->ai;
+    tc_ai_perso *p = a->ai;
+    tc_cast_dyn *d = a->dyn;
+    tc_collision *w = c->world;
+    const uint8_t *solid;
+    int32_t self, ignore;
+    uint8_t prio;
+    bool meets;
+    tc_mec_perso x;
+    if (!w || !f->body || p->state >= f->state_count || f->body[p->state] == 0xFFFF) return false;
+    if (!a->has_body) {
+        tc_player_init(a->body, w, p->position, p->heading);
+        a->has_body = true;
+    }
+    a->body->world = w;
+    a->body->position = p->position;
+    a->body->heading = p->heading;
+    a->body->velocity = d->velocity;
+    solid = w->solid, self = w->self, ignore = w->ignore, prio = w->self_priority, meets = w->self_meets;
+    w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
+    w->self = a->entry->id;
+    w->ignore = -1;
+    w->self_priority = a->entry->own_priority;
+    w->self_meets = a->entry->own_meets != 0;
+    d->env = tc_mec_env_default();
+    d->env_depth = c->sectors && a->sector.sector != TC_SECTOR_NONE
+                       ? tc_mec_env_at(c->sectors, a->sector.sector, p->position, &d->env) : 0;
+    x.ai = p;
+    x.body = a->body;
+    x.dyn = d;
+    x.card = card;
+    x.spheres = &f->bodies[f->body[p->state]];
+    x.root = tc_mec_root_motion(p);
+    x.ground = 0;
+    x.sectors = c->sectors;
+    x.sector = a->sector.sector;
+    tc_mec_perso_step(&x, dt);
+    w->solid = solid, w->self = self, w->ignore = ignore, w->self_priority = prio, w->self_meets = meets;
+    p->position = a->body->position;
+    p->heading = a->body->heading;
+    d->velocity = p->velocity = a->body->velocity;
+    p->contacts = d->contacts;
+    p->ground_material = d->walk.ground_own;
+    p->wall_material = d->walk.wall_own;
+    d->moving = tc_v3_length_sq(d->velocity) > 0;
+    return true;
+}
+
+/* One step of an actor's mechanics on its state's card (body: its ZDM, NULL none): the integrator by the card's type.
+ * false: a type the cast does not run (it turns in place). */
+static bool card_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, const tc_ai_sphere_set *body, float dt) {
+    tc_ai_perso *p = a->ai;
     const tc_ai_motion *m = &p->motion;
-    const tc_ai_card *card;
-    tc_cast_dyn *d = &a->dyn;
-    uint16_t ci;
+    tc_cast_dyn *d = a->dyn;
     uint8_t k;
-    if (!f->cards || p->state >= f->state_count || (ci = f->cards[p->state]) == 0xFFFF) return false;
-    card = &c->level->cast.cards[ci];
     if (m->heading_set) p->heading = m->heading; /* mode 5, on any card: the angle at once (the type's own rate is angle / dt) */
     if (card->type == 10) {
         d->card_type = 10;
@@ -430,7 +484,12 @@ bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
                 tc_mec_walk_reset(&d->walk), d->velocity = tc_v3(0, 0, 0);
             d->card_type = card->type;
         }
-        if (card->type == 12 || !walk_step(c, a, card, dt)) glide_step(a, card, dt);
+        if (card->type == 12 || !walk_step(c, a, card, body, dt)) glide_step(a, card, dt);
+        p->mech_moving = d->moving;
+        return true;
+    }
+    if ((card->type == 1 || card->type == 2 || card->type == 5 || card->type == 8 || card->type == 11) &&
+        shared_step(c, a, card, dt)) {
         p->mech_moving = d->moving;
         return true;
     }
@@ -453,8 +512,70 @@ bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
         }
         if (m->mode_count == 0) float_request(d, p, card, 0, m->proposal, dt, &w);
         for (k = 0; k < m->mode_count; k++) float_request(d, p, card, m->modes[k], m->proposal, dt, &w);
+        if (!memchr(m->modes, 12, m->mode_count) && !memchr(m->modes, 0x14, m->mode_count)) {
+            /* GAM_0042a8d0: the playing animation's root motion is a mode 12 request when the scripts make no move
+             * (the walk-in to a portal, 228, walks by it). Until 2026-11-13 the cast's type 7 left it out. */
+            tc_vec3 row = tc_v3_scale(tc_mec_root_motion(p), (float)p->frame_rate);
+            float len = tc_v3_length(row), pr[32];
+            if (len > 0) {
+                memcpy(pr, m->proposal, sizeof(pr));
+                pr[7] = row.x / len, pr[8] = row.y / len, pr[9] = row.z / len, pr[10] = len;
+                float_request(d, p, card, 12, pr, dt, &w);
+            }
+        }
         float_step(c, a, card, &w, dt);
     }
     p->mech_moving = d->moving;
     return true;
+}
+
+bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
+    const tc_cast_family *f = &c->level->cast.families[a->entry->family];
+    tc_ai_perso *p = a->ai;
+    uint16_t ci;
+    if (!f->cards || p->state >= f->state_count || (ci = f->cards[p->state]) == 0xFFFF) return false;
+    return card_step(c, a, &c->level->cast.cards[ci],
+                     f->body && f->body[p->state] != 0xFFFF ? &f->bodies[f->body[p->state]] : NULL, dt);
+}
+
+void tc_cast_main_mechanics(tc_cast *c, const tc_mec_perso *x, float dt) {
+    tc_cast_actor *a = c ? c->main_actor : NULL;
+    const tc_ai_card *card = x->card;
+    uint32_t type = card ? card->type : TC_AI_NONE16;
+    tc_ai_perso *p;
+    tc_cast_dyn *d;
+    tc_player *b;
+    tc_vec3 before;
+    /* the cast's integrators: the walkers with a body, 6, 7, 10, 12; the rest is the shared step's (tc_mec_perso.c:
+     * 1 2 5 8 11, and his capsule where a state has no body or no card) */
+    if (!a || !c->world || !card ||
+        !(((type == 0 || type == 4) && x->spheres) || type == 6 || type == 7 || type == 10 || type == 12)) {
+        tc_mec_perso_step(x, dt);
+        return;
+    }
+    p = a->ai, d = a->dyn, b = a->body;
+    if (type != d->card_type && d->card_type == 5) b->velocity = tc_v3(0, 0, 0); /* leaving flight (GAM_0042ab20) */
+    if (type != 0 && type != 4) d->walk.carrier = -1; /* port: riding is the walkers' */
+    a->sector.sector = x->sector;
+    /* his physics in the actor's terms: the AI record's place and heading, the dynamics' velocity */
+    before = p->position = b->position;
+    p->heading = b->heading;
+    d->velocity = b->velocity;
+    card_step(c, a, card, x->spheres, dt);
+    b->position = p->position;
+    b->heading = p->heading;
+    if (type == 6 || type == 7) { /* the move it made (the float's velocity is its forces': none at gravity factor 0) */
+        b->velocity = dt > 0 ? tc_v3_scale(tc_v3_sub(p->position, before), 1 / dt) : tc_v3(0, 0, 0);
+        if (type == 7) d->contacts = (b->grounded ? TC_AI_CONTACT_GROUND : 0) | (b->against_wall ? TC_AI_CONTACT_WALL : 0);
+    } else {
+        b->velocity = d->velocity;
+        d->contacts = p->contacts;
+        if (type == 0 || type == 4) {
+            b->grounded = (d->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
+            b->against_wall = (d->contacts & TC_AI_CONTACT_WALL) != 0;
+            b->ground_normal = d->walk.ground_normal;
+            b->wall_normal = d->walk.wall_normal;
+            b->ground_grip = d->walk.ground_grip;
+        }
+    }
 }

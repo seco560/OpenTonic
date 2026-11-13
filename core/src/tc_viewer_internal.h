@@ -44,11 +44,9 @@ struct tc_viewer_play {
     bool ski_shot;          /* the skier has ridden: the camera's shot is the ski follow (stands for the start trigger,
                                tc_viewer_camera_shot) */
     tc_mat4 pose_draw;           /* Ed's model matrix this frame, between main.pose_prev and main.pose_cur */
-    /* Custom gameplay, not the game's (core/src/custom, tcx.h; NULL: none): while it holds Ed (in a car), his AI and
-     * mechanics (and the cast, which steps on his clock) hold, and he is drawn at ed_model. */
+    /* Custom gameplay, not the game's (core/src/custom, tcx.h; NULL: none). Its car takes main's slot while Ed is in it:
+     * his AI and mechanics (and the cast, which steps on his clock) hold, and he is drawn at main.rider. */
     struct tcx_play *custom;
-    bool ed_posed;
-    tc_mat4 ed_model;
 };
 
 static inline bool level_has_ed(const tc_level *l) { return l->has_ed && l->collision_triangle_count > 0; }

@@ -50,7 +50,7 @@ static float tape_frame(const tc_tape_object *o, float a) { return o->frame_prev
 bool tcv_tape_actor_pose(const tc_viewer *v, const tc_cast_actor *c, tc_mat34 *world, const tc_cast_anim **anim, tc_sample *s) {
     const tc_viewer_tape *t = v->tape;
     const tc_tape_object *o = tape_object(t, c->entry->id);
-    const tc_ai_model *m = c->ai.model;
+    const tc_ai_model *m = c->ai->model;
     const tc_cast_family *f = &v->level->cast.families[c->entry->family];
     const tc_ai_state *st;
     const tc_cast_anim *an;
@@ -101,7 +101,7 @@ static void tape_frame_read(tc_viewer *v) {
         if (!o || !o->shown) continue;
         if (v->sectors && c->sector.sector != TC_SECTOR_NONE) tc_sector_move(&c->sector, v->sectors, o->position);
         d = tc_v3_sub(o->position, v->camera.position);
-        if (tc_v3_dot(d, d) <= TC_CAST_HEARING * TC_CAST_HEARING) tape_sounds(v, c->ai.model, o);
+        if (tc_v3_dot(d, d) <= TC_CAST_HEARING * TC_CAST_HEARING) tape_sounds(v, c->ai->model, o);
     }
 }
 

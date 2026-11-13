@@ -58,7 +58,7 @@ void tcv_update_scene(tc_viewer *v) {
         const tc_cast_actor *a = &p->cast.actors[i];
         const tc_ai_behaviour *b;
         if (!(a->entry->flags & TC_CAST_TALK) || !a->talking) continue;
-        b = &a->ai.model->behaviours[a->ai.normal.behaviour];
+        b = &a->ai->model->behaviours[a->ai->normal.behaviour];
         if (b->script_count == 0 && b->schedule < 0 && tc_level_after_cutscene(p->main.level_name)) {
             v->scene_leaving = true;
             p->main.driver.events.cover = true;
@@ -76,8 +76,8 @@ bool tc_viewer_talk_prompt(const tc_viewer *v) {
     for (i = 0; i < p->cast.count; i++) {
         const tc_cast_actor *a = &p->cast.actors[i];
         float dx, dy;
-        if (!(a->entry->flags & TC_CAST_TALK) || a->talking || !a->ai.active) continue;
-        dx = a->ai.position.x - p->cast.main->position.x, dy = a->ai.position.y - p->cast.main->position.y;
+        if (!(a->entry->flags & TC_CAST_TALK) || a->talking || !a->ai->active) continue;
+        dx = a->ai->position.x - p->cast.main->position.x, dy = a->ai->position.y - p->cast.main->position.y;
         if (dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH) return true;
     }
     return false;

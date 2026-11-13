@@ -106,7 +106,7 @@ static void read_sample(const tc_viewer *v, uint32_t frame, tc_rec_sample *s) {
         s->behaviour = d->ai.normal.behaviour;
         s->state = d->ai.state;
         s->wanted_state = d->ai.wanted_state;
-        s->card = (int32_t)d->card_type;
+        s->card = (int32_t)d->dyn.card_type;
         s->hit_points = d->ai.hit_points;
         s->ai_time_ms = d->ai.time_ms;
         s->restarts = d->restarts;
@@ -127,7 +127,7 @@ static void read_sample(const tc_viewer *v, uint32_t frame, tc_rec_sample *s) {
         s->thinking = c->thinking;
         s->spawned = c->spawned;
         s->cast_rng = c->rng;
-        for (i = 0; i < c->count; i++) h = hash_perso(h, &c->actors[i].ai);
+        for (i = 0; i < c->count; i++) h = hash_perso(h, c->actors[i].ai);
         s->cast_hash = fold(h);
         s->globals_hash = hash_globals(&c->globals);
     }
@@ -253,11 +253,11 @@ static void write_cast(tc_recorder *r, const tc_viewer *v) {
         tc_rec_actor o;
         memset(&o, 0, sizeof o);
         o.id = a->entry->id;
-        o.position[0] = a->ai.position.x, o.position[1] = a->ai.position.y, o.position[2] = a->ai.position.z;
-        o.behaviour = a->ai.normal.behaviour;
-        o.state = a->ai.state;
-        o.hit_points = a->ai.hit_points;
-        o.flags = (a->ai.active ? 1u : 0) | (a->ai.dead ? 2u : 0) | (a->awake ? 4u : 0) | (a->thought ? 8u : 0);
+        o.position[0] = a->ai->position.x, o.position[1] = a->ai->position.y, o.position[2] = a->ai->position.z;
+        o.behaviour = a->ai->normal.behaviour;
+        o.state = a->ai->state;
+        o.hit_points = a->ai->hit_points;
+        o.flags = (a->ai->active ? 1u : 0) | (a->ai->dead ? 2u : 0) | (a->awake ? 4u : 0) | (a->thought ? 8u : 0);
         put(r, &o, sizeof o);
     }
 }
@@ -775,13 +775,13 @@ static void compare_cast(tc_replay *r, const uint8_t *body, uint32_t n) {
         tc_rec_actor w;
         char what[96];
         memcpy(&w, body + (size_t)i * sizeof w, sizeof w);
-        if (w.position[0] == a->ai.position.x && w.position[1] == a->ai.position.y && w.position[2] == a->ai.position.z &&
-            w.behaviour == a->ai.normal.behaviour && w.state == a->ai.state && w.hit_points == a->ai.hit_points)
+        if (w.position[0] == a->ai->position.x && w.position[1] == a->ai->position.y && w.position[2] == a->ai->position.z &&
+            w.behaviour == a->ai->normal.behaviour && w.state == a->ai->state && w.hit_points == a->ai->hit_points)
             continue;
         bad = true;
         snprintf(what, sizeof what, "actor id %u: recorded B%d state %d hp %d, replayed B%d state %d hp %d", w.id,
-                 (int)w.behaviour, (int)w.state, (int)w.hit_points, (int)a->ai.normal.behaviour, (int)a->ai.state,
-                 (int)a->ai.hit_points);
+                 (int)w.behaviour, (int)w.state, (int)w.hit_points, (int)a->ai->normal.behaviour, (int)a->ai->state,
+                 (int)a->ai->hit_points);
         note_first(r, what);
     }
     if (bad) d->bad_casts++;

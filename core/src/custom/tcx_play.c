@@ -22,10 +22,10 @@ struct tcx_play {
 
 #define RIDE_ACTION (1u << TC_VA_ACTION)
 
-static bool down(const tcx_host *h, tc_view_action a) { return (h->held >> a) & 1u; }
+static bool down(uint32_t held, tc_view_action a) { return (held >> a) & 1u; }
 
-static float axis(const tcx_host *h, tc_view_action pos, tc_view_action neg) {
-    return (down(h, pos) ? 1.0f : 0.0f) - (down(h, neg) ? 1.0f : 0.0f);
+static float axis(uint32_t held, tc_view_action pos, tc_view_action neg) {
+    return (down(held, pos) ? 1.0f : 0.0f) - (down(held, neg) ? 1.0f : 0.0f);
 }
 
 /* Ed's animation by .ttlv name with at least one sample, or -1. */
@@ -72,12 +72,12 @@ void tcx_play_free(tcx_play *x) {
 
 /* The move keys and the left stick as the car's: forward / back the throttle (back brakes, then reverses), left / right
  * the steering, Jump (Space) the handbrake, Fast (Shift) a hop (swapped 2026-11-12, user). */
-static tcx_vehicle_input drive_input(const tcx_host *h) {
+static tcx_vehicle_input drive_input(uint32_t held, float move_x, float move_y) {
     tcx_vehicle_input in;
-    in.throttle = fmaxf(-1, fminf(1, axis(h, TC_VA_FORWARD, TC_VA_BACK) + h->move_y));
-    in.steer = fmaxf(-1, fminf(1, axis(h, TC_VA_RIGHT, TC_VA_LEFT) + h->move_x));
-    in.handbrake = down(h, TC_VA_JUMP);
-    in.hop = down(h, TC_VA_FAST);
+    in.throttle = fmaxf(-1, fminf(1, axis(held, TC_VA_FORWARD, TC_VA_BACK) + move_y));
+    in.steer = fmaxf(-1, fminf(1, axis(held, TC_VA_RIGHT, TC_VA_LEFT) + move_x));
+    in.handbrake = down(held, TC_VA_JUMP);
+    in.hop = down(held, TC_VA_FAST);
     return in;
 }
 
@@ -88,7 +88,8 @@ static void land(tcx_play *x, tc_player *player) {
     x->ride.vehicle = -1;
 }
 
-void tcx_abort(tcx_play *x, tc_player *player) {
+static void car_abort(void *self, tc_player *player) {
+    tcx_play *x = (tcx_play *)self;
     const tcx_vehicle *c = ride_car(x);
     if (!c) return;
     if (x->ride.phase != TCX_RIDE_LEAVING && !tcx_ride_leave(&x->ride, c, x->world)) { /* nowhere free: on its roof */
@@ -103,23 +104,20 @@ void tcx_abort(tcx_play *x, tc_player *player) {
 bool tcx_holds_action(const tcx_play *x) { return x && x->action_held; }
 
 /* The cars move (the one Ed drives by the player's keys, the others coast), their collision posed where they are; then
- * Action gets Ed in (within reach of one) or out. */
-bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed) {
+ * Action within reach of one gets Ed in (the car takes the main character's slot: car_frame from now). */
+bool tcx_update(tcx_play *x, const tcx_host *h, float dt) {
     tcx_ride *r;
-    const tc_level *l;
     float step;
     bool press;
     uint32_t k;
-    ed->landed = false;
     if (!x) return false;
     r = &x->ride;
-    l = x->level;
     step = h->paused ? 0 : dt;
     if (!(h->held & RIDE_ACTION)) x->action_held = false;
     press = (h->held & RIDE_ACTION) && !x->action_held && !h->held_back && !h->paused;
     for (k = 0; k < x->vehicle_count; k++) {
         tcx_vehicle *c = &x->vehicles[k];
-        tcx_vehicle_input in = drive_input(h);
+        tcx_vehicle_input in = drive_input(h->held, h->move_x, h->move_y);
         bool driven = r->phase == TCX_RIDE_DRIVING && (int32_t)k == r->vehicle && !h->held_back;
         tc_obstacle *ob;
         tc_mat34 w;
@@ -133,15 +131,27 @@ bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed) {
             if (tcx_ride_in_reach(&x->vehicles[k], h->player->position)) {
                 tcx_ride_board(r, (int32_t)k, &x->vehicles[k], h->player->position, x->world);
                 x->action_held = true;
-                break;
+                return true;
             }
-    } else if (r->phase == TCX_RIDE_DRIVING && press) {
+    }
+    return false;
+}
+
+/* The car as the main character (tc_main.h), from the frame Ed got in: Action hops him out (from the seat), the ride's
+ * hop runs, and he is drawn hopping (his jump clip, stretched over it, his size going to the seat's or back) or in the
+ * seat. Gives the slot back when he lands. */
+static bool car_frame(void *self, const tc_character_input *h, float dt, tc_character_pose *ed) {
+    tcx_play *x = (tcx_play *)self;
+    tcx_ride *r = &x->ride;
+    const tc_level *l = x->level;
+    float step = h->paused ? 0 : dt;
+    bool press = (h->held & RIDE_ACTION) && !x->action_held && !h->held_back && !h->paused;
+    if (r->phase == TCX_RIDE_DRIVING && press) {
         if (tcx_ride_leave(r, ride_car(x), x->world)) x->action_held = true;
     }
     if (!riding(x)) return false;
     if (tcx_ride_step(r, step) && r->phase == TCX_RIDE_NONE) {
-        land(x, h->player);
-        ed->landed = true;
+        land(x, h->ed);
         return false; /* his own control from this frame on */
     }
     {
@@ -151,9 +161,9 @@ bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed) {
         int jump = ed_anim(l, "jump"), idle = ed_anim(l, "idle");
         tcx_ride_pose(r, c, &feet, &heading, &scale, &done);
         /* the player stays with him (his sector follows the car through the portals; the recording reads it) */
-        h->player->position = r->phase == TCX_RIDE_DRIVING ? tcx_vehicle_drawn_position(c) : feet;
-        h->player->heading = heading;
-        h->player->velocity = r->phase == TCX_RIDE_DRIVING ? c->velocity : tc_v3(0, 0, 0);
+        h->ed->position = r->phase == TCX_RIDE_DRIVING ? tcx_vehicle_drawn_position(c) : feet;
+        h->ed->heading = heading;
+        h->ed->velocity = r->phase == TCX_RIDE_DRIVING ? c->velocity : tc_v3(0, 0, 0);
         if (r->phase == TCX_RIDE_DRIVING) { /* in the seat, shrunk, riding the body; his idle */
             tc_mat34 m = tcx_ride_seat_matrix(c);
             ed->model = tc_mat4_from34(&m);
@@ -165,7 +175,7 @@ bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed) {
                 ed->phase = tc_phase_advance(ed->phase, step * (a->sample_rate / 4) * h->animation_speed, a->sample_count, true);
             }
         } else { /* the hop: his take-off, stretched over it, his size going to the seat's or back */
-            tc_player at = *h->player;
+            tc_player at = *h->ed;
             int i;
             at.position = feet;
             at.heading = heading;
@@ -179,7 +189,8 @@ bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed) {
     return true;
 }
 
-void tcx_camera_target(const tcx_play *x, tc_cam_target *t) {
+static void car_camera_target(const void *self, struct tc_cam_target *t) {
+    const tcx_play *x = (const tcx_play *)self;
     const tcx_vehicle *c = ride_car(x);
     float heading, scale, done;
     if (!c) return;
@@ -236,7 +247,8 @@ bool tcx_sight_skips(const tcx_play *x, uint32_t mesh) {
     return false;
 }
 
-bool tcx_status(const tcx_play *x, char *out, size_t size) {
+static bool car_status(const void *self, char *out, size_t size) {
+    const tcx_play *x = (const tcx_play *)self;
     if (!riding(x) || x->ride.phase != TCX_RIDE_DRIVING) return false;
     snprintf(out, size, ", driving %.0f km/h", (double)(fabsf(tcx_vehicle_speed(ride_car(x))) * 3.6f)); /* units ~ metres */
     return true;
@@ -247,3 +259,7 @@ uint32_t tcx_play_vehicle_count(const tcx_play *x) { return x ? x->vehicle_count
 const tcx_vehicle *tcx_play_vehicle(const tcx_play *x, uint32_t i) { return x && i < x->vehicle_count ? &x->vehicles[i] : NULL; }
 
 const tcx_ride *tcx_play_ride(const tcx_play *x) { return x ? &x->ride : NULL; }
+
+static const tc_character_ops car_ops = {car_frame, car_camera_target, car_status, car_abort};
+
+const tc_character_ops *tcx_character(void) { return &car_ops; }

@@ -33,7 +33,7 @@ tc_viewer_play *tcv_play_create(tc_viewer *v, const tc_viewer_desc *desc) {
             float h = p->main.player.heading;
             for (i = 0; i < p->cast.count; i++)
                 if (p->cast.actors[i].entry->flags & TC_CAST_TALK) {
-                    tc_vec3 to = tc_v3_sub(p->cast.actors[i].ai.position, l->speech.arrival);
+                    tc_vec3 to = tc_v3_sub(p->cast.actors[i].ai->position, l->speech.arrival);
                     h = atan2f(to.x, -to.y);
                 }
             tc_player_teleport(&p->main.player, tc_v3_add(l->speech.arrival, tc_v3(0, 0, 0.3f)), h);
@@ -191,8 +191,9 @@ static uint32_t ai_inputs(const tc_viewer *v) {
 static bool update_custom(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     tcx_host h;
-    tcx_ed ed;
+    tc_character_input in;
     double prof;
+    bool held;
     if (!p->custom) return false;
     prof = TC_PROF_BEGIN();
     h.player = &p->main.player;
@@ -201,21 +202,30 @@ static bool update_custom(tc_viewer *v, float dt) {
     h.paused = v->paused;
     h.held_back = v->director || v->speech_held || v->inspecting || v->phase != TC_VP_PLAY;
     h.may_start = !v->cam.first_person;
-    h.animation_speed = v->animation_speed;
-    h.ed_clip = v->ed_clip, h.ed_phase = v->ed_phase;
-    p->ed_posed = tcx_update(p->custom, &h, dt, &ed);
-    TC_PROF_END(TC_PZ_CUSTOM, prof);
-    if (ed.landed) { /* back on his feet: his AI's tick blending starts over there */
-        p->main.have_pose = false;
-        p->tick_time = 0;
-        v->ed_state = -1;
-        v->ed_phase = 0;
+    /* the cars; Ed getting into one hands it the main character's slot (tc_main.h) */
+    if (tcx_update(p->custom, &h, dt)) tc_main_take(&p->main, tcx_character(), p->custom);
+    held = false;
+    if (!tc_main_is_ed(&p->main)) {
+        in.ed = &p->main.player;
+        in.held = h.held;
+        in.move_x = h.move_x, in.move_y = h.move_y;
+        in.paused = h.paused;
+        in.held_back = h.held_back;
+        in.animation_speed = v->animation_speed;
+        in.ed_clip = v->ed_clip, in.ed_phase = v->ed_phase;
+        held = tc_main_frame(&p->main, &in, dt);
+        if (!held) { /* back on his feet, main again: his AI's tick blending starts over there */
+            p->main.have_pose = false;
+            p->tick_time = 0;
+            v->ed_state = -1;
+            v->ed_phase = 0;
+        }
     }
-    if (!p->ed_posed) return false;
-    p->ed_model = ed.model;
-    v->ed_clip = ed.clip;
-    v->ed_phase = ed.phase;
-    v->ed_loop = ed.loop;
+    TC_PROF_END(TC_PZ_CUSTOM, prof);
+    if (!held) return false;
+    v->ed_clip = p->main.rider.clip;
+    v->ed_phase = p->main.rider.phase;
+    v->ed_loop = p->main.rider.loop;
     v->ed_state = -1;
     return true;
 }
@@ -225,8 +235,7 @@ void tcv_toggle_play(tc_viewer *v) {
     if (!p) return;
     v->playing = !v->playing;
     if (!v->playing) {
-        tcx_abort(p->custom, &p->main.player);
-        p->ed_posed = false;
+        tc_main_abort(&p->main); /* out of the car at once: Ed main again */
         v->has_exit_camera = true;
         v->exit_camera = v->camera.position;
         return;
@@ -457,6 +466,7 @@ static void step_ai(tc_viewer *v, float dt) {
         }
     }
     TC_PROF_END(TC_PZ_TICKS, prof);
+    if (!tc_main_is_ed(m)) return; /* Ed is drawn as the character in the slot says (update_custom) */
     t = p->tick_time / TC_ED_AI_TICK;
     p->pose_draw = pose_lerp(&p->main.pose_prev, &p->main.pose_cur, t);
     v->ed_clip = p->main.clip_cur;
@@ -487,8 +497,15 @@ void tcv_update_play(tc_viewer *v, float dt, bool fresh) {
         return;
     }
     tcv_look(v, dt);
-    if (update_custom(v, dt)) { /* custom gameplay holds Ed (in a car): the camera follows what it says */
-        tcv_update_camera(v, dt, fresh);
+    if (update_custom(v, dt)) { /* a car holds the main character's slot: the game goes on round Ed riding it */
+        if (p->use_ai) {
+            step_ai(v, v->paused ? 0 : dt);
+            if (!v->paused) {
+                tcv_update_speech(v, dt, fresh);
+                tcv_update_scene(v);
+            }
+        }
+        tcv_update_camera(v, dt, fresh); /* the camera follows what it says */
         return;
     }
     if (p->use_ai) {

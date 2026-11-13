@@ -286,9 +286,9 @@ static void sud0(const char *dir) {
         for (k = 0; k < g.level.cast.inv_count; k++)
             bonus = bonus || (g.level.cast.inv[k].id == a->entry->id && g.level.cast.inv[k].slot == slot &&
                               g.level.cast.inv[k].amount > 0 && a->entry->id != g.level.cast.world);
-        if (!bonus || !a->ai.active) continue;
+        if (!bonus || !a->ai->active) continue;
         tried++;
-        tc_player_teleport((tc_player *)tc_viewer_player(&g.v), tc_v3_add(a->ai.position, tc_v3(0, 0, 0.3f)), 0);
+        tc_player_teleport((tc_player *)tc_viewer_player(&g.v), tc_v3_add(a->ai->position, tc_v3(0, 0, 0.3f)), 0);
         frames(&g.v, 45);
         after = c->globals.values[slot];
     }

@@ -373,7 +373,7 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
     if (v->playing && v->director) APPEND("%s", ", scripted camera");
     {
         char custom[64];
-        if (v->playing && v->play && tcx_status(v->play->custom, custom, sizeof custom)) APPEND("%s", custom);
+        if (v->playing && v->play && tc_main_status(&v->play->main, custom, sizeof custom)) APPEND("%s", custom);
     }
     if (v->paused) APPEND("%s", ", paused");
     if (v->playing && v->play && v->play->has_cast && v->play->use_ai)

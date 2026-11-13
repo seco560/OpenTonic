@@ -78,23 +78,51 @@ the hook for it.
 
 ## The port today
 - **tc_cast (core/src/tc_cast.c)** is the loop for the level's persos: the always-awake list and the sector /
-  activity marks decide who is awake (.ttlv CAST flags 4 and 8, tools/ttre/cast.py). Each tick (tc_viewer step_ai)
-  runs the run-first persos (`tc_cast_step_first`), then Ed (tc_ed_ai), then the rest (`tc_cast_step_rest`), as the
-  exe's frame does (**read**; within each pass in level perso order: **port**, the exe walks the list's order, then the
-  tree's). An actor's sector follows it through the portals when its mechanics move it (`tc_sector_move`, GAM_0042c810).
-- **Ed** is stepped by tc_ed_ai between the two passes (**port**: in the exe he is one perso of the tree walk).
+  activity marks decide who is awake (.ttlv CAST flags 4 and 8, tools/ttre/cast.py). Each tick (`tc_cast_tick`, from
+  tc_main_tick) runs the run-first persos (`tc_cast_step_first`), then the dynamic world's walk with Ed (the main
+  character's step) at his own place in it, as the exe's frame does (**read**; the run-first pass in level perso order:
+  **port**, the exe walks that list's own order). An actor's sector follows it through the portals when its mechanics
+  move it (`tc_sector_move`, GAM_0042c810).
+- **Ed** is stepped by tc_ed_ai, his own driver, at his place in the walk (since 2026-11-13; before, between the passes).
   Folding him into the same loop is the direction (docs/DIRECTION.md, point 2). Since 2026-11-13 he is the **main
   character** (tc_main.h: the exe's main-character list): his physics, scripts and the tick around him (run-first
-  persos, Ed, the rest: `tc_main_tick`) left the viewer, unchanged (the gate's logs and replay hashes identical). The
-  user's plan, in stages: Ed in the cast's perso table with a brain (scripts, or native code for custom characters), the
-  car as a main character of its own when Ed gets in, Ed on the cast's perso step and mechanics, then the exe's tree
-  order. Not his to switch: Super Ed and the other transformations are Ed's own behaviours.
+  persos, Ed, the rest: `tc_main_tick`) left the viewer, unchanged (the gate's logs and replay hashes identical). Later
+  that day: the cast steps him (`tc_cast_tick`: the run-first pass, the main character's own step through
+  `tc_cast_main_ops`, the rest), and the main character is a **slot** another character can take (`tc_character_ops`,
+  `tc_main_take`): the toy car takes it when Ed gets in and gives it back when he lands (below, "Vehicles"). Proven
+  unchanged too, the car ride included (viewcheck's car ride: a hash of Ed's drawing, the car and the camera on every
+  frame of a hop in, a drive and a hop out). Then, the same day: **the game goes on while Ed drives** (the cast's passes
+  round him riding the car, his scripts asleep, his AI record where the car carries him, the game's clock running: a
+  scratch export of sud0 with a car showed the clock and the cast going on, the main actor within a tick of the car;
+  before, everything held, the main actor 42 units behind); the ride's hop in, drive and hop out are drawn as before
+  (viewcheck's stage hashes), only his clock after landing has moved on. And **the exe's tree order** (`tc_cast_tick`):
+  he runs at his own place in the dynamic world's walk (his main_id), not before all the others. He is near the top of
+  every level's tree (id 1-5; at most 2 rest-pass persos before him: marmite), so this changed nothing the gate sees.
+  **Ed and the cast merged (2026-11-13, the user: "for real"; playtest pending):**
+  - one dynamics record for every perso (`tc_mec_dyn`: walk, fly, swim, ski, lift, float, contacts), Ed's and the
+    actors' alike; an actor's AI, dynamics and physics body are pointers, to its own or (Ed) his driver's;
+  - **Ed is the cast's actor** `main_actor` (`actors[count]`, out of the cast's loops; `tc_cast_attach_main`): his id,
+    always awake, his own collide set (PCOL main), his states, cards and bodies from his model;
+  - **one mechanics dispatch**: his mechanics are the cast's (`tc_cast_main_mechanics` -> `card_step`, as every actor's):
+    the walkers with a body (`walk_step`: with it Ed's turns are capped by his card's max turn, MoveLift's detach lets
+    go of his carrier, his scripts' COND 51 sees water at last), 6, 7, 10, 12; the card types only Ed's code had (1 2 5 8
+    11) and a state without a body or a card are the shared step (`tc_mec_perso.c`, moved out of his driver: his
+    capsule), which the cast's persos use too (pyramide's type 8 states: the false teeth 335 and its family, which
+    turned in place). The float integrator (7) takes the exe's root motion push (GAM_0042a8d0) when the scripts make no
+    move, and a perso with a capsule collides through it;
+  - his position is published by his mechanics (exe): the persos after him in the walk see where he is now (a pit
+    marker catches his fall a tick earlier: castcheck).
+  The gate passes as before (movecheck's pyramide paw failed before all this); camcheck's walks, castcheck's levers and
+  pits, movecheck's rows moved with it. Still his own: his driver's step round the shared parts (the pad, the portals,
+  triggers and mode zones the exporter reduced to data: docs/DIRECTION.md's fold-back), his drawing from EDPL. Not his
+  to switch: Super Ed and the other transformations are Ed's own behaviours.
 - **Perso collision (2026-11-05):** each perso's collision is its own (.ttlv PCOL, tc_obstacle.h), no longer baked
   into the static world. Cast actors pose theirs after each step (state animation, position, tilt); the others stand
   at their frame-0 pose. Ed's sweeps meet them by the exe's rules and tests (below); `FUNC 54` and riding work.
 - **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift), 7 (pushed and floating things), the
-  walkers 0 / 4 / 12 (below, "Walkers") and the projectiles 10 ("Perso motion"). Types 8 and 9 still only turn in place
-  (**port**); 3 is the camera, outside the cast.
+  walkers 0 / 4 / 12 (below, "Walkers") and the projectiles 10 ("Perso motion"); since 2026-11-13 also 1 2 5 8 11
+  through the shared step (tc_mec_perso.c, above). Type 9 still only turns in place (**port**); 3 is the camera,
+  outside the cast.
 - **Activity (read, ported):** a perso's AI runs only while the main actor is within its activation radius (std game
   +0x2C squared, -1 always: `GAM_PersoFrame_0042b520` compares it with DAT_008bc744, the squared distance
   `GAM_0042a680` sets), and only in an awake sector (the marks above). Its **mechanics run whatever the radius**
@@ -662,7 +690,9 @@ LibertyCity2001 is a GTA III car mod (files/sources/Vehicles/manana: the Mazda M
   and a VEHI record. The .glb and the PNGs go to files/out/Vehicles/<car> (the install scripts copy the PNGs). The custom
   layer skips a level whose edits are already in it (CUST holds their digest), so a re-run doesn't rewrite Liberty City.
 - **Core:** core/include/tonic/custom/tcx_vehicle.h, core/src/custom/tcx_vehicle.c (the car, the ride), tcx_play.c (its
-  part of the play session: the viewer's hooks), tcx_level.c (VEHI) (second pass 2026-11-12, "tighter, more engaging and realistic"). Fixed
+  part of the play session: the viewer's hooks; since 2026-11-13 the car Ed is in is the main character, tc_main.h's
+  slot: `tcx_update` moves the cars and boards one, the car's `tc_character_ops` hop him in, drive, hop him out and give
+  the slot back), tcx_level.c (VEHI) (second pass 2026-11-12, "tighter, more engaging and realistic"). Fixed
   1/60 s ticks: a rear-wheel-drive engine whose push falls off with speed against aero drag (0-100 km/h in 5 s, about
   150 km/h top), brakes into reverse; two axles whose tyres push sideways with their slip angle up to a grip limit (about
   15 u/s^2; 12 felt too slippery to the user), the yaw from the two about the centre of mass: it runs wide at the limit (the front's limit a little under

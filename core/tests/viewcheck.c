@@ -730,6 +730,115 @@ static void cull_scenario(const char *dir) {
     check(sectors_untouched, "a level with sectors (sud0) is never culled");
 }
 
+/* FNV-1a over raw bytes: the ride's trace, to compare builds by. */
+static uint64_t fnv(uint64_t h, const void *data, size_t n) {
+    const uint8_t *b = (const uint8_t *)data;
+    size_t i;
+    for (i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001b3ull;
+    return h;
+}
+
+/* The toy car (custom gameplay, tcx.h; docs/ENGINE.md "Vehicles") in LibertyCity2001: Ed beside the first car presses
+ * Action, hops in (his jump clip, shrinking into the seat), drives (throttle, a turn), presses Action again and hops out
+ * onto his feet. Prints a hash of every frame's drawing of Ed (his parts' matrices, clip, frame), the car's pose and the
+ * camera: two builds that print the same hash ride the same, frame for frame. */
+static void car_ride_scenario(const char *dir) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tcx_vehicle *car;
+    tc_vec3 start, spot = {0, 0, 0}, car0, ed_end;
+    uint64_t h = 0xcbf29ce484222325ull, part[5] = {h, h, h, h, h}; /* on foot before, hop in, driving, hop out, after */
+    uint32_t frames = 0, seen[4] = {0, 0, 0, 0}, jump_frames = 0, hidden = 0, stage = 0;
+    int i, k, jump;
+    bool placed = false;
+    snprintf(path, sizeof(path), "%s/LibertyCity2001.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no LibertyCity2001: car ride skipped)\n"); return; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/LibertyCity2001.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "LibertyCity2001";
+    desc.seed = 9;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "LibertyCity2001 viewer"); free(ai); tc_level_free(&level); return; }
+    free(ai);
+    car = tcx_play_vehicle(tc_viewer_custom(&v), 0);
+    if (!car || !tc_viewer_can_play(&v)) {
+        printf("  (LibertyCity2001 has no car in play: car ride skipped)\n");
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+        return;
+    }
+    /* beside it: the first spot round it within reach */
+    for (k = 0; k < 16 && !placed; k++) {
+        float a = (float)k * TC_PI / 8;
+        spot = tc_v3_add(car->position, tc_v3(cosf(a) * 2.2f, sinf(a) * 2.2f, 0.4f));
+        placed = tcx_ride_in_reach(car, spot);
+    }
+    check(placed, "car ride: a spot beside the car within reach");
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), spot, 0);
+    car0 = tcx_vehicle_drawn_position(car);
+    start = tc_viewer_player(&v)->position;
+    jump = tc_ed_find_anim(&level.ed, "jump");
+    for (i = 0; i < 60 * 12; i++) {
+        float t = (float)i / 60;
+        uint32_t count, opaque, d;
+        const tc_view_draw *dr;
+        const tcx_ride *r;
+        tc_vec3 cp;
+        tc_viewer_release_all(&v);
+        if ((t >= 1.0f && t < 1.05f) || (t >= 8.0f && t < 8.05f)) tc_viewer_set_action(&v, TC_VA_ACTION, true); /* in; out */
+        if (t >= 3.0f && t < 6.5f) tc_viewer_set_action(&v, TC_VA_FORWARD, true);
+        if (t >= 4.5f && t < 5.5f) tc_viewer_set_action(&v, TC_VA_RIGHT, true);
+        tc_viewer_update(&v, 1.0f / 60);
+        dr = tc_viewer_draws(&v, &count, &opaque);
+        r = tcx_play_ride(tc_viewer_custom(&v));
+        if (r && (unsigned)r->phase < 4) seen[r->phase]++;
+        if (r && r->phase != TCX_RIDE_NONE) stage = (uint32_t)r->phase;
+        else if (stage) stage = 4;
+        if (r && r->phase == TCX_RIDE_BOARDING && v.ed_clip == jump) jump_frames++;
+        if (v.ed_draw_count == 0) hidden++;
+        for (d = 0; d < count; d++)
+            if (dr[d].mesh >= v.ed_first && dr[d].mesh < v.ed_first + level.ed.part_count) h = fnv(h, dr[d].model.m, sizeof(dr[d].model.m));
+        h = fnv(h, &v.ed_clip, sizeof(v.ed_clip));
+        h = fnv(h, &v.ed_phase, sizeof(v.ed_phase));
+        cp = tcx_vehicle_drawn_position(car);
+        h = fnv(h, &cp, sizeof(cp));
+        h = fnv(h, &v.camera.position, sizeof(v.camera.position));
+        { /* the same, by stage */
+            uint64_t g = part[stage];
+            for (d = 0; d < count; d++)
+                if (dr[d].mesh >= v.ed_first && dr[d].mesh < v.ed_first + level.ed.part_count) g = fnv(g, dr[d].model.m, sizeof(dr[d].model.m));
+            g = fnv(g, &v.ed_clip, sizeof(v.ed_clip));
+            g = fnv(g, &v.ed_phase, sizeof(v.ed_phase));
+            g = fnv(g, &cp, sizeof(cp));
+            g = fnv(g, &v.camera.position, sizeof(v.camera.position));
+            part[stage] = g;
+        }
+        frames++;
+    }
+    ed_end = tc_viewer_player(&v)->position;
+    printf("car ride (LibertyCity2001): %u frames: boarding %u, driving %u, leaving %u, on foot %u; jump clip on %u hop "
+           "frames; Ed undrawn %u; the car went %.1f, Ed %.1f from his start; trace %016llx\n", frames, seen[1], seen[2],
+           seen[3], seen[0], jump_frames, (unsigned)hidden, (double)tc_v3_length(tc_v3_sub(tcx_vehicle_drawn_position(car), car0)),
+           (double)tc_v3_length(tc_v3_sub(ed_end, start)), (unsigned long long)h);
+    printf("  by stage: on foot %016llx, hop in %016llx, driving %016llx, hop out %016llx, on foot after %016llx\n",
+           (unsigned long long)part[0], (unsigned long long)part[1], (unsigned long long)part[2], (unsigned long long)part[3],
+           (unsigned long long)part[4]);
+    check(seen[1] > 0 && seen[2] > 0 && seen[3] > 0, "car ride: Ed hops in, drives, hops out");
+    check(jump_frames > 0, "car ride: his hop in plays his jump clip");
+    check(tcx_play_ride(tc_viewer_custom(&v))->phase == TCX_RIDE_NONE && v.ed_draw_count > 0, "car ride: back on his feet, drawn");
+    check(tc_v3_length(tc_v3_sub(tcx_vehicle_drawn_position(car), car0)) > 5, "car ride: the car was driven");
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+}
+
 /* Riding (docs/ENGINE.md "Moving collision, read"): cavedoc's lift platform SDO_PFCaveDoc1 (perso 166, card type 6).
  * Ed dropped onto it lands on the perso (its own collision, .ttlv PCOL), rides it (tc_mec_walk.carrier), and its script
  * sees him through FUNC 54 (StandingOnPerso == Me): MoveLift (META 28) takes it to its other stop, Ed on it. Needs an
@@ -775,7 +884,7 @@ static void ride_scenario(const char *dir) {
         const struct tc_ed_ai *e = tc_viewer_driver(&v);
         frame(&v, 1.0f / 60);
         e = tc_viewer_driver(&v);
-        rode += e->walk.carrier == 166;
+        rode += e->dyn.walk.carrier == 166;
         seen += e->ai.standing_on == 166;
     }
     snprintf(what, sizeof(what), "Ed lands on it and rides it (%u of %u frames), FUNC 54 names it (%u)", rode, 60 * 8, seen);
@@ -838,7 +947,7 @@ static void guide_scenario(const char *dir) {
     for (i = 0; i < frames; i++) {
         tc_vec3 at;
         frame(&v, 1.0f / 60);
-        rode += tc_viewer_driver(&v)->walk.carrier == guide;
+        rode += tc_viewer_driver(&v)->dyn.walk.carrier == guide;
         at = tc_v3(ob->world.m[3], ob->world.m[7], ob->world.m[11]);
         for (k = next; k < way->count; k++) { /* the waypoints it comes within 2.5 of, in order */
             const tc_waypoint *w = &level.ways.waypoints[level.ways.points[way->first + k] - 1];
@@ -900,7 +1009,7 @@ static void shoot_scenario(const char *dir) {
     run(&v, 0.2f, BIT(TC_VA_ACTION));
     run(&v, 1, 0);
     p = (tc_player *)tc_viewer_player(&v);
-    p->position = tc_v3_add(guard->ai.position, tc_v3(0, 6, 0));
+    p->position = tc_v3_add(guard->ai->position, tc_v3(0, 6, 0));
     p->velocity = tc_v3(0, 0, 0);
     p->heading = 0; /* facing -Y: the guard */
     p->placed++;
@@ -908,15 +1017,15 @@ static void shoot_scenario(const char *dir) {
                        * zone), and further back Ed stands off the platform's edge */
     spawned = c->spawned;
     for (i = 0; i < 60; i++) {
-        tc_vec3 a = bee->ai.position;
+        tc_vec3 a = bee->ai->position;
         tc_viewer_set_action(&v, TC_VA_SHOOT, 1);
         frame(&v, 1.0f / 60);
-        if (bee->ai.active && tc_v3_distance(a, bee->ai.position) < 5) flew += tc_v3_distance(a, bee->ai.position);
+        if (bee->ai->active && tc_v3_distance(a, bee->ai->position) < 5) flew += tc_v3_distance(a, bee->ai->position);
     }
     tc_viewer_set_action(&v, TC_VA_SHOOT, 0);
     snprintf(what, sizeof(what), "Ed shoots: %u bees instanced, %.1f flown; the guard hit (behaviour %u, reflex %u)",
-             c->spawned - spawned, flew, guard->ai.normal.behaviour, guard->ai.reflex.behaviour);
-    check(c->spawned > spawned && flew > 3 && guard->ai.normal.behaviour == 6, what);
+             c->spawned - spawned, flew, guard->ai->normal.behaviour, guard->ai->reflex.behaviour);
+    check(c->spawned > spawned && flew > 3 && guard->ai->normal.behaviour == 6, what);
     tc_viewer_free(&v);
     tc_level_free(&level);
 }
@@ -974,7 +1083,7 @@ static void scene_scenario(const char *dir) {
     }
     snprintf(what, sizeof(what), "bar: every line wrapped to the window (%u lines, widest %.2f of 8.2)", lines, (double)widest);
     check(widest > 4 && widest <= 8.2f, what);
-    tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(speaker->ai.position, tc_v3(0, -6, 0.5f)), 0);
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(speaker->ai->position, tc_v3(0, -6, 0.5f)), 0);
     run(&v, 1, 0);
     lit = 0;
     if (tc_viewer_talk_prompt(&v) && tc_viewer_speech_panel(&v, 4.0f / 3, &panel))
@@ -997,7 +1106,7 @@ static void scene_scenario(const char *dir) {
     run(&v, 1, BIT(TC_VA_FORWARD));
     check(tc_v3_distance(at, tc_viewer_player(&v)->position) < 0.05f, "bar: Ed waits while he listens");
     run(&v, 0.1f, BIT(TC_VA_JUMP));
-    check(!tc_viewer_speech(&v) && speaker->ai.speaking == 0, "bar: a fresh Jump dismisses the line");
+    check(!tc_viewer_speech(&v) && speaker->ai->speaking == 0, "bar: a fresh Jump dismisses the line");
     for (i = 0; i < 60 * 30 && !pending; i++) {
         frame(&v, 1.0f / 60);
         pending = tc_viewer_pending_level(&v);
@@ -1184,6 +1293,7 @@ done:
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
     cull_scenario(dir);
+    car_ride_scenario(dir);
     check(bad_frames == 0, "every frame's draw list is valid");
     tc_viewer_free(&v);
     tc_level_free(&level);

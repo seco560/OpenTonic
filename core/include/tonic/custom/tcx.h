@@ -17,6 +17,7 @@
 #include "../tc_player.h"
 #include "../tc_cam.h"
 #include "../tc_mec.h"
+#include "../tc_main.h"
 #include "tcx_vehicle.h"
 
 #ifdef __cplusplus
@@ -41,25 +42,13 @@ struct tc_obstacles;
 
 /* What the host (tc_viewer) lends it each frame. */
 typedef struct tcx_host {
-    tc_player *player;               /* Ed's physics state: where he is; placed by it when he gets out of a car */
+    tc_player *player;               /* Ed's physics state: where he is */
     uint32_t held;                   /* 1 << tc_view_action */
     float move_x, move_y;            /* the left stick */
     bool paused;
     bool held_back;                  /* the game holds Ed (a line, the director's shot, the pause's look round) */
-    bool may_start;                  /* a new action may start (playing, not first person, no level change) */
-    float animation_speed;
-    int ed_clip;                     /* Ed's clip and phase last frame (an idle it keeps playing) */
-    float ed_phase;
+    bool may_start;                  /* a new action may start (playing, not first person, no level change, Ed main) */
 } tcx_host;
-
-/* What it hands back while it holds Ed (tcx_update returned true): how to draw him. */
-typedef struct tcx_ed {
-    tc_mat4 model;                   /* Ed -> world */
-    int clip;                        /* tc_level.ed.anims index, -1 none */
-    float phase;
-    bool loop;
-    bool landed;                     /* (returned false) he was just put back on his feet: his own control again */
-} tcx_ed;
 
 #ifndef TC_NO_CUSTOM
 
@@ -82,23 +71,22 @@ void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_
 /* Made with the play session (NULL: the level has nothing custom, or out of memory); every call below takes NULL. */
 tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles, uint32_t perso_first);
 void tcx_play_free(tcx_play *x);
-/* A frame, before Ed's step: true while it holds Ed (he is not stepped; draw him from *ed). */
-bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed);
-/* Leaving play mode: Ed out of whatever holds him, at once. */
-void tcx_abort(tcx_play *x, tc_player *player);
+/* A frame, before the main character's: the cars move (the one Ed drives by the player's keys, the others coast), their
+ * collision posed where they are; Action within reach of one gets Ed in. true: he just got in: the host hands the main
+ * character's slot to the car (tc_main_take(m, tcx_character(), x)), whose frames (from this one on) hop him in, drive,
+ * and hop him out on Action, giving the slot back when he lands. */
+bool tcx_update(tcx_play *x, const tcx_host *h, float dt);
+/* The car Ed is in, as the main character (tc_main.h; self: the tcx_play). */
+const tc_character_ops *tcx_character(void);
 /* The Action held now was its own (getting in or out): keep it from Ed's scripts until let go. */
 bool tcx_holds_action(const tcx_play *x);
-/* The play camera's target while it holds Ed (else untouched); its collision on or off while the camera moves (the cars
- * don't block the camera). */
-void tcx_camera_target(const tcx_play *x, tc_cam_target *t);
+/* The cars' collision on or off while the camera moves (the cars don't block the camera). */
 void tcx_camera_obstacles(tcx_play *x, bool on);
 /* A level perso it moves itself (a car): its world matrix now, and a channel's transform (channel -> perso). */
 bool tcx_perso_pose(const tcx_play *x, uint32_t perso, tc_mat34 *world);
 tc_mat34 tcx_perso_channel(const tcx_play *x, uint32_t perso, uint16_t channel);
 /* A tc_viewer_mesh the camera's sight test leaves out. */
 bool tcx_sight_skips(const tcx_play *x, uint32_t mesh);
-/* Its part of the title bar (", driving 42 km/h"), false: none. */
-bool tcx_status(const tcx_play *x, char *out, size_t size);
 
 /* For checks and frontends: the cars in play and Ed's ride. */
 uint32_t tcx_play_vehicle_count(const tcx_play *x);
@@ -125,14 +113,12 @@ static inline tcx_play *tcx_play_create(const tc_level *level, tc_collision *wor
     return NULL;
 }
 static inline void tcx_play_free(tcx_play *x) { (void)x; }
-static inline bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_ed *ed) {
+static inline bool tcx_update(tcx_play *x, const tcx_host *h, float dt) {
     (void)x, (void)h, (void)dt;
-    ed->landed = false;
     return false;
 }
-static inline void tcx_abort(tcx_play *x, tc_player *player) { (void)x, (void)player; }
+static inline const tc_character_ops *tcx_character(void) { return NULL; }
 static inline bool tcx_holds_action(const tcx_play *x) { (void)x; return false; }
-static inline void tcx_camera_target(const tcx_play *x, tc_cam_target *t) { (void)x, (void)t; }
 static inline void tcx_camera_obstacles(tcx_play *x, bool on) { (void)x, (void)on; }
 static inline bool tcx_perso_pose(const tcx_play *x, uint32_t perso, tc_mat34 *world) {
     (void)x, (void)perso, (void)world;
@@ -144,7 +130,6 @@ static inline tc_mat34 tcx_perso_channel(const tcx_play *x, uint32_t perso, uint
     return m;
 }
 static inline bool tcx_sight_skips(const tcx_play *x, uint32_t mesh) { (void)x, (void)mesh; return false; }
-static inline bool tcx_status(const tcx_play *x, char *out, size_t size) { (void)x, (void)out, (void)size; return false; }
 static inline uint32_t tcx_play_vehicle_count(const tcx_play *x) { (void)x; return 0; }
 static inline const tcx_vehicle *tcx_play_vehicle(const tcx_play *x, uint32_t i) { (void)x, (void)i; return NULL; }
 static inline const tcx_ride *tcx_play_ride(const tcx_play *x) { (void)x; return NULL; }

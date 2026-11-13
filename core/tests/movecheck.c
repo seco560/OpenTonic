@@ -75,7 +75,7 @@ static void level(const char *dir, const char *name, float seconds, float distan
     if (!c || !c->main) { tc_viewer_free(&v); free(ai); tc_level_free(&lv); return; }
     for (i = 0; i < c->count; i++) {
         const tc_cast_actor *a = &c->actors[i];
-        const tc_ai_perso *p = &a->ai;
+        const tc_ai_perso *p = a->ai;
         tc_vec3 start, last;
         float path_len = 0, turn = 0, heading;
         uint32_t k, states = 0, awake = 0, thought = 0;
@@ -160,7 +160,7 @@ static void pursuit_scenario(const char *dir) {
     int i, struck = 0;
     if (!open_level(dir, "sud0", &lv, &v, &ai)) return;
     if ((a = actor(tc_viewer_cast(&v), 7)) != NULL) {
-        p = (tc_ai_perso *)&a->ai;
+        p = (tc_ai_perso *)a->ai;
         tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(p->position, tc_v3(4, 0, 0.5f)), 0);
         for (i = 0; i < 30; i++) tc_viewer_update(&v, 1.0f / 60);
         tc_ai_force_behaviour(p, 1);
@@ -169,7 +169,7 @@ static void pursuit_scenario(const char *dir) {
         for (i = 0; i < 120; i++) {
             tc_viewer_update(&v, 1.0f / 60);
             nearest = fminf(nearest, tc_v3_distance(p->position, tc_viewer_cast(&v)->main->position));
-            top = fmaxf(top, tc_v3_length(a->dyn.velocity));
+            top = fmaxf(top, tc_v3_length(a->dyn->velocity));
             struck |= p->state == 31;
         }
         printf("P\tsud0 boxer: nearest %.2f, top speed %.2f, struck %d\n", (double)nearest, (double)top, struck);
@@ -194,7 +194,7 @@ static void lob_scenario(const char *dir) {
     int i;
     if (!open_level(dir, "pyramide", &lv, &v, &ai)) return;
     if ((a = actor(tc_viewer_cast(&v), 13)) != NULL) {
-        p = (tc_ai_perso *)&a->ai;
+        p = (tc_ai_perso *)a->ai;
         start = p->position;
         tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(p->position, tc_v3(3, 0, 0.5f)), 0);
         for (i = 0; i < 30; i++) tc_viewer_update(&v, 1.0f / 60);

@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
             if (f > 30) {
                 frames++;
                 speed += tc_v3_length(player.velocity);
-                if (ed.contacts & TC_AI_CONTACT_WALL) { walls++; wall_frames++; }
+                if (ed.dyn.contacts & TC_AI_CONTACT_WALL) { walls++; wall_frames++; }
             }
         }
         if (!teleported) {
@@ -112,8 +112,8 @@ int main(int argc, char **argv) {
                 printf("  stopped: ride %d from (%.1f, %.1f, %.1f) heading %.0f, at (%.1f, %.1f, %.1f) state %u contacts %#x, "
                        "%d frames at a wall (n %.2f %.2f %.2f, grip %.2f)\n", r, (double)start.x, (double)start.y,
                        (double)start.z, (double)(heading * 180 / TC_PI), (double)at[FRAMES - 1].x, (double)at[FRAMES - 1].y,
-                       (double)at[FRAMES - 1].z, ed.ai.state, ed.contacts, walls, (double)ed.walk.wall_normal.x,
-                       (double)ed.walk.wall_normal.y, (double)ed.walk.wall_normal.z, (double)ed.walk.wall_grip);
+                       (double)at[FRAMES - 1].z, ed.ai.state, ed.dyn.contacts, walls, (double)ed.dyn.walk.wall_normal.x,
+                       (double)ed.dyn.walk.wall_normal.y, (double)ed.dyn.walk.wall_normal.z, (double)ed.dyn.walk.wall_grip);
             }
         }
         tc_ed_ai_free(&ed);

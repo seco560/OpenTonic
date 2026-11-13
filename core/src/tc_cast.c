@@ -6,13 +6,14 @@
 #include "tonic/tc_player.h"
 #include "tonic/tc_obstacle.h"
 #include "tonic/tc_collision.h"
+#include "tc_prof_hooks.h"
 
 static tc_ai_perso *cast_find(void *user, int32_t id) {
     tc_cast *c = (tc_cast *)user;
     if (id == c->main_id || (c->level->cast.main_alias && id == c->level->cast.main_alias)) return c->main;
     if (id <= 0 || (uint32_t)id >= c->id_count || c->by_id[id] < 0) return NULL;
     if ((uint32_t)c->by_id[id] >= c->count) return &c->ghosts[c->by_id[id] - (int32_t)c->count].ai;
-    return &c->actors[c->by_id[id]].ai;
+    return c->actors[c->by_id[id]].ai;
 }
 
 /* The live persos one by one (the ZDE conditions): the active actors (not frozen), then the main actor. */
@@ -20,7 +21,7 @@ static tc_ai_perso *cast_each(void *user, uint32_t k) {
     tc_cast *c = (tc_cast *)user;
     uint32_t i;
     for (i = 0; i < c->count; i++) {
-        tc_ai_perso *p = &c->actors[i].ai;
+        tc_ai_perso *p = c->actors[i].ai;
         if (!p->model || !p->active || p->frozen) continue;
         if (k-- == 0) return p;
     }
@@ -49,28 +50,28 @@ static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc
     int32_t k;
     if (id <= 0 || (uint32_t)id >= c->id_count || (k = c->by_id[id]) < 0 || (uint32_t)k >= c->count) return NULL;
     a = &c->actors[k];
-    if (!(a->entry->flags & TC_CAST_SPAWN) || !a->ai.model) return NULL;
-    if (a->ai.active && !a->ai.frozen) return &a->ai;
-    tc_ai_free(&a->ai);
-    if (start_actor(c, a) != TC_OK) { memset(&a->ai, 0, sizeof(a->ai)); return NULL; }
-    a->ai.active = true;
-    a->ai.position = by->position;
+    if (!(a->entry->flags & TC_CAST_SPAWN) || !a->ai->model) return NULL;
+    if (a->ai->active && !a->ai->frozen) return a->ai;
+    tc_ai_free(a->ai);
+    if (start_actor(c, a) != TC_OK) { memset(a->ai, 0, sizeof(*a->ai)); return NULL; }
+    a->ai->active = true;
+    a->ai->position = by->position;
     if (by == c->main) /* port: from his mouth (the exe's instance starts at his matrix, his feet; offset not found) */
-        a->ai.position = tc_v3_add(by->position, rotate_z(by->heading, tc_v3(0, TC_CAST_SHOT_FRONT, TC_CAST_SHOT_HEIGHT)));
-    a->ai.heading = by->heading;
-    a->position_prev = a->ai.position;
+        a->ai->position = tc_v3_add(by->position, rotate_z(by->heading, tc_v3(0, TC_CAST_SHOT_FRONT, TC_CAST_SHOT_HEIGHT)));
+    a->ai->heading = by->heading;
+    a->position_prev = a->ai->position;
     a->rot_prev = tc_v3(0, 0, by->heading);
-    a->dyn.velocity = rotate_z(by->heading, launch);
-    a->ai.velocity = a->dyn.velocity;
+    a->dyn->velocity = rotate_z(by->heading, launch);
+    a->ai->velocity = a->dyn->velocity;
     a->sector.sector = c->main_sector;
-    a->sector.position = a->ai.position;
+    a->sector.position = a->ai->position;
     if (by != c->main) { /* another generator: its sector */
         uint32_t i;
         for (i = 0; i < c->count; i++)
-            if (&c->actors[i].ai == by) { a->sector.sector = c->actors[i].sector.sector; break; }
+            if (c->actors[i].ai == by) { a->sector.sector = c->actors[i].sector.sector; break; }
     }
     c->spawned++;
-    return &a->ai;
+    return a->ai;
 }
 
 /* A family's states as tc_ai states (no mechanics, no root motion, no bodies: the cast does not move). */
@@ -172,7 +173,7 @@ static level_save *find_save(uint32_t level, uint16_t perso, uint16_t var) {
 static void save_actor(uint32_t level, const tc_cast_actor *a) {
     const tc_ai_dsg_def *d = &a->model.dsg;
     uint16_t k;
-    if (!a->ai.model || !a->ai.dsg) return;
+    if (!a->ai->model || !a->ai->dsg) return;
     for (k = 0; d->vars && k < d->count; k++) {
         int w = tc_ai_dsg_width(d->vars[k].type);
         level_save *s;
@@ -194,7 +195,7 @@ static void save_actor(uint32_t level, const tc_cast_actor *a) {
             s->var = k;
         }
         s->size = (uint8_t)w;
-        memcpy(s->bytes, a->ai.dsg + d->vars[k].offset, (size_t)w);
+        memcpy(s->bytes, a->ai->dsg + d->vars[k].offset, (size_t)w);
     }
 }
 
@@ -208,7 +209,7 @@ static void load_actor(const tc_cast *c, tc_cast_actor *a) {
     const tc_ai_dsg_def *d = &a->model.dsg;
     uint32_t level;
     uint16_t k;
-    if (!g_save_count || !a->ai.dsg) return;
+    if (!g_save_count || !a->ai->dsg) return;
     level = level_key(c);
     for (k = 0; d->vars && k < d->count; k++) {
         const level_save *s;
@@ -217,15 +218,15 @@ static void load_actor(const tc_cast *c, tc_cast_actor *a) {
         if (!s || s->size != tc_ai_dsg_width(d->vars[k].type) || d->vars[k].offset + s->size > d->size) continue;
         /* only a value the visit changed marks it: most of these persos are story characters whose saved flags never
          * moved, and for them the removal guard stays as it was on the first visit */
-        if (memcmp(a->ai.dsg + d->vars[k].offset, s->bytes, s->size) != 0) a->ai.level_restored = true;
-        memcpy(a->ai.dsg + d->vars[k].offset, s->bytes, s->size);
+        if (memcmp(a->ai->dsg + d->vars[k].offset, s->bytes, s->size) != 0) a->ai->level_restored = true;
+        memcpy(a->ai->dsg + d->vars[k].offset, s->bytes, s->size);
     }
 }
 
 /* The AI's start (tc_ai_init) with the cast's links and the entry's std game. */
 static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     const tc_cast_entry *e = a->entry;
-    tc_ai_perso *p = &a->ai;
+    tc_ai_perso *p = a->ai;
     tc_result r = tc_ai_init(p, &a->model);
     if (r != TC_OK) return r;
     p->find = cast_find;
@@ -261,9 +262,9 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     a->frame_prev = p->state_frame;
     a->position_prev = p->position;
     a->rot_prev = tc_v3(0, 0, p->heading);
-    memset(&a->dyn, 0, sizeof(a->dyn));
-    a->dyn.card_type = 0xFFFF;
-    tc_mec_walk_reset(&a->dyn.walk);
+    memset(a->dyn, 0, sizeof(*a->dyn));
+    a->dyn->card_type = 0xFFFF;
+    tc_mec_walk_reset(&a->dyn->walk);
     a->sector.sector = e->sector;
     a->sector.position = p->position;
     a->sector.placed = 0;
@@ -329,6 +330,32 @@ static void link_alias(tc_cast *c) {
     c->main->alias_dsg = &c->ghosts[k - (int32_t)c->count].ai;
 }
 
+void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player *body) {
+    tc_cast_actor *a;
+    if (!c || !c->actors) return;
+    a = &c->actors[c->count];
+    if (c->main_actor != a) { /* his record, once */
+        tc_cast_entry *e = &c->main_entry;
+        memset(e, 0, sizeof(*e));
+        e->id = (uint16_t)c->main_id;
+        e->prso = e->family = e->family_type = 0xFFFF;
+        e->sector = TC_SECTOR_NONE;
+        e->active = e->mechanics = e->animation = 1;
+        e->flags = TC_CAST_ALWAYS_AWAKE;
+        e->radius2 = -1;
+        e->world = c->level->ed.start;
+        e->own_priority = c->level->pcol.main_priority;
+        e->own_meets = (c->level->pcol.main_flags & TC_PCOL_MEETS_PERSOS) != 0;
+        a->entry = e;
+        a->sector.sector = TC_SECTOR_NONE;
+        c->main_actor = a;
+    }
+    a->ai = ai;
+    a->dyn = dyn;
+    a->body = body;
+    a->has_body = a->capsule = true;
+}
+
 void tc_cast_set_main(tc_cast *c, tc_ai_perso *main) {
     uint32_t i, k;
     if (!c) return;
@@ -372,7 +399,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
     c->states = (tc_ai_state **)tc_calloc(d->family_count ? d->family_count : 1, sizeof(*c->states));
     c->sounds = (tc_ai_sound **)tc_calloc(d->family_count ? d->family_count : 1, sizeof(*c->sounds));
     c->sound_count = (uint32_t *)tc_calloc(d->family_count ? d->family_count : 1, sizeof(uint32_t));
-    c->actors = (tc_cast_actor *)tc_calloc(d->count, sizeof(tc_cast_actor));
+    c->actors = (tc_cast_actor *)tc_calloc(d->count + 1u, sizeof(tc_cast_actor)); /* + the main character's (main_actor) */
     c->by_prso = (int32_t *)tc_calloc(l->perso_count ? l->perso_count : 1, sizeof(int32_t));
     for (i = 0; i < d->count; i++) if (d->entries[i].id + 1u > c->id_count) c->id_count = d->entries[i].id + 1u;
     for (i = 0; i < d->ghost_count; i++) if (d->ghosts[i].id + 1u > c->id_count) c->id_count = d->ghosts[i].id + 1u;
@@ -380,6 +407,11 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
     if (!c->ghosts) goto oom;
     c->by_id = (int32_t *)tc_calloc(c->id_count ? c->id_count : 1, sizeof(int32_t));
     if (!c->states || !c->sounds || !c->sound_count || !c->actors || !c->by_prso || !c->by_id) goto oom;
+    for (i = 0; i <= d->count; i++) { /* their own records (the main character's: his, tc_cast_attach_main) */
+        c->actors[i].ai = &c->actors[i].own_ai;
+        c->actors[i].dyn = &c->actors[i].own_dyn;
+        c->actors[i].body = &c->actors[i].own_body;
+    }
     for (i = 0; i < c->id_count; i++) c->by_id[i] = -1;
     for (i = 0; i < l->perso_count; i++) c->by_prso[i] = -1;
     for (i = 0; i < d->family_count; i++)
@@ -471,7 +503,7 @@ void tc_cast_free(tc_cast *c) {
     tc_free(c->alias_saved);
     c->alias_saved = NULL;
     for (i = 0; c->actors && i < c->count; i++) {
-        tc_ai_free(&c->actors[i].ai);
+        tc_ai_free(c->actors[i].ai);
         detach(&c->actors[i].model);
         tc_ai_model_free(&c->actors[i].model);
     }
@@ -535,13 +567,13 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
                        tc_vec3 main_pos) {
     uint32_t k;
     {
-        tc_ai_perso *p = &a->ai;
+        tc_ai_perso *p = a->ai;
         bool think, animate, was_active;
         float d2;
         a->state_prev = p->state;
         a->frame_prev = p->state_frame;
         a->position_prev = p->position;
-        a->rot_prev = a->dyn.tilted ? a->dyn.rot : tc_v3(0, 0, p->heading);
+        a->rot_prev = a->dyn->tilted ? a->dyn->rot : tc_v3(0, 0, p->heading);
         a->thought = false;
         if (p->reinit_requested) { /* PROC 257 on a perso that comes back (std game +0x20 = 1): from its start, out */
             tc_ai_free(p);
@@ -619,7 +651,7 @@ static void pose_obstacle(tc_cast *c, tc_cast_actor *a) {
         ob->live = false;
         return;
     }
-    ob->live = a->ai.active && !a->ai.dead;
+    ob->live = a->ai->active && !a->ai->dead;
     ob->sector = a->sector.sector;
     tc_obstacle_pose(ob, &w, &an->transforms[(size_t)sm.s0 * an->channel_count], &an->shown[(size_t)sm.s0 * an->channel_count],
                      an->channel_count);
@@ -630,7 +662,7 @@ static void begin_step(tc_cast *c) {
     c->sounds_out_count = 0;
     c->awake = c->thinking = 0;
     for (i = 0; i < c->count; i++) /* the zones each hit test sees this tick: the states the tick began in (tc_ai.h) */
-        c->actors[i].ai.zone_state = (uint16_t)(c->actors[i].ai.state + 1u);
+        c->actors[i].ai->zone_state = (uint16_t)(c->actors[i].ai->state + 1u);
     if (c->main) c->main->zone_state = (uint16_t)(c->main->state + 1u);
     for (i = 0; i < c->ghost_count; i++) /* the shared ones: where the main actor's host says they are (the camera's eye) */
         if (c->ghosts[i].main_other >= 0 && c->main && c->main->other_positions)
@@ -745,6 +777,42 @@ void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_
     move_sectors(c, dt);
 }
 
+/* The exe's frame round the main character (docs/ENGINE.md "The frame"): the run-first list, then the dynamic world's
+ * walk in tree order (GAM_00428550), where he is a perso like the others, run at his own place in it. The cast's ids
+ * are the walk's positions (level perso k + 1: tools/ttre/cast.py), his main_id: the persos before him run on where he
+ * was last tick, those after him on where he is now (each perso measures him when it runs: GAM_0042a680). Until
+ * 2026-11-13 he ran between the passes, before all the others (port). */
+void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_ops *ops, void *self) {
+    double prof = TC_PROF_BEGIN();
+    uint16_t sector;
+    tc_vec3 main_pos;
+    uint32_t i;
+    bool stepped = false;
+    tc_cast_step_first(c, dt, s, ops->sector(self));
+    TC_PROF_END(TC_PZ_CAST_FIRST, prof);
+    prof = TC_PROF_BEGIN();
+    c->sectors = s;
+    sector = ops->sector(self);
+    main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+    for (i = 0; i < c->count; i++) {
+        tc_cast_actor *a = &c->actors[i];
+        if (a->entry->flags & TC_CAST_RUN_FIRST) continue;
+        if (!stepped && a->entry->id > c->main_id) { /* his place in the walk */
+            TC_PROF_END(TC_PZ_CAST_REST, prof);
+            ops->step(self, dt);
+            stepped = true;
+            prof = TC_PROF_BEGIN();
+            sector = ops->sector(self);
+            main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+        }
+        step_actor(c, a, dt, s, sector, main_pos);
+        pose_obstacle(c, a);
+    }
+    TC_PROF_END(TC_PZ_CAST_REST, prof);
+    if (!stepped) ops->step(self, dt); /* the last of the walk */
+    move_sectors(c, dt);
+}
+
 void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
     tc_cast_step_first(c, dt, s, main_sector);
     tc_cast_step_rest(c, dt, s, main_sector);
@@ -796,7 +864,7 @@ const tc_cast_actor *tc_cast_actor_of(const tc_cast *c, uint32_t prso) {
 
 bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *world, const tc_cast_anim **anim,
                   tc_sample *s) {
-    const tc_ai_perso *p = &a->ai;
+    const tc_ai_perso *p = a->ai;
     const tc_cast_family *f;
     const tc_ai_state *st;
     const tc_cast_anim *an;
@@ -823,7 +891,7 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
      * relative to the placement's heading. */
     *world = a->entry->world;
     {
-        tc_vec3 rot = a->dyn.tilted ? a->dyn.rot : tc_v3(0, 0, p->heading), r0 = a->rot_prev, pos;
+        tc_vec3 rot = a->dyn->tilted ? a->dyn->rot : tc_v3(0, 0, p->heading), r0 = a->rot_prev, pos;
         tc_vec3 axis;
         float angle, m3[9];
         int k;
@@ -881,10 +949,10 @@ void tc_cast_respawn(tc_cast *c) {
         tc_cast_actor *a = &c->actors[i];
         /* The undrawn persos that started active: the level's logic (the start text and the race clock's World, the
          * finish gates, the pit markers), whether it took itself out or runs on. Not the templates, nor a scene's. */
-        if (a->entry->prso != 0xFFFF || !a->entry->active || !a->ai.model) continue;
+        if (a->entry->prso != 0xFFFF || !a->entry->active || !a->ai->model) continue;
         if (a->entry->flags & (TC_CAST_SPAWN | TC_CAST_TALK | TC_CAST_SCENE)) continue;
-        tc_ai_free(&a->ai);
-        if (start_actor(c, a) != TC_OK) memset(&a->ai, 0, sizeof(a->ai));
+        tc_ai_free(a->ai);
+        if (start_actor(c, a) != TC_OK) memset(a->ai, 0, sizeof(*a->ai));
     }
 }
 
@@ -892,6 +960,6 @@ void tc_cast_unknown(const tc_cast *c, uint32_t *out) {
     uint32_t i, k;
     memset(out, 0, 10 * TC_AI_UNKNOWN_STRIDE * sizeof(uint32_t));
     for (i = 0; i < c->count; i++)
-        if (c->actors[i].ai.unknown)
-            for (k = 0; k < 10 * TC_AI_UNKNOWN_STRIDE; k++) out[k] += c->actors[i].ai.unknown[k];
+        if (c->actors[i].ai->unknown)
+            for (k = 0; k < 10 * TC_AI_UNKNOWN_STRIDE; k++) out[k] += c->actors[i].ai->unknown[k];
 }
