@@ -79,6 +79,10 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 
 ## cavedoc playtest (2026-11-11, later; the user on Linux, no powers set in the debug menu)
 
+**2026-11-13, the user:** cavedoc can be played to its end, but the cutscene that should follow beating the robot
+(FRB_RoBneus) never starts. Open: not traced yet (its B11 gives power 7 through Ed's B76, below; what should start the
+cutscene after that is not read).
+
 The debug menu works. With it the user played cavedoc from no powers: Suzy's line, through the level, the robot fight.
 Reported: (a) Ed does not get the power at the end of the boss fight; (b) the crate puzzle does not trigger; (c) the
 popcorn machine never starts; (d) the corn cob's shots never rebound from the targets, they go through.

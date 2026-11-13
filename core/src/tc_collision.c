@@ -1,6 +1,7 @@
 #include "tc_internal.h"
 #include "tonic/tc_collision.h"
 #include "tonic/tc_alloc.h"
+#include "tc_prof_hooks.h"
 #include <string.h>
 
 /* floor((v - origin) / cell) clamped to 0..n-1, without float->int overflow on far-away input. */
@@ -133,6 +134,7 @@ static void query_cell(int32_t c, void *user) {
     query_ctx *q = (query_ctx *)user;
     tc_collision *col = q->col;
     int32_t k;
+    TC_PROF_COUNT(TC_PC_COLLISION_CELLS, 1);
     for (k = col->cell_start[c]; k < col->cell_start[c + 1]; k++) {
         int32_t i = col->cell_tris[k];
         const tc_tri *t;
@@ -142,14 +144,18 @@ static void query_cell(int32_t c, void *user) {
         t = &col->tris[i];
         if (col->solid && t->sector < col->solid_count && !col->solid[t->sector]) continue;
         if (t->lo.x <= q->hi.x && t->lo.y <= q->hi.y && t->lo.z <= q->hi.z &&
-            t->hi.x >= q->lo.x && t->hi.y >= q->lo.y && t->hi.z >= q->lo.z)
+            t->hi.x >= q->lo.x && t->hi.y >= q->lo.y && t->hi.z >= q->lo.z) {
+            TC_PROF_COUNT(TC_PC_COLLISION_TRIS, 1);
             q->fn(t, q->user);
+        }
     }
 }
 
 void tc_collision_query(tc_collision *col, tc_vec3 lo, tc_vec3 hi, tc_tri_fn fn, void *user) {
     query_ctx q;
     if (col->tri_count == 0) return;
+    TC_PROF_COUNT(TC_PC_COLLISION_QUERIES, 1);
+    TC_PROF_COUNT(TC_PC_COLLISION_LOOSE, col->loose_count);
     col->query += 1;
     if (col->query == 0) { memset(col->stamp, 0, col->tri_count * sizeof(uint32_t)); col->query = 1; }
     q.col = col; q.lo = lo; q.hi = hi; q.fn = fn; q.user = user;

@@ -1,4 +1,4 @@
-/* What tc_viewer.c tells the recorder (tc_rec.h). */
+/* What the viewer (tc_viewer*.c) tells the recorder (tc_rec.h). */
 #ifndef TONIC_TC_REC_HOOKS_H
 #define TONIC_TC_REC_HOOKS_H
 #include "tonic/tc_rec.h"

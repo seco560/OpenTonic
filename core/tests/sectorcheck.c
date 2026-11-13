@@ -34,7 +34,7 @@ static uint8_t *read_file(const char *path, size_t *size) {
 
 static int failures;
 
-/* The original's light of a baked byte without lights (tc_viewer.c formula_light). */
+/* The original's light of a baked byte without lights (tc_viewer_light.c formula_light). */
 static float formula(float radiosity, float ambient, float diffuse) {
     float l = (radiosity / 256 * diffuse + ambient) * (512.0f / 255);
     return l < 0 ? 0 : l > 1 ? 1 : l;

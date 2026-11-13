@@ -29,6 +29,9 @@ Ed with them. Every platform (macOS now, PS Vita and 3DS later) links the same c
 3. **Renderer:** the simplest route is `tc_viewer.h` (cameras, play mode, settings, title readout): upload its
    mesh table once (`tc_viewer_mesh`), then each frame `tc_viewer_update`, `tc_viewer_frame` (pack into your
    uniforms) and draw `tc_viewer_draws` (matrix, texture, flags; transparent draws last). Both viewers do this.
+   Call `tc_viewer_set_aspect` (the drawable's width / height) before `tc_viewer_draws`: on levels without sectors
+   (the imported ones) it then leaves out what the camera can't see, and draws a wide static as the runs of it in view
+   (`first_index`, `index_count`: always draw a draw's own index range). Without the call nothing is left out.
    Or draw from the loaded structs yourself. `tc_vertex` is a packed 44-byte vertex (pos, normal,
    uv, 3 rgba8 baked-light sets) that can go to a vertex buffer as is. Persos: `tc_sample_at_time`
    + `tc_channel_matrix`; Ed: `tc_phase_advance` + `tc_sample_at_phase` + `tc_player_model_matrix`.

@@ -324,6 +324,22 @@ typedef struct tc_viewer {
     uint32_t piece_first, piece_count, piece_cap;
     float *blended_depth;     /* this frame's blended draws: view depth of their bounds' farthest corner */
     uint32_t blended_depth_cap;
+    /* Culling (port: the levels without sectors, tc_viewer_set_aspect): the draws the camera can see, out of `draws`
+     * (which stays whole: the camera's sight test reads it). cull_aspect 0: nothing culled. */
+    float cull_aspect;
+    bool cull_off;            /* tc_viewer_set_culling(v, false) */
+    tc_view_draw *culled;
+    uint32_t culled_cap;
+    uint32_t culled_count;    /* draws of `draws` left out whole by the last tc_viewer_draws */
+    uint32_t culled_cells;    /* cells left out of the draws it kept */
+    /* Cells (levels without sectors): a wide opaque static's triangles sorted into squares of the ground, each with its
+     * bounding sphere, so culling draws only the runs of it in view. mesh_cells: per static mesh, its first cell and how
+     * many (0: drawn whole); celled: per static mesh, its copy with the indices in cell order, which tc_viewer_mesh
+     * gives in place of the level's (the same vertices: all its triangles, in another order). */
+    struct tc_viewer_cell *cells;
+    uint32_t cell_count, cell_cap;
+    uint32_t *mesh_cells;
+    tc_mesh *celled;
 
     /* The debug menu (tc_debug.h; F4). While it is open the game holds, as under a scripted picture, and the held
      * actions move the menu instead (tc_viewer_toggle_debug). */
@@ -380,6 +396,14 @@ bool tc_viewer_tape_done(const tc_viewer *v);
  * Storage is the viewer's, valid until the next call. */
 #define TC_VIEW_PIECE_SIZE 16.0f
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
+/* The drawable's width / height, before tc_viewer_draws. On a level without sectors (the imported ones: nothing else
+ * says what is in sight) tc_viewer_draws then leaves out the draws whose bounds are wholly outside the camera's view:
+ * a bounding sphere against the four sides of the frustum at this aspect and a plane through the eye (no far plane).
+ * Never billboards (the shaders turn them) nor Ed. Not called (or 0): nothing is left out. Port: the original's
+ * levels all have sectors, and those are left alone. */
+void tc_viewer_set_aspect(tc_viewer *v, float aspect);
+/* Culling on (the default) or off, for comparing (tc_viewer_set_aspect). */
+void tc_viewer_set_culling(tc_viewer *v, bool on);
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out);
 
 /* A simple round shadow under Ed (a stand-in until the game's own is read): where straight down from him meets the

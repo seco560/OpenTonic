@@ -83,7 +83,12 @@ the hook for it.
   exe's frame does (**read**; within each pass in level perso order: **port**, the exe walks the list's order, then the
   tree's). An actor's sector follows it through the portals when its mechanics move it (`tc_sector_move`, GAM_0042c810).
 - **Ed** is stepped by tc_ed_ai between the two passes (**port**: in the exe he is one perso of the tree walk).
-  Folding him into the same loop is the direction (docs/DIRECTION.md, point 2).
+  Folding him into the same loop is the direction (docs/DIRECTION.md, point 2). Since 2026-11-13 he is the **main
+  character** (tc_main.h: the exe's main-character list): his physics, scripts and the tick around him (run-first
+  persos, Ed, the rest: `tc_main_tick`) left the viewer, unchanged (the gate's logs and replay hashes identical). The
+  user's plan, in stages: Ed in the cast's perso table with a brain (scripts, or native code for custom characters), the
+  car as a main character of its own when Ed gets in, Ed on the cast's perso step and mechanics, then the exe's tree
+  order. Not his to switch: Super Ed and the other transformations are Ed's own behaviours.
 - **Perso collision (2026-11-05):** each perso's collision is its own (.ttlv PCOL, tc_obstacle.h), no longer baked
   into the static world. Cast actors pose theirs after each step (state animation, position, tilt); the others stand
   at their frame-0 pose. Ed's sweeps meet them by the exe's rules and tests (below); `FUNC 54` and riding work.
@@ -635,7 +640,7 @@ A new game (`GAM_00419290`): no powers, slot 0 = 0, slots 1-6 = -1, the rest 0.
 
 Gameplay Tonic Trouble never had is kept apart from the game's, so it can't be mistaken for it (the user's rule). In the
 core: `core/src/custom/` and `core/include/tonic/custom/`, everything named `tcx_*`; the rest of the core calls in only
-through `custom/tcx.h` (a handful of hooks in tc_viewer.c and tc_level.c: grep `tcx_`, `TCX_`), and the level's custom data
+through `custom/tcx.h` (a handful of hooks in tc_viewer*.c and tc_level.c: grep `tcx_`, `TCX_`), and the level's custom data
 hangs off one pointer (`tc_level.custom`). `make CUSTOM=0` builds the core without any of it (the hooks become no-ops,
 the custom layer's chunks are skipped) into `core/build-nocustom`; `make -C core CUSTOM=0 checkall` passing shows the
 game doesn't lean on it (2026-11-12: both builds pass, camcheck the same). Without it a level the custom layer gave a

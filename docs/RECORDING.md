@@ -45,7 +45,7 @@ It took the place of the old Demo (Ed's autopilot, removed 2026-11-06: the user 
 
 The **Original demos** button in the Replays menu (D; L1 on SDL's pad) plays the disc's own demo tapes, in a shuffled round
 until Esc or Start, watched like a recording (locked, no recorder). Code: `core/src/tc_tape.c` (the file),
-`tc_viewer_play_tape` in `core/src/tc_viewer.c` (playing it on a level), `tools/ttre/demos.py` (out/demos). This took the place of
+`tc_viewer_play_tape` in `core/src/tc_viewer_tape.c` (playing it on a level), `tools/ttre/demos.py` (out/demos). This took the place of
 the old autopilot (removed 2026-11-06).
 
 Retail only: 8 distinct tapes on 6 levels (cock01, LeCanyon x2, pyramide x2, sud0, Totalski, Transit), about 8.3 minutes; the

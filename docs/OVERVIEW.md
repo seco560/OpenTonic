@@ -50,6 +50,7 @@ for all levels, `progress.ttpg`, shown by the debug menu).
 | `tc_level.c` | reads a `.ttlv` |
 | `tc_ai.c` | the script interpreter: runs one character's behaviours, as the exe does. Also holds the game's shared state (powers, save values, lives) |
 | `tc_ed_ai.c` | Ed: his scripts joined to his physics |
+| `tc_main.c` | the main character (the exe's main-character list): Ed, his physics and scripts, and the game's tick around him (the run-first persos, Ed, the rest) |
 | `tc_mec.c`, `tc_mec_walk.c` | the physics, one "ID card" type at a time: walking and falling, flying, the ski board |
 | `tc_cast.c`, `tc_cast_mec.c` | every other character: who is awake, their scripts, their physics, the moving sectors |
 | `tc_collision.c`, `tc_obstacle.c` | the static world's triangles; the characters' own collision, moved with them |
@@ -59,7 +60,8 @@ for all levels, `progress.ttpg`, shown by the debug menu).
 | `tc_rec.c`, `tc_tape.c` | our recordings and replays; the original game's demo tapes |
 | `tc_debug.c` | the debug menu (F4): the powers and save values, who uses them, switches |
 | `tc_player.c` | the old "simple Ed": a plain walker with no scripts, kept as a fallback |
-| `tc_viewer.c` | everything else, tied together: input, the frame, portals, lighting, the draw list. The biggest file, and the one a split is planned for |
+| `tc_viewer*.c` | everything else, tied together (the public side is `tc_viewer.h`). One module in nine files since 2026-11-13, sharing the private `tc_viewer_internal.h`: `tc_viewer.c` (init, the frame, settings), `_play` (input, Ed's ticks, the cast, custom gameplay), `_camera`, `_speech`, `_portals`, `_light`, `_draw` (the draw list), `_tape`, `_debug`. What one part lends another is `tcv_*` |
+| `tc_prof.c` | the profiling hook: where a frame's time goes, zone by zone, when the host lends it a clock (`tc_prof.h`; off by default) |
 | `custom/tcx_*.c` | custom gameplay, ours and not the game's (the toy car and Ed's ride: docs/ENGINE.md "Custom gameplay"), reached only through `custom/tcx.h`; `make CUSTOM=0` builds the core without it |
 
 ## One frame
@@ -97,6 +99,16 @@ The direction is to fold each back into the cast, one subsystem at a time (docs/
 `make -C core checkall` is the gate: fourteen headless checks on the real levels (walking, skiing, portals, sectors, the
 camera, the cast, replays, the debug menu, the HUD). They prove the build has not changed against what was measured before; they do not prove it
 looks or feels right. Only a playtest does.
+
+`make -C core perfcheck` is not in the gate: it times the core's own work per frame (`tc_prof.h`), headless, on sud0,
+LibertyCity2001 (walking and free-fly) and the biggest SSX course, and prints the draws and triangles handed to the GPU.
+Compare its numbers on one machine, before and after a change. First run (2026-11-13, MacBook): the core takes under
+0.2 ms a frame on all of them; what grows with a level is what it hands the GPU. Levels without sectors (the imported
+ones) handed it everything every frame (LibertyCity2001: some 3200 draws and 4.1 million triangles; the SSX course 830
+thousand); since then culling (`tc_viewer_set_aspect`: bounding spheres against the view, wide statics cut into cells)
+takes LibertyCity2001 walking to 1.4 million and the SSX ride to 540 thousand. What is left there is mostly the cars:
+some 94 thousand triangles each (a converter-side simplification would be the next step). Levels with sectors are not
+culled (the original's own visibility); viewcheck proves on LibertyCity2001 that nothing in view is left out.
 
 ## Where to read more
 

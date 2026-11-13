@@ -307,6 +307,8 @@ void view_draw_frame(view *v, gpu_frame *f) {
      * over shallow ground stays on top of the shadow. */
     draw_ctx c = {v, f->cmd, pass, NULL};
     uint32_t count, opaque;
+    /* the window's shape: levels without sectors leave out what the camera can't see (tc_viewer_set_aspect) */
+    tc_viewer_set_aspect(&v->viewer, (float)f->width / (float)SDL_max(f->height, 1u));
     const tc_view_draw *draws = tc_viewer_draws(&v->viewer, &count, &opaque);
     for (uint32_t i = 0; i < opaque; i++) draw_mesh(&c, &draws[i]);
     tc_view_shadow sh;

@@ -1,7 +1,7 @@
 /* Custom gameplay: things Tonic Trouble never had, ours alone (docs/ENGINE.md "Custom gameplay"). Everything of it lives in
  * core/src/custom and core/include/tonic/custom, named tcx_*: nothing here is read from the exe or the game's data, and
  * none of the game's own code depends on it. This header is the one seam: the only calls the rest of the core makes into
- * it (grep "tcx_" in tc_viewer.c / tc_level.c to see every place).
+ * it (grep "tcx_" in tc_viewer*.c / tc_level.c to see every place).
  *
  * `make CUSTOM=0` builds the core without it (TC_NO_CUSTOM: core/src/custom left out, the calls below inline no-ops, the
  * custom layer's chunks skipped), into build-nocustom: its checkall shows the game doesn't lean on any of it.

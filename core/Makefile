@@ -17,6 +17,8 @@
 #   make checkall   -> THE GATE: every check above in turn, one line each, logs in build/logs; fails if any does. Also the
 #                      Special Edition's sectors when ../files/out/se/ttlv is there. Imported levels (out/Imported) are
 #                      passed by (tests/testlevels.h). Run it before and after a change.
+#   make perfcheck  -> where a frame's time goes (tc_prof.h) on sud0, LibertyCity2001 and an SSX course: informational, not
+#                      in the gate (timings vary); compare runs on one machine before and after a change
 #   make replay     -> build/replay: a recording's info, timeline, csv, check
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 #   make CUSTOM=0 ...  -> the same without custom gameplay (src/custom: ours, not the game's; include/tonic/custom/tcx.h),
@@ -40,7 +42,7 @@ SRC := $(wildcard src/*.c) $(wildcard src/custom/*.c)
 endif
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/replay
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/perfcheck $(BUILD)/replay
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -89,6 +91,9 @@ $(BUILD)/debugcheck: tests/debugcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 $(BUILD)/hudcheck: tests/hudcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+$(BUILD)/perfcheck: tests/perfcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD)/tapecheck: tests/tapecheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
@@ -132,6 +137,9 @@ castcheck: $(BUILD)/castcheck
 movecheck: $(BUILD)/movecheck
 	$(BUILD)/movecheck ../files/out/ttlv
 
+perfcheck: $(BUILD)/perfcheck
+	$(BUILD)/perfcheck ../files/out/ttlv
+
 tapecheck: $(BUILD)/tapecheck
 	$(BUILD)/tapecheck ../files/out/ttlv ../files/out/demos
 
@@ -168,4 +176,4 @@ checkall: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck tapecheck replay clean
+.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck tapecheck perfcheck replay clean

@@ -152,7 +152,7 @@ platforms). They mainly call **PROC 180 SetCameraTarget** (sud0 ×28, north ×20
 camera directly, north 16, bar 1 (the barman). The portals' camera places (TC_AI_POP_CAMERA) are another of these.
 
 ## 2. The port's camera today
-`core/src/tc_viewer.c` `update_play` / `look`:
+`core/src/tc_viewer_play.c` `update_play` / `look`:
 - **A manual orbit round Ed's chest** (his drawn position + 1.1 up), 6 units (wheel 1.5–25, kept across levels).
 - **Yaw and pitch only from the player:** mouse 0.003 rad per pixel, keys and the right stick at `turn_speed`. Pitch is
   limited to ±1.5. There is no invert and no sensitivity setting, and the camera never comes round behind Ed by itself
@@ -395,7 +395,7 @@ Ported (core/src/tc_cam.c; `tc_cam.h` lists each number with its source):
   pulled-in eye near Ed would otherwise swing with each of his 30 Hz steps. No more minimum distance: the old 0.5
   floor put the eye inside walls (cavedoc's swim along a wall: 305 frames) and inside Ed. **Ed is hidden** when the eye
   is nearer than 0.9 to his pivot (`TC_CAM_HIDE_DISTANCE`, **port**; the original's first person hides his channels).
-- **The line of sight against the drawn persos** (`camera_sight` in tc_viewer.c, from last frame's draw list; not
+- **The line of sight against the drawn persos** (`camera_sight` in tc_viewer_camera.c, from last frame's draw list; not
   sprites, water or blended draws), as the exe's ray does; the level itself by its collision (its visual geometry is
   not tested: **port**). This catches the moving platforms whose collision the exporter bakes at frame 0 (Land's slab,
   cavedoc's cone, until moving collision comes: docs/ENGINE.md) and the characters with none.

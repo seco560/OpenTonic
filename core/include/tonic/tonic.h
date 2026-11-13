@@ -2,6 +2,7 @@
 #ifndef TONIC_TONIC_H
 #define TONIC_TONIC_H
 #include "tc_alloc.h"
+#include "tc_prof.h"
 #include "tc_math.h"
 #include "tc_level.h"
 #include "tc_sector.h"

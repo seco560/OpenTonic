@@ -537,6 +537,199 @@ static void se_ski_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
+/* A draw that the frame's own view-projection puts wholly outside one side of the clip volume: its mesh's vertex box
+ * (computed here, not the core's spheres) at its model matrix, all eight corners beyond the same plane. */
+static int box_outside(const tc_mat4 *vp, const tc_view_draw *d, const float lo[3], const float hi[3]) {
+    int out[6] = {1, 1, 1, 1, 1, 1}, k, j;
+    for (k = 0; k < 8; k++) {
+        float p[3] = {k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]}, w[3], c[4];
+        const float *m = d->model.m, *q = vp->m;
+        for (j = 0; j < 3; j++) w[j] = m[j] * p[0] + m[4 + j] * p[1] + m[8 + j] * p[2] + m[12 + j];
+        for (j = 0; j < 4; j++) c[j] = q[j] * w[0] + q[4 + j] * w[1] + q[8 + j] * w[2] + q[12 + j];
+        out[0] &= c[0] > c[3]; out[1] &= c[0] < -c[3];
+        out[2] &= c[1] > c[3]; out[3] &= c[1] < -c[3];
+        out[4] &= c[2] < 0;    out[5] &= c[2] > c[3];   /* before the near plane, past the far one (0..1 depth) */
+    }
+    for (k = 0; k < 6; k++) if (out[k]) return 1;
+    return 0;
+}
+
+/* Every triangle of the draw's index range [first, first + count) has its three corners, by the frame's matrix, beyond
+ * one same plane of the clip volume (each triangle its own plane): then nothing of it can show. The exact test, for when
+ * the mesh's box (box_outside) reaches into the view. */
+static int vertices_outside(const tc_viewer *v, const tc_mat4 *vp, const tc_view_draw *d, uint32_t first, uint32_t count) {
+    const tc_mesh *m = tc_viewer_mesh(v, d->mesh);
+    uint32_t t;
+    if (!m) return 0;
+    for (t = first; t + 2 < first + count && t + 2 < m->index_count; t += 3) {
+        int out[6] = {1, 1, 1, 1, 1, 1}, j, c, any = 0;
+        for (c = 0; c < 3; c++) {
+            const float *p = m->vertices[m->indices[t + c]].position, *mm = d->model.m, *q = vp->m;
+            float w[3], x[4];
+            for (j = 0; j < 3; j++) w[j] = mm[j] * p[0] + mm[4 + j] * p[1] + mm[8 + j] * p[2] + mm[12 + j];
+            for (j = 0; j < 4; j++) x[j] = q[j] * w[0] + q[4 + j] * w[1] + q[8 + j] * w[2] + q[12 + j];
+            out[0] &= x[0] > x[3]; out[1] &= x[0] < -x[3];
+            out[2] &= x[1] > x[3]; out[3] &= x[1] < -x[3];
+            out[4] &= x[2] < 0;    out[5] &= x[2] > x[3];
+        }
+        for (j = 0; j < 6; j++) any |= out[j];
+        if (!any) return 0;
+    }
+    return 1;
+}
+
+/* The vertex box of mesh i (lo xyz, hi xyz), made when first asked for. */
+static const float *mesh_box(const tc_viewer *v, uint32_t i, float *boxes, uint8_t *have) {
+    float *b = boxes + 6 * i;
+    const tc_mesh *m = tc_viewer_mesh(v, i);
+    uint32_t q;
+    int c;
+    if (have[i]) return b;
+    b[0] = b[1] = b[2] = INFINITY;
+    b[3] = b[4] = b[5] = -INFINITY;
+    for (q = 0; m && q < m->vertex_count; q++)
+        for (c = 0; c < 3; c++) b[c] = fminf(b[c], m->vertices[q].position[c]), b[3 + c] = fmaxf(b[3 + c], m->vertices[q].position[c]);
+    have[i] = 1;
+    return b;
+}
+
+/* Culling on a level without sectors (tc_viewer_set_aspect): flying round LibertyCity2001 at three window shapes, every
+ * frame's culled list is the whole list (culling off) in order with draws left out, the opaque ones still first, and
+ * everything left out (whole draws, a celled static's cells) is outside the view by the frame's own matrix (box_outside,
+ * else vertices_outside, triangle by triangle). */
+static void cull_scenario(const char *dir) {
+    static const float aspects[3] = {16.0f / 9, 32.0f / 9, 9.0f / 16};
+    char path[1024];
+    size_t size;
+    uint8_t *data;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    float *box;
+    uint8_t *have;
+    uint32_t frames = 0, bad = 0, wrong_order = 0, dropped = 0, dropped_before = 0, partial = 0, whole = 0, tris_whole = 0,
+             tris_kept = 0;
+    int a, i, sectors_untouched;
+    snprintf(path, sizeof(path), "%s/LibertyCity2001.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no LibertyCity2001: culling skipped)\n"); return; }
+    free(data);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.level_name = "LibertyCity2001";
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "LibertyCity2001 viewer"); tc_level_free(&level); return; }
+    box = (float *)calloc(6 * (size_t)tc_viewer_mesh_count(&v), sizeof(float));
+    have = (uint8_t *)calloc(tc_viewer_mesh_count(&v), 1);
+    if (v.playing) tc_viewer_toggle_play(&v);
+    for (i = 0; i < 12; i++) tc_viewer_wheel(&v, 1);
+    for (a = 0; a < 3; a++) {
+        tc_viewer_set_action(&v, TC_VA_FORWARD, true);
+        for (i = 0; i < 240; i++) {
+            uint32_t count, opaque, full_count, full_opaque, k, j;
+            const tc_view_draw *d;
+            tc_view_draw *full;
+            tc_view_frame fr;
+            tc_viewer_mouse_look(&v, 9, (i / 40) % 2 ? 2.5f : -2.5f); /* turning, looking up and down */
+            tc_viewer_update(&v, 1.0f / 30);
+            tc_viewer_set_aspect(&v, aspects[a]);
+            tc_viewer_set_culling(&v, false);
+            d = tc_viewer_draws(&v, &full_count, &full_opaque);
+            full = (tc_view_draw *)malloc((full_count ? full_count : 1) * sizeof(*full));
+            memcpy(full, d, full_count * sizeof(*full));
+            tc_viewer_set_culling(&v, true);
+            d = tc_viewer_draws(&v, &count, &opaque);
+            tc_viewer_frame(&v, aspects[a], &fr);
+            frames++;
+            whole += full_count;
+            for (k = 0; k < full_count; k++) tris_whole += full[k].index_count / 3;
+            for (k = 0; k < count; k++) tris_kept += d[k].index_count / 3;
+            /* d is full in order, each full draw kept whole, left out, or (a celled static) as some of its index range:
+             * pieces in order, inside it, otherwise the same draw. What is left out must be outside the view. */
+            for (j = 0, k = 0; j < full_count; j++) {
+                const tc_view_draw *w = &full[j];
+                uint32_t at = w->first_index, end = w->first_index + w->index_count, pieces = 0;
+                tc_view_draw a = *w;
+                a.first_index = a.index_count = 0;
+                while (k < count) {
+                    tc_view_draw b = d[k];
+                    b.first_index = b.index_count = 0;
+                    if (memcmp(&a, &b, sizeof(a)) != 0 || d[k].first_index < at || d[k].first_index + d[k].index_count > end) break;
+                    if ((k < opaque) != (j < full_opaque)) wrong_order++;
+                    if (d[k].first_index > at && !vertices_outside(&v, &fr.view_projection, w, at, d[k].first_index - at)) bad++;
+                    at = d[k].first_index + d[k].index_count;
+                    k++;
+                    pieces++;
+                }
+                if (pieces == 0) {
+                    const float *b = mesh_box(&v, w->mesh, box, have);
+                    dropped++;
+                    if (!box_outside(&fr.view_projection, w, b, b + 3) &&
+                        !vertices_outside(&v, &fr.view_projection, w, w->first_index, w->index_count))
+                        bad++;
+                } else {
+                    if (at < end && !vertices_outside(&v, &fr.view_projection, w, at, end - at)) bad++;
+                    if (pieces > 1 || at != end || d[k - 1].first_index != w->first_index) partial++;
+                }
+            }
+            if (k != count) wrong_order++;
+            if (v.culled_count != dropped - dropped_before) wrong_order++;
+            dropped_before = dropped;
+            free(full);
+        }
+        tc_viewer_release_all(&v);
+    }
+    printf("culling (LibertyCity2001, %u frames at 16:9, 32:9, 9:16): %.0f triangles a frame of %.0f; %.0f draws of %.0f "
+           "left out, %.0f kept in part (cells)\n", frames, (double)tris_kept / frames, (double)tris_whole / frames,
+           (double)dropped / frames, (double)whole / frames, (double)partial / frames);
+    check(dropped > 0 && partial > 0, "culling leaves draws out, and parts of the wide statics (cells)");
+    check(wrong_order == 0, "the culled list is the whole one in order (with parts of draws), the opaque draws first");
+    {   /* each celled static's copy holds the level's triangles, in another order */
+        uint32_t i, same = 1, celled = 0;
+        for (i = 0; i < level.mesh_count; i++) {
+            const tc_mesh *a = &level.meshes[i], *b = tc_viewer_mesh(&v, i);
+            uint64_t sa = 0, sb = 0, xa = 0, xb = 0;
+            uint32_t t;
+            if (a == b) continue;
+            celled++;
+            if (a->index_count != b->index_count || a->vertices != b->vertices) { same = 0; continue; }
+            for (t = 0; t + 2 < a->index_count; t += 3) { /* order-free sums of each triangle (its corners in order) */
+                uint64_t ha = ((uint64_t)a->indices[t] * 2654435761u) ^ ((uint64_t)a->indices[t + 1] * 40503u << 20) ^ ((uint64_t)a->indices[t + 2] << 40);
+                uint64_t hb = ((uint64_t)b->indices[t] * 2654435761u) ^ ((uint64_t)b->indices[t + 1] * 40503u << 20) ^ ((uint64_t)b->indices[t + 2] << 40);
+                sa += ha, sb += hb, xa ^= ha * 0x9E3779B97F4A7C15ull, xb ^= hb * 0x9E3779B97F4A7C15ull;
+            }
+            if (sa != sb || xa != xb) same = 0;
+        }
+        printf("  %u statics cut into %u cells\n", celled, v.cell_count);
+        check(celled > 0 && same, "each celled static's copy has the level's triangles, reordered");
+    }
+    check(bad == 0, "everything left out is outside the view (each triangle by the frame's matrix)");
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+    free(box);
+    free(have);
+    /* a level with sectors: the list is whole whatever the aspect */
+    snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
+    sectors_untouched = 1;
+    if ((data = read_file(path, &size)) && tc_level_load(&level, data, size) == TC_OK) {
+        uint32_t c1, o1, c2, o2;
+        free(data);
+        data = NULL;
+        memset(&desc, 0, sizeof(desc));
+        desc.level = &level;
+        desc.level_name = "sud0";
+        if (tc_viewer_init(&v, &desc) == TC_OK) {
+            run(&v, 0.2f, 0);
+            tc_viewer_draws(&v, &c1, &o1);
+            tc_viewer_set_aspect(&v, 16.0f / 9);
+            tc_viewer_draws(&v, &c2, &o2);
+            sectors_untouched = c1 == c2 && o1 == o2 && v.culled_count == 0;
+            tc_viewer_free(&v);
+        }
+        tc_level_free(&level);
+    }
+    free(data);
+    check(sectors_untouched, "a level with sectors (sud0) is never culled");
+}
+
 /* Riding (docs/ENGINE.md "Moving collision, read"): cavedoc's lift platform SDO_PFCaveDoc1 (perso 166, card type 6).
  * Ed dropped onto it lands on the perso (its own collision, .ttlv PCOL), rides it (tc_mec_walk.carrier), and its script
  * sees him through FUNC 54 (StandingOnPerso == Me): MoveLift (META 28) takes it to its other stop, Ed on it. Needs an
@@ -990,6 +1183,7 @@ done:
     scene_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
+    cull_scenario(dir);
     check(bad_frames == 0, "every frame's draw list is valid");
     tc_viewer_free(&v);
     tc_level_free(&level);

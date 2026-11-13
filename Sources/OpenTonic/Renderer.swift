@@ -468,6 +468,8 @@ import TonicCore
         enc.setVertexBytes(lights, length: lights.count, index: 4)
 
         var count: UInt32 = 0, opaque: UInt32 = 0
+        // the window's shape: levels without sectors leave out what the camera can't see (tc_viewer_set_aspect)
+        tc_viewer_set_aspect(v, Float(size.width / max(size.height, 1)))
         let draws = tc_viewer_draws(v, &count, &opaque)!
         func drawMesh(_ d: tc_view_draw) {
             // d's index range: all of the mesh, or the shown sectors' part of a static (tc_view_draw)

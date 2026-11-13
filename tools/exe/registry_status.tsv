@@ -46,7 +46,7 @@
 004a4260	CAM_CanSee	partial	1 ray (radius 0.1, DAT_00521330/34); port: a both-faces ray + the drawn persos (clear_distance)
 004a3f20	CAM_RaysAround	known	n rays round the segment, rotated 2 pi / n
 004a3a00	CAM_RayThroughSectors	partial	the camera's, the target's and the listed sectors' geometry; port: the level collision
-004a3920	CAM_RayPersos	partial	persos of a sector on the ray (drawn geometry); port: every drawn perso (camera_sight in tc_viewer.c)
+004a3920	CAM_RayPersos	partial	persos of a sector on the ray (drawn geometry); port: every drawn perso (camera_sight in tc_viewer_camera.c)
 004a42c0	CAM_CheckPosition	known	can-see / can-go of a position by flags (0x2F in the searches)
 00484210	SPO_SegmentVsObject	partial	segment vs a SuperObject's visual geometry (GLIGLOU_004427d0), recursive; port: drawn persos only
 004a0bf0	CAM_TargetMoving	known	the target's averaged speed > 0.01
