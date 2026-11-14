@@ -1,4 +1,4 @@
-## Open Tonic - open source engine reimplemetation for Tonic Trouble
+## Open Tonic - open source engine reimplementation for Tonic Trouble
 
 Read files/sources/README.md for updated information on the installation process
 
