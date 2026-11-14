@@ -15,11 +15,13 @@ While still very much a work in progress, enough gameplay has been reproduced to
   
  <img width="1800" height="1130" alt="Screenshot 2026-10-20 at 04 45 02" src="https://github.com/user-attachments/assets/aec86f85-30ff-4ddf-a167-1e21a0f756a7" /> 
  
-The project is firmly in Beta territory, with a lot of outstanding work needing to be done. Just about everything is rough around the edges or still unimplemented. For now it acts more like a proof of concept and exploration of the game itself. You can essentially simulate a playthrough by starting with Ski Slope (totalski) and sequentially going through portals. You can also play the intro video and skip / watch until the end, the first level begins afterwards.
+The project is firmly in Beta territory, with a lot of outstanding work needing to be done. Just about everything is rough around the edges or still unimplemented. For now it acts more like a proof of concept and exploration of the game itself. To begin the game traditionally, without power-ups, either select totalski on the level picker or watch the intro video (Retail files required; behaviour with Special files only not guaranteed).
 
 <img width="1800" height="1130" alt="skislopes" src="https://github.com/user-attachments/assets/4aceb873-a9d7-409e-9ad1-9a7b344dec09" /> 
 
-The next steps for the project consist of further decompilation and implementation of actual game mechanics. For now, you're not actually able to interact with power-ups or enemies and a lot of the game engine code needs work. I don't intend this to be a 1-to-1 replication of the original game; I'm aiming more for something like Tonic Trouble: Remastered, with the added freedom of being able to build new levels for Ed to explore and play around in.
+I don't intend this to be a 1-to-1 replication of the original game; I'm aiming more for something like Tonic Trouble: Remastered, with the added freedom of being able to build new levels for Ed to explore and play around in. The way I'm going about reimplementing the gameplay is quite painstaking, being done entirely by Claude with me vaguely reading the code; just describing issues back and vaguely orchestrating. Pure vibe coding as defined by Karpathy all the way back in February 2025. The next obvious step is implementing a proper main menu and save system, since cavedoc is now fully playable.
+
+Press Tab at any point to go into viewer mode; what this project was before I added a "simple walking mode" (still accessible by pressing I and messing everything up) and then catching a glimpse of what could be done if more of the game were interpreted. Work is ongoing and I'm going about it in a very barbaric way, commiting and pushing straight to main (probably fine since there's no CI to speak of and no plans for a web version). I do have plans for an OpenGL renderer which would open up more platforms. The Linux SDL frontend could also be ported to Windows and built via MinGW without too much hassle. Anyway...
 
 ### Controls
 
