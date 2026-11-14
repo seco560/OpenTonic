@@ -38,6 +38,11 @@ void view_free(view *v);
 
 /* Clears and draws the level into the frame (its own 3D pass). */
 void view_draw_frame(view *v, gpu_frame *f);
+/* Occlusion culling (tc_viewer_set_occlusion: levels without sectors) on / off for every level from now on, and what
+ * the last frame drew: draws and triangles handed to the GPU, draws and cells left out as hidden. */
+void view_set_occlusion(bool on);
+bool view_occlusion(void);
+void view_draw_stats(const view *v, uint32_t *draws, uint32_t *triangles, uint32_t *hidden_draws, uint32_t *hidden_cells);
 /* The screen transition, black, or the loading screen's black backdrop (o from tc_viewer_overlay) in a 2D pass over
  * the frame. The loading screen itself (vignette, caption, bar) is the app's. */
 void view_draw_overlay(view *v, gpu_frame *f, SDL_GPURenderPass *pass, const tc_view_overlay *o);

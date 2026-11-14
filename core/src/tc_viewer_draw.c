@@ -434,7 +434,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     bool perso_sectors = shown && v->sectors->perso_count == l->perso_count;
     bool water = water_planes(v);
     float z;
-    uint16_t sec;
+    uint16_t sec, far;
     double prof = TC_PROF_BEGIN();
     v->ed_draw_count = 0;
 
@@ -473,11 +473,20 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         if (!actor && v->spawn_prso && v->spawn_prso[i]) continue;
         if (!actor && v->play && tcx_perso_pose(v->play->custom, i, &w34)) { /* moved by custom gameplay (a car) */
             world = tc_mat4_from34(&w34);
+            if (v->camera.position.z - world.m[14] > TC_VIEW_CAR_HIDE_HEIGHT) continue; /* seen from high above: not drawn */
+            {   /* far off: its far model (TCX_PART_FAR), when it has one */
+                tc_vec3 d = tc_v3_sub(tc_v3(world.m[12], world.m[13], world.m[14]), v->camera.position);
+                uint16_t far_bit = 0;
+                if (tc_v3_dot(d, d) > TC_VIEW_CAR_FAR * TC_VIEW_CAR_FAR)
+                    for (k = 0; k < p->part_count && !far_bit; k++)
+                        if (p->parts[k].object != TC_HIDDEN && (p->parts[k].object & TCX_PART_FAR)) far_bit = TCX_PART_FAR;
+                far = far_bit;
+            }
             for (k = 0; k < p->part_count; k++) {
                 const tc_part *part = &p->parts[k];
                 tc_mat34 c34;
                 tc_mat4 m, model;
-                if (part->channel >= nch || p->shown[part->channel] != part->object) continue;
+                if (part->channel >= nch || (uint16_t)(p->shown[part->channel] | far) != part->object) continue;
                 c34 = tcx_perso_channel(v->play->custom, i, part->channel);
                 m = tc_mat4_from34(&c34);
                 model = tc_mat4_mul(&world, &m);
@@ -614,9 +623,13 @@ static bool sphere_seen(const frustum *fr, const tc_mat4 *model, const float *s)
 }
 
 /* A draw by its mesh's bounding sphere (tc_viewer.mesh_sphere). Billboards (the shaders turn them) and Ed always are. */
-static bool draw_seen(const tc_viewer *v, const frustum *fr, const tc_view_draw *d) {
+static bool never_culled(const tc_viewer *v, const tc_view_draw *d) {
     if (d->flags & TC_FLAG_BILLBOARD) return true;
-    if (d->mesh >= v->ed_first && d->mesh < v->ed_first + v->level->ed.part_count) return true;
+    return d->mesh >= v->ed_first && d->mesh < v->ed_first + v->level->ed.part_count;
+}
+
+static bool draw_seen(const tc_viewer *v, const frustum *fr, const tc_view_draw *d) {
+    if (never_culled(v, d)) return true;
     return sphere_seen(fr, &d->model, v->mesh_sphere + 4 * d->mesh);
 }
 
@@ -702,6 +715,8 @@ static bool cell_mesh(tc_viewer *v, uint32_t i, float cell) {
         }
         s[3] = sqrtf(r2);
         if (!push_cell(v, a, b - a, s)) goto done;
+        for (e = 0; e < 3; e++) v->cells[v->cell_count - 1].box[e] = blo[e], v->cells[v->cell_count - 1].box[3 + e] = bhi[e];
+        if (r2 == INFINITY) v->cells[v->cell_count - 1].box[0] = INFINITY, v->cells[v->cell_count - 1].box[3] = -INFINITY; /* never hidden */
     }
     v->celled[i] = *m;
     v->celled[i].indices = idx;
@@ -745,13 +760,18 @@ static bool emit(tc_viewer *v, uint32_t *n, const tc_view_draw *d, uint32_t firs
     return true;
 }
 
-/* A whole celled static: the runs of its cells in view, each one draw (consecutive cells' ranges joined). */
-static bool emit_cells(tc_viewer *v, const frustum *fr, uint32_t *n, const tc_view_draw *d) {
+/* A whole celled static: the runs of its cells in view (occ: and not hidden, tc_viewer_occlusion.c), each one draw
+ * (consecutive cells' ranges joined). */
+static bool emit_cells(tc_viewer *v, const frustum *fr, uint32_t *n, const tc_view_draw *d, bool occ) {
     const struct tc_viewer_cell *c = v->cells + v->mesh_cells[2 * d->mesh];
     uint32_t k, cells = v->mesh_cells[2 * d->mesh + 1], first = 0, count = 0;
     for (k = 0; k < cells; k++) {
         if (!sphere_seen(fr, &d->model, c[k].sphere)) {
             v->culled_cells++;
+            continue;
+        }
+        if (occ && tcv_occ_hidden(v, &d->model, c[k].box)) {
+            v->occluded_cells++;
             continue;
         }
         if (count && first + count == c[k].first) {
@@ -766,15 +786,18 @@ static bool emit_cells(tc_viewer *v, const frustum *fr, uint32_t *n, const tc_vi
 }
 
 /* The seen draws of the list, in its order, into v->culled (a celled static as the runs of its cells in view); the list
- * itself as it was when nothing can be culled (or out of memory). */
+ * itself as it was when nothing can be culled (or out of memory). Seen: in the camera's view, and (tc_viewer_set_occlusion)
+ * not wholly behind the level's solid statics. */
 static const tc_view_draw *cull_draws(tc_viewer *v, const tc_view_draw *d, uint32_t *count, uint32_t *opaque_count) {
     frustum fr;
     uint32_t i, n = 0, opaque = 0;
-    v->culled_count = v->culled_cells = 0;
+    bool occ;
+    v->culled_count = v->culled_cells = v->occluded_count = v->occluded_cells = v->occluder_tris = 0;
     if (v->sectors || v->cull_aspect <= 0 || v->cull_off || *count == 0) return d;
     tcv_mesh_spheres(v);
     if (!v->mesh_sphere) return d;
     make_frustum(v, &fr);
+    occ = tcv_occ_begin(v) && v->mesh_box;
     for (i = 0; i < *count; i++) {
         bool ok;
         uint32_t m = d[i].mesh;
@@ -784,13 +807,20 @@ static const tc_view_draw *cull_draws(tc_viewer *v, const tc_view_draw *d, uint3
         }
         if (v->mesh_cells && m < v->level->mesh_count && v->mesh_cells[2 * m + 1] && d[i].first_index == 0 &&
             d[i].index_count == v->meshes[m]->index_count) {
-            uint32_t before = n;
-            ok = emit_cells(v, &fr, &n, &d[i]);
-            if (ok && n == before) v->culled_count++; /* every cell out of view: left out whole */
+            uint32_t before = n, hidden = v->occluded_cells;
+            ok = emit_cells(v, &fr, &n, &d[i], occ);
+            if (ok && n == before) { /* every cell out of view or hidden: left out whole */
+                if (v->occluded_cells > hidden) v->occluded_count++;
+                else v->culled_count++;
+            }
+        } else if (occ && !never_culled(v, &d[i]) && !(d[i].flags & TCX_FLAG_ROUND_CAMERA) &&
+                   tcv_occ_hidden(v, &d[i].model, v->mesh_box + 6 * m)) {
+            v->occluded_count++;
+            continue;
         } else
             ok = emit(v, &n, &d[i], d[i].first_index, d[i].index_count);
         if (!ok) {
-            v->culled_count = v->culled_cells = 0;
+            v->culled_count = v->culled_cells = v->occluded_count = v->occluded_cells = 0;
             return d;
         }
         if (i < *opaque_count) opaque = n;

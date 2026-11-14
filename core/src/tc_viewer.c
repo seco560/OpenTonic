@@ -185,6 +185,8 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
      * first frame drawn (LibertyCity2001: millions of vertices). Levels with sectors make them when the camera first
      * asks (camera_sight), as before. */
     if (!v->sectors) tcv_mesh_spheres(v);
+    /* and what occlusion culling needs (tc_viewer_set_occlusion): the meshes' boxes, the occluders */
+    tcv_occ_init(v);
     return TC_OK;
 }
 
@@ -207,6 +209,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->mesh_ghost);
     tc_free(v->blended);
     tc_free(v->culled);
+    tcv_occ_free(v);
     for (i = 0; v->celled && v->mesh_cells && v->level && i < v->level->mesh_count; i++)
         if (v->mesh_cells[2 * i + 1]) tc_free(v->celled[i].indices);
     tc_free(v->celled);

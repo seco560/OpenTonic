@@ -631,6 +631,7 @@ static void cull_scenario(const char *dir) {
             tc_viewer_mouse_look(&v, 9, (i / 40) % 2 ? 2.5f : -2.5f); /* turning, looking up and down */
             tc_viewer_update(&v, 1.0f / 30);
             tc_viewer_set_aspect(&v, aspects[a]);
+            tc_viewer_set_occlusion(&v, false); /* the view alone here; occlusion: occlusion_scenario */
             tc_viewer_set_culling(&v, false);
             d = tc_viewer_draws(&v, &full_count, &full_opaque);
             full = (tc_view_draw *)malloc((full_count ? full_count : 1) * sizeof(*full));
@@ -728,6 +729,190 @@ static void cull_scenario(const char *dir) {
     }
     free(data);
     check(sectors_untouched, "a level with sectors (sud0) is never culled");
+}
+
+/* ---- occlusion culling (tc_viewer_set_occlusion) against a software render of the frame ---- */
+
+#define OCC_W 960
+#define OCC_H 540
+typedef struct occ_pt { double x, y, w; } occ_pt; /* pixels, 1 / depth */
+
+/* One triangle into a depth picture (the nearest 1 / depth per pixel centre). */
+static void occ_raster(float *zb, occ_pt a, occ_pt b, occ_pt c) {
+    double area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    double lox = fmin(a.x, fmin(b.x, c.x)), hix = fmax(a.x, fmax(b.x, c.x)), loy = fmin(a.y, fmin(b.y, c.y)), hiy = fmax(a.y, fmax(b.y, c.y));
+    int x0, x1, y0, y1, x, y;
+    if (area == 0 || hix < 0 || hiy < 0 || lox > OCC_W || loy > OCC_H) return;
+    x0 = lox < 0 ? 0 : (int)lox, y0 = loy < 0 ? 0 : (int)loy;
+    x1 = hix > OCC_W - 1 ? OCC_W - 1 : (int)hix, y1 = hiy > OCC_H - 1 ? OCC_H - 1 : (int)hiy;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++) {
+            double px = x + 0.5, py = y + 0.5;
+            double w0 = ((b.x - px) * (c.y - py) - (b.y - py) * (c.x - px)) / area;
+            double w1 = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) / area, w2 = 1 - w0 - w1;
+            float z;
+            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+            z = (float)(w0 * a.w + w1 * b.w + w2 * c.w);
+            if (z > zb[y * OCC_W + x]) zb[y * OCC_W + x] = z;
+        }
+}
+
+/* The triangles of d's indices [first, end) into a depth picture, by the frame's own matrix, cut at the near plane. */
+static void occ_range(const tc_viewer *v, const tc_mat4 *vp, const tc_view_draw *d, uint32_t first, uint32_t end, float *zb) {
+    const tc_mesh *m = tc_viewer_mesh(v, d->mesh);
+    tc_mat4 mvp = tc_mat4_mul(vp, &d->model);
+    double nz = v->camera.near_z;
+    uint32_t t;
+    for (t = first; m && t + 2 < end && t + 2 < m->index_count; t += 3) {
+        double p[3][4], cut[8][4];
+        occ_pt s[8];
+        int c, j, n = 0, out[4] = {1, 1, 1, 1};
+        for (c = 0; c < 3; c++) {
+            const float *q = m->vertices[m->indices[t + c]].position;
+            for (j = 0; j < 4; j++) p[c][j] = (double)mvp.m[j] * q[0] + (double)mvp.m[4 + j] * q[1] + (double)mvp.m[8 + j] * q[2] + mvp.m[12 + j];
+            out[0] &= p[c][0] > p[c][3]; out[1] &= p[c][0] < -p[c][3];
+            out[2] &= p[c][1] > p[c][3]; out[3] &= p[c][1] < -p[c][3];
+        }
+        if (out[0] | out[1] | out[2] | out[3]) continue;
+        for (c = 0; c < 3; c++) {
+            const double *a = p[c], *b = p[(c + 1) % 3];
+            int ia = a[3] >= nz, ib = b[3] >= nz;
+            if (ia) memcpy(cut[n++], a, sizeof(cut[0]));
+            if (ia != ib) {
+                double k = (nz - a[3]) / (b[3] - a[3]);
+                for (j = 0; j < 4; j++) cut[n][j] = a[j] + k * (b[j] - a[j]);
+                n++;
+            }
+        }
+        for (c = 0; c < n; c++) {
+            s[c].w = 1 / cut[c][3];
+            s[c].x = (cut[c][0] * s[c].w * 0.5 + 0.5) * OCC_W;
+            s[c].y = (0.5 - cut[c][1] * s[c].w * 0.5) * OCC_H;
+        }
+        for (c = 1; c + 1 < n; c++) occ_raster(zb, s[0], s[c], s[c + 1]);
+    }
+}
+
+typedef enum occ_script { OCC_WALK, OCC_FLY } occ_script;
+
+/* Occlusion culling on one level: `frames` frames, one every `every` updates, Ed walking (or the skier riding) with the
+ * camera swung about, or the camera flying. Each frame's list with occlusion on is the list without it, in order, with
+ * draws (and parts of celled statics) left out. Whether that shows is measured on a software render of the frame
+ * (OCC_W x OCC_H): what was left out, drawn into one depth picture; the solid part of what was kept (opaque, no
+ * cut-outs: all a see-through texel can't let through) into another. A pixel where something left out is nearer than
+ * everything solid that was kept is a pixel occlusion culling changed. Adds to *changed and *pixels; false: skipped. */
+static int occlusion_level(const char *dir, const char *name, occ_script script, int frames, int every, uint64_t *changed,
+                           uint64_t *pixels, uint32_t *worst) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    float *kept, *left;
+    double tris_before = 0, tris_after = 0, hidden = 0, cells = 0, occluders = 0;
+    uint32_t order_wrong = 0, level_changed = 0;
+    int i, f = 0;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); printf("  (no %s: skipped)\n", name); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &level;
+    desc.ai_data = ai;
+    desc.ai_size = ai ? ai_size : 0;
+    desc.level_name = name;
+    desc.seed = 3;
+    if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "occlusion: the viewer starts"); free(ai); tc_level_free(&level); return 0; }
+    kept = (float *)malloc(sizeof(float) * OCC_W * OCC_H);
+    left = (float *)malloc(sizeof(float) * OCC_W * OCC_H);
+    if (script == OCC_FLY && v.playing) { tc_viewer_toggle_play(&v); v.camera.pitch = 0; }
+    for (i = 0; f < frames && i < 60 * 600; i++) {
+        uint32_t ca, oa, cb, ob, j, k, bad = 0;
+        const tc_view_draw *d;
+        tc_view_draw *full;
+        tc_view_frame fr;
+        if (script == OCC_FLY) {
+            tc_viewer_set_action(&v, TC_VA_FORWARD, true);
+            tc_viewer_mouse_look(&v, 3, sinf((float)i * 0.02f) * 1.5f);
+        } else {
+            tc_viewer_set_move_stick(&v, sinf((float)i / 60 * 0.7f) * 0.6f, 1);
+            tc_viewer_mouse_look(&v, sinf((float)i * 0.013f) * 4, sinf((float)i * 0.031f) * 1.5f);
+        }
+        tc_viewer_update(&v, 1.0f / 60);
+        if (i < (script == OCC_FLY ? 60 : 1500) || i % every) continue; /* Ed has landed (LibertyCity2001: a long fall) */
+        tc_viewer_set_aspect(&v, 16.0f / 9);
+        tc_viewer_set_occlusion(&v, false);
+        d = tc_viewer_draws(&v, &ca, &oa);
+        full = (tc_view_draw *)malloc((ca ? ca : 1) * sizeof(*full));
+        memcpy(full, d, ca * sizeof(*full));
+        tc_viewer_set_occlusion(&v, true);
+        d = tc_viewer_draws(&v, &cb, &ob);
+        tc_viewer_frame(&v, 16.0f / 9, &fr);
+        memset(kept, 0, sizeof(float) * OCC_W * OCC_H);
+        memset(left, 0, sizeof(float) * OCC_W * OCC_H);
+        for (j = 0, k = 0; j < ca; j++) {
+            const tc_view_draw *w = &full[j];
+            uint32_t at = w->first_index, end = w->first_index + w->index_count;
+            int solid = j < oa && !(w->flags & (TC_FLAG_ALPHA_TEST | TC_FLAG_BILLBOARD));
+            tc_view_draw a = *w;
+            a.first_index = a.index_count = 0;
+            tris_before += w->index_count / 3;
+            while (k < cb) {
+                tc_view_draw b = d[k];
+                b.first_index = b.index_count = 0;
+                if (memcmp(&a, &b, sizeof(a)) != 0 || d[k].first_index < at || d[k].first_index + d[k].index_count > end) break;
+                if ((k < ob) != (j < oa)) order_wrong++;
+                if (d[k].first_index > at) occ_range(&v, &fr.view_projection, w, at, d[k].first_index, left);
+                if (solid) occ_range(&v, &fr.view_projection, w, d[k].first_index, d[k].first_index + d[k].index_count, kept);
+                tris_after += d[k].index_count / 3;
+                at = d[k].first_index + d[k].index_count;
+                k++;
+            }
+            if (at < end) {
+                if (w->flags & TC_FLAG_BILLBOARD) order_wrong++; /* never left out */
+                else occ_range(&v, &fr.view_projection, w, at, end, left);
+            }
+        }
+        if (k != cb) order_wrong++;
+        for (j = 0; j < (uint32_t)(OCC_W * OCC_H); j++) bad += left[j] > kept[j] * 1.00002f;
+        level_changed += bad;
+        if (bad > *worst) *worst = bad;
+        hidden += v.occluded_count, cells += v.occluded_cells, occluders += v.occluder_tris;
+        free(full);
+        f++;
+    }
+    if (f) printf("  %-24s %s, %d frames: %.0f triangles a frame of %.0f in view; %.0f draws and %.0f cells hidden behind %.0f "
+                  "occluder triangles; %u pixels changed\n", name, script == OCC_FLY ? "flying" : "on foot", f, tris_after / f,
+                  tris_before / f, hidden / f, cells / f, occluders / f, level_changed);
+    check(order_wrong == 0, "occlusion: the list is the one without it, in order, with draws left out; billboards stay");
+    *changed += level_changed;
+    *pixels += (uint64_t)f * OCC_W * OCC_H;
+    free(kept);
+    free(left);
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+    free(ai);
+    return f > 0;
+}
+
+/* Occlusion culling changes next to nothing of the picture, and is worth having. Not nothing: an imported level's
+ * walls don't always meet (cracks a fraction of a pixel wide, which show what is behind as single pixels), and the
+ * small depth picture can't hold a crack. The bound: one pixel in 100000 over all frames, 50 in the worst. */
+static void occlusion_scenario(const char *dir) {
+    uint64_t changed = 0, pixels = 0;
+    uint32_t worst = 0;
+    int ran = 0;
+    printf("occlusion culling (levels without sectors), against a %d x %d software render:\n", OCC_W, OCC_H);
+    ran += occlusion_level(dir, "LibertyCity2001", OCC_WALK, 40, 19, &changed, &pixels, &worst);
+    ran += occlusion_level(dir, "LibertyCity2001", OCC_FLY, 20, 31, &changed, &pixels, &worst);
+    ran += occlusion_level(dir, "SSX_ElysiumAlps", OCC_WALK, 20, 37, &changed, &pixels, &worst);
+    ran += occlusion_level(dir, "SSX_MerquryCityMeltdown", OCC_WALK, 20, 37, &changed, &pixels, &worst);
+    if (!ran) return;
+    printf("  %llu of %llu pixels changed (%.5f %%), %u in the worst frame\n", (unsigned long long)changed,
+           (unsigned long long)pixels, 100.0 * (double)changed / (double)pixels, worst);
+    check((double)changed <= (double)pixels * 1e-5 && worst <= 50, "occlusion: at most a pixel in 100000 changes, 50 in a frame");
 }
 
 /* FNV-1a over raw bytes: the ride's trace, to compare builds by. */
@@ -1295,6 +1480,7 @@ done:
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
     cull_scenario(dir);
+    occlusion_scenario(dir);
     car_ride_scenario(dir);
     check(bad_frames == 0, "every frame's draw list is valid");
     tc_viewer_free(&v);

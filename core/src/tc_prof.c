@@ -36,14 +36,14 @@ void tc_prof_read(tc_prof_stats *out, bool reset) {
 const char *tc_prof_zone_name(tc_prof_zone z) {
     static const char *const names[TC_PZ_COUNT] = {
         "update", "ticks", "cast first", "ed", "cast rest", "custom", "simple", "camera", "sight", "lighting",
-        "portals", "draws", "draw statics", "draw persos", "draw sort", "draw cull",
+        "portals", "draws", "draw statics", "draw persos", "draw sort", "draw cull", "draw occluders",
     };
     return (unsigned)z < TC_PZ_COUNT ? names[z] : "?";
 }
 
 const char *tc_prof_counter_name(tc_prof_counter c) {
     static const char *const names[TC_PC_COUNT] = {
-        "collision queries", "collision cells", "collision tris", "collision loose", "sight tris",
+        "collision queries", "collision cells", "collision tris", "collision loose", "sight tris", "occluder tris",
     };
     return (unsigned)c < TC_PC_COUNT ? names[c] : "?";
 }

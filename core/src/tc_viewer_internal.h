@@ -8,6 +8,7 @@
  *   tc_viewer_portals.c  portals, level changes, screen transitions and overlays, the gunsight
  *   tc_viewer_light.c    baked light sets and the light persos, the game's lighting (sectors' lights and fog)
  *   tc_viewer_draw.c     the mesh table, transparent pieces, sector ranges, the draw list, the frame's shading values
+ *   tc_viewer_occlusion.c  occlusion culling: what is in view but behind something solid (levels without sectors)
  *   tc_viewer_tape.c     the original demo tapes
  *   tc_viewer_debug.c    the debug menu and the HUD's glue */
 #ifndef TONIC_TC_VIEWER_INTERNAL_H
@@ -68,6 +69,7 @@ static inline bool drawable(const tc_mesh *m) { return m->index_count > 0 && m->
 struct tc_viewer_cell {
     uint32_t first, count;
     float sphere[4];        /* centre xyz, radius (mesh space) */
+    float box[6];           /* their vertices' bounds: lo xyz, hi xyz (occlusion: tc_viewer_occlusion.c) */
 };
 
 struct tc_viewer_char_lit {
@@ -125,6 +127,12 @@ void tcv_measure_sky(tc_viewer *v);
 void tcv_view_light(tc_view_light *o, const tc_light *L, float w);
 uint16_t tcv_perso_light_sector(const tc_viewer *v, uint32_t i);
 void tcv_update_lighting(tc_viewer *v, float dt);
+
+/* tc_viewer_occlusion.c */
+bool tcv_occ_init(tc_viewer *v);
+void tcv_occ_free(tc_viewer *v);
+bool tcv_occ_begin(tc_viewer *v);
+bool tcv_occ_hidden(const tc_viewer *v, const tc_mat4 *model, const float *box);
 
 /* tc_viewer_draw.c */
 bool tcv_make_cells(tc_viewer *v);

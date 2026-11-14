@@ -10,6 +10,9 @@ spliced into a finished level for the core's toy car (core/include/tonic/custom/
   - TEXS: its textures (PNG, in <out>/Vehicles/<name>/), by path relative to the level's folder.
   - SECT, LITE when the level has them: the perso's sector (none: always drawn) and its parts' materials (the port's
     guess, ambient 0.35, diffuse 0.75: no car in the original to read).
+Each part comes twice: as modelled, and a far model (object | FAR_OBJECT: simplify(), a few thousand triangles for the
+whole car instead of some 94 thousand) that the core draws in its place from FAR distance on (tc_viewer_draw.c,
+TCX_PART_FAR / TC_VIEW_CAR_FAR). No sample shows a far object, so nothing else ever draws one.
 Car axes, as every perso's: the front local -Y, the left +X, z = 0 where the wheels touch the ground (GTA's front is +Y:
 turned half round).
 """
@@ -26,6 +29,8 @@ FLOOR_CLEARANCE = 0.2    # the box starts this far above the ground: Ed walks in
 PCOL_MEETS, PCOL_FLOOR_OK, PCOL_HAS_SET, PCOL_ACTIVE = 1, 2, 8, 16
 MAIN_PRIORITY, MAIN_FLAGS = 127, PCOL_MEETS | PCOL_FLOOR_OK | PCOL_HAS_SET  # retail Ed's collide set (ttlv.perso_collision)
 LITE_AMBIENT, LITE_DIFFUSE = 0.35, 0.75
+FAR_OBJECT = 0x4000      # a part's far model: its object with this bit (core: TCX_PART_FAR)
+FAR_CELL = 0.08          # the far model's grain: the vertices of each cube this wide become one
 RIDER_SCALE = 0.42  # Ed in the seat, shrunk (2.17 tall -> about 0.9: his head over the windscreen of a small car)
 
 
@@ -120,6 +125,50 @@ def read_parts(glb, tex_dir):
     return out_body, wheels, seat
 
 
+def simplify(verts, indices, cell=FAR_CELL):
+    """A part's far model, by vertex clustering: every vertex in a cube of `cell` moves to the cube's mean position, so
+    triangles within a cube vanish and the surface stays closed (no cracks: a cube has one position). A cube keeps
+    separate vertices where the texture or the shading breaks (uv more than 1/8 of the texture apart, normals in
+    different octants), each with its group's mean normal and uv, so seams and hard edges stay. Twice-told triangles go."""
+    import math
+    cubes, groups, vert_group = {}, {}, []
+    for p, n, u in verts:
+        cube = tuple(math.floor(p[k] / cell) for k in range(3))
+        key = (cube, math.floor(u[0] * 8), math.floor(u[1] * 8), n[0] >= 0, n[1] >= 0, n[2] >= 0)
+        c = cubes.setdefault(cube, [0.0, 0.0, 0.0, 0])
+        g = groups.setdefault(key, [len(groups), cube, 0.0, 0.0, 0.0, 0.0, 0.0, 0])
+        for k in range(3):
+            c[k] += p[k]
+            g[2 + k] += n[k]
+        c[3] += 1
+        g[5] += u[0]
+        g[6] += u[1]
+        g[7] += 1
+        vert_group.append(g)
+    out_verts = [None] * len(groups)
+    for g in groups.values():
+        c = cubes[g[1]]
+        length = math.sqrt(g[2] ** 2 + g[3] ** 2 + g[4] ** 2) or 1.0
+        out_verts[g[0]] = (tuple(c[k] / c[3] for k in range(3)), (g[2] / length, g[3] / length, g[4] / length),
+                           (g[5] / g[7], g[6] / g[7]))
+    out_indices, seen = [], set()
+    for t in range(0, len(indices) - 2, 3):
+        a, b, c = (vert_group[indices[t + k]] for k in range(3))
+        if a[1] == b[1] or b[1] == c[1] or a[1] == c[1]:
+            continue  # two corners in one cube: no area left
+        key = frozenset((a[0], b[0], c[0]))
+        if key in seen:
+            continue
+        seen.add(key)
+        out_indices += [a[0], b[0], c[0]]
+    used = sorted(set(out_indices))
+    remap = {old: new for new, old in enumerate(used)}
+    return [out_verts[i] for i in used], [remap[i] for i in out_indices]
+
+
+_far_cache = {}
+
+
 def geometry(verts, indices):
     return (struct.pack('<II', len(verts), len(indices))
             + b''.join(struct.pack('<8f3I2f', *p, *n, *u, 0, 0, 0, -1.0, -1.0) for p, n, u in verts)
@@ -162,6 +211,12 @@ def splice(c, glb, name, tex_dir, ttlv_dir, world, read_textures):
     for k, (_, _, _, _, wparts) in enumerate(wheels):
         for (png, flags), verts, indices in wparts:
             parts.append((k + 1, k + 1, surface(tex(png), flags), verts, indices))
+    # each part's far model after them (the same for every car of this model: made once)
+    far = _far_cache.get(glb)
+    if far is None:
+        far = _far_cache[glb] = [simplify(verts, indices) for _, _, _, verts, indices in parts]
+    near_triangles = sum(len(i) // 3 for _, _, _, _, i in parts)
+    parts += [(ch, ob | FAR_OBJECT, s, fv, fi) for (ch, ob, s, _, _), (fv, fi) in zip(parts, far) if fi]
     channels = 1 + len(wheels)
     n_persos, = struct.unpack_from('<I', c['PRSO'])
     entry = struct.pack('<12f', *world) + struct.pack('<HHf', channels, 1, 1.0) + struct.pack(f'<{channels}h', -1, *[0] * len(wheels))
@@ -216,4 +271,4 @@ def splice(c, glb, name, tex_dir, ttlv_dir, world, read_textures):
             entries += struct.pack('<6fI', *[LITE_AMBIENT] * 3, *[LITE_DIFFUSE] * 3, 1) + struct.pack('<II3f', 0, len(verts), *centre)
         c['LITE'] = (lite[:table_at] + struct.pack('<I', len(spans) + len(parts)) + lite[table_at + 4:insert] + entries
                      + lite[insert:])
-    return len(parts), sum(len(i) // 3 for _, _, _, _, i in parts), (lo, hi), wheels
+    return len(parts), near_triangles, (lo, hi), wheels

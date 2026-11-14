@@ -264,6 +264,19 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     SDL_DrawGPUIndexedPrimitives(c->pass, d->index_count, 1, m->first_index + d->first_index, m->vertex_offset, 0);
 }
 
+static bool occlusion_on = true;
+static uint32_t last_draws, last_triangles;
+
+void view_set_occlusion(bool on) { occlusion_on = on; }
+bool view_occlusion(void) { return occlusion_on; }
+
+void view_draw_stats(const view *v, uint32_t *draws, uint32_t *triangles, uint32_t *hidden_draws, uint32_t *hidden_cells) {
+    *draws = last_draws;
+    *triangles = last_triangles;
+    *hidden_draws = v->has_viewer ? v->viewer.occluded_count : 0;
+    *hidden_cells = v->has_viewer ? v->viewer.occluded_cells : 0;
+}
+
 void view_draw_frame(view *v, gpu_frame *f) {
     tc_view_frame fr;
     tc_viewer_frame(&v->viewer, (float)f->width / (float)SDL_max(f->height, 1u), &fr);
@@ -314,7 +327,11 @@ void view_draw_frame(view *v, gpu_frame *f) {
     uint32_t count, opaque;
     /* the window's shape: levels without sectors leave out what the camera can't see (tc_viewer_set_aspect) */
     tc_viewer_set_aspect(&v->viewer, (float)f->width / (float)SDL_max(f->height, 1u));
+    tc_viewer_set_occlusion(&v->viewer, occlusion_on); /* and what is in view but hidden behind solid statics (F5) */
     const tc_view_draw *draws = tc_viewer_draws(&v->viewer, &count, &opaque);
+    last_draws = count;
+    last_triangles = 0;
+    for (uint32_t i = 0; i < count; i++) last_triangles += draws[i].index_count / 3;
     for (uint32_t i = 0; i < opaque; i++) draw_mesh(&c, &draws[i]);
     tc_view_shadow sh;
     if (tc_viewer_shadow(&v->viewer, &sh)) {

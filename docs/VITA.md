@@ -76,7 +76,11 @@ scripts make the stick camera-relative themselves.
 ### 2. Fewer draws (core; all frontends benefit)
 - **Static batching** at `tc_viewer_init`: merge static meshes that share texture, flags and UV scroll into one mesh
   (animated textures and water meshes stay separate). The mesh table keeps its contract; it just gets shorter.
-- **Frustum culling** in `tc_viewer_draws`: per-mesh bounds against the frame's view-projection.
+- **Frustum culling** in `tc_viewer_draws`: per-mesh bounds against the frame's view-projection. Done for the levels
+  without sectors (`tc_viewer_set_aspect`), with **occlusion culling** on top since 2026-11-14 (`tc_viewer_set_occlusion`,
+  docs/OVERVIEW.md "How it is checked"): all in the core, plain C, so every backend gets it. On a Vita / 3DS-class CPU
+  its cost (1 to 2.5 ms on the Celeron J4125) needs measuring; `TC_OCC_W`, `TC_OCC_BUDGET` and `TC_OCC_MIN_PIXELS`
+  in `tc_viewer_occlusion.c` trade its cost against what it hides.
 - **Lead (user's hunch, 2026-10-29): the game draws only parts of a level.** It loads the whole level but renders by
   sector: OpenSpace sectors carry lists of the sectors to draw (and to keep active) from them. sud0's sector data
   (seen while chasing the ghost water) has several {head, tail, count} lists after the environments and surfaces,

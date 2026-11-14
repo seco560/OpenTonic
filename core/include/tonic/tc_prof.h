@@ -28,6 +28,7 @@ typedef enum tc_prof_zone {
     TC_PZ_DRAW_PERSOS,    /*   the persos (and Ed) */
     TC_PZ_DRAW_SORT,      /*   the blended draws back to front */
     TC_PZ_DRAW_CULL,      /* the culling of tc_viewer_set_aspect (levels without sectors) */
+    TC_PZ_DRAW_OCCLUDERS, /*   of it: drawing the occluders' depth picture (tc_viewer_set_occlusion) */
     TC_PZ_COUNT
 } tc_prof_zone;
 
@@ -37,6 +38,7 @@ typedef enum tc_prof_counter {
     TC_PC_COLLISION_TRIS,     /*   triangles handed to the caller (after the box test) */
     TC_PC_COLLISION_LOOSE,    /*   moved sectors' triangles tested one by one */
     TC_PC_SIGHT_TRIS,         /* triangles the camera's sight test transformed and crossed */
+    TC_PC_OCCLUDER_TRIS,      /* triangles drawn into the occlusion culling's depth picture */
     TC_PC_COUNT
 } tc_prof_counter;
 

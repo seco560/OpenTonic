@@ -28,6 +28,10 @@ extern "C" {
  * camera, its vertices relative to the eye (SSX Tricky's skies are: tools/ttre/ssx.py add_sky; Tonic Trouble's are
  * level geometry). Without the custom layer it stays where its vertices are: round the origin. */
 #define TCX_FLAG_ROUND_CAMERA (1u << 8)
+/* A car's part with this bit in its object is the far model of the part without it (tools/ttre/vehicle.py: a few
+ * thousand triangles for the whole car instead of some 94 thousand), drawn in its place from TC_VIEW_CAR_FAR on. No
+ * sample shows such an object, so nothing but the cars' drawing (tc_viewer_draw.c) ever draws one. */
+#define TCX_PART_FAR 0x4000u
 
 /* The custom layer's data in a level (tc_level.custom; NULL: none). */
 typedef struct tcx_level {

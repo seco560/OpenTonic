@@ -82,7 +82,7 @@ static void scenario(const char *dir, const char *name, script s, float seconds)
     tc_viewer_desc desc;
     tc_prof_stats st;
     series upd = {0}, drw = {0};
-    double t0, load_ms, init_ms, draws_sum = 0, tris_sum = 0, static_tris = 0;
+    double t0, load_ms, init_ms, draws_sum = 0, tris_sum = 0, static_tris = 0, hidden_sum = 0, cells_sum = 0;
     int i, frames = (int)(seconds * 60), warm, z;
     tc_vec3 start, settle;
 
@@ -150,6 +150,8 @@ static void scenario(const char *dir, const char *name, script s, float seconds)
         upd.ms[upd.n++] = (b - a) * 1000;
         drw.ms[drw.n++] = (c - b) * 1000;
         draws_sum += count;
+        hidden_sum += v.occluded_count;
+        cells_sum += v.occluded_cells;
         for (k = 0; k < count; k++) {
             tris_sum += d[k].index_count / 3;
             if (d[k].mesh < v.perso_first || (d[k].mesh >= v.piece_first && d[k].mesh < v.piece_first + v.piece_count))
@@ -173,6 +175,8 @@ static void scenario(const char *dir, const char *name, script s, float seconds)
                                              (double)st.counts[z] / frames, z + 1 < TC_PC_COUNT ? " ·" : "");
     printf("\n    drawn, per frame: %.0f draws, %.0f triangles (statics %.0f, persos and Ed %.0f)\n", draws_sum / frames,
            tris_sum / frames, static_tris / frames, (tris_sum - static_tris) / frames);
+    if (hidden_sum + cells_sum > 0)
+        printf("    hidden, per frame (occlusion culling): %.0f draws, %.0f cells of wide statics\n", hidden_sum / frames, cells_sum / frames);
     {
         tc_vec3 end = tc_viewer_can_play(&v) && s != FLY ? tc_viewer_player(&v)->position : v.camera.position;
         printf("    moved %.1f units (the scenario ran)\n", (double)tc_v3_length(tc_v3_sub(end, start)));

@@ -110,6 +110,27 @@ takes LibertyCity2001 walking to 1.4 million and the SSX ride to 540 thousand. W
 some 94 thousand triangles each (a converter-side simplification would be the next step). Levels with sectors are not
 culled (the original's own visibility); viewcheck proves on LibertyCity2001 that nothing in view is left out.
 
+**Occlusion culling (2026-11-14, `core/src/tc_viewer_occlusion.c`, `tc_viewer_set_occlusion`; F5 in the SDL build).**
+Culling by the view still handed the GPU everything inside it, hidden or not: measured on a software render, the
+draws with at least one visible pixel held 2 % of the triangles handed over when walking in LibertyCity2001, 21 % on
+the SSX ride. So, on levels without sectors, each frame the core now draws the nearest big triangles of the opaque
+statics (some 1,500 of them, largest first, nearest sets first) into a 256-pixel-wide depth picture on the CPU, and
+leaves out every draw (and every cell of a wide static) whose bounding box is wholly behind it. perfcheck on the
+Celeron J4125, triangles handed to the GPU per frame: LibertyCity2001 walking 1.34 million -> some 130 thousand, the
+SSX ride 535 thousand -> some 110 thousand; free-fly over the city barely changes (from the air little hides
+anything; the cars' 94 thousand triangles each remain the cost there). It costs the core 1 to 2.5 ms a frame on the
+Celeron. viewcheck measures what it changes of the picture against a 960 x 540 software render of each frame: 5
+pixels of 52 million (hairline cracks between the city's walls, which the small depth picture cannot hold). Levels
+with sectors are untouched. Not done yet, next in line if needed: backface culling (the pipelines draw both faces),
+drawing the opaque draws front to back, a SIMD rasteriser.
+
+**The cars (2026-11-14).** Each of LibertyCity2001's cars is some 94 thousand triangles. Two rules, both for
+custom-gameplay cars only: one more than `TC_VIEW_CAR_HIDE_HEIGHT` (100) below the camera is not drawn, and one more
+than `TC_VIEW_CAR_FAR` (40) away is drawn as its far model: `tools/ttre/vehicle.py` `simplify()` (vertex clustering,
+8 cm cubes: some 15 thousand triangles), stored as extra parts with `TCX_PART_FAR` in their object. perfcheck, the
+cars' triangles per frame: walking 48 thousand -> 8 thousand, free-fly 599 thousand -> 69 thousand. The SDL build's
+antialiasing now starts at 2x (8x before).
+
 ## Where to read more
 
 | about | file |

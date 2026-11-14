@@ -364,6 +364,14 @@ typedef struct tc_viewer {
     uint32_t cell_count, cell_cap;
     uint32_t *mesh_cells;
     tc_mesh *celled;
+    /* Occlusion culling (port: the levels without sectors; tc_viewer_set_occlusion, src/tc_viewer_occlusion.c): after
+     * the culling above, what is in view but wholly behind the level's solid statics is left out too. */
+    bool occlusion_off;       /* tc_viewer_set_occlusion(v, false) */
+    struct tc_viewer_occ *occ;
+    float *mesh_box;          /* per mesh: its vertex bounds, lo xyz and hi xyz (mesh space) */
+    uint32_t occluded_count;  /* draws of `draws` left out whole as hidden by the last tc_viewer_draws */
+    uint32_t occluded_cells;  /* cells left out as hidden */
+    uint32_t occluder_tris;   /* triangles it drew into its depth picture */
 
     /* The debug menu (tc_debug.h; F4). While it is open the game holds, as under a scripted picture, and the held
      * actions move the menu instead (tc_viewer_toggle_debug). */
@@ -419,6 +427,12 @@ bool tc_viewer_tape_done(const tc_viewer *v);
  * level, so transparent statics are cut into pieces of TC_VIEW_PIECE_SIZE cells (by triangle centroid) at init.
  * Storage is the viewer's, valid until the next call. */
 #define TC_VIEW_PIECE_SIZE 16.0f
+/* Port (the user's, 2026-11-14): a custom-gameplay car (tcx_perso_pose; LibertyCity2001's, some 94 thousand triangles
+ * each) is not drawn while the camera is more than this far above it: from up there it is a few pixels, and from the
+ * air nothing hides the cars (occlusion culling can't help). */
+#define TC_VIEW_CAR_HIDE_HEIGHT 100.0f
+/* And from this far from the camera on it is drawn as its far model (TCX_PART_FAR), when the level holds one. */
+#define TC_VIEW_CAR_FAR 40.0f
 const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count);
 /* The drawable's width / height, before tc_viewer_draws. On a level without sectors (the imported ones: nothing else
  * says what is in sight) tc_viewer_draws then leaves out the draws whose bounds are wholly outside the camera's view:
@@ -428,6 +442,13 @@ const tc_view_draw *tc_viewer_draws(tc_viewer *v, uint32_t *count, uint32_t *opa
 void tc_viewer_set_aspect(tc_viewer *v, float aspect);
 /* Culling on (the default) or off, for comparing (tc_viewer_set_aspect). */
 void tc_viewer_set_culling(tc_viewer *v, bool on);
+/* Occlusion culling on (the default) or off, for comparing. With the culling of tc_viewer_set_aspect (and only then: a
+ * level without sectors, an aspect set, culling on), tc_viewer_draws also leaves out what is inside the view but wholly
+ * hidden behind the level's solid geometry: each frame it draws the nearest big triangles of the opaque statics into a
+ * small depth picture on the CPU and tests every draw's bounding box (every cell's of a wide static) against it. Never
+ * billboards nor Ed. tc_viewer.occluded_count / occluded_cells / occluder_tris say what the last frame did. */
+void tc_viewer_set_occlusion(tc_viewer *v, bool on);
+bool tc_viewer_occlusion(const tc_viewer *v);
 void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out);
 
 /* A simple round shadow under Ed (a stand-in until the game's own is read): where straight down from him meets the

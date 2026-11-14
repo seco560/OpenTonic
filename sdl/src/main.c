@@ -44,8 +44,10 @@ static const char *controls_text =
     "HUD:  H auto-hide on / off (each element shows for five seconds when it changes, then slides out; D-pad right)\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
     "Lighting:  L  the original's (default: its formula, the lights and fog of Ed's sector) / the port's old one\n"
-    "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 8)\n"
+    "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 2)\n"
     "Supersampling:  F3  off / 1.5x / 2x  (draws the level at that many times the window's pixels; TONIC_SCALE=150|200)\n"
+    "Occlusion culling:  F5  on (default) / off  (imported levels: leaves out what is hidden behind walls and ground;\n"
+    "  the terminal says what the frame drew; TONIC_OCCLUSION=0 starts with it off)\n"
     "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
@@ -901,6 +903,16 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
         }
         return;
     }
+    if (sc == SDL_SCANCODE_F5) {  /* F5: occlusion culling on / off (levels without sectors), with what the frame drew */
+        if (!k->repeat) {
+            uint32_t draws = 0, tris = 0, hidden = 0, cells = 0;
+            if (a->view) view_draw_stats(a->view, &draws, &tris, &hidden, &cells);
+            SDL_Log("Occlusion culling was %s: the last frame drew %u draws, %u triangles (%u draws and %u cells hidden). Now %s.",
+                    view_occlusion() ? "on" : "off", draws, tris, hidden, cells, view_occlusion() ? "off" : "on");
+            view_set_occlusion(!view_occlusion());
+        }
+        return;
+    }
     if (sc == SDL_SCANCODE_F9) {  /* F9: mark this moment in the recording */
         if (!k->repeat) mark_moment(a);
         return;
@@ -1506,7 +1518,7 @@ static void look_settings(app *a) {
 /* TONIC_MSAA=1/2/4/8: the level's starting antialiasing (F2 cycles it). */
 static int msaa_setting(void) {
     const char *e = SDL_getenv("TONIC_MSAA");
-    int n = e ? SDL_atoi(e) : 8;
+    int n = e ? SDL_atoi(e) : 2; /* 2x: 8x is too heavy for integrated graphics (the Celeron J4125's UHD 600) */
     return n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 1;
 }
 
@@ -1530,6 +1542,10 @@ int main(int argc, char **argv) {
         return 1;
     }
     gpu_set_scale(&a.g, scale_setting());
+    {   /* TONIC_OCCLUSION=0: occlusion culling starts off (F5 switches it) */
+        const char *e = SDL_getenv("TONIC_OCCLUSION");
+        if (e && e[0] == '0') view_set_occlusion(false);
+    }
     look_settings(&a);
 
     /* --replay [file]: plays a recording back (the newest without one); the rest as usual. */
