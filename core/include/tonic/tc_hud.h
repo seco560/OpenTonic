@@ -66,8 +66,12 @@ typedef struct tc_hud {
     tc_hud_data data;
     bool loaded;
     /* The standard HUD stays on screen (the game's default). Set: an element shows for five seconds when its value
-     * changes, then slides out (the game's other mode, on one of its F keys). A setting for later: nothing sets it yet. */
+     * changes, then slides out (the game's other mode, on one of its F keys). tc_viewer_set_hud_auto_hide (H). */
     bool auto_hide;
+    /* Port (the user, 2026-11-14): the levels outside the retail game (the Special Edition's, the imported ones: the SSX
+     * courses, LibertyCity2001), extensions of it, show the standard HUD's left side only: Ed's life (the thermometer),
+     * his head and lives; nothing on the right. Set by the viewer (tc_viewer_set_hud). */
+    bool left_only;
     /* the standard HUD: what was last shown (a change brings its element in for five seconds), which elements are
      * asked for (the exe's DAT_008bd07b: 1 life and lives, 4 the spade, 8 the bees, 0x10 the tings, 0x20 Doc's
      * object), since when, and how far out each has slid (2: gone) */

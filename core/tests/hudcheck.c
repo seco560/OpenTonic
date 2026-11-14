@@ -319,6 +319,24 @@ static void sud0(const char *dir) {
     stop(&g);
 }
 
+
+/* The levels outside the retail game (tc_hud.left_only; the user, 2026-11-14): Ed's life, head and lives on the left,
+ * the right side clean. An imported level (no cast: SSX_Trick, the skier) and the Special Edition's sud0, when converted. */
+static void extension(const char *dir, const char *name, const char *what) {
+    game g;
+    float b[4];
+    char text[200];
+    bool on;
+    if (!start(&g, dir, name)) return;
+    frames(&g.v, 90);
+    on = bounds(&g.v, 4.0f / 3, b);
+    snprintf(text, sizeof text, "%s: Ed's life and lives only, on the left (the HUD's quads %.2f..%.2f of the width)", what,
+             on ? (double)b[0] : -1.0, on ? (double)b[2] : -1.0);
+    check(g.v.hud.left_only && on && b[2] < 0.3f, text);
+    picture(&g.v, name, 640, 480);
+    stop(&g);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv";
     char path[1024];
@@ -333,6 +351,12 @@ int main(int argc, char **argv) {
     data_checks();
     totalski(dir);
     sud0(dir);
+    {
+        char se[1024];
+        snprintf(se, sizeof se, "%s/../se/ttlv", dir);
+        extension(dir, "SSX_Trick", "an imported level (SSX_Trick)");
+        extension(se, "sud0", "the Special Edition's sud0");
+    }
     free(hud_bytes);
     printf(failures ? "%d FAILED\n" : "ok\n", failures);
     return failures ? 1 : 0;

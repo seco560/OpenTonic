@@ -278,10 +278,12 @@ int picker_hit(picker *p, float x, float y) {
 
 void picker_set_hover(picker *p, float x, float y) { p->hover = picker_hit(p, x, y); }
 
+/* A stage of either edition or an imported level (SSX courses, LibertyCity2001 ...) at random; not the cutscenes. */
 int picker_random(const picker *p) {
     int found = 0, pick = -1;
-    for (int i = 0; i < p->first[SECTION_CUTSCENES]; i++)
-        if (!tc_level_is_cutscene(p->entries[i].name) && SDL_rand(++found) == 0) pick = i;
+    for (int i = 0; i < p->count; i++)
+        if (p->entries[i].section != SECTION_CUTSCENES && !tc_level_is_cutscene(p->entries[i].name) && SDL_rand(++found) == 0)
+            pick = i;
     return pick;
 }
 

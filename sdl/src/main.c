@@ -41,6 +41,7 @@ static const char *controls_text =
     "Animation:  P pause / resume  -  [ slower  -  ] faster\n"
     "Lighting variant:  Alt + 1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain), Alt + 0 the level's own\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
+    "HUD:  H auto-hide on / off (each element shows for five seconds when it changes, then slides out; D-pad right)\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
     "Lighting:  L  the original's (default: its formula, the lights and fog of Ed's sector) / the port's old one\n"
     "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 8)\n"
@@ -61,7 +62,7 @@ static const char *controls_text =
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
     "  R2:  fly faster  -  L2:  recentre the camera  -  Triangle:  close-up  -  L3 (click):  first person\n"
-    "  D-pad up / down:  camera distance / fly speed  -  Start:  level select  -  Select:  controls\n"
+    "  D-pad up / down:  camera distance / fly speed  -  D-pad right:  HUD auto-hide  -  Start:  level select  -  Select:  controls\n"
     "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
@@ -82,6 +83,7 @@ typedef struct app {
     SDL_JoystickID pad;          /* the gamepad last used, 0 = none (every gamepad is opened as it connects) */
     bool pad_fast;               /* its right trigger past half way: TC_VA_FAST */
     bool pad_recenter;           /* its left trigger past half way: recentre the camera (on the press) */
+    bool hud_auto_hide;          /* H / D-pad right: the HUD's auto-hide (tc_viewer_set_hud_auto_hide), kept across levels */
     float look_sensitivity;      /* the look settings (TONIC_LOOK, TONIC_INVERT; ; ' Y), given to every level's viewer */
     bool invert_x, invert_y;
     int nav_dx, nav_dy;          /* level select: the left stick's direction, and when it moves the selection again */
@@ -154,6 +156,7 @@ static void update_title(app *a) {
     if (a->marks) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", %u marks", a->marks);
     if (a->replaying) SDL_strlcat(aa, a->replay_paused ? ", playback, paused" : ", playback", sizeof aa);
     if (a->g.scale > 100) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", SS %s", a->g.scale >= 200 ? "2x" : "1.5x");
+    if (a->hud_auto_hide) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", HUD auto-hide");
     tc_viewer_status(&v->viewer, aa, status, sizeof status);
     SDL_snprintf(s, sizeof s, "%s  \xc2\xb7  %s", a->title_base, status);
     if (SDL_strcmp(s, a->title) != 0) {
@@ -307,6 +310,7 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     close_picker(a);
     close_replays(a);
     a->view = v;
+    tc_viewer_set_hud_auto_hide(&v->viewer, a->hud_auto_hide);
     SDL_free(a->current_folder);
     a->current_folder = path_dir(path);
     char *stem = path_stem(path);
@@ -623,20 +627,14 @@ static char *ski_slope(app *a, const char *folder) {
     return path;
 }
 
-/* At the end, or skipped: the ski slope, as the original game starts it, after its loading screen. Which one is a coin
- * toss, retail or Special Edition (the user's, not the original's); the other when that one isn't converted, the level
- * select when neither is. */
+/* At the end, or skipped: the retail ski slope, as the original game starts it, after its loading screen; the level
+ * select when it isn't converted. (Until 2026-11-14 a coin toss between retail and the Special Edition: the user's
+ * stopgap, retired; the Special Edition's levels are an optional extension of the retail game.) */
 static void finish_intro(app *a) {
     if (!a->intro) return;
     intro_close(a->intro);
     a->intro = NULL;
-    char *se = path_join(a->data_dir, "se"), *se_levels = se ? path_join(se, "ttlv") : NULL;
-    const char *folders[2] = {a->level_folder, se_levels};
-    int toss = SDL_rand(2);
-    char *path = ski_slope(a, folders[toss]);
-    if (!path) path = ski_slope(a, folders[1 - toss]);
-    SDL_free(se);
-    SDL_free(se_levels);
+    char *path = ski_slope(a, a->level_folder);
     if (!path) { show_picker(a); return; }
     SDL_free(a->current_folder);
     a->current_folder = path_dir(path);  /* the loading screen's vignette is the edition's */
@@ -711,6 +709,14 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     if (sc == SDL_SCANCODE_COMMA || sc == SDL_SCANCODE_PERIOD) {  /* , / .: field of view (vertical, 5 degree steps) */
         tc_viewer_step_fov(v, sc == SDL_SCANCODE_PERIOD ? 1 : -1);
         update_title(a);
+        return;
+    }
+    if (sc == SDL_SCANCODE_H) {  /* H: the HUD's auto-hide (kept across levels) */
+        if (!k->repeat) {
+            a->hud_auto_hide = !a->hud_auto_hide;
+            tc_viewer_set_hud_auto_hide(v, a->hud_auto_hide);
+            update_title(a);
+        }
         return;
     }
     if (sc == SDL_SCANCODE_G) {  /* G: level fog on/off */
@@ -979,6 +985,12 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         }
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {  /* L3: first person (0) */
             tc_viewer_toggle_first_person(&a->view->viewer);
+            update_title(a);
+            return;
+        }
+        if (button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) {  /* D-pad right: the HUD's auto-hide (H) */
+            a->hud_auto_hide = !a->hud_auto_hide;
+            tc_viewer_set_hud_auto_hide(&a->view->viewer, a->hud_auto_hide);
             update_title(a);
             return;
         }

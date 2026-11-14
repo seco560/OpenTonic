@@ -364,6 +364,7 @@ static void put_standard(draw *d) {
         snprintf(num, sizeof(num), "x%d", (int)v->lives);
         put_standard_text(d, TC_HUD_LIVES, num, -3.5f - h->out_lives, 2.87f, 0, -1);
     }
+    if (h->left_only) return; /* an extension's (tc_hud.left_only): the right side clean */
     if (h->out_spade < GONE && v->spade >= 0) {
         snprintf(num, sizeof(num), "%d", (int)v->spade);
         put_standard_text(d, TC_HUD_SPADE, NULL, 13.8f, h->out_spade + 9.5f, 12.0f, 1);

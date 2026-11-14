@@ -134,7 +134,7 @@ final class LevelPicker: NSView {
         introButton.toolTip = "The game's intro movie (V)"
         randomButton.target = self
         randomButton.action = #selector(random)
-        randomButton.toolTip = "A stage of either edition, at random"
+        randomButton.toolTip = "A stage of either edition, or an imported level, at random"
         replaysButton.target = self
         replaysButton.action = #selector(replays)
         replaysButton.toolTip = "Your recorded sessions: play or delete them"
@@ -161,10 +161,10 @@ final class LevelPicker: NSView {
 
     var isEmpty: Bool { entries.isEmpty }
 
-    /// Opens a stage of either edition at random. Not the cutscenes (the Special Edition's pane has one too: its
-    /// outro), nor the imported models.
+    /// Opens a stage of either edition or an imported level (the SSX courses, LibertyCity2001 ...) at random. Not the
+    /// cutscenes (the Special Edition's pane has one too: its outro).
     func pickRandom() {
-        let stages = entries.filter { $0.section < LevelPicker.cutscenes && tc_level_is_cutscene($0.name) == 0 }
+        let stages = entries.filter { $0.section != LevelPicker.cutscenes && tc_level_is_cutscene($0.name) == 0 }
         if let stage = stages.randomElement() { onPick(stage.url) }
     }
 

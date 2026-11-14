@@ -189,6 +189,30 @@ cavedoc's Doc (portalcheck); the others by the gate only (castcheck no longer ta
 Not checked one by one: sud0's Doc (where he sends Ed depends on the story values, which the port starts at 0 with every
 power on), the spies, the final boss.
 
+## Opened later: arches the story switches on (2026-11-14)
+Some arches start shut, by their own scripts, and another perso opens them:
+- **The worlds' exits** (`SDO_ArcheRetourneDansSud`, e.g. north's `SDO_ArcheFinSud`): B3 = if dsg2 == 0, transparency 0 and
+  `DeactivatePerso(Me)`. The level's end Suzy (`HEG_SuzyFinDeMaps`, north's `NBD_SuzyNorth`) checks the world's gate by
+  her dsg2 (1: power 8, 2: power 128, 3: a perso's dsg13, 4: power 512, 5: power 112, 6: SaveValue(4) == 6). Then she
+  calls `ForceBehaviour(arch, B2)` and `ActivatePerso(arch)`, and takes herself out. B2 fades the arch in (transparency +10 a
+  tick, dsg2 := 1), and B1 is the usual capture (radius 4, B66 / R4).
+- **sud0's skymap arch** (`HEG_ArcheMagicMush`): B2 = if `SaveValue(4) >= 5` and a perso's dsg27 == 1, B3, else
+  `RemovePerso` on itself and the fleeing mushroom. B3 stays translucent (150), with "you need ..." text within 8, until
+  the sum of save values 7, 9, ..., 23 reaches 160. Then it captures (`ChangeLevel('skymap')`).
+
+The bug (fixed 2026-11-14): the port's removal guard (tc_ai_perso.removal_guard) turns a `DeactivatePerso` into a frozen,
+drawn prop when Ed is not near. Nothing undid that, so when Suzy activated the arch it stayed frozen. It never ran its
+fade-in or its capture, and Ed walked into it. Now a deactivation the guard kept (`frozen_inactive`) ends with the next
+`ActivatePerso`, as the deactivation would in the exe. The same fix wakes the other persos that start deactivated until the
+game activates them (north's flying guards `SDO_Garde_Volant`, cavedoc's popcorn `FRB_PopcornAnim` and its spy):
+before, they hung where they stood. portalcheck: "north exit arch, in the game" (Ed waits 14 away first, out of the guard's
+reach, as he does when he comes from afar).
+
+Still a port choice: shut arches are drawn (frozen props), where the exe draws nothing. In sud0 with the port's story values
+(all 0), the skymap arch takes itself out, so it is drawn but never captures. That is right for that story state, but it
+looks like a broken portal. The gates read the port's story state, which starts every power on and every save value at
+0. So north's exit opens at once (power 8), while skymap never does (SaveValue(4) = 0).
+
 ## Cutscene levels: no longer skipped (2026-11-06; docs/ENGINE.md "Walkable scenes")
 Ed now walks into the scene and its speaker's script hands over; an export without SPCH still passes it by. Before:
 Six of sud0's red arches lead to a cutscene level whose character then changes level (`tc_level_after_cutscene`: bar ->
@@ -242,3 +266,22 @@ stood at the end of the placing recordings, front to the camera. Retail sud0 sho
 sud0; SE sud0 shows retail's red exit arch with the "South Plain" sign and leads to retail sud0. An arch is static MESH
 entries plus a PORT record (radius 4, two-sided, the retail walk-in) and two PLAC entries: Ed arrives 5.5 in front of the
 other arch. Level names `se:x` / `retail:x` switch edition; the frontends pick the folder and the vignette.
+
+### Extensions (2026-11-14): the SSX courses and LibertyCity2001
+The custom layer's arches to levels outside the retail game, each only when its files are there (`Arch.needs`; a level
+whose edits all went away is restored from `.custom-base`):
+- **Retail sud0's ice cave** (the Pyrex's cave, `HEG_LacDeGlace`): eleven arches, one per SSX course, A-Z round the walls
+  the way Ed meets them from the passage (the north-east and north walls the user walked in 2026-11-14_004907, the side
+  of the Pyrex's alcove, the wall by the pond); spots picked from the collision (square to the wall, 0.5 off it, 8
+  apart, flat ground under and 5.5 in front). The ski arch (`ZOR_ArcheTotalSki`'s) with an orange swirl and the course's
+  loading badge (PS2LOAD.BIG `ldtrack*.ssh`) on its sign. Walk-in as retail's arches; the course opens at its start.
+- **The way back from a course:** a record in its .ttai at the lowest point of its AI paths (the finish's run-out; ground
+  within 0.4 under it on all 11), radius 15: the cover at once, then sud0 in front of the course's arch.
+- **The Special Edition's sud0 -> LibertyCity2001:** the plain arch with a green swirl against the west wall of Doc's
+  house, facing the middle of the map; **back:** the Special Edition's arch with its South Plain picture in the first car's parking lot,
+  facing it. The pair's places put Ed in front of the other arch each way.
+- **Loading screens:** Vignette/Level/SSX_<course>.png (the badge over the darkened orange swirl); an imported level
+  without one gets a map of its collision from above (LibertyCity2001, SSX_Trick, the next glTF imports).
+- The progress (lives, powers, story values) passes through a level without a cast (tcv_arrive keeps the carry's).
+- portalcheck "custom layer's portals": the arch to SSX_Alaska, SSX_Trick's end back to sud0 in front of its arch, both
+  LibertyCity2001 arches; skipped when their files are not there.

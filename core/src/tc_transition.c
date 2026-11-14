@@ -11,7 +11,10 @@ bool tc_transition_start(tc_transition *t, const tc_ai_transitions *c, bool reve
     const tc_ai_effect *e;
     uint16_t threshold = reveal ? c->reveal_threshold : c->cover_threshold, range = reveal ? c->reveal_range : c->cover_range;
     memset(t, 0, sizeof(*t));
-    t->logo = next(rng) % ((uint32_t)range + 1) > threshold; /* FUN_004cb380 / FUN_004cb4b0 */
+    /* FUN_004cb380 / FUN_004cb4b0: r > threshold picks the logo (effect B, ~24 %). Port (the user, 2026-11-14): the
+     * patterned masks only (effect A); the draw stays, so the random stream (and recordings) go on as before. */
+    t->logo = false;
+    (void)(next(rng) % ((uint32_t)range + 1) > threshold);
     e = &c->effects[(reveal ? 2 : 0) + (t->logo ? 1 : 0)];
     if (e->variant_count == 0) return false;
     t->effect = e;

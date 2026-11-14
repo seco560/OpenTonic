@@ -79,7 +79,7 @@ NO_COLLISION = 17
 # propel themselves over the flats and dips, Tonic Trouble's skier has gravity only. Slower than CRUISE (TT units a
 # second; 14 = 11 m/s = 40 km/h at 1 unit = 80 cm, a slow SSX pace) along the board and on the ground, he is pushed
 # with up to PUSH (u/s^2; his gravity down a 9 degree slope).
-CRUISE, PUSH = 14.0, 6.0
+CRUISE, PUSH = 17.0, 6.0  # 17 u/s since 2026-11-14 (user: "a bit faster"; was 14)
 
 
 # ---- the disc ----

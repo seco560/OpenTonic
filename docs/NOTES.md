@@ -487,8 +487,9 @@ old look for comparing (title: "old lighting").
 - **Intro -> Totalski (2026-10-24, user):** the original game goes from the intro, watched or skipped, straight into
   the ski slope; both frontends do the same (`startAfterIntro` / `finish_intro`; the level select when Totalski is not
   converted). The level select has a big "Play Intro Video" button at the top (and V), Controls top right.
-- **Which ski slope (2026-11-06, user):** a port choice, not the original's: a coin toss between retail and Special
-  Edition Totalski, the other when one isn't converted. The loading screen shows that edition's vignette.
+- **Which ski slope (2026-11-06, user; retired 2026-11-14):** was a port choice, not the original's: a coin toss between
+  retail and Special Edition Totalski. Since 2026-11-14 (user) the retail Totalski only, watched or skipped: the Special
+  Edition's levels are an optional extension of the retail game.
 - **Level select layout (2026-11-06, user):** the Swift build fits the window: imports scroll in the bottom third (at
   least a row, at most what they fill), the level panes get the rest. SDL keeps its two-row panes and scrolling page.
 - **Cutscenes pane (2026-11-08, user):** the cutscenes left the bottom area for a pane of their own, after the Special

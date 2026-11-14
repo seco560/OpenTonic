@@ -545,6 +545,9 @@ struct tc_ai_perso {
                                     not a story check: the removal guard lets it go */
     uint32_t near_main_ms;       /* host-fed: the clock when the main actor was last within reach (0 never) */
     bool frozen;
+    bool frozen_inactive;        /* frozen in place of a DeactivatePerso (PROC 6), not a removal: an ActivatePerso (PROC 5)
+                                    wakes it again, as it would the deactivated perso in the exe (north's exit arch: it
+                                    deactivates itself until Suzy opens it, docs/PORTALS.md "Opened later") */
     uint32_t removals_kept;      /* diagnostics */
     bool read_only_for_cast;     /* port: the cast does not write this perso's dsgvars (the camera's copy, which the main
                                     actor's scripts read: the cutscene triggers' camera modes would hold him), except

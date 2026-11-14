@@ -102,6 +102,16 @@ void tcv_arrive(tc_viewer *v, const tc_viewer_carry *c) {
         g->lives = c->lives;
         g->powers = c->powers;
         memcpy(g->values, c->values, sizeof g->values);
+    } else if (c->has_progress && !v->carry) { /* a level without a cast (an imported one: the SSX courses): nothing here
+                                                * holds the progress, so it is kept for the way out (custom.py's arches) */
+        tc_viewer_carry *keep = (tc_viewer_carry *)tc_calloc(1, sizeof(*keep));
+        if (keep) {
+            keep->has_progress = true;
+            keep->lives = c->lives;
+            keep->powers = c->powers;
+            memcpy(keep->values, c->values, sizeof keep->values);
+            v->carry = keep;
+        }
     }
     for (i = 0; c->place[0] && i < m->place_count; i++)
         if (m->places[i].name && tcv_same_text(m->places[i].name, c->place))
@@ -151,9 +161,10 @@ void tcv_update_portals(tc_viewer *v, float dt) {
             c->vertical_fov = v->camera.vertical_fov;
             c->orbit_distance = v->orbit_distance;
             c->closeup = v->cam.closeup;
-            c->has_progress = v->play->has_cast;
-            if (c->has_progress) tc_cast_level_save(&v->play->cast); /* the way out: the level's saved values */
-            if (c->has_progress) {
+            /* without a cast: the progress it arrived with, if any (kept by tcv_arrive) */
+            if (v->play->has_cast) c->has_progress = true;
+            if (v->play->has_cast) tc_cast_level_save(&v->play->cast); /* the way out: the level's saved values */
+            if (v->play->has_cast) {
                 const tc_ai_globals *g = &v->play->cast.globals;
                 c->lives = g->lives;
                 c->powers = g->powers;

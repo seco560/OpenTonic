@@ -409,6 +409,14 @@ static void hud_tick(tc_viewer *v) {
     memset(&now, 0, sizeof(now));
     now.hit_points = p->main.driver.ai.hit_points;
     now.hit_points_max = p->main.driver.ai.hit_points_max;
+    if (!p->has_cast) { /* an imported level (tc_hud.left_only): his life, and the lives it arrived with (tcv_arrive) */
+        now.lives = v->carry && v->carry->has_progress ? v->carry->lives : 0;
+        now.bees = now.tings = now.spade = -1;
+        now.show_all = !v->hud.auto_hide;
+        tc_hud_tick(&v->hud, NULL, &now);
+        if (tcv_hud_covered(v)) tc_hud_away(&v->hud);
+        return;
+    }
     now.lives = g->lives;
     /* Port (the user, 2026-11-13: no ammunition counter before Ed has the peashooter): the bees show with power 8,
      * which Ed's own scripts test before Action takes the blowgun out (B86 / B87: Cond_TestPower(8) -> B72) and which
@@ -462,7 +470,7 @@ static void step_ai(tc_viewer *v, float dt) {
         if (p->has_cast) {
             v->talk_press = false; /* the cast had it */
             hud_tick(v);
-        }
+        } else if (v->hud.left_only) hud_tick(v); /* an imported level's stripped-down HUD */
         if (p->has_cast && take_picture(v)) { /* the game holds while it shows (0x40fa20 waits in the main loop) */
             p->tick_time = 0;
             break;

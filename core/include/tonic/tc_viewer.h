@@ -542,6 +542,11 @@ typedef struct tc_view_hud {
 } tc_view_hud;
 tc_result tc_viewer_set_hud(tc_viewer *v, const void *data, size_t size);
 bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out);
+/* The standard HUD's auto-hide (tc_hud.auto_hide; the game's other mode, on one of its F keys): an element shows for five
+ * seconds when its value changes, then slides out; off (the default, the game's): it stays. A display setting (the
+ * frontends keep it across levels: H, the pad's D-pad right); recordings don't carry it. */
+void tc_viewer_set_hud_auto_hide(tc_viewer *v, bool on);
+bool tc_viewer_hud_auto_hide(const tc_viewer *v);
 /* The sliding stages (Totalski, skymap) begin behind "Press 'Jump' to start". Without the HUD nothing shows it, and the
  * driver presses Jump itself (tc_ed_ai.auto_start, a stand-in); with the HUD the skier waits for the player, as in the
  * game. tc_viewer_set_hud turns the wait on (retail levels); a recording keeps it (a replay begins with it off). */

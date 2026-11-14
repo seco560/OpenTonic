@@ -244,6 +244,8 @@ static int holes(const char *dir, int *inside, int *outside) {
 }
 
 static int look_away; /* in_game: turn the camera 0.5 s into the fixed shot */
+static float wait_far;  /* in_game: first stand this far out (on the ground, the same way) for a second: the portal wakes
+                           with Ed out of the removal guard's reach (TC_CAST_NEAR) */
 
 /* The same portals in the game (since 2026-11-13 the cast runs them: their own scripts capture Ed, cover the screen and
  * move him; docs/PORTALS.md "The arches run themselves"): a headless viewer at 60 frames per second with its real
@@ -322,6 +324,14 @@ static int in_game_at(const char *dir, const char *name, int op, const char *lev
                 break;
             }
         }
+    }
+    if (wait_far > 0 && !near) {
+        tc_hit hit;
+        tc_vec3 o = tc_v3_add(g->position, tc_v3_scale(front, wait_far));
+        if (tc_collision_raycast(tc_viewer_player(&v)->world, tc_v3_add(o, tc_v3(0, 0, 3)), tc_v3(0, 0, -1), 6, &hit))
+            o.z = o.z + 3 - hit.distance + 0.05f;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), o, atan2f(-front.x, front.y));
+        for (i = 0; i < 60; i++) tc_viewer_update(&v, 1.0f / 60);
     }
     tc_player_teleport((tc_player *)tc_viewer_player(&v), start, atan2f(-front.x, front.y));
     for (i = 0; i < 30; i++) tc_viewer_update(&v, 1.0f / 60); /* settle; the camera behind him */
@@ -496,6 +506,115 @@ static int tcv_same(const char *a, const char *b) {
     return *a == *b;
 }
 
+
+/* The custom layer's portals (tools/ttre/custom.py, 2026-11-14): whether `name` in `dir` has a portal whose level change
+ * goes to `dest` (its files there and the layer run): -1 the level is not there, 0 no such portal, 1 yes. */
+static int has_custom_portal(const char *dir, const char *name, const char *dest) {
+    char path[1024];
+    size_t size;
+    uint8_t *ai;
+    tc_ai_model m;
+    int k;
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    if (!(ai = read_file(path, &size))) return -1;
+    if (tc_ai_model_load(&m, ai, size) != TC_OK) { free(ai); return -1; }
+    k = find_portal(&m, TC_AI_POP_LEVEL, dest, 0);
+    tc_ai_model_free(&m);
+    free(ai);
+    return k >= 0;
+}
+
+/* An SSX course's way back (custom.py SSX_FINISH): the skier put at the course's end; out: the level and place asked
+ * for, and when (s). 0: not run. */
+static int ssx_finish(const char *dir, const char *name, char *level, char *place, float *at) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level lv;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    const tc_ai_model *m;
+    int i, k;
+    level[0] = place[0] = 0;
+    *at = -1;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &lv;
+    desc.level_name = name;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.seed = 7;
+    if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_level_free(&lv); return 0; }
+    if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+    for (i = 0; i < 60; i++) tc_viewer_update(&v, 1.0f / 60); /* set off */
+    m = tc_viewer_driver(&v) ? tc_viewer_driver(&v)->ai.model : NULL;
+    k = m ? find_portal(m, TC_AI_POP_LEVEL, "sud0", 0) : -1;
+    if (k >= 0) {
+        tc_vec3 end = m->portals[k].position;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3(end.x, end.y, end.z + 1), tc_viewer_player(&v)->heading);
+        for (i = 0; i < 60 * 10; i++) {
+            const tc_viewer_carry *c;
+            tc_viewer_update(&v, 1.0f / 60);
+            if ((c = tc_viewer_pending_level(&v)) != NULL) {
+                snprintf(level, 64, "%s", c->level);
+                snprintf(place, 64, "%s", c->place);
+                *at = (float)i / 60;
+                break;
+            }
+        }
+    }
+    tc_viewer_free(&v);
+    free(ai);
+    tc_level_free(&lv);
+    return 1;
+}
+
+/* Arriving in `name` at `place` (the carry a portal leaves): Ed's distance from the portal of `name` that leads to
+ * `back` (the arch he stands before), or -1. */
+static float arrive_before(const char *dir, const char *name, const char *place, const char *back) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level lv;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_viewer_carry carry;
+    tc_ai_model probe;
+    float d = -1;
+    int i, k;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return -1; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    if (!ai || tc_ai_model_load(&probe, ai, ai_size) != TC_OK) { free(ai); tc_level_free(&lv); return -1; }
+    memset(&carry, 0, sizeof(carry));
+    snprintf(carry.level, sizeof(carry.level), "%s", name);
+    snprintf(carry.place, sizeof(carry.place), "%s", place);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &lv;
+    desc.level_name = name;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.carry = &carry;
+    desc.seed = 7;
+    k = find_portal(&probe, TC_AI_POP_LEVEL, back, 0);
+    if (k >= 0 && tc_viewer_init(&v, &desc) == TC_OK) {
+        if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+        for (i = 0; i < 30; i++) tc_viewer_update(&v, 1.0f / 60);
+        d = tc_v3_distance(tc_viewer_player(&v)->position, probe.portals[k].position);
+        tc_viewer_free(&v);
+    }
+    tc_ai_model_free(&probe);
+    free(ai);
+    tc_level_free(&lv);
+    return d;
+}
+
 static int failures;
 static void check(int ok, const char *what) {
     printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);
@@ -558,6 +677,55 @@ int main(int argc, char **argv) {
             check(g.captured && !g.saw_228 && g.covers >= 1 && g.teleport_at >= 0,
                   "north zone portal, in the game: cover, no walk-in, teleport");
         } else failures++;
+    }
+    { /* north's exit arch (SDO_ArcheFinSud, the second record to sud0): it starts deactivated (its B3:
+       * DeactivatePerso(Me), which the removal guard keeps as a frozen prop) until Suzy (NBD_SuzyNorth, with power 8)
+       * forces its fade-in and activates it; then it captures Ed as any arch (docs/PORTALS.md "Opened later"). Ed waits 14
+       * away first, as when he comes from afar: before 2026-11-14 the activation left the guard's prop frozen */
+        game_result g;
+        int ok;
+        wait_far = 14;
+        ok = in_game(dir, "north", TC_AI_POP_LEVEL, "sud0", 1, &g);
+        wait_far = 0;
+        if (ok) {
+            check(!g.record_driven && g.captured && g.saw_228, "north exit arch, in the game: opened by Suzy, captures Ed");
+            check(g.covers >= 1 && tcv_same(g.level, "sud0"), "north exit arch, in the game: cover, then sud0");
+        } else failures++;
+    }
+    { /* the custom layer's portals (tools/ttre/custom.py; docs/PORTALS.md "Custom layer"), when their files are there */
+        game_result g;
+        char se_dir[1024], level[64], place[64];
+        float at, d;
+        snprintf(se_dir, sizeof(se_dir), "%s/../se/ttlv", dir);
+        if (has_custom_portal(dir, "sud0", "SSX_Alaska") == 1) {
+            if (in_game(dir, "sud0", TC_AI_POP_LEVEL, "SSX_Alaska", 0, &g)) {
+                check(g.record_driven && g.captured && g.saw_228 && g.covers >= 1 && tcv_same(g.level, "SSX_Alaska"),
+                      "sud0's ice cave, in the game: the arch to SSX_Alaska (walk-in, cover, the level)");
+            } else failures++;
+        } else printf("  (no SSX arches in sud0: the SSX courses are not converted; skipped)\n");
+        if (has_custom_portal(dir, "SSX_Trick", "sud0") == 1 && ssx_finish(dir, "SSX_Trick", level, place, &at)) {
+            printf("  SSX_Trick: the end -> %s at %s, %.2f s\n", level, place, (double)at);
+            check(tcv_same(level, "sud0") && tcv_same(place, "custom_portal_ed_ssx_trick"),
+                  "SSX_Trick, in the game: the course's end covers and leads back to sud0, before its arch");
+            d = arrive_before(dir, "sud0", place, "SSX_Trick");
+            printf("  sud0: arrived %.2f from the SSX_Trick arch\n", (double)d);
+            check(d > 4 && d < 7, "sud0 from SSX_Trick: Ed arrives in front of the course's arch");
+        } else printf("  (no way back in SSX_Trick; skipped)\n");
+        if (has_custom_portal(se_dir, "sud0", "retail:LibertyCity2001") == 1) {
+            if (in_game(se_dir, "sud0", TC_AI_POP_LEVEL, "retail:LibertyCity2001", 0, &g)) {
+                check(g.captured && g.saw_228 && g.covers >= 1 && tcv_same(g.level, "retail:LibertyCity2001"),
+                      "Special Edition sud0, in the game: the arch to LibertyCity2001");
+            } else failures++;
+        } else printf("  (no LibertyCity2001 arch in the Special Edition's sud0; skipped)\n");
+        if (has_custom_portal(dir, "LibertyCity2001", "se:sud0") == 1) {
+            if (in_game(dir, "LibertyCity2001", TC_AI_POP_LEVEL, "se:sud0", 0, &g)) {
+                check(g.captured && g.saw_228 && g.covers >= 1 && tcv_same(g.level, "se:sud0"),
+                      "LibertyCity2001, in the game: the arch back to the Special Edition's sud0");
+            } else failures++;
+            d = arrive_before(dir, "LibertyCity2001", "custom_portal_ed_gta", "se:sud0");
+            printf("  LibertyCity2001: arrived %.2f from its arch\n", (double)d);
+            check(d > 4 && d < 7, "LibertyCity2001 from the Special Edition: Ed arrives in front of the arch back");
+        } else printf("  (no arch in LibertyCity2001; skipped)\n");
     }
     {
         doc_result d;

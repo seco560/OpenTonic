@@ -380,6 +380,10 @@ final class GameView: MTKView {
             updateTitle()
             return
         }
+        if event.keyCode == 4 {  // H: the HUD's auto-hide (kept across levels)
+            if !event.isARepeat { HudSettings.toggle(v); updateTitle() }
+            return
+        }
         if event.keyCode == 5 {  // G: level fog on/off
             if !event.isARepeat { tc_viewer_toggle_fog(v); updateTitle() }
             return
@@ -417,6 +421,7 @@ final class GameView: MTKView {
         let base = w.title.components(separatedBy: "  ·  ").first ?? w.title
         let aa = renderer.map {
             ($0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off") + ($0.scale > 100 ? ", SS \($0.scale >= 200 ? "2x" : "1.5x")" : "")
+                + ($0.viewer.map { tc_viewer_hud_auto_hide($0.raw) } == true ? ", HUD auto-hide" : "")
         } ?? ""
         let marks = Recording.shared.marks > 0 ? ", \(Recording.shared.marks) marks" : ""
         w.title = base + "  ·  " + viewer.status(extra: aa + marks + (playbackPaused ? ", paused" : ""))
@@ -730,16 +735,13 @@ final class GameView: MTKView {
         view.start()
     }
 
-    /// After the intro (watched or skipped): Totalski, as the original game, after its loading screen (as a red
-    /// portal's, on black). Which one is a coin toss, retail or Special Edition (the user's, not the original's); the
-    /// other when that one isn't converted, the level select when neither is.
+    /// After the intro (watched or skipped): the retail Totalski, as the original game, after its loading screen (as a
+    /// red portal's, on black); the level select when it isn't converted. (Until 2026-11-14 a coin toss between retail
+    /// and the Special Edition: the user's stopgap, retired; the Special Edition's levels are an optional extension.)
     func startAfterIntro() {
         let out = levelFolder.deletingLastPathComponent()
-        let slopes = [levelFolder, out.appendingPathComponent("se/ttlv")].shuffled().compactMap { folder -> URL? in
-            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-            return files.first { $0.lastPathComponent.lowercased() == "totalski.ttlv" }
-        }
-        guard let ski = slopes.first else {
+        let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
+        guard let ski = files.first(where: { $0.lastPathComponent.lowercased() == "totalski.ttlv" }) else {
             showPicker()
             return
         }
@@ -807,7 +809,7 @@ final class GameView: MTKView {
     func openPortalLevel(_ carry: tc_viewer_carry) {
         // A custom-layer portal names its edition ("se:sud0", "retail:sud0"; tools/ttre/custom.py).
         let parts = cString(carry.level).split(separator: ":", maxSplits: 1).map(String.init)
-        let name = parts.last ?? ""
+        let name = (parts.last ?? "").lowercased()  // the custom layer's names keep their case (LibertyCity2001, SSX_Alaska)
         let folder = parts.count < 2 ? (currentLevelFolder ?? levelFolder)
             : parts[0] == "se" ? levelFolder.deletingLastPathComponent().appendingPathComponent("se/ttlv") : levelFolder
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
@@ -845,6 +847,7 @@ final class GameView: MTKView {
             let loaded = try Viewer(level: Level(url: url), carry: carry, seed: seed,
                                     recorder: playback == nil ? Recording.shared.recorder : nil)
             LookSettings.apply(loaded.raw)
+            HudSettings.apply(loaded.raw)
             r.load(loaded)
             r.onLoading = { [weak view] in view?.showLoading($0) }
             r.onPicture = { [weak view] in view?.showPicture($0) }
@@ -873,6 +876,11 @@ final class GameView: MTKView {
                 case .recenter:
                     if let v = view?.renderer?.viewer?.raw {
                         tc_viewer_recenter_camera(v)
+                        view?.updateTitle()
+                    }
+                case .hudAutoHide:  // as H on the keyboard
+                    if let v = view?.renderer?.viewer?.raw {
+                        HudSettings.toggle(v)
                         view?.updateTitle()
                     }
                 case .closeup:  // as 5 on the keyboard, which the debug menu takes while it is open

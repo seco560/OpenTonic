@@ -38,21 +38,29 @@ void tc_viewer_hud_waits(tc_viewer *v, bool on) {
 tc_result tc_viewer_set_hud(tc_viewer *v, const void *data, size_t size) {
     tc_result r = tc_hud_load(&v->hud, data, size);
     if (r == TC_OK && v->level && v->level->edition == 0) tc_viewer_hud_waits(v, true);
+    /* outside the retail game (the Special Edition's levels; the imported ones, which have no cast): its extensions */
+    v->hud.left_only = v->level && (v->level->edition != 0 || !(v->play && v->play->has_cast));
     return r;
 }
+
+void tc_viewer_set_hud_auto_hide(tc_viewer *v, bool on) { v->hud.auto_hide = on; }
+
+bool tc_viewer_hud_auto_hide(const tc_viewer *v) { return v->hud.auto_hide; }
 
 bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
     tc_viewer_play *p = v->play;
     uint8_t points[TC_AI_HUD_SLOTS] = {0}, max[TC_AI_HUD_SLOTS] = {0};
     const tc_ai_globals *g;
     uint32_t k;
-    if (!v->hud.loaded || !v->playing || !p || !p->main.has_driver || !p->has_cast || !p->use_ai || v->tape) return false;
+    if (!v->hud.loaded || !v->playing || !p || !p->main.has_driver || !(p->has_cast || v->hud.left_only) || !p->use_ai ||
+        v->tape)
+        return false;
     if (tcv_hud_covered(v)) return false;
     /* Port (the user, 2026-11-13, a stand-in for a photo mode): no HUD while paused, live (P) or in a paused playback
      * (tc_replay_pause): both set the pause's look round. It comes back as it was. */
     if (v->paused || v->inspecting) return false;
-    g = &p->cast.globals;
-    for (k = 0; k < TC_AI_HUD_SLOTS; k++) { /* a boss's life bar: its perso's hit points (GAM_00418d70) */
+    g = p->has_cast ? &p->cast.globals : NULL;
+    for (k = 0; g && k < TC_AI_HUD_SLOTS; k++) { /* a boss's life bar: its perso's hit points (GAM_00418d70) */
         const tc_ai_hud_slot *s = &g->hud[k];
         int32_t hp = 0, top = 0;
         if (!s->active || s->kind != TC_AI_HUD_BOSS) continue;

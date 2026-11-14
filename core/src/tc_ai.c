@@ -2099,8 +2099,17 @@ static uint32_t procedure(run *r, uint32_t i) {
     case 5: case 6: { /* ActivatePerso (GAM_Objinit_004199f0: not when dead) / DeactivatePerso (GAM_Objinit_00419a10) */
         tc_ai_perso *q = target(r, arg(r, i, 0));
         if (q && q != p && q->main_actor == 0) return 0; /* port: the player stays (his host does not read it anyway) */
-        if (q && c == 6 && kept_as_prop(p, q)) return 0;
-        if (q && c == 5 && !q->dead) q->active = true;
+        if (q && c == 6) {
+            bool was_frozen = q->frozen; /* a removal's prop stays one */
+            if (kept_as_prop(p, q)) {
+                if (!was_frozen) q->frozen_inactive = true;
+                return 0;
+            }
+        }
+        if (q && c == 5 && !q->dead) {
+            q->active = true;
+            if (q->frozen_inactive) q->frozen = q->frozen_inactive = false; /* the guard's stand-in for "inactive" ends */
+        }
         if (q && c == 6) q->active = false;
         return 0;
     }
