@@ -102,6 +102,7 @@ void tc_level_free(tc_level *level) {
     tc_free(level->lightmap_atlas);
     for (i = 0; i < level->light_perso_count; i++) tc_free(level->light_persos[i].scripts);
     tc_free(level->light_persos);
+    tc_free(level->sound_rolloffs);
     for (i = 0; i < level->ed.part_count; i++) free_mesh(&level->ed.parts[i].mesh);
     tc_free(level->ed.parts);
     for (i = 0; i < level->ed.anim_count; i++) {
@@ -949,6 +950,32 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 
+    if (chunk_need(&cs, "SND3", r)) { /* optional: the 3D sound data (absent: default rolloffs, no sector muted) */
+        n = rd_u32(r);
+        level->sound_rolloffs = (tc_level_rolloff *)rd_array(r, n, sizeof(tc_level_rolloff), 12);
+        if (level->sound_rolloffs) level->sound_rolloff_count = n;
+        for (i = 0; i < level->sound_rolloff_count && !r->error; i++) {
+            level->sound_rolloffs[i].perso = rd_u16(r);
+            (void)rd_u16(r);
+            /* 16.16 in the snapshot: the floats hold them exactly */
+            level->sound_rolloffs[i].rolloff.min = (int32_t)(rd_f32(r) * 65536.0f);
+            level->sound_rolloffs[i].rolloff.max = (int32_t)(rd_f32(r) * 65536.0f);
+        }
+        n = rd_u16(r);
+        (void)rd_u16(r);
+        for (i = 0; i < n && !r->error; i++) {
+            uint16_t m = rd_u16(r);
+            uint16_t *list = (uint16_t *)rd_array(r, m, sizeof(uint16_t), 2);
+            for (k = 0; list && k < m; k++) list[k] = rd_u16(r);
+            if (i < level->sectors.count && list) {
+                level->sectors.sectors[i].sound_muted = list;
+                level->sectors.sectors[i].sound_muted_count = m;
+            } else
+                tc_free(list);
+        }
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
     if (chunk_need(&cs, "EDIT", r)) { /* optional: the game version the level comes from (absent: retail) */
         level->edition = rd_u32(r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
@@ -978,6 +1005,13 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 fail:
     tc_level_free(level);
     return e;
+}
+
+const tc_sound_rolloff *tc_level_sound_rolloff(const tc_level *level, int32_t perso) {
+    uint32_t i;
+    for (i = 0; perso > 0 && i < level->sound_rolloff_count; i++)
+        if (level->sound_rolloffs[i].perso == (uint32_t)perso) return &level->sound_rolloffs[i].rolloff;
+    return NULL;
 }
 
 void tc_level_bounds(const tc_level *level, tc_vec3 *lo, tc_vec3 *hi) {

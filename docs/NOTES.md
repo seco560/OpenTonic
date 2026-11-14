@@ -716,12 +716,14 @@ This was the simple demo I thought of making that eventually spiraled into remak
   20-byte entries { u32 type, u32 value, u32 frame, u32, u32 }: type 0 = sound (value = event pointer), type 3 = foot
   contact (value 14 / 15; not used yet), types 1 / 2 rare; 232 of Ed's 369 states have some (523 sounds). Scripts:
   PlaySound3D / ...Other / Global / Global2 (PROC 145-148) with a T34 node (the event pointer).
+- **Corrected 2026-11-14:** a level sound id is bank << 16 | event index (`_SND_fn_pGetBinEvent`), not the event
+  record's first word; a play event's third word names its resource the same way (docs/ENGINE.md "3D sound").
 - **Port**: tools/ttre/sfx.py extracts the events' files (72, 5.3 MB) to out/audio/sfx with events.tsv (play / loop /
   stop, volume); .ttai v7 adds each state's animation sound rows and turns T34 nodes into event indices; tc_ai queues
   the events whose frame the animation clock passes and PlaySound3D's (tc_ai_perso.sounds), tc_viewer_sounds hands them
   to the frontend; the Mac app plays them (Sfx.swift, its own mixer in a running AVAudioEngine, muted with M; AVAudioPlayer's play() blocked
-  the renderer 16 ms or more per sound, a dropped frame every footstep, 2026-11-06). Not positional yet (3D), no
-  per-material footsteps (done 2026-10-24: "Footsteps by floor material"), other persos' sounds not played.
+  the renderer 16 ms or more per sound, a dropped frame every footstep, 2026-11-06). Positional (3D) since 2026-11-14:
+  docs/ENGINE.md "3D sound". (Per-material footsteps: done 2026-10-24, "Footsteps by floor material".)
 
 ## Audio (2026-10-19)
 - All audio lives in Ubisoft sound banks `WORLD/SOUND/Bnk_*.bnm` (+ `English/` voice banks). vgmstream reads them (brew `vgmstream`).

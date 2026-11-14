@@ -28,6 +28,123 @@ static tc_ai_perso *cast_each(void *user, uint32_t k) {
     return k == 0 ? c->main : NULL;
 }
 
+/* ---- sounds (tc_sound.h) ---- */
+
+int tc_cast_sound_place(const tc_cast *c, const tc_sound_source *s, const tc_sound_listener *l, int *pan, int *dolby) {
+    const tc_ai_perso *q = NULL;
+    const tc_sound_rolloff *own = NULL;
+    uint16_t sector = TC_SECTOR_NONE;
+    bool main = false;
+    int32_t k;
+    *pan = 64, *dolby = 0; /* SND_004044e0 with -1: pan 0x40, rear 0 */
+    if (s->kind == TC_SOUND_FLAT) return 127; /* no object: SND_004044e0 with -1 (2D, as asked) */
+    if (s->emitter == TC_SOUND_EMITTER_MAIN || s->emitter == c->main_id ||
+        (c->level->cast.main_alias && s->emitter == c->level->cast.main_alias)) {
+        q = c->main, main = true;
+    } else if (s->emitter > 0 && (uint32_t)s->emitter < c->id_count && (k = c->by_id[s->emitter]) >= 0) {
+        if ((uint32_t)k < c->count) {
+            q = c->actors[k].ai;
+            sector = c->actors[k].sector.sector;
+        } else
+            q = &c->ghosts[k - (int32_t)c->count].ai;
+    }
+    if (!q) return 0; /* no such perso: nothing to hear */
+    if (s->kind == TC_SOUND_OWN && (q->sound_serial != s->serial || q->frozen)) return -1; /* deactivated or removed since
+                                                                                         (or kept as the guard's prop) */
+    if (!l->valid) return 127;
+    /* the micro's test (0x422860): the main actor always; a perso without a sector never (in a level with sectors: the
+     * ghosts, a perso the port could not place); another in the listener's sector, or one whose sector is not on the
+     * listener sector's sound list with value 0. Unheard: the driver skips the micro, volume 0, centred */
+    if (!main && sector == TC_SECTOR_NONE && c->sectors && c->sectors->count) return 0;
+    if (!main && sector != TC_SECTOR_NONE && l->sector != TC_SECTOR_NONE && sector != l->sector && c->sectors &&
+        l->sector < c->sectors->count) {
+        const tc_sector *ls = &c->sectors->sectors[l->sector];
+        uint16_t i;
+        for (i = 0; i < ls->sound_muted_count; i++)
+            if (ls->sound_muted[i] == sector) return 0; /* the micro is skipped: volume 0, centred */
+    }
+    if (s->kind == TC_SOUND_OWN) /* type A's +0x30 callback (0x42dad0): perso +0x40, its id's (the template's) */
+        own = tc_level_sound_rolloff(c->level, main ? c->main_id : s->emitter);
+    {
+        tc_vec3 off = tc_v3_sub(q->position, l->position);
+        int vol = tc_sound_volume(tc_sound_distance(off), own);
+        *pan = tc_sound_pan(off, l->right);
+        *dolby = tc_sound_dolby(off, l->front);
+        return vol;
+    }
+}
+
+/* A sound one of the actor's AI started this tick, with where it sounds from; the throttle (TC_CAST_SOUNDS_PER_TICK)
+ * counts the audible ones. */
+static void report_sound(tc_cast *c, tc_cast_actor *a, tc_ai_perso *p, uint32_t k) {
+    tc_sound_source src;
+    const tc_ai_perso *q;
+    uint16_t e = p->sounds[k];
+    int vol, pan, dolby;
+    memset(&src, 0, sizeof(src));
+    src.kind = p->sound_kind[k];
+    src.emitter = p->sound_emitter[k] ? p->sound_emitter[k] : p->self_id;
+    q = src.emitter == p->self_id ? p : cast_find(c, src.emitter);
+    src.serial = q ? q->sound_serial : 0;
+    if (q && q->frozen && src.kind == TC_SOUND_OWN) { /* a prop the removal guard keeps for an inactive or removed perso:
+                                                         the exe's would neither animate nor sound (BUGS.md 13: cavedoc's
+                                                         popcorn, deactivated after its 3 s scene, laughed on for ever) */
+        c->sounds_dropped++;
+        return;
+    }
+    if (c->sounds_out_count >= TC_AI_MAX_SOUNDS) {
+        c->sounds_dropped++;
+        return;
+    }
+    vol = tc_cast_sound_place(c, &src, &c->listener, &pan, &dolby);
+    if (vol < 0) return;
+    if (vol >= TC_SOUND_AUDIBLE) {
+        if (c->audible_out >= TC_CAST_SOUNDS_PER_TICK ||
+            (e == a->last_sound && p->time_ms - a->last_sound_ms < TC_CAST_SOUND_GAP_MS)) {
+            c->sounds_dropped++;
+            return;
+        }
+        c->audible_out++;
+        a->last_sound = e;
+        a->last_sound_ms = p->time_ms;
+    }
+    c->sources_out[c->sounds_out_count] = src;
+    c->sounds_out[c->sounds_out_count++] = e;
+}
+
+static tc_vec3 rotate_z(float heading, tc_vec3 v);
+static tc_result start_actor(tc_cast *c, tc_cast_actor *a);
+
+/* GAM_00436910 case 2: the generator's animation reached its launch (TC_AI_LAUNCH_EVENT) on channel `ch`. Its generated
+ * object (META 11's, waiting inactive) is put on the channel (FUN_0047c950: the generator's world matrix times the
+ * channel's), activated (GAM_Objinit_004199f0) and its mechanics started (DNM_CardTypeInit, request 0x15) with the launch
+ * vector META 11 gave it. The link is cleared (FUN_00452900(link, 0)). Port: the instance's heading is the channel's
+ * front's (its -Y) about Z. */
+static void launch(tc_cast *c, tc_cast_actor *a, uint32_t ch) {
+    tc_cast_actor *g;
+    tc_mat34 w, m;
+    const tc_cast_anim *an;
+    tc_sample sm;
+    tc_vec3 front, at, launch_v;
+    if (a->generated < 0 || (uint32_t)a->generated >= c->count) return;
+    g = &c->actors[a->generated];
+    a->generated = -1;
+    if (!g->ai->model || g->ai->dead || g->ai->active) return;
+    if (!tc_cast_pose(c, a, 1, &w, &an, &sm) || ch >= an->channel_count) return;
+    m = tc_m34_mul(&w, &an->transforms[(size_t)sm.s0 * an->channel_count + ch]);
+    at = tc_v3(m.m[3], m.m[7], m.m[11]);
+    front = tc_v3(-m.m[1], -m.m[5], 0);
+    launch_v = tc_v3_length(g->ai->velocity) > 0 ? g->ai->velocity : tc_v3(0, 0, 0); /* rotated with the generator's
+                                                                                    heading at the spawn (cast_spawn) */
+    g->ai->active = true;
+    g->ai->position = g->position_prev = at;
+    if (tc_v3_length(front) > 1e-4f) g->ai->heading = atan2f(front.x, -front.y);
+    g->rot_prev = tc_v3(0, 0, g->ai->heading);
+    g->dyn->velocity = g->ai->velocity = launch_v;
+    g->sector.sector = a->sector.sector;
+    g->sector.position = at;
+}
+
 static tc_vec3 rotate_z(float heading, tc_vec3 v) {
     float co = cosf(heading), si = sinf(heading);
     return tc_v3(co * v.x - si * v.y, si * v.x + co * v.y, v.z);
@@ -41,9 +158,11 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a);
 
 /* META 11's instancing (GAM_Always_004259a0): the template's actor (TC_CAST_SPAWN). While its last instance is still out,
  * that one again, where it is (the generator's +0x30 object: META_SpawnInState_0049f190 reuses it); else it starts
- * afresh at the generator's place and heading, in its sector. Port: one instance per template, and the launch vector
- * becomes its velocity too (its scripts read Velocity at once: the bee's B2 aims its wall probe along it; how the exe
- * makes it so, GAM_Always, is not read). */
+ * afresh at the generator's place and heading, in its sector, inactive (GAM_Always ends with GAM_00423d40(.., 0)) and
+ * linked to its generator (a->generated), until the generator's animation launches it (launch above; docs/ENGINE.md
+ * "Launching generated objects"). Port: one instance per template, and the launch vector becomes its velocity too (its
+ * scripts read Velocity at once: the bee's B2 aims its wall probe along it). The main actor's bee starts at once, from
+ * the port's guessed mouth (his launch from channel 88 needs his pose, the viewer's). */
 static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc_vec3 launch) {
     tc_cast *c = (tc_cast *)user;
     tc_cast_actor *a;
@@ -52,11 +171,15 @@ static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc
     a = &c->actors[k];
     if (!(a->entry->flags & TC_CAST_SPAWN) || !a->ai->model) return NULL;
     if (a->ai->active && !a->ai->frozen) return a->ai;
-    tc_ai_free(a->ai);
-    if (start_actor(c, a) != TC_OK) { memset(a->ai, 0, sizeof(*a->ai)); return NULL; }
-    a->ai->active = true;
+    {
+        uint16_t serial = a->ai->sound_serial; /* a new instance: the old one's own sounds stop (GAM_Always_00425c50) */
+        tc_ai_free(a->ai);
+        if (start_actor(c, a) != TC_OK) { memset(a->ai, 0, sizeof(*a->ai)); return NULL; }
+        a->ai->sound_serial = (uint16_t)(serial + 1);
+    }
+    a->ai->active = by == c->main; /* the exe's instance waits, inactive, for its generator's launch (below) */
     a->ai->position = by->position;
-    if (by == c->main) /* port: from his mouth (the exe's instance starts at his matrix, his feet; offset not found) */
+    if (by == c->main) /* port: from his mouth, at once (his launch event, channel 88, is not taken from his pose yet) */
         a->ai->position = tc_v3_add(by->position, rotate_z(by->heading, tc_v3(0, TC_CAST_SHOT_FRONT, TC_CAST_SHOT_HEIGHT)));
     a->ai->heading = by->heading;
     a->position_prev = a->ai->position;
@@ -65,10 +188,14 @@ static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc
     a->ai->velocity = a->dyn->velocity;
     a->sector.sector = c->main_sector;
     a->sector.position = a->ai->position;
-    if (by != c->main) { /* another generator: its sector */
+    if (by != c->main) { /* another generator: its sector, and its link to the instance (perso +0x30) */
         uint32_t i;
         for (i = 0; i < c->count; i++)
-            if (c->actors[i].ai == by) { a->sector.sector = c->actors[i].sector.sector; break; }
+            if (c->actors[i].ai == by) {
+                a->sector.sector = c->actors[i].sector.sector;
+                c->actors[i].generated = k;
+                break;
+            }
     }
     c->spawned++;
     return a->ai;
@@ -348,6 +475,7 @@ void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player
         e->own_meets = (c->level->pcol.main_flags & TC_PCOL_MEETS_PERSOS) != 0;
         a->entry = e;
         a->sector.sector = TC_SECTOR_NONE;
+        a->generated = -1;
         c->main_actor = a;
     }
     a->ai = ai;
@@ -442,6 +570,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
         a->model.sounds = c->sounds[e->family];
         a->model.sound_count = c->sound_count[e->family];
         a->entry = e;
+        a->generated = -1;
         a->heading0 = tc_heading_of(&e->world);
         if ((r = start_actor(c, a)) != TC_OK) {
             detach(&a->model);
@@ -597,9 +726,11 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         a->rot_prev = a->dyn->tilted ? a->dyn->rot : tc_v3(0, 0, p->heading);
         a->thought = false;
         if (p->reinit_requested) { /* PROC 257 on a perso that comes back (std game +0x20 = 1): from its start, out */
+            uint16_t serial = p->sound_serial; /* its stopped sounds stay stopped */
             tc_ai_free(p);
             if (start_actor(c, a) != TC_OK) { memset(p, 0, sizeof(*p)); return; }
             p->active = false;
+            p->sound_serial = serial;
         }
         if (p->place_requested) { /* another perso's SetPositionFrom, since its last step */
             p->place_requested = false;
@@ -626,6 +757,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         was_active = p->active && !p->frozen;
         if (p->run_mechanics && p->model->state_count) root_to_proposal(p);
         tc_ai_step_parts(p, dt, think, animate);
+        if (p->launch_channel >= 0) launch(c, a, (uint32_t)p->launch_channel); /* its animation's launch event */
         /* saved: here (it took itself out, or the removal guard kept it: a save point's radius may exceed TC_CAST_NEAR) */
         if (was_active && (!p->active || p->frozen) && (a->entry->flags & TC_CAST_SAVE_POINT) && c->main) {
             c->globals.has_checkpoint = true;
@@ -655,18 +787,8 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
                                                        p->position.y != a->sector.position.y ||
                                                        p->position.z != a->sector.position.z))
             tc_sector_move(&a->sector, s, p->position); /* GAM_0042c810: through the portals it crossed */
-        if (d2 <= TC_CAST_HEARING * TC_CAST_HEARING)
-            for (k = 0; k < p->sound_count; k++) {
-                uint16_t e = p->sounds[k];
-                if (c->sounds_out_count >= TC_CAST_SOUNDS_PER_TICK ||
-                    (e == a->last_sound && p->time_ms - a->last_sound_ms < TC_CAST_SOUND_GAP_MS)) {
-                    c->sounds_dropped++;
-                    continue;
-                }
-                a->last_sound = e;
-                a->last_sound_ms = p->time_ms;
-                c->sounds_out[c->sounds_out_count++] = e;
-            }
+        for (k = 0; k < p->sound_count; k++)
+            report_sound(c, a, p, k);
     }
 }
 
@@ -691,6 +813,7 @@ static void pose_obstacle(tc_cast *c, tc_cast_actor *a) {
 static void begin_step(tc_cast *c) {
     uint32_t i;
     c->sounds_out_count = 0;
+    c->audible_out = 0;
     c->awake = c->thinking = 0;
     for (i = 0; i < c->count; i++) /* the zones each hit test sees this tick: the states the tick began in (tc_ai.h) */
         c->actors[i].ai->zone_state = (uint16_t)(c->actors[i].ai->state + 1u);

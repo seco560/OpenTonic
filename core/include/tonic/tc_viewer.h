@@ -282,6 +282,7 @@ typedef struct tc_viewer {
     int walk_in;              /* simple controller at a portal: 1 the step-in clip, 2 the cover and the portal firing */
     int walk_clip;            /* the step-in clip (state 228's animation), -1 none */
     uint16_t sounds[TC_AI_MAX_SOUNDS]; /* sound events started by the last update */
+    tc_sound_source sound_sources[TC_AI_MAX_SOUNDS]; /* where each sounds from (tc_sound.h) */
     uint32_t ed_draw_count;   /* Ed's parts in the last tc_viewer_draws (0: hidden, e.g. stepped into a portal) */
     uint32_t sound_count;
 
@@ -474,6 +475,14 @@ const tc_viewer_carry *tc_viewer_pending_level(const tc_viewer *v);
 /* Sound events started by the last tc_viewer_update (global event indices: audio/sfx/events.tsv, written by
  * tools/ttre/sfx.py: play, loop or stop a file). */
 uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events);
+/* Where each of them sounds from (parallel to tc_viewer_sounds' events; docs/ENGINE.md "3D sound"). */
+const tc_sound_source *tc_viewer_sound_sources(const tc_viewer *v);
+/* A sound's gains now, heard from the camera as the original's micro hears it, through its mixer (tc_sound_gains): its
+ * event's resource volume (events.tsv, 0..1) times the 3D volume, pan and rear value of where it sounds from; dolby: the
+ * Dolby Surround option (the original's sound menu; off by default). false: it is to stop (a perso's own sound, the perso
+ * deactivated or removed since). The frontends call it when a sound starts, and every frame for the sounds whose event
+ * follows its emitter (events.tsv's follow column) while they play. */
+bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float event_volume, bool dolby, tc_sound_mix *out);
 
 /* Settings (keys in the Swift and SDL frontends in brackets). */
 void tc_viewer_step_speed(tc_viewer *v, int dir);   /* [ ]: 1/4, 1/3, 1/2, 2/3, 3/4, 1, 1.5, 2 */

@@ -70,6 +70,12 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
               u32 index_count } (its triangles sorted by group, consecutive, covering all its indices)
           u32 n_persos (= PRSO's), n x u16 sector (the snapshot's SectorInfo +4; 0xFFFF unknown: always drawn)
           u32 n_collision (= COLL's triangles), n x u16 sector (a static's sector, a perso's; 0xFFFF: always solid)
+  SND3* the 3D sound data (retail; docs/ENGINE.md "3D sound"; reader core/src/tc_level.c). Absent: every perso takes the
+        default rolloff and no sector is muted:
+          u32 n, n x { u16 perso id (as CAST's), u16 0, f32 min, f32 max } (its own rolloff, perso +0x40:
+              LevelData.sound_rolloffs)
+          u16 n_sectors (= SECT's), u16 0, n_sectors x { u16 n, n x u16 sector } (its +0x70 sound list's entries of value
+              0: the objects in those sectors are not heard while the listener is in it)
   VEHI* the custom layer's cars (tools/ttre/vehicle.py; layout in core custom/tcx_vehicle.h): per car its PRSO entry (body on
         channel 0, a channel per wheel), its PCOL box's perso id, the body's bounds, the wheels, the driver's seat and Ed's
         scale in it. Imported levels only.
@@ -525,6 +531,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
            ('SPCH', spch) if spch else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
+           ('SND3', snd3(data, sect.sectors)) if not data.se else None,
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
                          donor_lite)),
            ('CHLT', chlt(sect.sectors)) if data.se else None]
@@ -546,6 +553,15 @@ def _decal(prims, m):
         if abs(n[2]) <= 0.5 * math.sqrt(sum(x * x for x in n)):
             return False
     return True
+
+
+def snd3(data, sectors):
+    """The SND3 chunk (module docstring)."""
+    rolloffs = sorted(data.sound_rolloffs().items())
+    out = [struct.pack('<I', len(rolloffs))] + [struct.pack('<2H2f', pid, 0, lo, hi) for pid, (lo, hi) in rolloffs]
+    out.append(struct.pack('<2H', len(sectors), 0))
+    out += [struct.pack(f'<H{len(s.sound_muted)}H', len(s.sound_muted), *s.sound_muted) for s in sectors]
+    return b''.join(out)
 
 
 def perso_collision(data, cast_locs, prso_index, skip_decals=False):

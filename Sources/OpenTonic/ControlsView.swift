@@ -51,7 +51,7 @@ final class ControlsView: NSView {
          k("R", 1, .fly, "up"), k("T"), k("Y", 1, .camera, "invert"), k("U"), k("I", 1, .mode, "AI mode"), k("O"), k("P", 1, .view, "pause"),
          k("[", 1, .view, "slower"), k("]", 1, .view, "faster"), k("\\")],
         [k("Caps", 1.75), k("A", 1, .move, "left"), k("S", 1, .move, "back"), k("D", 1, .move, "right"), k("F", 1, .fly, "down"),
-         k("G", 1, .view, "fog"), k("H", 1, .view, "HUD hide"), k("J"), k("K", 1, .view, "sectors"), k("L", 1, .view, "old light"), k(";", 1, .camera, "look -"), k("'", 1, .camera, "look +"), k("Return", 1.75)],
+         k("G", 1, .view, "fog"), k("H", 1, .view, "HUD hide"), k("J", 1, .view, "Dolby"), k("K", 1, .view, "sectors"), k("L", 1, .view, "old light"), k(";", 1, .camera, "look -"), k("'", 1, .camera, "look +"), k("Return", 1.75)],
         [k("Shift", 2.25, .ed, "walk / fast"), k("Z"), k("X", 1, .camera, "recentre"), k("C", 1, .ed, "side-step"), k("V", 1, .app, "intro*"), k("B"), k("N"),
          k("M", 1, .app, "mute"), k(",", 1, .view, "FOV -"), k(".", 1, .view, "FOV +"), k("/"), k("Shift", 2.25, .ed, "walk / fast")],
         [k("Ctrl", 1.25), k("Opt", 1.25), k("Cmd", 1.5, .app, "see below"), k("Space", 5, .ed, "jump"), k("Cmd", 1.5, .app, "see below"),
@@ -73,6 +73,7 @@ final class ControlsView: NSView {
         "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
         "H (D-pad right): the HUD's auto-hide, the game's other mode: each element shows for five seconds when it changes, then slides out. Kept across levels.",
+        "J: Dolby Surround, the original's sound option: sounds behind the camera go to the rear channel of a surround decoder (Pro Logic); in plain stereo they sound wide and hollow. Off by default, as in the original. Kept across launches.",
         "F4: the debug menu: the game's powers and save values, who uses them, switches. The game holds while it is open; W / S choose, A / D change, Space or E switch.",
     ]
 

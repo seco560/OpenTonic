@@ -115,8 +115,33 @@ typedef struct ed_tick {
     tc_cast *cast;
     const tc_main_input *in;
     uint16_t *sounds;
+    tc_sound_source *sources;
     uint32_t *count, cap;
 } ed_tick;
+
+/* His sound k: on him (TC_SOUND_EMITTER_MAIN), or on the perso his script named (OP 24's). */
+static tc_sound_source main_source(const tc_ai_perso *ai, const tc_cast *cast, uint32_t k) {
+    tc_sound_source s;
+    const tc_ai_perso *q = ai;
+    memset(&s, 0, sizeof(s));
+    s.kind = ai->sound_kind[k];
+    s.emitter = TC_SOUND_EMITTER_MAIN;
+    if (ai->sound_emitter[k] && cast && ai->sound_emitter[k] != cast->main_id && ai->find) {
+        s.emitter = ai->sound_emitter[k];
+        q = ai->find(ai->find_user, s.emitter);
+    }
+    s.serial = q ? q->sound_serial : 0;
+    return s;
+}
+
+/* The cast's sounds this tick, after his. */
+static void cast_sounds(const tc_cast *cast, uint16_t *sounds, tc_sound_source *sources, uint32_t *count, uint32_t cap) {
+    uint32_t n;
+    for (n = 0; n < cast->sounds_out_count && *count < cap; n++) {
+        sources[*count] = cast->sources_out[n];
+        sounds[(*count)++] = cast->sounds_out[n];
+    }
+}
 
 static void ed_step(void *self, float dt) {
     ed_tick *x = (ed_tick *)self;
@@ -145,7 +170,10 @@ static void ed_step(void *self, float dt) {
         if (x->cast) tc_cast_respawn(x->cast);
         memset(m->zone_fired, 0, sizeof(m->zone_fired)); /* the SE reloads the level: its triggers fire again */
     }
-    for (n = 0; n < m->driver.ai.sound_count && *x->count < x->cap; n++) x->sounds[(*x->count)++] = m->driver.ai.sounds[n];
+    for (n = 0; n < m->driver.ai.sound_count && *x->count < x->cap; n++) {
+        x->sources[*x->count] = main_source(&m->driver.ai, x->cast, n);
+        x->sounds[(*x->count)++] = m->driver.ai.sounds[n];
+    }
 }
 
 static uint16_t ed_sector(const void *self) { return ((const ed_tick *)self)->m->driver.sector.sector; }
@@ -196,9 +224,9 @@ static void take_requests(tc_main *m, tc_cast *cast) {
 }
 
 /* A tick while another character holds the slot: the cast's passes round Ed riding it. */
-static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, uint32_t *count, uint32_t cap) {
+static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, tc_sound_source *sources, uint32_t *count,
+                      uint32_t cap) {
     ed_tick x;
-    uint32_t n;
     memset(&x, 0, sizeof(x));
     x.m = m;
     if (!cast) {
@@ -209,21 +237,20 @@ static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, uint32_t *cou
     cast->main_mass = 0;
     cast->talk_press = false; /* his Action is its own (getting out) */
     tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors, &ride_ops, &x);
-    for (n = 0; n < cast->sounds_out_count && *count < cap; n++) sounds[(*count)++] = cast->sounds_out[n];
+    cast_sounds(cast, sounds, sources, count, cap);
     take_requests(m, cast);
     return true;
 }
 
-bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *sounds, uint32_t *count, uint32_t cap,
-                  int *mode_switch) {
+bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *sounds, tc_sound_source *sources,
+                  uint32_t *count, uint32_t cap, int *mode_switch) {
     ed_tick x;
-    uint32_t n;
     *mode_switch = 0;
-    if (!tc_main_is_ed(m)) return m->has_driver && ride_tick(m, cast, sounds, count, cap);
+    if (!tc_main_is_ed(m)) return m->has_driver && ride_tick(m, cast, sounds, sources, count, cap);
     m->pose_prev = m->pose_cur, m->clip_prev = m->clip_cur, m->phase_prev = m->phase_cur;
     *mode_switch = tc_main_mode_zones(m, cast);
     if (!m->has_driver) return false;
-    x.m = m, x.cast = cast, x.in = in, x.sounds = sounds, x.count = count, x.cap = cap;
+    x.m = m, x.cast = cast, x.in = in, x.sounds = sounds, x.sources = sources, x.count = count, x.cap = cap;
     if (cast) {
         /* what the run-first persos need of him: what he rides and what he weighs on it */
         const tc_ai_state *st = &m->driver.ai.model->states[m->driver.ai.state];
@@ -238,7 +265,7 @@ bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *
         /* the exe's frame (docs/ENGINE.md): the run-first persos (platforms, lifts) move before the rest, so Ed rides
          * and collides with them where they are this tick; then Ed, then the other persos */
         tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors, &ed_ops, &x);
-        for (n = 0; n < cast->sounds_out_count && *count < cap; n++) sounds[(*count)++] = cast->sounds_out[n];
+        cast_sounds(cast, sounds, sources, count, cap);
         take_requests(m, cast);
     } else
         ed_step(&x, TC_ED_AI_TICK);

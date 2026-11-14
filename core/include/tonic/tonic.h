@@ -6,6 +6,7 @@
 #include "tc_math.h"
 #include "tc_level.h"
 #include "tc_sector.h"
+#include "tc_sound.h"
 #include "tc_collision.h"
 #include "tc_player.h"
 #include "tc_anim.h"

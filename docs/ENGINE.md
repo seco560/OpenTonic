@@ -508,9 +508,9 @@ acted on by forces, and the real Ed is switched off (the "double Ed"); NBD_Appui
   hint every time. The arrival is against a wall in pyr_fou and spynorth, so the camera swings to the open side and faces Ed.
 
 ## Audio and UI triggers met in the scripts (2026-11-06)
-Counts over the cast's scripts, all retail levels. **Works:** the sound requests (PROC 145-148: 1,585 uses, 64 families,
-flat, within TC_CAST_HEARING), animation sound events, DisplayVignetteDuring (PROC 210), transparency (PROC 203-205), speech
-(META 7, above).
+Counts over the cast's scripts, all retail levels. **Works:** the sound requests (PROC 145-148: 1,585 uses, 64 families;
+placed in 3D since 2026-11-14, "3D sound" below), animation sound events, DisplayVignetteDuring (PROC 210), transparency
+(PROC 203-205), speech (META 7, above).
 | primitive | uses | what it is | status |
 |---|---|---|---|
 | PROC 142 AddObjectInInventory | 344 | the inventory (`0x419310`) | **works** since 2026-11-12 ("The HUD") |
@@ -522,6 +522,119 @@ flat, within TC_CAST_HEARING), animation sound events, DisplayVignetteDuring (PR
 | PROC 212-214 particles | 8 | | **skipped**, purely visual |
 | PROC 165 / 173 / 182 / 192 / 199 | 134 | camera speed, angle, shake, orientation | **skipped** (the camera is the port's own) |
 | PROC 241 (c2boxer) | 2 | under a distance, something on a channel (`0x48b7d0`, not read): 750 hits in 5 s | **skipped**, not understood |
+
+## 3D sound (2026-11-14; **read** unless marked)
+How the original places a sound: read from the exe's sound3d.c (`SND_sound3d_00404db0` the request,
+`SND_sound3d_00404c40` every frame), the game's callbacks (unlabelled code at 0x4225a0-0x422b50, 0x421e50-0x4222d0,
+0x42dad0, disassembled), the exe's exported maths (0x40c200-0x40c6c0) and the sound driver DLLs (`WAVMWSVR.DLL`, the
+software mixer, decompiled with REA from the install's DLL folder; `SND_CPA.INI` picks `WAVd3` (DirectSound3D) when the
+card is "optimum", else `WAVMW` (MMX) or `WAVPW`). Port: `tc_sound.h` / `tc_sound.c` (the maths), `tc_cast_sound_place`
+(an emitter heard from a listener), `tc_viewer_sound_gains` (the frontends' entry), `Sfx.swift` / `sdl/src/sfx.c`.
+- **Objects and types.** A request is (object, type, event). The game registers four object types (`GAM_00422b70`):
+  **A** and **B** take the object's position from its SuperObject's world matrix (callbacks 0..2: translation x 65536,
+  truncated) and its speed from its dynamics (+0x25c..); **C** and **D** have none (menus, global). Type A alone has
+  the rolloff callback (`0x42dad0`: perso +0x40 -> {min, max}, 16.16). Who uses which:
+  | request | object | type | port kind |
+  |---|---|---|---|
+  | animation sound event (`GAM_00436910` case 0) | the perso | A | `TC_SOUND_OWN` |
+  | PROC 145 PlaySound3D | Me, or OP 24's perso (proc flag 1: `AI_004913a0`) | A | `TC_SOUND_OWN` |
+  | PROC 146 PlaySound3DOther | the same | B | `TC_SOUND_OTHER` |
+  | PROC 147 PlaySoundGlobal | none (-1) | C | `TC_SOUND_FLAT` |
+  | PROC 148 PlaySoundGlobal2 | none (-1) | A | `TC_SOUND_FLAT` |
+  An object of -1 is flat (`SND_004044e0`: flags 3, pan 64, the event's volume). DeactivatePerso (PROC 6,
+  `GAM_Objinit_00419a10`) and RemovePerso (PROC 257, `GAM_Objinit_00419b60`) stop the perso's **type A** sounds
+  (`SND_sound3d_004050e0(perso, A)`); a level change stops types A and B (`SND_sound3d_00405170`). So a pickup's own
+  PlaySound3D dies with it; its designers used 146 or 147 for what must outlive it.
+- **The listener** is a "micro": a perso's MS_Micro (perso +0x28: { matrix, u8 active }); the micro sits at the perso and
+  its axes are the perso's world rotation times the micro's own matrix. In every retail level only the fix
+  camera (`StdCamer`, family 2) has an active one, its matrix mapping front = -Y, pan axis = -X of the camera; the
+  camera's look-at (`FUN_004b533c`) builds Y = eye - target and X from it and the up, so front is the sight and the pan
+  axis the camera's right. (cavedoc's `FRB_DocCave` carries an inactive micro: no script was seen switching it on; the
+  driver averages two micros when there are two.) The micros are read at the start of the frame (0x4289d3, before the
+  camera moves): the port's cast uses last frame's camera for its throttle, the frontends this frame's.
+- **Heard or not** (type A / B callback `0x422860`): the main actor always; an object without a sector never; one in the
+  micro's sector always; else unless its sector is on the micro sector's **sound list** (sector +0x70: {ptr sector,
+  u32 value, ptr next}) with value 0. Unheard: the driver skips the micro: volume 0, the voice runs on. Only sud0 (7
+  sectors, 14 entries), marmite (1) and pyramide (10) have such lists, all with value 0 (`.ttlv SND3`). A perso whose
+  sector the port does not know is not heard either (the user's choice, 2026-11-14: as the exe's "no sector"), in a
+  level with sectors; the ghosts (persos that do not run, as the camera) have none.
+- **Volume and pan** (`_SND_fn_vParam3Dto2D`, all 16.16): distance = `_SND_fn_rPseudoNormeVectorSnd`, f(f(|x|, |y|), |z|)
+  with f(a, b) = the larger + half the smaller (up to ~12 % over the true length). Volume 0..127:
+  `_SND_fn_ucDistanceToVolume` for the default rolloff (min 8 (`SXD_DIST_SATUR=8`, also the built-in 0x80000): 127
+  below it, straight down to 0 at 8 min = 64; no floor), or `_SND_fn_ucDistanceToVolumeEx` for a perso's own: 127
+  below min, straight down to 0 at 8 min, and beyond max held at max's value (max < min: none). 45 of sud0's persos have
+  one (min 2..30, max 16..100: some of them, as min 30 max 100, are heard all over the level, at 84); Ed has none.
+  min 0 divides 0 by 0 in the exe, whose byte comes out 0: silent (sud0's 7 family-39 persos). Pan 0..127
+  (`_SND_fn_ucPositionToPan`): 64 + 127 (offset . right) / (2 distance), clamped (0 left, 127 right); the Dolby rear
+  value (`_SND_fn_ucPositionToDolby`, along the micro's front): 63 - 127 (offset . front) / (2 distance), clamped (0
+  ahead, 63 at the side, 127 behind). Doppler is off (`GAM_fn_vLoadFix`: `SND_sound3d_00404b70(0)`), so the speeds go
+  unused.
+- **The mixer** (`WAVMWSVR.DLL` 0x10008e90 / 0x1000c910, ported as it is since the user's word, 2026-11-14): a voice's
+  volume v = resource volume x volume >> 7; under 3 it is not mixed but runs on (a loop comes back when its emitter does);
+  its 16-bit gains go through `pmulhw` (x >> 16): left = v (128 - pan) 2, right = v pan 2, so a centred full-volume
+  sound is 0.246 of full scale on each side and one hard to a side 0.49 there (the headroom of 64 voices; the sum
+  saturates at 16 bits). Every sound effect, speech included, is about 12 dB quieter against the music than the port
+  played them before (whether the MPEG music driver scales its stream is not read). 64 voices, all busy: no new one. The
+  mixer takes the sample its pitch step lands on (no interpolation), as the port's.
+- **Pitch.** `SND_004048e0`: an event's +0x0C spread s gives the voice the pitch 1 + rand() / 0x7fff x 2s - s (16.16
+  steps), fixed for its life (2 exported events; `tc_sound_pitch`). The port: the Mac mixer steps its voices at that
+  rate, the SDL build sets the stream's frequency ratio.
+- **Dolby Surround** (the sound menu's option, `MnuSNDmw.dll` InitDolby / ChangeDolby -> `_SND_fn_vSetDolbySample`; the
+  driver's flag 0x1007b440 is 0 until then: **off by default**; port: J, the Mac app keeps it, the SDL build takes
+  `TONIC_DOLBY=1`). The voice loop (0x1000d4f7) then makes the front gains v (128 - pan) (128 - dolby) >> 5 (twice the
+  stereo ones ahead, as much at the side, nothing behind) and adds v dolby 2 x the sample into a mono rear signal. The
+  encoder (0x1000d823, FUN_10007b90 type 5 for 32 taps at the mixer's 22050 Hz, coefficients h x 32768 / sum |h|): a
+  100-7000 Hz band-pass with a Hilbert transform; y[n] = sum c[k] rear[n - 32 + k] >> 13 is added to the left and taken
+  from the right (`paddsw` / `psubsw`): a Pro Logic decoder sends it to the rear speakers. **Port:** the Mac mixer filters
+  the summed rear at 44100 Hz with the filter made for that rate (64 taps: the same span); the SDL build filters each
+  voice's rear at the voice's own rate (the filter is linear: the same sum), so per-voice 16-bit saturation is not
+  reproduced. **Not ported:** that loop hands the pan's lanes over the other way round from the stereo loop (left and
+  right swapped): taken as a slip in the original.
+- **Following.** Every frame `SND_sound3d_00404c40` places again the voices whose event has +0x1C set (141 of the
+  exported events; the others stay where they started: 173). `events.tsv` carries it (follow) and the pitch spread.
+- **Effects, not used here:** the mixer's post-mix routines (0x1000d181 / d314 / d3e0, `_SND_fn_vSetEffectSxd`) are
+  reverb and echo delay lines, picked per voice by the reverb byte the game's type callback gives: 0 for all of TT's
+  object types (`SND_00404930`), so none run.
+- **cavedoc's looping "laugh"** (BUGS.md 13). **The cause: the level banks' events were looked up wrongly.** The exe
+  names an event bank << 16 | index (`_SND_fn_pGetBinEvent`: bank id >> 16, event id & 0xFFFF), and a play event's third
+  word names its resource the same way; tools/ttre/sfx.py matched the ids against the event records' first word, another
+  numbering. `FRB_PopcornAnim`'s animation names 0x320000 (Bnk_50's event 0, `xclap101`, a pop: six a loop, dropped as
+  unknown) and 0x310000 (Bnk_49's event 0, `xclic401`, a click: played as Bnk_20's `rv05`, an evil laugh, because that
+  record's first word is 0x310000). The user (2026-11-14): in the original that shot of the popcorn starts the popping.
+  All 156 level-bank ids the levels' .snd files name resolve now (137 matched nothing before: those sounds were silent).
+  Also fixed on the way: the removal guard's frozen prop stands in for an inactive perso, so its own sounds stop
+  (`sound_serial`) and it starts none (tc_cast.c report_sound): the popcorn deactivates itself at the level's start
+  and after its 3-second scene (`FRB_PopCinema`), and the prop went on animating.
+- **sud0's new noise** (the same recording): the tomato `HEG_TomLut` (75), wandering in its states 5, 6 and 8 (`tolim101`,
+  resource volume 0.55), heard from 27-37 units. Its own rolloff is min 20 / max 40, so `_SND_fn_ucDistanceToVolumeEx`
+  gives it 108 beyond 40 units, for ever (read again from the assembly, 0x40c2a0; the DirectSound3D driver imports the
+  same function, so every player's game computed it). The old 30-unit cut hid it. Whether the original tomato wandered
+  and walked as often is not known.
+- **Port, not the exe's:** the cast's throttle (TC_CAST_SOUNDS_PER_TICK audible sounds a tick, TC_CAST_SOUND_GAP_MS) stays,
+  counting only the sounds heard from the camera; the 30-unit hearing cut (TC_CAST_HEARING) is gone. A loop has one voice
+  per (event, emitter); a stop event stops its loop from the same emitter (any emitter when the stop is flat). A recorded
+  demo's persos sound from where they were when the sound started.
+- **Left and right:** the mix loop (0x1000c9e2..c9f1) multiplies the samples by v (128 - pan) and by v pan and
+  interleaves them with `punpcklwd` in that order, so the (128 - pan) product is the first sample of each stereo frame:
+  left, as WAV frames go. (The driver's "reverse stereo" option, `_SND_fn_vSetReverseStereoSxd`, would flip it: 127 - pan.)
+- **Not heard yet**, never run here: the SDL build was syntax-checked only.
+
+## Launching generated objects (2026-11-14; **read** unless marked)
+`Action_ExecuteActionAndGenerateObject` (META 11) makes the instance at the generator's matrix (its feet) and links it
+(perso +0x30), but **inactive**: `GAM_Always_004259a0` ends with `GAM_00423d40(.., 0)`, DeactivatePerso's call. The
+generator's state animation then carries an event of **type 2** (`GAM_00436910` case 2), value = channel id << 8: at
+that frame the linked instance is put on the channel (`FUN_0047c950`: the generator's world matrix times the channel's),
+activated (`GAM_Objinit_004199f0`), its mechanics started (`DNM_CardTypeInit`, request 0x15) and the link cleared.
+cavedoc's corn: state 2, frame 17, channel id 4, at its mouth (0.65 in front, 2.09 up); Ed: states 126 / 187 / 325 /
+326, channel id 88, his blowpipe (0.79 in front, 1.30 up). **Port:** the events ride in the SNDS / CAST sound rows as
+`TC_AI_LAUNCH_EVENT` | the channel's index (tools/ttre/ai.py launch_row); the cast holds a spawned instance inactive
+and launches it from the channel (tc_cast.c launch); its heading is the channel's front about Z. The corn's kernels
+started at its feet before, so on their way back from a target they flew under its ZDE box (0.79-3.01 above its
+origin) and never hurt it (BUGS.md (d)); now a returning kernel bursts on it and takes 2 hit points (headless probe).
+The launch may come in a later state of the chain (sud0's navets: state 19 -> 20; the magic mushroom: 7 -> 8 -> 9); north's
+`SDO_Garde_NoeudPapillon` spawns in state 37, whose chain has none: its instance stays held, as in the exe (the port
+launched it at once from the guard's feet before). **Not yet:** Ed as a generator: his bee still starts at once at the port's guessed mouth (tc_cast.c
+TC_CAST_SHOT_HEIGHT 1.7 / FRONT 0.5; the channel says 1.30 / 0.79), as his pose is the viewer's, not the cast's.
 
 ## Game progress (2026-11-11; **read** unless marked)
 What the scripts read and write as progress, surveyed over every AI model of the 21 retail levels (a scratch survey of

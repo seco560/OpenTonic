@@ -442,7 +442,11 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
 - Unrelated table found on the way: `0x432f00` (not in the dump) pairs 22 sud0 sector lists ("-sctsud14-sctsud10-
   sctneige-", ...) with (x, y) points: probably the map screen's marker per region.
 
-## Sound system: 3D sound (plan, 2026-11-14; nothing read or ported yet)
+## Sound system: 3D sound (plan, 2026-11-14; **read and ported the same day**: docs/ENGINE.md "3D sound")
+Done: steps 1-6 (the bank's event fields: +0x0C pitch spread, +0x1C follow; the exe's and the driver DLL's maths; the
+four request paths; loops and the kill on deactivation; the core's sources and the frontends' gains). Step 7: the gate's
+numbers only (castcheck counts the reported cast sounds: they rose once the 30-unit cut went; the replays stay exact),
+plus soundcheck (the maths on hand-worked cases, sud0's SND3); the user's ears are next. The original plan, kept:
 What the port has: the **triggers** (animation sound rows, PlaySound3D / Other / Global / Global2 = PROC 145-148,
 T34 event nodes, footsteps by floor material: docs/NOTES.md "Sound events") and the **files** (tools/ttre/sfx.py,
 events.tsv: play / loop / stop, volume). What it lacks is the **output stage**. Every cast sound within TC_CAST_HEARING

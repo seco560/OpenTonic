@@ -66,6 +66,9 @@ typedef struct tc_sector {
     uint16_t char_light_count;
     uint16_t *char_lights;        /* .ttlv CHLT: these reach only its characters and water, not the static geometry,
                                      which has them in its radiosity (the Special Edition's rule; none on retail) */
+    uint16_t sound_muted_count;
+    uint16_t *sound_muted;        /* .ttlv SND3: its sound list's (+0x70) entries of value 0: while the listener is in it,
+                                     the objects in these sectors are not heard (tc_sound.h) */
 } tc_sector;
 
 typedef struct tc_sector_group {

@@ -445,6 +445,7 @@ static void step_ai(tc_viewer *v, float dt) {
     double prof = TC_PROF_BEGIN();
     if (!m->have_pose) tc_main_capture(m);
     v->sound_count = 0;
+    if (p->has_cast) p->cast.listener = tcv_listener(v); /* last frame's camera, as the exe's micro at the frame's start */
     p->tick_time += dt;
     while (p->tick_time >= TC_ED_AI_TICK) {
         tc_main_input in;
@@ -463,7 +464,8 @@ static void step_ai(tc_viewer *v, float dt) {
         in.talk_press = v->talk_press;
         in.hud_waits = v->hud_waits;
         /* the game's tick (tc_main.h): the run-first persos, Ed, the rest */
-        ran = tc_main_tick(m, p->has_cast ? &p->cast : NULL, &in, v->sounds, &v->sound_count, TC_AI_MAX_SOUNDS, &mode_switch);
+        ran = tc_main_tick(m, p->has_cast ? &p->cast : NULL, &in, v->sounds, v->sound_sources, &v->sound_count,
+                           TC_AI_MAX_SOUNDS, &mode_switch);
         if (mode_switch < 0) p->use_ai = false;
         if (mode_switch > 0 && m->mode == TC_AI_MODE_WALK) p->ski_shot = false;
         if (!ran) break;

@@ -164,9 +164,7 @@ private final class RecordingFile {
     func advance(_ dt: Float, _ v: UnsafeMutablePointer<tc_viewer>) -> Bool {
         guard let raw else {  // an original demo: false at the tape's end
             tc_viewer_update(v, dt)
-            var sounds: UnsafePointer<UInt16>?
-            let n = Int(tc_viewer_sounds(v, &sounds))
-            if n > 0, let sounds { Sfx.shared.play(Array(UnsafeBufferPointer(start: sounds, count: n))) }
+            Sfx.shared.play(v)
             return !tc_viewer_tape_done(v)
         }
         if paused {
@@ -177,9 +175,7 @@ private final class RecordingFile {
         while clock > 0 {
             var step: Float = 0
             if !tc_replay_step(raw, &step) { return false }
-            var sounds: UnsafePointer<UInt16>?
-            let n = Int(tc_viewer_sounds(v, &sounds))
-            if n > 0, let sounds { Sfx.shared.play(Array(UnsafeBufferPointer(start: sounds, count: n))) }
+            Sfx.shared.play(v)
             clock -= step
         }
         return true

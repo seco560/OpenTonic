@@ -170,6 +170,11 @@ typedef struct tc_ai_mech_event { uint16_t frame, mode; uint8_t first, period; }
  * the core reports for them are TC_AI_STEP_SOUND + v (tools/ttre/sfx.py writes those rows into events.tsv). */
 #define TC_AI_FOOTSTEP_EVENT 49
 #define TC_AI_STEP_SOUND 256
+/* SNDS rows from TC_AI_LAUNCH_EVENT up are not sounds: an animation event of type 2 (GAM_00436910 case 2), the channel's
+ * index in the state's animation in the low byte. When the frame is reached the perso's generated object (META 11's
+ * instance, made inactive: GAM_Always_004259a0 ends with GAM_00423d40(.., 0)) is put on that channel, activated and
+ * its mechanics started: the corn's kernel at its mouth, Ed's bee at his blowpipe (tools/ttre/ai.py launch_row). */
+#define TC_AI_LAUNCH_EVENT 0xF000u
 /* A level perso by instance name (lowercase): PROC_29 arrivals ("heg_positionedland"). */
 typedef struct tc_ai_place { char *name; tc_vec3 position; float heading; } tc_ai_place;
 /* One screen transition effect (fix.gpt 0x12a8): fields = effect +0x10..+0x30 (A, the mask wipe: start, end, current,
@@ -492,6 +497,11 @@ struct tc_ai_perso {
     bool anim_end_reached;       /* 3dData +0x162: the animation reached its end this advance (WaitEndOfAnim) */
     uint16_t sounds[TC_AI_MAX_SOUNDS];
     uint8_t sound_count;
+    int16_t launch_channel;      /* this step's launch (TC_AI_LAUNCH_EVENT): the channel index, -1 none; the host acts */
+    uint8_t sound_kind[TC_AI_MAX_SOUNDS];    /* per sounds[k]: TC_SOUND_OWN / OTHER / FLAT (tc_sound.h) */
+    int32_t sound_emitter[TC_AI_MAX_SOUNDS]; /* per sounds[k]: the perso it sounds from (its id, 0 = this one) */
+    uint16_t sound_serial;       /* + 1 each time DeactivatePerso or RemovePerso takes it out: its TC_SOUND_OWN sounds stop
+                                    (GAM_Objinit_00419a10 / 00419b60 -> SND_sound3d_004050e0(perso, type A)) */
     tc_ai_light_call light_calls[TC_AI_MAX_LIGHT_CALLS]; /* SetLightSet calls this step; reset each step */
     uint8_t light_call_count;
     uint8_t g_flags, g_armed;    /* Proc9's deferred result (exe DAT_0051b019 / DAT_0051b018) */

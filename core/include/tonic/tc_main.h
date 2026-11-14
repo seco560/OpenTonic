@@ -115,10 +115,11 @@ void tc_main_capture(tc_main *m);
  * mechanics, the other persos, what the cast hands him (a speaker's cover or level change), what to draw. With another
  * character in the slot: the cast's passes round Ed riding it (his scripts asleep, his AI record carried, the clock on;
  * not without his driver: false). Sound events
- * started (his, then the cast's) are appended to sounds[*count < cap]. false: he has no driver (nothing ran past the
- * zones: the host's own controller moves him). *mode_switch: tc_main_mode_zones'. */
-bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *sounds, uint32_t *count, uint32_t cap,
-                  int *mode_switch);
+ * started (his, then the cast's) are appended to sounds[*count < cap], where each sounds from to sources[] (tc_sound.h).
+ * false: he has no driver (nothing ran past the zones: the host's own controller moves him). *mode_switch:
+ * tc_main_mode_zones'. */
+bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *sounds, tc_sound_source *sources,
+                  uint32_t *count, uint32_t cap, int *mode_switch);
 
 /* The slot. Ed is main (no other character holds it). */
 static inline bool tc_main_is_ed(const tc_main *m) { return m->ops == NULL; }

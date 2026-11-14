@@ -309,6 +309,8 @@ def _states_block(d, a, keys, anim_index, snd_table):
             typ, value, frame = d.un('3I', ev, 20 * k)
             first, period = d.un('2B', ev, 20 * k + 0xB)
             snd = sound_at(snd_table, (ev[0], ev[1] + 20 * k + 4), value) if typ == 0 and value else None
+            if typ == 2:  # the launch (ai.launch_row): rides with the sounds as LAUNCH_EVENT | channel index
+                snd = ai.launch_row(d, ar, value)
             if snd is not None and (frame & 0xFFFF) <= n_frames:
                 sounds.append((frame & 0xFFFF, snd, first, period))
         anim = anim_index.get(keys[i], 0xFFFF)

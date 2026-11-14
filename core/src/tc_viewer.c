@@ -241,6 +241,48 @@ uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events) {
     return v->sound_count;
 }
 
+const tc_sound_source *tc_viewer_sound_sources(const tc_viewer *v) { return v->sound_sources; }
+
+tc_sound_listener tcv_listener(const tc_viewer *v) {
+    tc_sound_listener l;
+    l.position = v->camera.position;
+    l.right = tc_camera_right(&v->camera);
+    l.front = tc_camera_forward(&v->camera);
+    l.sector = v->sectors ? v->light_sector : TC_SECTOR_NONE; /* the camera's (tc_viewer_light.c camera_sector) */
+    l.valid = true;
+    return l;
+}
+
+bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float event_volume, bool dolby, tc_sound_mix *out) {
+    int vol = 127, pan = 64, rear = 0;
+    if (s->kind != TC_SOUND_FLAT) {
+        tc_sound_listener l = tcv_listener(v);
+        if (s->emitter == TC_SOUND_EMITTER_POINT || !v->play || !v->play->has_cast || v->tape) {
+            /* a place, or the main actor without a cast (at his own rolloff: the default one, Ed has none) */
+            tc_vec3 at = s->emitter == TC_SOUND_EMITTER_POINT ? s->at
+                       : v->play ? v->play->main.player.position : l.position;
+            tc_vec3 off = tc_v3_sub(at, l.position);
+            vol = tc_sound_volume(tc_sound_distance(off), NULL);
+            pan = tc_sound_pan(off, l.right);
+            rear = tc_sound_dolby(off, l.front);
+        } else
+            vol = tc_cast_sound_place(&v->play->cast, s, &l, &pan, &rear);
+    }
+    if (vol < 0) {
+        out->left = out->right = out->rear = 0;
+        return false;
+    }
+    tc_sound_gains(vol, pan, rear, event_volume, dolby, out);
+    return true;
+}
+
+void tcv_push_sound(tc_viewer *v, uint16_t event, const tc_sound_source *s) {
+    if (v->sound_count >= TC_AI_MAX_SOUNDS) return;
+    if (s) v->sound_sources[v->sound_count] = *s;
+    else memset(&v->sound_sources[v->sound_count], 0, sizeof(v->sound_sources[0])); /* flat */
+    v->sounds[v->sound_count++] = event;
+}
+
 /* Ed's sector after this frame's moves: his AI's, else tracked here for the simple controller. */
 static void update_sectors(tc_viewer *v) {
     tc_viewer_play *p = v->play;

@@ -194,6 +194,7 @@ void tc_sectors_free(tc_sectors *s) {
         tc_free(sec->floors);
         tc_free(sec->lights);
         tc_free(sec->char_lights);
+        tc_free(sec->sound_muted);
     }
     tc_free(s->sectors);
     tc_free(s->surface_z);

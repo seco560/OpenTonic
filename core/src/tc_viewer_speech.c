@@ -16,8 +16,7 @@ void tcv_update_speech(tc_viewer *v, float dt, bool fresh) {
         tc_speech_start(s, &v->level->speech.dialogues[g->speech - 1]);
         v->speech_event = 0;
         v->speech_held = true;
-        if (s->dialogue->voice != TC_DIALOGUE_VOICE_NONE && v->sound_count < TC_AI_MAX_SOUNDS)
-            v->sounds[v->sound_count++] = s->dialogue->voice;
+        if (s->dialogue->voice != TC_DIALOGUE_VOICE_NONE) tcv_push_sound(v, s->dialogue->voice, NULL);
         fresh = false; /* the press that set it off is not the one that ends it */
     }
     if (!s->dialogue) {
@@ -36,7 +35,7 @@ void tcv_update_speech(tc_viewer *v, float dt, bool fresh) {
                (float)d->events[v->speech_event].frame <= s->time * (float)d->rate)
             tc_ai_set_state(g->speaker, d->events[v->speech_event++].state);
         if (fresh || gone || (!d->text && s->time >= length)) {
-            if (v->sound_count < TC_AI_MAX_SOUNDS) v->sounds[v->sound_count++] = TC_AI_VOICE_STOP;
+            tcv_push_sound(v, TC_AI_VOICE_STOP, NULL);
             tc_speech_end(s);
             tc_ai_speech_end(g);
             v->scene_said = v->level->speech.has_arrival;

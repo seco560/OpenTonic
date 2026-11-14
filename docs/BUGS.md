@@ -84,6 +84,20 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 12. **Stick attacks:** hit, with no sound from Ed or the enemy and no other feedback.
 13. **Cast sounds:** many still unheard. A script sometimes loops a laugh (cavedoc: fighting the corn, near the popcorn
     puzzle; probably Doc's robot's).
+    * **2026-11-14 (Claude), awaiting a playtest; needs the re-export your next build does:** every sound is now placed in
+      3D as the original's engine does (docs/ENGINE.md "3D sound"): distance falloff with the exe's own rolloffs, stereo
+      pan from the camera, sector muting, and a perso's own sounds stopping when it is deactivated. The 30-unit cut is
+      gone, so far-off persos with long rolloffs are heard now; the laugh is either placed and quieter, or still loops (then
+      it is the script, not the mixer). Later the same day: the mixer's own levels (sounds about 12 dB quieter against the
+      music), the pitch spread, Dolby Surround (J), and persos with no known sector muted. The likely laugh: the popcorn
+      persos' idle loop plays `20_rv05` three times a cycle, in the game's own data (docs/ENGINE.md "3D sound"); not heard.
+    * **The user, the same day: still there (recording 2026-11-14_125856), and sud0 louder.** The real cause, found in that
+      recording: `FRB_PopcornAnim` is a 3-second scene (FRB_PopCinema activates it, then deactivates it); the removal
+      guard kept it as a frozen prop that went on laughing. Fixed: a guard prop makes no sound of its own (docs/ENGINE.md
+      "3D sound"). The recording replayed headless: its 13 laughs as a prop are gone, the 5 during the scene stay.
+    * **The user again: the laugh must not play at all; in the original the popcorn's shot starts the popping.** The real
+      cause: the level banks' events were mapped by the wrong id (docs/ENGINE.md "3D sound"): the popcorn's click played
+      Bnk_20's rv05 (the laugh) and its pops were dropped. Fixed in tools/ttre/sfx.py; needs the re-export.
 14. **Hint scenes:** only bar is reliable. spynorth sometimes. pharmmap, pyr_fou and mammyon can be started with effort
     but skip to the level without the line. SpyCarota can leave Ed stuck: Agent XYZ is up on the ledge, out of reach
     (once it started from below).
@@ -153,6 +167,22 @@ popcorn machine never starts; (d) the corn cob's shots never rebound from the ta
   hit point (the probe could not stage the fight: the corn never moves sideways to line up with Ed, its B1
   SetMoveDirection under mode 12 leaves it in place, and teleported Ed lands at z -3, so most shots aim into the floor).
   The general rule holds for every ZDE test (shots, stick hits, pickups): the whole gate prints the same.
+- **(d) again, 2026-11-14 (the user: "the kernels clip through the corn after ricocheting off the targets").** Staged
+  headless (scratch probe: Ed on the ledge before target 64, stepping back along the line of fire when the kernel
+  leaves; the corn held where it fired from): the kernel hits the target, turns back along its path and flies through
+  the corn's origin, 0.00 away, without bursting, and the corn keeps its 6 hit points. Why: the corn's only ZDE zone
+  (type 0x1) is a box 0.79-3.01 above its origin (its body is drawn 0.42-3.5 above it), and the kernel (a 0.31 sphere)
+  starts at the corn's origin (`META_SpawnInState_0049f190` -> `GAM_Always_004259a0` at the corn's world matrix), so
+  its way back runs under the box. The exe's ZDE test poses zones with the perso's world matrix too (`GAM_ZdxStuff_0041fe60`,
+  not the module path), and the distances the kernel aims with are signed, as ported (`AI_00491ba0` / `AI_00491ab0`).
+  So the exe must start or move the instance somewhere not read yet: the same gap as Ed's own shots, which the port
+  starts at his mouth (tc_cast.c TC_CAST_SHOT_HEIGHT: "offset not found"). Next: find where the exe puts a spawned
+  instance (`GAM_Objinit_004197c0` mode 6 and the 3dData init it calls; or under the emulator). **Found and fixed the
+  same day:** the instance waits inactive and the corn's shooting animation launches it from its mouth channel
+  (docs/ENGINE.md "Launching generated objects"); probe: the returning kernel bursts on the corn, 6 -> 4 hit points.
+  Also seen:
+  with Ed one step aside the corn slides to line up with him again before the kernel is back, so the kernel misses it
+  by 2-4 units whatever the zones (as the exe would: the corn's B1 runs while the kernel flies).
 - **The corn does not move** (found on the way, open): B1 slides it along x to line up with Ed (SetMoveDirection,
   SetMechMode12, its card) and it stays put; then it never shoots unless Ed walks into its line himself.
 - **Was (d):** the rebound is the kernel's (BNE_GrainMais, STH_tir_mais, spawned by the corn): its R0 sends it back

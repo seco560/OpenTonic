@@ -8,6 +8,7 @@
 #include "tc_math.h"
 #include "tc_collision.h"
 #include "tc_sector.h"
+#include "tc_sound.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -350,6 +351,12 @@ typedef struct tc_waypoint {
 } tc_waypoint;
 typedef struct tc_way { uint32_t first; uint16_t count; } tc_way;              /* points[first .. first + count) */
 typedef struct tc_perso_ways { uint16_t perso, count; uint32_t first; } tc_perso_ways; /* ways[first .. first + count) */
+/* A perso's own sound rolloff (.ttlv SND3; perso +0x40, tc_sound.h), by its id (as CAST's). */
+typedef struct tc_level_rolloff {
+    uint16_t perso;
+    tc_sound_rolloff rolloff;
+} tc_level_rolloff;
+
 typedef struct tc_ways {
     uint16_t waypoint_count;
     tc_waypoint *waypoints;      /* number k is waypoints[k - 1] */
@@ -388,6 +395,8 @@ typedef struct tc_level {
     tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
     tc_pcol pcol;                /* .ttlv PCOL (count 0: none; older files baked the persos' collision into COLL) */
     tc_ways ways;
+    uint32_t sound_rolloff_count; /* .ttlv SND3 (absent: none): the persos with a sound rolloff of their own */
+    tc_level_rolloff *sound_rolloffs;
     tc_speech_data speech;       /* .ttlv SPCH (optional) */                /* .ttlv WAYS (none: no waypoints; the way primitives then do nothing) */
     uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
     struct tcx_level *custom;    /* custom gameplay's data, not the game's (core/include/tonic/custom/tcx.h: the custom
@@ -403,6 +412,9 @@ typedef struct tc_level {
 /* Parses `size` bytes at `data`. On failure *level is left empty (safe to tc_level_free). */
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size);
 void tc_level_free(tc_level *level);
+
+/* The sound rolloff of the perso with that id (.ttlv SND3), or NULL: the default one (tc_sound.h). */
+const tc_sound_rolloff *tc_level_sound_rolloff(const tc_level *level, int32_t perso);
 
 /* Axis-aligned bounds of the static meshes' vertices (zero when there are none). */
 void tc_level_bounds(const tc_level *level, tc_vec3 *lo, tc_vec3 *hi);

@@ -73,8 +73,9 @@ bool tcv_tape_actor_pose(const tc_viewer *v, const tc_cast_actor *c, tc_mat34 *w
     return true;
 }
 
-/* The state animation's sounds this frame passed (the scripts' own, first == 0xFF, aren't the animation's to play). */
-static void tape_sounds(tc_viewer *v, const tc_ai_model *m, const tc_tape_object *o) {
+/* The state animation's sounds this frame passed (the scripts' own, first == 0xFF, aren't the animation's to play), from
+ * src (tc_sound.h). */
+static void tape_sounds(tc_viewer *v, const tc_ai_model *m, const tc_tape_object *o, const tc_sound_source *src) {
     const tc_ai_state *st;
     float from;
     uint32_t k;
@@ -83,7 +84,8 @@ static void tape_sounds(tc_viewer *v, const tc_ai_model *m, const tc_tape_object
     from = o->state != o->state_prev || o->frame < o->frame_before ? -1.0f : o->frame_before;
     for (k = 0; k < st->sound_count && v->sound_count < TC_AI_MAX_SOUNDS; k++) {
         const tc_ai_sound *e = &m->sounds[st->sound_first + k];
-        if (e->first != 0xFF && (float)e->frame > from && (float)e->frame <= o->frame) v->sounds[v->sound_count++] = e->event;
+        if (e->first != 0xFF && e->event < TC_AI_LAUNCH_EVENT && (float)e->frame > from && (float)e->frame <= o->frame)
+            tcv_push_sound(v, e->event, src);
     }
 }
 
@@ -93,15 +95,19 @@ static void tape_frame_read(tc_viewer *v) {
     tc_viewer_play *p = v->play;
     const tc_tape_object *ed = &t->tape.objects[t->ed];
     uint32_t i;
-    if (ed->shown) tape_sounds(v, &p->main.model, ed);
+    tc_sound_source src;
+    memset(&src, 0, sizeof(src));
+    src.kind = TC_SOUND_OWN;
+    src.emitter = TC_SOUND_EMITTER_MAIN;
+    if (ed->shown) tape_sounds(v, &p->main.model, ed, &src);
+    src.emitter = TC_SOUND_EMITTER_POINT; /* port: placed where the perso was when it started */
     for (i = 0; i < p->cast.count; i++) {
         tc_cast_actor *c = &p->cast.actors[i];
         const tc_tape_object *o = tape_object(t, c->entry->id);
-        tc_vec3 d;
         if (!o || !o->shown) continue;
         if (v->sectors && c->sector.sector != TC_SECTOR_NONE) tc_sector_move(&c->sector, v->sectors, o->position);
-        d = tc_v3_sub(o->position, v->camera.position);
-        if (tc_v3_dot(d, d) <= TC_CAST_HEARING * TC_CAST_HEARING) tape_sounds(v, c->ai->model, o);
+        src.at = o->position;
+        tape_sounds(v, c->ai->model, o, &src);
     }
 }
 

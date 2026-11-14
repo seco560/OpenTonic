@@ -4,7 +4,10 @@ Sound banks (WORLD/SOUND/Bnk_<n>.bnm, after decoding nothing: plain little-endia
   header { u32 version (0), u32 events_offset, u32 n_events, u32 resources_offset, u32 n_resources, u32 data_offset,
            ... }
   event (0x20) { u32 id, u32 kind (1 play, 2 stop), u32 target (play: the resource index; stop: the index of the event
-                 it stops), ... }
+                 it stops), u32 pitch spread (16.16: SND_004048e0 plays it at a random pitch in [1 - s, 1 + s); 5 events
+                 have one), u32, u32, u32 (1 nearly always; not read), u32 follow (SND_sound3d_00404c40, each frame:
+                 1 = its voices are placed again from where their object is now, 0 = they stay as they started) }
+                 (the exe's request switch knows kinds 1, 2, 3, 4, 6-11; TT's banks hold only 1 and 2)
   resource (0x5c) { u32 id, u32 type (1 audio; 8 / 10 tiny raw waveforms, unused here), u32, u32 size,
                     u32 data offset, u32 volume (0x7f full), ..., file name }
 The engine's global sound events are **Bnk_0's events** (84; the fix bank): the snapshot stores them as pointers
@@ -14,10 +17,13 @@ resources by ground material (EsCarpet ... EsEarthS, Edpasgen; its resource r2e 
 generic step. An event that a stop event targets is a loop (flight: 77 played, 76 stops it).
 
 The levels' own sounds (2026-11-02): each level's .snd (encrypted) lists { u32 event id, u32 address } for every place in its
-memory holding a sound reference (script T34 nodes, animation sound events); the ids are unique over all banks, so the
-event's bank follows. The core reports them as LEVEL_SOUND + the event's rank (level_events); files <bank>_<name>.wav.
+memory holding a sound reference (script T34 nodes, animation sound events); an id is bank << 16 | event index, as the
+exe's _SND_fn_pGetBinEvent reads it, and a play event's third word names its resource the same way (bank << 16 |
+resource index). The core reports them as LEVEL_SOUND + the event's rank (level_events); files <bank>_<name>.wav.
 Output: files/out/audio/sfx/<name>.wav (vgmstream-cli; bnm stream names carry the resource index) and events.tsv:
   index <tab> play|loop|stop|voice <tab> file (relative to sfx/, "" = silent) <tab> volume 0..1 <tab> stop: the event it stops
+  <tab> follow (1: placed again every frame from its emitter, 0: where it started; docs/ENGINE.md "3D sound")
+  <tab> pitch spread (0: none)
 Usage: python3 -m tools.ttre.sfx [out_dir]
 """
 import os
@@ -36,23 +42,40 @@ LEVEL_SOUND = 1024  # the core's events for the levels' own banks: LEVEL_SOUND +
 LEVELS = 'files/sources/GAMEDATA/WORLD/LEVELS'
 
 
-def level_events():
-    """Every event of the banks other than Bnk_0, as {event id: (global index, bank, k, kind, target)}: index =
-    LEVEL_SOUND + its rank in (bank, k) order. Event ids are unique over all 86 banks (checked 2026-11-02)."""
+def bank_paths():
+    """{bank number: path} of every bank file but Bnk_0 and the intro's 200: WORLD/SOUND/Bnk_<n>.bnm and the language
+    folder's (English/Bnk_83..88, the voices), any letter case."""
     import glob
+    out = {}
+    for path in glob.glob(f'{SOUND}/*.[bB][nN][mM]') + glob.glob(f'{SOUND}/*/*.[bB][nN][mM]'):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if stem[:4].lower() != 'bnk_' or not stem[4:].isdigit():
+            continue
+        bank = int(stem[4:])
+        if bank not in (0, 200):
+            out.setdefault(bank, path)
+    return out
+
+
+def level_events():
+    """Every event of the banks other than Bnk_0, as {key: (global index, bank, k, kind, target)}, key = bank << 16 | k,
+    the way the exe names an event (_SND_fn_pGetBinEvent(id): the loaded bank number id >> 16, its event id & 0xFFFF;
+    the intro's 0xC80000 is bank 200's event 0). The levels' .snd and the scripts hold these keys. index = LEVEL_SOUND +
+    its rank in (bank, k) order. target (the event's third word) is a key too: a play event's resource (bank << 16 |
+    resource index), a stop event's event. (Until 2026-11-14 the keys were matched against the event records' first
+    word, another numbering: cavedoc's popcorn, 0x310000 / 0x320000 = Bnk_49 / Bnk_50's clicks and pops, played
+    Bnk_20's rv05, a laugh, or nothing.)"""
     if not hasattr(level_events, 'cache'):
         rows = []
-        for path in glob.glob(f'{SOUND}/Bnk_*.bnm'):
-            bank = int(os.path.basename(path)[4:-4])
-            if bank == 0:
-                continue
+        for bank, path in bank_paths().items():
             try:
                 events, _ = read_bank(path)
             except (struct.error, OSError):
                 continue
-            rows += [(bank, k, eid, kind, target) for k, (eid, kind, target) in enumerate(events)]
+            rows += [(bank, k, kind, target) for k, (_, kind, target) in enumerate(events)]
         rows.sort()
-        level_events.cache = {eid: (LEVEL_SOUND + i, bank, k, kind, target) for i, (bank, k, eid, kind, target) in enumerate(rows)}
+        level_events.cache = {(bank << 16) | k: (LEVEL_SOUND + i, bank, k, kind, target)
+                              for i, (bank, k, kind, target) in enumerate(rows)}
     return level_events.cache
 
 
@@ -104,6 +127,14 @@ def read_bank(path):
     return events, resources
 
 
+def event_extras(path):
+    """[(follow, pitch spread)] per event of a bank (the event record's +0x1C and +0x0C / 65536; module docstring)."""
+    d = open(path, 'rb').read()
+    _, ev_off, n_ev = struct.unpack_from('<3I', d, 0)
+    return [(struct.unpack_from('<I', d, ev_off + 0x20 * k + 0x1C)[0] and 1,
+             struct.unpack_from('<i', d, ev_off + 0x20 * k + 0x0C)[0] / 65536) for k in range(n_ev)]
+
+
 def event_index(raw):
     """A snapshot sound-event pointer -> global event index, or None."""
     k, m = divmod(raw - EVENT_BASE, 0x20)
@@ -132,16 +163,19 @@ def stream_index(bank):
 def main(out_dir='files/out/audio/sfx'):
     bank = f'{SOUND}/Bnk_0.bnm'
     events, resources = read_bank(bank)
+    extras = event_extras(bank)
     by_index = {v[0]: (rid, v) for rid, v in resources.items()}
     streams = stream_index(bank)
     os.makedirs(out_dir, exist_ok=True)
     rows, extracted = [], {}
     loops = {target for _, kind, target in events if kind == 2}
+    step_extras = (1, 0.0)
     for k, (eid, kind, target) in enumerate(events):
         if kind == 2:
-            rows.append((k, 'stop', '', 1.0, target))
+            rows.append((k, 'stop', '', 1.0, target, 0, 0.0))
             continue
         if eid == FOOTSTEPS:
+            step_extras = extras[k]
             rid, res = GENERIC_STEP, resources.get(GENERIC_STEP)
         else:
             rid, res = by_index.get(target, (None, None))  # the resource index (agrees with the id where both exist)
@@ -152,7 +186,7 @@ def main(out_dir='files/out/audio/sfx'):
                 subprocess.run(['vgmstream-cli', '-s', str(streams[res[0]]), '-o', os.path.join(out_dir, file), bank],
                                check=True, capture_output=True)
                 extracted[file] = True
-        rows.append((k, 'loop' if k in loops else 'play', file, (res[2] if res else 127) / 127, ''))
+        rows.append((k, 'loop' if k in loops else 'play', file, (res[2] if res else 127) / 127, '', *extras[k]))
     # The footstep switch's sounds (docs/NOTES.md "Footsteps"): step id 0x390002 + v for the floor's sound type v
     # (GameMaterial +8; 1 EsEarthS .. 20 EsSnow, 21 EsIce, 23 EsCarpet), reported by the core as event 256 + v.
     for v in range(1, 24):
@@ -164,7 +198,7 @@ def main(out_dir='files/out/audio/sfx'):
                 subprocess.run(['vgmstream-cli', '-s', str(streams[res[0]]), '-o', os.path.join(out_dir, file), bank],
                                check=True, capture_output=True)
                 extracted[file] = True
-        rows.append((STEP_SOUND + v, 'play', file, (res[2] if res else 127) / 127, ''))
+        rows.append((STEP_SOUND + v, 'play', file, (res[2] if res else 127) / 127, '', *step_extras))  # the switch's
     # The levels' own sounds (their banks' events that some level's .snd names): event LEVEL_SOUND + rank.
     import glob
     named = set()
@@ -173,37 +207,45 @@ def main(out_dir='files/out/audio/sfx'):
         b = sna.decrypt(open(f, 'rb').read())
         named |= set(struct.unpack_from(f'<{len(b) // 4}I', b)[0::2])
     table = level_events()
-    banks = {}
-    for eid in sorted(named):
-        if eid in table:
-            banks.setdefault(table[eid][1], []).append(eid)
+    paths = bank_paths()
+    loaded = {}  # bank -> (resources by index, stream index)
+
+    def resource(key):
+        """A play event's resource: (bank, (index, type, volume, name)) or None."""
+        bank, ri = key >> 16, key & 0xFFFF
+        if bank not in paths:
+            return None
+        if bank not in loaded:
+            _, res_by_id = read_bank(paths[bank])
+            loaded[bank] = ({v[0]: v for v in res_by_id.values()}, stream_index(paths[bank]))
+        res = loaded[bank][0].get(ri)
+        return (bank, res) if res else None
+
+    loops_all = {target for _, _, _, kind, target in table.values() if kind == 2}
+    extras_of = {}
     level_rows = 0
-    for bank, eids in sorted(banks.items()):
-        path = f'{SOUND}/Bnk_{bank}.bnm'
-        events, res_by_id = read_bank(path)
-        by_index = {v[0]: (rid, v) for rid, v in res_by_id.items()}
-        streams = stream_index(path)
-        loops_b = {target for _, kind, target in events if kind == 2}
-        for eid in eids:
-            index, _, k, kind, target = table[eid]
-            if kind == 2:  # stop: the event it stops, by its index in this bank
-                stopped = events[target][0] if target < len(events) else None
-                rows.append((index, 'stop', '', 1.0, table[stopped][0] if stopped in table else ''))
-                level_rows += 1
-                continue
-            rid, res = by_index.get(target, (None, None))
-            if res is None:
-                res = res_by_id.get(eid)
-            file = ''
-            if res and res[1] == 1 and res[0] in streams:
-                file = f'{bank}_' + os.path.splitext(res[3].lower())[0] + '.wav'
-                if file not in extracted:
-                    subprocess.run(['vgmstream-cli', '-s', str(streams[res[0]]), '-o', os.path.join(out_dir, file), path],
-                                   check=True, capture_output=True)
-                    extracted[file] = True
-            rows.append((index, 'loop' if k in loops_b else 'play', file, (res[2] if res else 127) / 127, ''))
+    for key in sorted(k for k in named if k in table):
+        index, bank, k, kind, target = table[key]
+        if bank not in extras_of:
+            extras_of[bank] = event_extras(paths[bank])
+        if kind == 2:  # stop: the event it stops (a key)
+            rows.append((index, 'stop', '', 1.0, table[target][0] if target in table else '', 0, 0.0))
             level_rows += 1
-    print(f'levels\' own sounds: {level_rows} events from {len(banks)} banks')
+            continue
+        got, file, vol = resource(target), '', 127
+        if got:
+            rbank, res = got
+            vol = res[2]
+            streams = loaded[rbank][1]
+            if res[1] == 1 and res[0] in streams:
+                file = f'{rbank}_' + os.path.splitext(res[3].lower())[0] + '.wav'
+                if file not in extracted:
+                    subprocess.run(['vgmstream-cli', '-s', str(streams[res[0]]), '-o', os.path.join(out_dir, file),
+                                    paths[rbank]], check=True, capture_output=True)
+                    extracted[file] = True
+        rows.append((index, 'loop' if key in loops_all else 'play', file, vol / 127, '', *extras_of[bank][k]))
+        level_rows += 1
+    print(f'levels\' own sounds: {level_rows} events')
     # The voices (speech.py): event VOICE_SOUND + rank; the frontends decode one when it is said, and stop it when the
     # line is dismissed (the core's TC_AI_VOICE_STOP).
     from . import speech
@@ -219,11 +261,12 @@ def main(out_dir='files/out/audio/sfx'):
                 subprocess.run(['vgmstream-cli', '-s', str(voice_streams[bank][index]), '-o', os.path.join(out_dir, file), path],
                                check=True, capture_output=True)
                 extracted[file] = True
-        rows.append((event, 'voice', file, 1.0, ''))
+        rows.append((event, 'voice', file, 1.0, '', 0, 0.0))
     with open(os.path.join(out_dir, 'events.tsv'), 'w') as f:
-        f.write('# index\tplay|loop|stop\tfile\tvolume\tstops  (tools/ttre/sfx.py: Bnk_0 events = the global sound events)\n')
-        for k, what, file, vol, stops in rows:
-            f.write(f'{k}\t{what}\t{file}\t{vol:.3f}\t{stops}\n')
+        f.write('# index\tplay|loop|stop\tfile\tvolume\tstops\tfollow\tspread  (tools/ttre/sfx.py: Bnk_0 events = the global '
+                'sound events)\n')
+        for k, what, file, vol, stops, follow, spread in rows:
+            f.write(f'{k}\t{what}\t{file}\t{vol:.3f}\t{stops}\t{follow}\t{spread:.4f}\n')
     print(f'{out_dir}: {len(extracted)} sounds, {sum(1 for r in rows if r[2])}/{len(rows)} events with a sound')
 
 

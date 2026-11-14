@@ -42,6 +42,7 @@ static const char *controls_text =
     "Lighting variant:  Alt + 1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain), Alt + 0 the level's own\n"
     "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
     "HUD:  H auto-hide on / off (each element shows for five seconds when it changes, then slides out; D-pad right)\n"
+    "Sound:  J Dolby Surround on / off (the original's option: sounds behind the camera to a surround decoder's rear; TONIC_DOLBY=1)\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
     "Lighting:  L  the original's (default: its formula, the lights and fog of Ed's sector) / the port's old one\n"
     "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 2)\n"
@@ -159,6 +160,7 @@ static void update_title(app *a) {
     if (a->replaying) SDL_strlcat(aa, a->replay_paused ? ", playback, paused" : ", playback", sizeof aa);
     if (a->g.scale > 100) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", SS %s", a->g.scale >= 200 ? "2x" : "1.5x");
     if (a->hud_auto_hide) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", HUD auto-hide");
+    if (sfx_dolby()) SDL_snprintf(aa + SDL_strlen(aa), sizeof aa - SDL_strlen(aa), ", Dolby Surround");
     tc_viewer_status(&v->viewer, aa, status, sizeof status);
     SDL_snprintf(s, sizeof s, "%s  \xc2\xb7  %s", a->title_base, status);
     if (SDL_strcmp(s, a->title) != 0) {
@@ -554,10 +556,8 @@ static void start_demos(app *a) {
 }
 
 static void demo_tick(app *a, float dt) {
-    const uint16_t *sounds;
     tc_viewer_update(&a->view->viewer, dt);
-    uint32_t n = tc_viewer_sounds(&a->view->viewer, &sounds);
-    if (n > 0) sfx_play(sounds, n);
+    sfx_play(&a->view->viewer);
     if (tc_viewer_tape_done(&a->view->viewer) && !demo_next(a)) back_to_replays(a, "no original demo could be played");
 }
 
@@ -574,14 +574,12 @@ static void playback_tick(app *a, float dt) {
     a->replay_clock += dt;
     while (a->replaying && a->replay_clock > 0) {
         float step = 0;
-        const uint16_t *sounds;
         if (!tc_replay_step(&a->replay, &step)) {
             if (a->replay_segment + 1 >= a->replay.segment_count) back_to_replays(a, "the end of the recording");
             else if (!playback_level(a, a->replay_segment + 1)) back_to_replays(a, "its next level isn't here");
             return;
         }
-        uint32_t n = tc_viewer_sounds(&a->view->viewer, &sounds);
-        if (n > 0) sfx_play(sounds, n);
+        sfx_play(&a->view->viewer);
         a->replay_clock -= step;
     }
 }
@@ -719,6 +717,10 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
             tc_viewer_set_hud_auto_hide(v, a->hud_auto_hide);
             update_title(a);
         }
+        return;
+    }
+    if (sc == SDL_SCANCODE_J) {  /* J: Dolby Surround (the original's sound menu option; TONIC_DOLBY=1 at the start) */
+        if (!k->repeat) { sfx_set_dolby(!sfx_dolby()); update_title(a); }
         return;
     }
     if (sc == SDL_SCANCODE_G) {  /* G: level fog on/off */
@@ -1547,6 +1549,7 @@ int main(int argc, char **argv) {
         if (e && e[0] == '0') view_set_occlusion(false);
     }
     look_settings(&a);
+    { const char *d = SDL_getenv("TONIC_DOLBY"); if (d && d[0] == '1') sfx_set_dolby(true); } /* J toggles it */
 
     /* --replay [file]: plays a recording back (the newest without one); the rest as usual. */
     bool want_replay = false;
@@ -1610,10 +1613,9 @@ int main(int argc, char **argv) {
         if (a.view && a.replaying) playback_tick(&a, dt);
         else if (a.view) {
             tc_viewer_update(&a.view->viewer, dt);
-            const uint16_t *sounds;
-            uint32_t n = tc_viewer_sounds(&a.view->viewer, &sounds);
-            if (n > 0) sfx_play(sounds, n);
+            sfx_play(&a.view->viewer);
         }
+        if (a.view) sfx_update(&a.view->viewer); /* the sounds heard from somewhere: where their emitters are now */
         if (a.view) {
             /* Refresh the AI's behaviour/state and the light changes in the title. */
             if (tc_viewer_status_live(&a.view->viewer) && now - a.last_title_ns > 250000000) {

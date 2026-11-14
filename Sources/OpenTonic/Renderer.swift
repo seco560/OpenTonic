@@ -420,10 +420,9 @@ import TonicCore
             }
         } else {
             tc_viewer_update(v, dt)
-            var sounds: UnsafePointer<UInt16>?
-            let n = Int(tc_viewer_sounds(v, &sounds))
-            if n > 0, let sounds { Sfx.shared.play(Array(UnsafeBufferPointer(start: sounds, count: n))) }
+            Sfx.shared.play(v)
         }
+        Sfx.shared.update(v)  // the sounds heard from somewhere: where their emitters are now
 
         let size = view.drawableSize
         var f = tc_view_frame()

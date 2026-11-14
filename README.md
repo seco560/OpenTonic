@@ -1,5 +1,7 @@
 ## Open Tonic - open source engine reimplemetation for Tonic Trouble
 
+Read files/sources/README.md for updated information on the installation process
+
 <img width="1800" height="1130" alt="Screenshot 2026-10-19 at 20 55 41" src="https://github.com/user-attachments/assets/ce53b698-d818-4161-8d94-40539f97c555" />
 
 While still very much a work in progress, enough gameplay has been reproduced to call this a working reimplementation of Tonic Trouble. Let's go through the folder structure:

@@ -605,6 +605,27 @@ def zdm_sets(d, perso, n_states):
     return [list(s) for s in sets], per_state
 
 
+LAUNCH_EVENT = 0xF000  # SNDS rows from 0xF000 up: an animation's launch, the channel's index in the low byte (core
+                       # tc_ai.h TC_AI_LAUNCH_EVENT)
+
+
+def launch_row(d, ar, value):
+    """An animation event of type 2 (GAM_00436910 case 2: the perso's generated object, which META 11 made and left
+    inactive, is put on the channel whose id is value >> 8 at this frame, activated, and its mechanics started) as the
+    SNDS row's event: LAUNCH_EVENT | the channel's index in the state's animation (its A3D channel order, as exported),
+    or None when the animation has no such channel."""
+    a3 = d.lv.ptr(ar, 0x28) if ar else None
+    if not a3:
+        return None
+    try:
+        anim = d.read_a3d(a3)
+    except Exception:
+        return None
+    ids = [c[1] for c in anim.chans]
+    cid = (value >> 8) & 0xFFFF
+    return LAUNCH_EVENT | ids.index(cid) if cid in ids and ids.index(cid) < 0x100 else None
+
+
 def zde_prims(d, g):
     """A ZDE zone's GeometricObjectCollide -> [(kind, a, b, type)] in the perso's axes: spheres (element type 7: entries
     at element +4, 12 bytes {u16 centre vertex, u16, f32 radius, ptr game material}: a = centre, b = (r, 0, 0)) and
@@ -1656,6 +1677,10 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
             e = event_index(value) if typ == 0 and value else None
             if e is not None and (frame & 0xFFFF) <= d.un('H', ar, 4)[0]:  # within the animation (some lists hold garbage)
                 rows.append((frame & 0xFFFF, e, first, period))
+            if typ == 2 and (frame & 0xFFFF) <= d.un('H', ar, 4)[0]:
+                e = launch_row(d, ar, value)
+                if e is not None:
+                    rows.append((frame & 0xFFFF, e, first, period))
             if typ == 1 and value < 0x100 and (frame & 0xFFFF) <= d.un('H', ar, 4)[0]:  # FUN_00436910 case 1
                 mech.append((frame & 0xFFFF, value, first, period))
         sound_index.append((len(sound_rows), len(rows)))

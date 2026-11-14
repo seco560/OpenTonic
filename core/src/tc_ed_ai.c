@@ -313,7 +313,11 @@ static void footsteps(tc_ed_ai *e) {
                 v = m->floor_sounds[hit.tri->source];
         }
         /* Ed's own step plays too, the floor's on top (user, from the original) */
-        if (v >= 1 && v <= 23 && a->sound_count < TC_AI_MAX_SOUNDS) a->sounds[a->sound_count++] = (uint16_t)(TC_AI_STEP_SOUND + v);
+        if (v >= 1 && v <= 23 && a->sound_count < TC_AI_MAX_SOUNDS) {
+            a->sound_kind[a->sound_count] = a->sound_kind[k]; /* from where the step event was */
+            a->sound_emitter[a->sound_count] = a->sound_emitter[k];
+            a->sounds[a->sound_count++] = (uint16_t)(TC_AI_STEP_SOUND + v);
+        }
     }
 }
 

@@ -1047,8 +1047,22 @@ static bool can_change_state(const tc_ai_perso *p, uint32_t target) {
     return target == p->wanted_state || (target < p->model->state_count && state_allowed(p, target, &play));
 }
 
+/* A sound this step: kind and emitter as tc_sound.h (emitter: a perso id, 0 = this perso). */
+static void play_sound_from(tc_ai_perso *p, uint32_t event, uint8_t kind, int32_t emitter) {
+    if (event > 0xFFFF || p->sound_count >= TC_AI_MAX_SOUNDS) return;
+    p->sound_kind[p->sound_count] = kind;
+    p->sound_emitter[p->sound_count] = emitter;
+    p->sounds[p->sound_count++] = (uint16_t)event;
+}
+
+/* An animation's sound event (GAM_00436910 case 0): on the perso, object type A; a launch row (case 2,
+ * TC_AI_LAUNCH_EVENT) asks the host to launch the perso's generated object from that channel. */
 static void play_sound(tc_ai_perso *p, uint32_t event) {
-    if (event <= 0xFFFF && p->sound_count < TC_AI_MAX_SOUNDS) p->sounds[p->sound_count++] = (uint16_t)event;
+    if (event >= TC_AI_LAUNCH_EVENT && event <= 0xFFFF) {
+        p->launch_channel = (int16_t)(event & 0xFF);
+        return;
+    }
+    play_sound_from(p, event, TC_SOUND_OWN, 0);
 }
 
 /* A mechanics request for this frame (REQ_Push_0047a370: up to 8, a full queue drops it), without the AI's
@@ -1788,6 +1802,8 @@ static bool kept_as_prop(tc_ai_perso *p, tc_ai_perso *q) {
     if (q == p && p->level_restored) return false; /* its own saved state: a pickup taken on an earlier visit */
     if (q->near_main_ms && q->time_ms - q->near_main_ms <= TC_AI_REMOVAL_MS) return false;
     q->frozen = true;
+    q->sound_serial++; /* the prop stands in for an inactive perso: its own sounds stop, as the exe's deactivation stops
+                          them (GAM_Objinit_00419a10 / 00419b60), and it starts none while frozen (tc_cast report_sound) */
     p->removals_kept++;
     return true;
 }
@@ -2110,7 +2126,10 @@ static uint32_t procedure(run *r, uint32_t i) {
             q->active = true;
             if (q->frozen_inactive) q->frozen = q->frozen_inactive = false; /* the guard's stand-in for "inactive" ends */
         }
-        if (q && c == 6) q->active = false;
+        if (q && c == 6) {
+            q->active = false;
+            q->sound_serial++;
+        }
         return 0;
     }
     case 17: case 18: case 19: case 20: case 21: case 22: { /* PROC_4Etc_00488580 -> GAM_00424280(perso, mechanics,
@@ -2130,6 +2149,7 @@ static uint32_t procedure(run *r, uint32_t i) {
         tc_ai_perso *q = target(r, arg(r, i, 0));
         if (!q || q->main_actor == 0) return 0;
         q->frozen = true;
+        q->sound_serial++; /* removed in the exe: its own sounds stop (as kept_as_prop) */
         p->removals_kept++;
         return q == p ? F_STOP : 0;
     }
@@ -2139,6 +2159,7 @@ static uint32_t procedure(run *r, uint32_t i) {
         if (!q || (q != p && q->main_actor == 0)) return 0;
         if (kept_as_prop(p, q)) return q == p ? F_STOP : 0;
         q->active = false;
+        q->sound_serial++;
         if (q->reinit) q->reinit_requested = true;
         else q->dead = true;
         return q == p ? F_STOP : 0;
@@ -2230,7 +2251,13 @@ static uint32_t procedure(run *r, uint32_t i) {
         p->motion.heading = h;
         return 0;
     }
-    case 145: case 146: case 147: case 148: play_sound(p, arg_param(r, i, 0)); return 0; /* PlaySound3D ... (event) */
+    case 145: case 146: /* PlaySound3D (object type A) / PlaySound3DOther (type B): on Me, or on OP 24's perso (the
+                         * procedures' flag 1: AI_004913a0 takes DAT_004ffcf4) */
+        play_sound_from(p, arg_param(r, i, 0), c == 145 ? TC_SOUND_OWN : TC_SOUND_OTHER, r->ctx);
+        return 0;
+    case 147: case 148: /* PlaySoundGlobal (type C) / Global2 (type A without an object): flat, wherever it was asked */
+        play_sound_from(p, arg_param(r, i, 0), TC_SOUND_FLAT, 0);
+        return 0;
     case 27: /* SetPositionFrom(perso, position) = AI_00488010 */
         place_perso(r, arg(r, i, 0), argv3(r, i, 1));
         return 0;
@@ -2694,6 +2721,7 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     p->change_level = p->change_place = p->change_camera_place = -1;
     p->g_flags = 0x20;
     p->g_armed = 1;
+    p->launch_channel = -1;
     p->state = p->wanted_state = m->initial_state < m->state_count ? m->initial_state : 0;
     if (m->state_count) {
         state_play(p, p->state); /* its animation's event counters */
@@ -2749,6 +2777,7 @@ static void step_begin(tc_ai_perso *p, float dt) {
     memcpy(proposal, p->motion.proposal, sizeof(proposal));
     memset(&p->motion, 0, sizeof(p->motion));
     p->sound_count = 0;
+    p->launch_channel = -1;
     p->light_call_count = 0;
     p->motion.mech_mode = mode;          /* the mechanics mode stays until the AI picks another */
     memcpy(p->motion.axes, axes, sizeof(axes));

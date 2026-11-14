@@ -11,7 +11,8 @@
  * Their mechanics run for card types 0, 4, 6, 7, 10, 12 (tc_cast_mec.c; docs/ENGINE.md "Moving collision, read", "Walkers",
  * "Perso motion"), and their own collision (tc_obstacle.h) is posed where they are after each step.
  * Port choices, not the exe: with other card types (8, 9) the persos with the mechanics flag turn in place by the AI's
- * turn requests; only sounds within TC_CAST_HEARING of the main actor are reported (the frontends play them flat). */
+ * turn requests; at most TC_CAST_SOUNDS_PER_TICK audible sounds a tick (the throttle). Every sound is reported with where it
+ * sounds from (tc_sound.h): the frontends place it from the camera, as the exe's micro hears it. */
 #ifndef TONIC_TC_CAST_H
 #define TONIC_TC_CAST_H
 #include "tc_ai.h"
@@ -24,11 +25,11 @@
 extern "C" {
 #endif
 
-#define TC_CAST_HEARING 30.0f
 #define TC_CAST_NEAR 10.0f         /* the removal guard's reach (tc_ai_perso.removal_guard): the pickups are taken within it */
-#define TC_CAST_SOUNDS_PER_TICK 4  /* port: at most this many cast sounds a tick, and the same one from the same perso
-                                      not again within TC_CAST_SOUND_GAP_MS (a script that replays one every tick must
-                                      not flood the mixer) */
+#define TC_CAST_SOUNDS_PER_TICK 4  /* port: at most this many audible cast sounds a tick (heard from tc_cast.listener at
+                                      TC_SOUND_AUDIBLE or more), and the same one from the same perso not again within
+                                      TC_CAST_SOUND_GAP_MS (a script that replays one every tick must not flood the mixer).
+                                      The inaudible ones go on (a loop is heard once its emitter comes near) */
 #define TC_CAST_SOUND_GAP_MS 250u
 #define TC_CAST_TALK_REACH 7.0f    /* port: how near a speaker Action talks to it, along the ground: the bar's counter keeps Ed
                                       5.8 off the barman, SpyCarota's ledge 6, and the mammoth towers 23 above him */
@@ -67,6 +68,8 @@ typedef struct tc_cast_actor {
     tc_sector_track sector;      /* the sector it is in now (GAM_0042c810 moves a perso with mechanics through the
                                     portals every frame); placed at its snapshot sector */
     tc_vec3 position_prev;       /* the tick before: for drawing between ticks */
+    int32_t generated;           /* its generated object waiting for the launch (the perso's +0x30 link, META 11): an
+                                    actor index, -1 none */
     tc_vec3 rot_prev;
     bool talking;                /* TC_CAST_TALK: the main actor spoke to it: its scripts run */
     /* Its physics as the shared mechanics see it (tc_mec_perso: the card types Ed's code brought, 1 2 5 8 11), made at
@@ -114,7 +117,11 @@ typedef struct tc_cast {
     uint32_t alias_saved_size;
     tc_ai_globals globals;
     uint16_t sounds_out[TC_AI_MAX_SOUNDS]; /* this step's sound events (global indices) */
+    tc_sound_source sources_out[TC_AI_MAX_SOUNDS]; /* where each sounds from (tc_sound.h) */
     uint8_t sounds_out_count;
+    uint8_t audible_out;         /* of them, heard from the listener (the throttle's count) */
+    tc_sound_listener listener;  /* host-fed: the camera's micro, last frame's (the exe places its micro at the frame's
+                                    start, before the camera moves): the throttle counts the sounds heard from it */
     uint32_t awake, thinking;    /* last step's counts */
     uint32_t sounds_dropped;     /* by the throttle, in all */
     uint32_t rng;
@@ -135,6 +142,12 @@ typedef struct tc_cast {
     tc_cast_moving_sector moving_sectors[TC_CAST_MAX_MOVING_SECTORS]; /* in the order the scripts first moved them */
     uint32_t moving_sector_count;
 } tc_cast;
+
+/* Where a started sound is heard from l (tc_sound.h): its volume 0..127, *pan and *dolby 0..127, or -1 when it is to
+ * stop (a TC_SOUND_OWN sound whose perso was deactivated or removed since: its sound_serial moved on). The emitter's
+ * position is its perso's now; the main actor (TC_SOUND_EMITTER_MAIN or his id) is always heard, at his own position; a
+ * perso whose sector is not known is not (volume 0), as the exe's callback (0x422860) has it. */
+int tc_cast_sound_place(const tc_cast *c, const tc_sound_source *s, const tc_sound_listener *l, int *pan, int *dolby);
 
 /* main: the main actor's AI (it gets the cast's lookup; must outlive the cast). Levels without a CAST chunk give an
  * empty cast (count 0). */

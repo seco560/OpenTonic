@@ -384,6 +384,10 @@ final class GameView: MTKView {
             if !event.isARepeat { HudSettings.toggle(v); updateTitle() }
             return
         }
+        if event.keyCode == 38 {  // J: Dolby Surround (the original's sound menu option; kept across launches)
+            if !event.isARepeat { Sfx.shared.dolby.toggle(); updateTitle() }
+            return
+        }
         if event.keyCode == 5 {  // G: level fog on/off
             if !event.isARepeat { tc_viewer_toggle_fog(v); updateTitle() }
             return
@@ -422,6 +426,7 @@ final class GameView: MTKView {
         let aa = renderer.map {
             ($0.msaa > 1 ? ", AA \($0.msaa)x" : ", AA off") + ($0.scale > 100 ? ", SS \($0.scale >= 200 ? "2x" : "1.5x")" : "")
                 + ($0.viewer.map { tc_viewer_hud_auto_hide($0.raw) } == true ? ", HUD auto-hide" : "")
+                + (Sfx.shared.dolby ? ", Dolby Surround" : "")
         } ?? ""
         let marks = Recording.shared.marks > 0 ? ", \(Recording.shared.marks) marks" : ""
         w.title = base + "  ·  " + viewer.status(extra: aa + marks + (playbackPaused ? ", paused" : ""))

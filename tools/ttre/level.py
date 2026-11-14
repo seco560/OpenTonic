@@ -180,6 +180,7 @@ class Sector:
     surfaces: list = field(default_factory=list)
     portals: list = field(default_factory=list)
     floors: list = field(default_factory=list)
+    sound_muted: list = field(default_factory=list)  # +0x70: sectors whose objects are not heard from this one (sounds())
 
 
 @dataclass(eq=False)
@@ -1423,6 +1424,17 @@ class LevelData:
                     if target is not None:
                         into.append(target)
                     node = lv.ptr(node, 4)
+            # +0x70 {head, tail, n} of {ptr sector, u32 value, ptr next}: the sound list. The listener's micro hears an
+            # object in another sector unless that sector is on the micro sector's list with value 0 (the type A / B
+            # objects' callback 0x422860; docs/ENGINE.md "3D sound"). Retail only: where the SE's shifted layout puts it
+            # is not read (its lists are left empty)
+            node, seen = (lv.ptr(data, 0x70) if not self.se else None), set()
+            while node is not None and node not in seen and len(seen) < 4096:
+                seen.add(node)
+                target = index.get(lv.ptr(node))
+                if target is not None and un('i', node, 4)[0] == 0:
+                    sec.sound_muted.append(target)
+                node = lv.ptr(node, 8)
             node = lv.ptr(data, 4 + sh)
             while node is not None and len(sec.envs) < 64:
                 entry = lv.ptr(node)
@@ -1584,6 +1596,21 @@ class LevelData:
                 ids[t.loc] = len(ps) + 1 + j
             self._perso_ids = ids
         return self._perso_ids
+
+    def sound_rolloffs(self):
+        """{perso id (perso_ids): (min, max)}: the persos with their own sound rolloff, perso +0x40 -> {i32 min, i32 max}
+        in 16.16 (the type A objects' callback 0x42dad0 hands it to _SND_fn_ucDistanceToVolumeEx: full volume nearer
+        than min, silent from 8 min, and no quieter than at max beyond max; max < min: no such floor). The others take
+        the default rolloff (min 8, silent from 64). Retail only (the SE's perso layout is not read there)."""
+        if self.se:
+            return {}
+        out = {}
+        for loc, pid in self.perso_ids().items():
+            r = self.lv.ptr(loc, 0x40)
+            if r is not None:
+                lo, hi = self.un('2i', r)
+                out[pid] = (lo / 65536, hi / 65536)
+        return out
 
     def sector_index(self, so_loc):
         """A sector SuperObject's index in sectors() (the .ttlv SECT's order; a script's type 27 node names one), or None."""
