@@ -76,11 +76,19 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 7. **Dying:** in some pits Ed still hits the bottom; some pits do not work; after a respawn he is shown falling for about
    half a second; lava and deadly water do not kill him.
 8. **Lifts and platforms:** most work. Sometimes one disappears mid-path. Ed flying clips through moving platforms.
+   * **2026-11-14 (Claude), awaiting a playtest:** flight now collides as the exe's does, with his flight body's spheres
+     against the persos too (docs/ENGINE.md "Flight: collision, the tornados, LeCanyon's wings"). Headless: he stops at
+     sud0's arena block instead of gliding through it. His body in flight is bigger than the old capsule (r 1.2 at his
+     origin): tight gaps he flew through before may stop him now, as in the original.
 9. **Pushed things:** cavedoc's crate moves but does not start the machine (a story gate?). marmite's boxes fly off one
    way when hit, without colliding.
 10. **Enemies:** bare: no proper sounds or collision. They can be killed and they hurt Ed.
 11. **Shooting:** rough. Aiming in first person does not tilt the blowpipe up or down. No shot leaves while one is in
     the air (what the exe does there is to be read).
+    * **2026-11-14 (Claude), awaiting a playtest:** the bee leaves from Ed's blowpipe at his animation's launch frame (about
+      a quarter second into the shot, as the exe; before: at once, from a guessed mouth), along the blowpipe: in flight
+      along his flight path. In first person the look's pitch tilts it (port: the original's stick mode pitches his upper
+      body). docs/ENGINE.md "Launching generated objects".
 12. **Stick attacks:** hit, with no sound from Ed or the enemy and no other feedback.
 13. **Cast sounds:** many still unheard. A script sometimes loops a laugh (cavedoc: fighting the corn, near the popcorn
     puzzle; probably Doc's robot's).

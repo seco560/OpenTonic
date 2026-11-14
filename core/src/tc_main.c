@@ -143,6 +143,51 @@ static void cast_sounds(const tc_cast *cast, uint16_t *sounds, tc_sound_source *
     }
 }
 
+/* v turned by angle about the unit axis r (Rodrigues). */
+static tc_vec3 turn_about(tc_vec3 v, tc_vec3 r, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    return tc_v3_add(tc_v3_add(tc_v3_scale(v, c), tc_v3_scale(tc_v3_cross(r, v), s)), tc_v3_scale(r, tc_v3_dot(r, v) * (1 - c)));
+}
+
+/* His animation's launch event (GAM_00436910 case 2: tc_ai_perso.launch_channel) this step: what his META 11 made leaves
+ * from the channel (his blowpipe, id 88: 0.79 in front, 1.30 up in state 126; along his head, so along the flight path,
+ * in flight state 187), placed as he is drawn (tc_ed_ai_model_matrix times the channel's matrix at this frame).
+ * Port: aim_pitch turns it about his right axis (in.aim_pitch: first person's look), at the channel. */
+static void launch_main(tc_main *m, tc_cast *cast, float aim_pitch) {
+    char name[16];
+    /* without his state animation or that channel: the blowpipe as in state 126, ahead of him (port) */
+    static const tc_mat34 blowpipe = {{1, 0, 0, 0, 0, 1, 0, -0.79f, 0, 0, 1, 1.30f}};
+    const tc_ed_anim *an;
+    const tc_mat34 *t = &blowpipe;
+    tc_mat4 mm;
+    tc_mat34 w;
+    tc_vec3 col[3], right, o;
+    uint32_t ch = (uint32_t)m->driver.ai.launch_channel, smp;
+    int i, k;
+    snprintf(name, sizeof(name), "s%u", (unsigned)tc_ed_ai_anim(&m->driver));
+    if ((i = ed_anim(m->level, name)) >= 0 && ch < (an = &m->level->ed.anims[i])->channel_count) {
+        smp = m->driver.ai.state_frame > 0 ? (uint32_t)m->driver.ai.state_frame : 0;
+        if (smp >= an->sample_count) smp = an->sample_count - 1u;
+        t = &an->transforms[(size_t)smp * an->channel_count + ch];
+    }
+    mm = tc_ed_ai_model_matrix(&m->driver);
+    for (k = 0; k < 3; k++) { /* the model's rotation times the channel's axis k */
+        tc_vec3 a = tc_v3(t->m[k], t->m[4 + k], t->m[8 + k]);
+        col[k] = tc_v3(mm.m[0] * a.x + mm.m[4] * a.y + mm.m[8] * a.z, mm.m[1] * a.x + mm.m[5] * a.y + mm.m[9] * a.z,
+                       mm.m[2] * a.x + mm.m[6] * a.y + mm.m[10] * a.z);
+    }
+    o = tc_v3(mm.m[0] * t->m[3] + mm.m[4] * t->m[7] + mm.m[8] * t->m[11] + mm.m[12],
+              mm.m[1] * t->m[3] + mm.m[5] * t->m[7] + mm.m[9] * t->m[11] + mm.m[13],
+              mm.m[2] * t->m[3] + mm.m[6] * t->m[7] + mm.m[10] * t->m[11] + mm.m[14]);
+    right = tc_v3_normalize(tc_v3(mm.m[0], mm.m[1], mm.m[2]));
+    if (aim_pitch != 0) /* front (-Y) towards up for a positive pitch: about his x axis by -pitch */
+        for (k = 0; k < 3; k++) col[k] = turn_about(col[k], right, -aim_pitch);
+    w.m[0] = col[0].x, w.m[1] = col[1].x, w.m[2] = col[2].x, w.m[3] = o.x;
+    w.m[4] = col[0].y, w.m[5] = col[1].y, w.m[6] = col[2].y, w.m[7] = o.y;
+    w.m[8] = col[0].z, w.m[9] = col[1].z, w.m[10] = col[2].z, w.m[11] = o.z;
+    tc_cast_launch_main(cast, &w);
+}
+
 static void ed_step(void *self, float dt) {
     ed_tick *x = (ed_tick *)self;
     tc_main *m = x->m;
@@ -156,7 +201,7 @@ static void ed_step(void *self, float dt) {
         const tc_ai_state *ski_state = &m->driver.ai.model->states[m->driver.ai.state];
         if (ski_state->card != TC_AI_NONE16)
             tcx_ski_tick(m->level->custom, &m->driver.dyn.ski, m->player.velocity, m->driver.dyn.contacts,
-                         tc_ai_card_f32(&m->driver.ai.model->cards[ski_state->card], 4));
+                         &m->driver.ai.model->cards[ski_state->card]);
     }
     /* the start text shows: the player presses Jump. Not where the level itself asks for the automatic start
      * (.ttai AUTO: the Special Edition's Totalski, imported courses), which have no such text */
@@ -165,6 +210,7 @@ static void ed_step(void *self, float dt) {
     prof = TC_PROF_BEGIN();
     tc_ed_ai_step(&m->driver, dt, in->inputs, in->stick_x, in->stick_y, in->eye);
     TC_PROF_END(TC_PZ_ED, prof);
+    if (x->cast && m->driver.ai.launch_channel >= 0) launch_main(m, x->cast, in->aim_pitch);
     if (m->driver.events.restarted) {
         m->driver.events.restarted = false;
         if (x->cast) tc_cast_respawn(x->cast);

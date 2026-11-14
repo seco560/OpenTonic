@@ -69,7 +69,7 @@ final class ControlsView: NSView {
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
         "L: the original's lighting (the default: its formula, the lights and fog of Ed's sector) or the port's old one, to compare.",
         "* V (or Play Intro Video) plays the intro movie from the level select screen; when it ends, or is skipped, the retail ski slope starts.",
-        "R (or Replays) on the level select screen: your recorded sessions, to play or delete, and the original demos (D). Watching one, P pauses and Esc goes back.",
+        "R (or Replays) on the level select screen: your recorded sessions, to play or delete (Shift + Delete, or Delete all: every one, after one question), and the original demos (D). Watching one, P pauses and Esc goes back.",
         "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
         "H (D-pad right): the HUD's auto-hide, the game's other mode: each element shows for five seconds when it changes, then slides out. Kept across levels.",

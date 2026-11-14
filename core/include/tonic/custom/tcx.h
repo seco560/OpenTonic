@@ -38,6 +38,7 @@ typedef struct tcx_level {
     uint32_t vehicle_count;          /* .ttlv VEHI (tcx_vehicle.h) */
     tcx_vehicle_data *vehicles;
     float ski_cruise, ski_push;      /* .ttlv SKIA (tcx_ski_tick); 0: none */
+    float ski_air_gravity;           /* SKIA's third value: off the snow his gravity times this (1: as the card has it) */
 } tcx_level;
 
 /* A play session's custom gameplay (opaque; tc_viewer_custom). */
@@ -68,9 +69,11 @@ bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model);
 /* Before a tick of the skier's mechanics (Ed on a type 2 card), on a level with SKIA (the SSX Tricky courses): on the
  * ground and slower along the board than ski_cruise (u/s), a push along its front of up to ski_push (u/s^2), fading out
  * over the upper half of that speed. SSX's riders propel themselves over the flats and dips their courses are built
- * with; Tonic Trouble's skier has gravity only (his slopes never level out), and sat still on them. Added to the
+ * with; Tonic Trouble's skier has gravity only (his slopes never level out), and sat still on them. Off the snow (no
+ * contact last tick) his weight is lightened to ski_air_gravity of the card's (factor +0x34, times +0x40 clear of the
+ * ground, as tc_mec_ski_velocity): SSX's gaps are built for its riders' long jumps (user, 2026-11-14). Added to the
  * board's force list, which the integrator takes with this tick. l NULL or no SKIA: nothing. */
-void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, float mass);
+void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, const tc_ai_card *card);
 
 /* Made with the play session (NULL: the level has nothing custom, or out of memory); every call below takes NULL. */
 tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles, uint32_t perso_first);
@@ -108,8 +111,9 @@ static inline bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *mod
     (void)mesh, (void)eye, (void)model;
     return false;
 }
-static inline void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, float mass) {
-    (void)l, (void)ski, (void)velocity, (void)contacts, (void)mass;
+static inline void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts,
+                                const tc_ai_card *card) {
+    (void)l, (void)ski, (void)velocity, (void)contacts, (void)card;
 }
 static inline tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles,
                                         uint32_t perso_first) {

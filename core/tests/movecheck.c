@@ -206,7 +206,9 @@ static void lob_scenario(const char *dir) {
         }
         printf("P\tpyramide paw: nearest to Ed %.2f, furthest from its start %.2f\n", (double)nearest, (double)furthest);
         check(furthest < 60, "pyramide", "the paw stays around its target");
-        check(nearest < 4, "pyramide", "the paw comes down on Ed");
+        /* Info only for now (user, 2026-11-14): the scripts that aim it at Ed are not ported yet; back to a check then */
+        printf("  info  pyramide: the paw %s on Ed (nearest %.2f)\n", nearest < 4 ? "comes down" : "does not come down",
+               (double)nearest);
     }
     tc_viewer_free(&v);
     free(ai);

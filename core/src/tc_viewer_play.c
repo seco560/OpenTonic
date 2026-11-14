@@ -461,6 +461,7 @@ static void step_ai(tc_viewer *v, float dt) {
         in.eye = v->camera.position;
         in.face = v->cam.first_person && !v->director;
         in.heading = TC_PI - v->camera.yaw;
+        in.aim_pitch = in.face ? v->camera.pitch : 0; /* first person: shots go where the gunsight is, up and down too */
         in.talk_press = v->talk_press;
         in.hud_waits = v->hud_waits;
         /* the game's tick (tc_main.h): the run-first persos, Ed, the rest */

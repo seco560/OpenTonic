@@ -209,6 +209,10 @@ const tc_cast_actor *tc_cast_actor_of(const tc_cast *c, uint32_t prso);
  * sample. false: not drawn (inactive, or no animation). */
 bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *world, const tc_cast_anim **anim,
                   tc_sample *s);
+/* The main actor's animation reached its launch (TC_AI_LAUNCH_EVENT; his blowpipe, channel id 88): the object his META 11
+ * made waits for it, inactive, as any generator's does; it now leaves from `at` (the channel's world matrix: his model
+ * matrix, tilted in flight, times the channel's), with its launch vector in the channel's axes. Nothing waiting: no-op. */
+void tc_cast_launch_main(tc_cast *c, const tc_mat34 *at);
 /* Diagnostics: the primitives the cast's scripts skipped, summed (as tc_ai_perso.unknown, 10 * TC_AI_UNKNOWN_STRIDE). */
 void tc_cast_unknown(const tc_cast *c, uint32_t *out);
 /* After the main actor's death (or the ski levels' retry) and the port's respawn: the original initialises the map

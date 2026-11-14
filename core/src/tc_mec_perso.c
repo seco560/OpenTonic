@@ -48,6 +48,35 @@ static void hang(const tc_mec_perso *x, const tc_ai_sphere_set *body, float dt) 
     p->against_wall = (x->dyn->contacts & TC_AI_CONTACT_WALL) != 0;
 }
 
+/* The flight's collide-and-move (DNM_IntegrateFly_004ac0da: MEC_CollideMove_004be1bd, no card, flags 0x10, which no
+ * response reads): the state's ZDM spheres posed as the model is in flight (tc_mec_fly_model_axes: head first along the
+ * velocity, so Ed's head sphere leads and the big body sphere, r 1.2 at his origin, carries him), against the static
+ * world and the persos alike (MEC_SweepZones_0043bff0, as on foot: moving platforms stop him). No card: the default
+ * contact classes, no step-up. After a contact FUN_004c3dc3: the response's velocity if it still goes his way
+ * (before . after > DAT_004d3070 = 0), else the velocity from before the contact; R15 then reads the contact (the
+ * ground: landing B62; a wall: the bump, state 268). Port: the spheres are posed with this frame's flight axes (the exe
+ * sweeps from the pose the last integrator step left). Before 2026-11-14 tc_player's upright capsule against the
+ * static world only: he flew through moving platforms. */
+static void fly_move(const tc_mec_perso *x, const tc_ai_card *card, tc_vec3 v, float dt) {
+    tc_player *p = x->body;
+    tc_ai_sphere_set posed = *x->spheres;
+    tc_vec3 ax, ay, az, before = v;
+    uint16_t k;
+    tc_mec_fly_model_axes(&x->dyn->fly, card, &ax, &ay, &az);
+    for (k = 0; k < posed.count; k++) {
+        tc_vec3 c = x->spheres->spheres[k].center;
+        posed.spheres[k].center = tc_v3_add(tc_v3_add(tc_v3_scale(ax, c.x), tc_v3_scale(ay, c.y)), tc_v3_scale(az, c.z));
+    }
+    if (tc_mec_collide_move(&x->dyn->walk, NULL, p->world, &posed, 0, dt, &p->position, &v) && tc_v3_dot(before, v) <= 0)
+        v = before;
+    p->velocity = v;
+    x->dyn->contacts = tc_mec_walk_contacts(&x->dyn->walk) & 0x1F;
+    p->grounded = (x->dyn->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) != 0;
+    p->against_wall = (x->dyn->contacts & TC_AI_CONTACT_WALL) != 0;
+    p->ground_normal = x->dyn->walk.ground_normal;
+    p->wall_normal = x->dyn->walk.wall_normal;
+}
+
 /* Card type 8 (FUN_004ac62b, request FUN_004af04e; Ed's climb onto a ledge, state 153, and the skier's crash): no forces
  * (FUN_004c4aa4 empties the list), so the velocity is exactly the request's: mode 12 the move direction x speed in
  * world axes, mode 13 ProposalVecA, any other mode none (the port takes the root motion as mode 12's, as for walking).
@@ -243,17 +272,26 @@ void tc_mec_perso_step(const tc_mec_perso *x, float dt) {
         return;
     }
     if (type == 5) {
-        tc_vec3 v = p->velocity;
+        /* PROC 35 (the Velocity field) sets the dynamics' velocity before the request handler builds the frame from it
+         * (ignored here before 2026-11-14): B74 leaving a tornado, (0, 0, 11) in its level pose = 11 straight ahead
+         * (else he left still climbing, head up); B45 after the lateral roll, 9 level for 500 ms */
+        tc_vec3 v = m->velocity_set ? m->velocity : p->velocity;
         uint8_t k;
         if (d->card_type != 5)
             tc_mec_fly_enter(&d->fly, card, local_to_global(p->heading, tc_v3(0, -1, 0)), &v);
         if (m->mode_count == 0) tc_mec_fly_request(&d->fly, card, 0, m->proposal, dt, &v);
         for (k = 0; k < m->mode_count; k++) tc_mec_fly_request(&d->fly, card, m->modes[k], m->proposal, dt, &v);
         v = tc_mec_fly_velocity(&d->fly, card, d->env, v, dt);
-        tc_player_move(p, dt, v);
+        if (d->fly.hold_height) v.z = 0; /* port (tc_mec_fly.hold_height): he floats, level */
+        if (x->spheres) {
+            fly_move(x, card, v, dt);
+            v = p->velocity;
+        } else { /* a flight state without a body (none of Ed's): the capsule */
+            tc_player_move(p, dt, v);
+            d->contacts = player_contacts(p);
+        }
         if (v.x * v.x + v.y * v.y > 1e-4f) p->heading = atan2f(v.x, -v.y); /* face along the flight path */
         d->card_type = type;
-        d->contacts = player_contacts(p);
         return;
     }
     if (type == 2) {

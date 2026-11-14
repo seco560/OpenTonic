@@ -60,6 +60,9 @@ void replays_open(replays *r, gpu *g, float scale, const char *folder, bool reco
     r->yes = gpu_text(g, "Yes, delete", r->text_scale, &r->yes_w, &r->yes_h);
     r->keep = gpu_text(g, "Keep", r->text_scale, &r->keep_w, &r->keep_h);
     r->ask = gpu_text(g, "Delete this recording for good?", r->text_scale, &r->ask_w, &r->ask_h);
+    r->del_all = gpu_text(g, "Delete all", r->text_scale, &r->del_all_w, &r->del_all_h);
+    r->ask_all = gpu_text(g, "Delete every recording for good?", r->text_scale, &r->ask_all_w, &r->ask_all_h);
+    r->yes_all = gpu_text(g, "Yes, delete all", r->text_scale, &r->yes_all_w, &r->yes_all_h);
     r->demos = gpu_text(g, "Original demos (D)", r->text_scale, &r->demos_w, &r->demos_h);
     r->record = gpu_text(g, "Record runs (R)", r->text_scale, &r->record_w, &r->record_h);
     r->empty = gpu_text(g, folder ? "No recordings yet: turn on Record runs, then play a level."
@@ -73,7 +76,8 @@ static void free_entry(replays *r, replays_entry *e) {
 }
 
 void replays_close(replays *r) {
-    SDL_GPUTexture *labels[] = {r->heading, r->back, r->play, r->del, r->yes, r->keep, r->ask, r->empty, r->record, r->demos};
+    SDL_GPUTexture *labels[] = {r->heading, r->back, r->play, r->del, r->yes, r->keep, r->ask, r->empty, r->record, r->demos,
+                                r->del_all, r->ask_all, r->yes_all};
     for (int i = 0; i < r->count; i++) free_entry(r, &r->entries[i]);
     for (size_t k = 0; k < SDL_arraysize(labels); k++)
         if (labels[k]) SDL_ReleaseGPUTexture(r->g->device, labels[k]);
@@ -109,6 +113,23 @@ static SDL_FRect demos_rect(const replays *r) {
     return q;
 }
 
+/* Delete all, after the original demos (or Back); while it asks, its question and Yes / Keep there instead. */
+static SDL_FRect delete_all_rect(const replays *r) {
+    SDL_FRect b = r->can_demo ? demos_rect(r) : back_rect(r);
+    SDL_FRect q = {b.x + b.w + 12 * r->scale, b.y, (float)r->del_all_w + 24 * r->scale, b.h};
+    return q;
+}
+static SDL_FRect all_yes_rect(const replays *r) {
+    SDL_FRect d = delete_all_rect(r);
+    SDL_FRect q = {d.x + (float)r->ask_all_w + 16 * r->scale, d.y, (float)r->yes_all_w + 24 * r->scale, d.h};
+    return q;
+}
+static SDL_FRect all_keep_rect(const replays *r) {
+    SDL_FRect y = all_yes_rect(r);
+    SDL_FRect q = {y.x + y.w + 10 * r->scale, y.y, (float)r->keep_w + 24 * r->scale, y.h};
+    return q;
+}
+
 /* The Record runs switch and its label, the controls' right end: all of it answers the mouse. */
 #define SWITCH_W 44.0f
 #define SWITCH_H 22.0f
@@ -136,6 +157,10 @@ replays_hit replays_at(const replays *r, float x, float y) {
     replays_hit h = {REPLAYS_NOTHING, -1};
     if (inside(back_rect(r), x, y)) { h.action = REPLAYS_BACK; return h; }
     if (r->can_demo && inside(demos_rect(r), x, y)) { h.action = REPLAYS_DEMOS; return h; }
+    if (r->confirm_all) {
+        if (inside(all_yes_rect(r), x, y)) { h.action = REPLAYS_ALL_YES; return h; }
+        if (inside(all_keep_rect(r), x, y)) { h.action = REPLAYS_ALL_KEEP; return h; }
+    } else if (r->count && inside(delete_all_rect(r), x, y)) { h.action = REPLAYS_DELETE_ALL; return h; }
     if (r->can_record && inside(record_rect(r), x, y)) { h.action = REPLAYS_RECORD; return h; }
     if (y < header_height(r)) return h;  /* the rows scroll under the header */
     for (int i = 0; i < r->count; i++) {
@@ -163,6 +188,7 @@ void replays_scroll(replays *r, float pixels) { r->scroll = SDL_clamp(r->scroll 
 void replays_move(replays *r, int dy) {
     if (r->count == 0) return;
     r->confirm = -1;
+    r->confirm_all = false;
     r->selected = r->selected < 0 ? 0 : SDL_clamp(r->selected + dy, 0, r->count - 1);
     SDL_FRect q = row_rect(r, r->selected);
     if (q.y < header_height(r)) replays_scroll(r, q.y - header_height(r));
@@ -170,7 +196,32 @@ void replays_move(replays *r, int dy) {
 }
 
 void replays_ask(replays *r, int i) {
-    if (i >= 0 && i < r->count) r->confirm = i;
+    if (i >= 0 && i < r->count) r->confirm = i, r->confirm_all = false;
+}
+
+void replays_ask_all(replays *r) {
+    if (r->count) r->confirm_all = true, r->confirm = -1;
+}
+
+int replays_delete_all(replays *r) {
+    int kept = 0;
+    r->confirm_all = false;
+    r->confirm = -1;
+    for (int i = 0; i < r->count; i++) {
+        if (!SDL_RemovePath(r->entries[i].path)) {
+            SDL_Log("Can't delete %s: %s", r->entries[i].path, SDL_GetError());
+            r->entries[kept++] = r->entries[i];
+            continue;
+        }
+        SDL_Log("Deleted %s", r->entries[i].path);
+        free_entry(r, &r->entries[i]);
+    }
+    int failed = kept;
+    r->count = kept;
+    r->selected = -1;
+    r->hover = (replays_hit){REPLAYS_NOTHING, -1};
+    r->scroll = 0;
+    return failed;
 }
 
 bool replays_delete(replays *r, int i) {
@@ -249,6 +300,14 @@ void replays_draw(replays *r, gpu_frame *f, SDL_GPURenderPass *pass) {
     if (r->can_demo)
         picker_big_button(g, f, pass, demos_rect(r), r->demos, r->demos_w, r->demos_h, r->hover.action == REPLAYS_DEMOS, s, ACCENT);
     if (r->can_record) draw_record_switch(r, f, pass);
+    if (r->confirm_all) {
+        SDL_FRect d = delete_all_rect(r);
+        picker_label(g, f, pass, r->ask_all, (SDL_FRect){d.x, SDL_roundf(d.y + (d.h - (float)r->ask_all_h) / 2), (float)r->ask_all_w,
+                     (float)r->ask_all_h}, NULL, s, WARN);
+        picker_button(g, f, pass, all_yes_rect(r), r->yes_all, r->yes_all_w, r->yes_all_h, r->hover.action == REPLAYS_ALL_YES, s);
+        picker_button(g, f, pass, all_keep_rect(r), r->keep, r->keep_w, r->keep_h, r->hover.action == REPLAYS_ALL_KEEP, s);
+    } else if (r->count)
+        picker_button(g, f, pass, delete_all_rect(r), r->del_all, r->del_all_w, r->del_all_h, r->hover.action == REPLAYS_DELETE_ALL, s);
     if (r->heading) picker_label(g, f, pass, r->heading, (SDL_FRect){SDL_roundf((r->width - (float)r->heading_w) / 2),
                                  SDL_roundf(title_y(r)), (float)r->heading_w, (float)r->heading_h}, NULL, s, TEXT);
     if (r->count == 0 && r->empty)

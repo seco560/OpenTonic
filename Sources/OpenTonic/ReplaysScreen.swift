@@ -3,8 +3,9 @@ import TonicCore
 
 /// The Replays menu: the recordings (Recording) in a list, newest first, each to play or delete; sdl/src/replays.c is the
 /// SDL build's. Row text is the core's (tc_replay_summarize). Deleting asks first; an autopilot run can't be played. A run
-/// ends on the way to a menu, so nothing here is being written. Up / Down select, Return plays, Delete deletes, R flips
-/// Record runs (Recording.enabled), D plays the original demos, Esc goes back.
+/// ends on the way to a menu, so nothing here is being written. Up / Down select, Return plays, Delete deletes, Shift +
+/// Delete (or Delete all) deletes every one after one question, R flips Record runs (Recording.enabled), D plays the
+/// original demos, Esc goes back.
 final class ReplaysScreen: NSView {
     private struct Entry { let url: URL; let title: String; let details: String; let playable: Bool }
 
@@ -22,6 +23,7 @@ final class ReplaysScreen: NSView {
     private let scroll = NSScrollView()
     private let empty: NSTextField
     private let record = NSSwitch()
+    private let deleteAllButton = NSButton(title: "Delete all", target: nil, action: nil)
     private let recordLabel = NSTextField(labelWithString: "Record runs (R)")
     private let rowHeight: CGFloat = 72, gap: CGFloat = 8, header: CGFloat = 64
 
@@ -63,6 +65,16 @@ final class ReplaysScreen: NSView {
             demos.autoresizingMask = [.maxXMargin, .minYMargin]
             addSubview(demos)
         }
+        deleteAllButton.target = self
+        deleteAllButton.action = #selector(deleteAllPressed)
+        deleteAllButton.bezelStyle = .rounded
+        deleteAllButton.hasDestructiveAction = true
+        deleteAllButton.toolTip = "Delete every recording in this list, after one question (Shift + Delete)"
+        deleteAllButton.sizeToFit()
+        let leftmost = subviews.compactMap { $0 as? NSButton }.map { $0.frame.maxX }.max() ?? back.frame.maxX
+        deleteAllButton.frame.origin = NSPoint(x: leftmost + 8, y: back.frame.minY)
+        deleteAllButton.autoresizingMask = [.maxXMargin, .minYMargin]
+        addSubview(deleteAllButton)
         record.target = self
         record.action = #selector(toggleRecord)
         record.state = Recording.enabled ? .on : .off
@@ -120,6 +132,7 @@ final class ReplaysScreen: NSView {
         rows.forEach { $0.removeFromSuperview() }
         rows = []
         empty.isHidden = !entries.isEmpty
+        deleteAllButton.isEnabled = !entries.isEmpty
         let width = min(scroll.contentSize.width - 40, 1100), left = (scroll.contentSize.width - width) / 2
         for (i, e) in entries.enumerated() {
             let row = NSBox(frame: NSRect(x: left, y: CGFloat(i) * (rowHeight + gap), width: width, height: rowHeight))
@@ -192,6 +205,35 @@ final class ReplaysScreen: NSView {
         }
     }
 
+    /// Asks once, then removes every listed recording; the ones that could not be removed stay listed.
+    private func deleteAll() {
+        guard !entries.isEmpty else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = entries.count == 1 ? "Delete the one recording for good?"
+                                               : "Delete all \(entries.count) recordings for good?"
+        alert.informativeText = "Every recording in this list is removed. The original demos stay."
+        alert.addButton(withTitle: "Delete all").hasDestructiveAction = true
+        alert.addButton(withTitle: "Keep")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        var kept: [Entry] = [], firstError: Error?
+        for e in entries {
+            do { try FileManager.default.removeItem(at: e.url) } catch {
+                kept.append(e)
+                if firstError == nil { firstError = error }
+            }
+        }
+        entries = kept
+        selected = -1
+        rebuild()
+        if let error = firstError {
+            let failed = NSAlert()
+            failed.messageText = kept.count == 1 ? "One recording could not be deleted" : "\(kept.count) recordings could not be deleted"
+            failed.informativeText = "\(error.localizedDescription)"
+            failed.runModal()
+        }
+    }
+
     private func play(_ i: Int) {
         if entries.indices.contains(i), entries[i].playable { onPlay?(entries[i].url) }
     }
@@ -201,6 +243,7 @@ final class ReplaysScreen: NSView {
     @objc private func toggleRecord() { Recording.enabled = record.state == .on }
     @objc private func playRow(_ sender: NSButton) { play(sender.tag) }
     @objc private func deleteRow(_ sender: NSButton) { delete(sender.tag) }
+    @objc private func deleteAllPressed() { deleteAll() }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
@@ -208,7 +251,8 @@ final class ReplaysScreen: NSView {
         case 126: if !entries.isEmpty { select(max(selected - 1, 0)) }  // up
         case 125: if !entries.isEmpty { select(min(selected + 1, entries.count - 1)) }  // down
         case 36, 76: if !event.isARepeat { play(selected) }  // Return, keypad Enter
-        case 51, 117: if !event.isARepeat { delete(selected) }  // Delete, forward delete
+        case 51, 117:  // Delete, forward delete; with Shift, all of them
+            if !event.isARepeat { if event.modifierFlags.contains(.shift) { deleteAll() } else { delete(selected) } }
         case 15: if !event.isARepeat, record.isEnabled { record.performClick(nil) }  // R
         case 2: if !event.isARepeat, hasDemos { onDemos?() }  // D
         default: super.keyDown(with: event)

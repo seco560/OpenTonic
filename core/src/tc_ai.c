@@ -774,6 +774,15 @@ static tc_vec3 global_to_local(const tc_ai_perso *p, tc_vec3 v) {
     float c = cosf(p->heading), s = sinf(p->heading);
     return tc_v3(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
 }
+/* The same by the perso's drawn axes where the host feeds them (has_axes), as the exe's matrix. */
+static tc_vec3 axes_to_global(const tc_ai_perso *p, tc_vec3 v) {
+    if (!p->has_axes) return local_to_global(p, v);
+    return tc_v3_add(tc_v3_add(tc_v3_scale(p->axes[0], v.x), tc_v3_scale(p->axes[1], v.y)), tc_v3_scale(p->axes[2], v.z));
+}
+static tc_vec3 global_to_axes(const tc_ai_perso *p, tc_vec3 v) {
+    if (!p->has_axes) return global_to_local(p, v);
+    return tc_v3(tc_v3_dot(v, p->axes[0]), tc_v3_dot(v, p->axes[1]), tc_v3_dot(v, p->axes[2]));
+}
 /* A level perso's placement, where the model knows it: the portals (.ttai PORT), whose perso Ed's dsg99 holds while he
  * walks in. rows: its 3x3, row-major. */
 static bool perso_frame(const tc_ai_perso *p, int32_t perso, tc_vec3 *position, const float **rows) {
@@ -1675,8 +1684,11 @@ static value function(run *r, uint32_t i) {
     case 88: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_float(q ? tc_v3_length(q->velocity) : 0); }
     case 98: return v_float(tc_v3_length(argv3(r, i, 0)));
     case 99: { tc_vec3 v = argv3(r, i, 0); float l = tc_v3_length(v); return v_vec(l > 0 ? tc_v3_div(v, l) : v); }
-    case 100: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(local_to_global(q ? q : p, argv3(r, i, 0))); }
-    case 101: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(global_to_local(q ? q : p, argv3(r, i, 0))); }
+    /* FUNC 100 / 101 (0x49ab10): by the perso's matrix, so tilted where it is drawn tilted (has_axes: flight, swimming, the
+     * board; before 2026-11-14 the heading alone: B74's way out of a tornado, (0, 0, 11) in its level pose = ahead, went
+     * straight up) */
+    case 100: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(axes_to_global(q ? q : p, argv3(r, i, 0))); }
+    case 101: { const tc_ai_perso *q = r->ctx ? live(p, r->ctx) : p; return v_vec(global_to_axes(q ? q : p, argv3(r, i, 0))); }
     /* FUNC_VecLengthEtc_0049ab10 cases 0x66 / 0x67: a point through the perso's world matrix (FUN_0047b2f0) or its
      * inverse. Ed's underwater reflex R8 leaves the water when FUNC_102((0, 1, -1)) rises 0.55 above the surface. */
     case 13: { /* FUNC_GetPositionEtc_0049a140 case 0xd: the squared distance from OP 24's perso's origin to the point (Ed's

@@ -52,6 +52,7 @@ typedef struct tc_mec_fly {
      * drawn from it (tc_mec_fly_model_axes). Kept while the speed is too low to build one. */
     tc_vec3 frame_x, frame_y, frame_z;
     tc_vec3 pending_dv;          /* mode 21's velocity change: a force in the exe's force list, applied by the integrator */
+    bool hold_height;            /* port, set by the driver each step: no climb or sink (Ed's in-flight aim hover) */
 } tc_mec_fly;
 
 /* Switching to a type 5 card (GAM_0042ab20): controls reset, the velocity becomes card +0x48 (Ed: 10) along the

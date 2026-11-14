@@ -16,7 +16,7 @@ typedef struct replays_entry {
 /* What is under a point. */
 typedef enum replays_action {
     REPLAYS_NOTHING, REPLAYS_BACK, REPLAYS_ROW, REPLAYS_PLAY, REPLAYS_DELETE, REPLAYS_YES, REPLAYS_KEEP, REPLAYS_RECORD,
-    REPLAYS_DEMOS
+    REPLAYS_DEMOS, REPLAYS_DELETE_ALL, REPLAYS_ALL_YES, REPLAYS_ALL_KEEP
 } replays_action;
 typedef struct replays_hit { replays_action action; int row; } replays_hit;
 
@@ -27,6 +27,7 @@ typedef struct replays {
     float scale, scroll, width, height;
     int selected;                /* -1 none */
     int confirm;                 /* the row asking "delete?", -1 none */
+    bool confirm_all;            /* the header asking "delete every one?" */
     replays_hit hover;
     int text_scale;
     bool can_record, recording;  /* the Record runs toggle: shown, and its state (record_enabled) */
@@ -35,9 +36,9 @@ typedef struct replays {
     bool can_demo;               /* the original demos' button: there are tapes (out/demos) */
     SDL_GPUTexture *demos;
     int demos_w, demos_h;
-    SDL_GPUTexture *heading, *back, *play, *del, *yes, *keep, *ask, *empty;
+    SDL_GPUTexture *heading, *back, *play, *del, *yes, *keep, *ask, *empty, *del_all, *ask_all, *yes_all;
     int heading_w, heading_h, back_w, back_h, play_w, play_h, del_w, del_h, yes_w, yes_h, keep_w, keep_h, ask_w, ask_h,
-        empty_w, empty_h;
+        empty_w, empty_h, del_all_w, del_all_h, ask_all_w, ask_all_h, yes_all_w, yes_all_h;
 } replays;
 
 /* Lists folder's recordings (NULL: recording is off, no toggle); recording: the toggle's state; demos: show the original
@@ -53,5 +54,9 @@ void replays_move(replays *r, int dy);
 void replays_ask(replays *r, int i);
 /* Deletes row i's file and row; false (the row kept) when the file can't be removed. */
 bool replays_delete(replays *r, int i);
+/* The header asks to delete every recording (none listed: nothing). */
+void replays_ask_all(replays *r);
+/* Deletes every listed recording; returns how many could not be removed (their rows stay). */
+int replays_delete_all(replays *r);
 void replays_draw(replays *r, gpu_frame *f, SDL_GPURenderPass *pass);
 #endif

@@ -803,16 +803,24 @@ static void delete_replay(app *a, int i) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Replays", "That recording could not be deleted.", a->window);
 }
 
-/* Enter or Cross on the selected row: its question's yes, else play. */
+static void delete_all_replays(app *a) {
+    int failed = replays_delete_all(&a->rp);
+    if (failed) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Replays", failed == 1 ? "One recording could not be deleted."
+                                         : "Some recordings could not be deleted.", a->window);
+}
+
+/* Enter or Cross on the selected row: its question's yes (or Delete all's), else play. */
 static void replays_accept(app *a) {
     replays *r = &a->rp;
-    if (r->confirm >= 0) delete_replay(a, r->confirm);
+    if (r->confirm_all) delete_all_replays(a);
+    else if (r->confirm >= 0) delete_replay(a, r->confirm);
     else play_replay(a, r->selected);
 }
 
 /* Esc or Circle: the question, else the menu. */
 static void replays_cancel(app *a) {
-    if (a->rp.confirm >= 0) a->rp.confirm = -1;
+    if (a->rp.confirm_all) a->rp.confirm_all = false;
+    else if (a->rp.confirm >= 0) a->rp.confirm = -1;
     else {
         close_replays(a);
         set_title(a, "Open Tonic");
@@ -841,8 +849,11 @@ static void replays_key(app *a, const SDL_KeyboardEvent *k) {
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
         if (!k->repeat) replays_accept(a);
         break;
-    case SDL_SCANCODE_DELETE: case SDL_SCANCODE_BACKSPACE:
-        if (!k->repeat) replays_ask(r, r->selected);
+    case SDL_SCANCODE_DELETE: case SDL_SCANCODE_BACKSPACE: /* with Shift: every one */
+        if (!k->repeat) {
+            if (k->mod & SDL_KMOD_SHIFT) replays_ask_all(r);
+            else replays_ask(r, r->selected);
+        }
         break;
     case SDL_SCANCODE_ESCAPE:
         if (!k->repeat) replays_cancel(a);
@@ -856,13 +867,16 @@ static void replays_click(app *a, float x, float y) {
     replays_hit h = replays_at(r, x, y);
     switch (h.action) {
     case REPLAYS_BACK: r->confirm = -1; replays_cancel(a); break;
-    case REPLAYS_ROW: r->selected = h.row; r->confirm = -1; break;
+    case REPLAYS_ROW: r->selected = h.row; r->confirm = -1; r->confirm_all = false; break;
     case REPLAYS_PLAY: play_replay(a, h.row); break;
     case REPLAYS_DELETE: replays_ask(r, h.row); break;
     case REPLAYS_YES: delete_replay(a, h.row); break;
     case REPLAYS_KEEP: r->confirm = -1; break;
     case REPLAYS_RECORD: replays_toggle_record(a); break;
     case REPLAYS_DEMOS: start_demos(a); break;
+    case REPLAYS_DELETE_ALL: replays_ask_all(r); break;
+    case REPLAYS_ALL_YES: delete_all_replays(a); break;
+    case REPLAYS_ALL_KEEP: r->confirm_all = false; break;
     case REPLAYS_NOTHING: break;
     }
 }
@@ -1022,6 +1036,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         case SDL_GAMEPAD_BUTTON_DPAD_DOWN: replays_move(&a->rp, 1); break;
         case SDL_GAMEPAD_BUTTON_SOUTH: replays_accept(a); break;
         case SDL_GAMEPAD_BUTTON_WEST: replays_ask(&a->rp, a->rp.selected); break;  /* Square: delete */
+        case SDL_GAMEPAD_BUTTON_BACK: replays_ask_all(&a->rp); break;  /* Select: delete all (Cross: yes) */
         case SDL_GAMEPAD_BUTTON_NORTH: replays_toggle_record(a); break;  /* Triangle: Record runs */
         case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: if (a->rp.can_demo) start_demos(a); break;  /* L1: the original demos */
         case SDL_GAMEPAD_BUTTON_EAST: replays_cancel(a); break;

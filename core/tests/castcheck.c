@@ -76,6 +76,14 @@ static bool cast_portal(const tc_viewer *v, uint32_t id) {
     return false;
 }
 
+/* Its scripts hold a ForceBehaviour / ForceReflex (PROC 237 / 238). */
+static bool forces_others(const tc_ai_model *m) {
+    uint32_t n;
+    for (n = 0; n < m->node_count; n++)
+        if (m->nodes[n].type == TC_AI_PROC && (m->nodes[n].param == 237 || m->nodes[n].param == 238)) return true;
+    return false;
+}
+
 static void save_draws(tc_viewer *v) {
     uint32_t count, opaque;
     const tc_view_draw *d = tc_viewer_draws(v, &count, &opaque);
@@ -348,13 +356,14 @@ static void level(const char *dir, const char *name) {
     visited -= unreached;
     check(visited == 0 || woke * 10 >= visited * 9, "the sleepers wake when Ed comes within their radius");
     /* The persos allowed to force Ed (tools/ttre/cast.py MAY_FORCE_MAIN: the levers): Ed beside one, Action; he must be
-     * taken over, then let go (back to running). Only drawn ones: World and the pit markers are invisible (above). */
+     * taken over, then let go (back to running). Only drawn ones: World and the pit markers are invisible (above); and
+     * only those whose scripts force him (PROC 237 / 238): the tornados are allowed only to write his dsgvars. */
     for (i = 0; i < c->count; i++) {
         const tc_cast_actor *a = &c->actors[i];
         int side, k, taken_over = 0;
         unsigned forced_into = 0, held_on, state_before, state_after;
         if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || !a->ai->active || a->entry->prso == 0xFFFF ||
-            cast_portal(&v, a->entry->id))
+            cast_portal(&v, a->entry->id) || !forces_others(&a->model))
             continue;
         /* each from a fresh level: an earlier visit can leave Ed in another behaviour (Action by a grille he cannot
          * work yet: B69), and the next machine then never takes him (Land: the grille 53 beside the machine 54) */

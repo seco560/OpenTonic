@@ -95,6 +95,8 @@ typedef struct tc_main_input {
     tc_vec3 eye;                 /* the camera (his scripts make the direction keys camera-relative) */
     bool face;                   /* turn him to `heading` first (first person: where the player looks) */
     float heading;
+    float aim_pitch;             /* rad, + up: tilts what he shoots about his right axis (first person: the look's pitch;
+                                    port, for the original's stick mode B29 pitching his channel 3; 0 otherwise) */
     bool talk_press;             /* a fresh Action since the last tick, for the cast (TC_CAST_TALK) */
     bool hud_waits;              /* the start text shows (the host's HUD): the player presses Jump himself */
 } tc_main_input;

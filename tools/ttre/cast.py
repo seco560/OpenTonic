@@ -61,6 +61,9 @@ MAY_FORCE_MAIN = {'sud_mecalevier', 'distrib',  # the levers; the popcorn (Crunc
                   'World',  # the game flow: north's fall height (R0: z < -105 -> Ed's B60), the collect-N reward (B41)
                   'grille',  # cavedoc's popcorn grille: Super Ed holding Action in its zone works it (Ed's dsg58 = 1)
                   'mais',  # cavedoc's corn cob boss: its intro / end hold Ed (B15 + R4, then B103), as the robot's
+                  'Tornado',  # the swirly cones (FRB_tornadodudes): while Ed is in one (COND 15) they write his dsg33 =
+                  #             1 and dsg84 = their push (dsg0, (0, 0, 2) in LeCanyon, weaker towards their top); his flight
+                  #             B45 -> B74 takes it as a velocity change (fly mode 21) every frame. Nothing else of his.
                   'genski'}  # the ski levels' flow: the finish (SYM_Gen_Arrivee, NBD_Arrivee_Et_Retry) writes the
 #                              skier's arrival waypoints and next / retry (dsg35 / 36 / 40) and the fix Ed's dsg148 = 3,
 #                              which start his own finish (B19: state 321, stepping off); the start (PAT_DEPARTESSAI)
@@ -75,7 +78,12 @@ MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn',
                          # cavedoc's last door (BEM_PorteDeFinDoc): its lever pulled (SDO_OuvrePorte's dsg0 1 or 2), it
                          # holds Ed (B?: his wait, R4) while it opens and starts Doc's way home (BEM_Doc B5, B3: the
                          # cutscene after the robot; Doc runs since 2026-11-13, level_changer_ids)
-                         'BEM_DocPorteFin'}
+                         'BEM_DocPorteFin',
+                         # LeCanyon's wings (gencanyon): the fall into the canyon (J2P_CutTrou1's shot) takes Ed's
+                         # flying power; dropping past YAS_RemoveWings (model YAS_EnleveAilePasSM) without it gives it
+                         # back and opens his wings (B67 -> B63 with dsg142 = 1: falling, state 44; 300 ms later R15 +
+                         # B26, the flight start). SDO_ActiveLesAiles (SDO_AA*): the same within its dsg2 = 30, no wait.
+                         'YAS_EnleveAilePasSM', 'SDO_ActiveLesAiles'}
 # ... but not these instances: marmite's magnet switch keeps Ed holding it (his dsg3 = 1: Jump and Shoot steer the
 # magnet; leaning it to let go with Action does not take in the port yet, castcheck 2026-11-02): he would be stuck.
 MAY_NOT_FORCE_MAIN = {'JET_SwAimant'}
@@ -369,13 +377,24 @@ def named_zones(cast):
                     c = n.children
                     if n.type == 1 and n.param == 13 and len(c) == 3 and c[0].type == 24 and c[0].ref and c[1].type == 12:
                         out.setdefault(c[0].ref, set()).add(c[1].param)
+                    if n.type == 1 and n.param == 15 and len(c) == 2 and c[0].type == 24 and c[0].ref:
+                        out.setdefault(c[0].ref, set()).add(ALL_ZONES)
     return out
 
 
-def zones(d, loc, a, named=()):
-    """The ZDD zones its scripts test with COND_13(Me, k, ...) (1-based k), and those the cast names it by (named:
-    named_zones()[loc]): [(k, primitives)] (ai.zdd_zone: spheres and boxes in the perso's axes; triangle zones are
-    left out)."""
+ALL_ZONES = 0  # in named_zones' sets: COND 15 names the perso, so every ZDD zone of it counts
+# Port choice: these models' COND 15 zones are not exported yet (their test stays false, as before 2026-11-14). sud0's
+# catapult (doc_tapet): Ed on it 1 s -> it holds him, sets a fixed camera shot, starts Doc's tank and the inventory, then
+# launches him (his B56: a (0, -20, 20) kick, the cover, B59). Never run or checked in the port; with its zone alone it
+# would do the camera and the others and never launch him (its forces on him are not allowed): to look at as a whole.
+ZONES_HELD = {'IVP_la_catapultapette_du_doc'}
+
+
+def zones(d, loc, a, named=(), all_zones=True):
+    """The ZDD zones its scripts test with COND_13(Me, k, ...) (1-based k), every one when they test COND 15(Me, ..)
+    (Cond_CollidePersoAllZDDWithPersoAllZDD, GAM_AnyZoneHolds_004202c0: any of its zones; the tornados' push, marmite's
+    pressure plates, pyramide's breaking platforms; not with all_zones False: ZONES_HELD), and those the cast names it by (named: named_zones()[loc]): [(k,
+    primitives)] (ai.zdd_zone: spheres and boxes in the perso's axes; triangle zones are left out)."""
     ks = set(named)
     for b in a.behaviours:
         for sc in b.scripts + ([b.schedule] if b.schedule else []):
@@ -383,6 +402,12 @@ def zones(d, loc, a, named=()):
                 c = n.children
                 if n.type == 1 and n.param == 13 and len(c) == 3 and c[0].type == 0 and c[0].param == 4 and c[1].type == 12:
                     ks.add(c[1].param)
+                if n.type == 1 and n.param == 15 and len(c) == 2 and c[0].type == 0 and c[0].param == 4:
+                    ks.add(ALL_ZONES)
+    if ALL_ZONES in ks:
+        ks.discard(ALL_ZONES)
+        if all_zones:
+            ks.update(k for k in range(1, 9) if ai.zdd_zone(d, loc, k - 1))
     out = []
     for k in sorted(ks):
         prims = ai.zdd_zone(d, loc, k - 1) if k >= 1 else None
@@ -490,7 +515,7 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         if loc in spawn_locs:
             flags |= SPAWN
         flags |= TABLES
-        zs = zones(d, loc, a, zones_named.get(loc, ()))
+        zs = zones(d, loc, a, zones_named.get(loc, ()), names[1] not in ZONES_HELD)
         zone_block = struct.pack('<HH', len(zs), 0)
         if zs:
             zone_block += struct.pack('<12f', *ai.mat_inverse(world))

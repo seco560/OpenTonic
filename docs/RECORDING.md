@@ -14,6 +14,7 @@ Why it exists: docs/FINDINGS.md item 4.
 | Other folder, or off | `TONIC_RECORDINGS=/some/folder`, `TONIC_RECORDINGS=off` (no toggle then) |
 | Mark a moment | **F9**, or the pad's touchpad: "look at this". The title counts them |
 | Watch or delete one | **Replays** on the level select (R, or Square): the list, newest first, with Play and Delete |
+| Delete them all | **Delete all** in the Replays menu's header (Shift + Delete; Select on SDL's pad): one question, then every listed recording goes (the original demos stay) |
 | Watching one | locked: the game's keys, the mouse and the pad do nothing. **P** or Cross pauses: mouse, arrows, right stick and wheel move the camera round Ed, and resuming puts it back (a level's scripted shot, as in the outro, keeps its camera). Esc or Start goes back to the list, as its end does; Cmd-L / Ctrl+L to the level select |
 | Straight from the command line | `OpenTonic --replay [file]` (the newest without a file) |
 | What's in one | `core/build/replay info FILE` |

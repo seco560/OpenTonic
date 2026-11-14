@@ -1215,6 +1215,199 @@ static void shoot_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
+/* A fresh viewer on an already loaded level, playing. */
+static bool open_viewer(tc_viewer *v, tc_level *level, const char *name, const uint8_t *ai, size_t ai_size) {
+    tc_viewer_desc desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.level = level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = name;
+    desc.seed = 7;
+    if (tc_viewer_init(v, &desc) != TC_OK) return false;
+    if (!v->playing && tc_viewer_can_play(v)) tc_viewer_toggle_play(v);
+    return true;
+}
+
+static const tc_cast_actor *actor_id(const tc_cast *c, uint32_t id) {
+    uint32_t i;
+    for (i = 0; c && i < c->count; i++)
+        if (c->actors[i].entry->id == id) return &c->actors[i];
+    return NULL;
+}
+
+static void put_ed(tc_viewer *v, tc_vec3 at, float heading) {
+    tc_player *p = (tc_player *)tc_viewer_player(v);
+    p->position = at;
+    p->velocity = tc_v3(0, 0, 0);
+    p->heading = heading;
+    p->placed++;
+}
+
+/* Ed's bee: in the air now (the instance launched), its velocity's elevation in degrees; -999 none. */
+static float bee_elevation(const tc_cast *c) {
+    uint32_t i;
+    for (i = 0; c && i < c->count; i++) {
+        const tc_ai_perso *b = c->actors[i].ai;
+        if ((c->actors[i].entry->flags & TC_CAST_SPAWN) && b->model && b->active && !b->frozen)
+            return atan2f(b->velocity.z, sqrtf(b->velocity.x * b->velocity.x + b->velocity.y * b->velocity.y)) * 180 / TC_PI;
+    }
+    return -999;
+}
+
+/* Flight and shooting (docs/ENGINE.md "Flight: collision, the tornados, LeCanyon's wings", "Launching generated
+ * objects"): LeCanyon's tornado FRB_dude1 (perso 22) carries Ed up when he flies into it; dropping past YAS_RemoveWings
+ * (129) without the flying power opens his wings; flying at sud0's arena block (HEG_BlocArene01, perso 117) stops him
+ * at it; his bee leaves along the look's pitch in first person and along his path in flight. */
+static void flight_scenario(const char *dir) {
+    static const char *names[2] = {"LeCanyon", "sud0"};
+    char path[1024], what[256];
+    size_t size, ai_size;
+    uint8_t *data, *ai;
+    tc_level level;
+    tc_viewer v;
+    const tc_cast *c;
+    const tc_cast_actor *a;
+    int n, i;
+    for (n = 0; n < 2; n++) {
+        snprintf(path, sizeof(path), "%s/%s.ttlv", dir, names[n]);
+        if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) {
+            free(data);
+            printf("  (no %s: flight skipped)\n", names[n]);
+            continue;
+        }
+        free(data);
+        snprintf(path, sizeof(path), "%s/%s.ttai", dir, names[n]);
+        ai_size = 0;
+        ai = read_file(path, &ai_size);
+        if (n == 0) {
+            float top = -1e9f, z0;
+            int boosted = 0, flew = 0;
+            uint16_t powers_low = 0xFFFF;
+            /* the tornado: from 15 beside it, jump in the air to fly, glide into it */
+            if (!open_viewer(&v, &level, names[n], ai, ai_size)) { check(0, "LeCanyon viewer"); free(ai); tc_level_free(&level); continue; }
+            c = tc_viewer_cast(&v);
+            run(&v, 1, 0);
+            if (!(a = actor_id(c, 22)) || !a->entry->zone_count) {
+                printf("  (LeCanyon's tornado 22 without its zone: an older export, skipped)\n");
+            } else {
+                z0 = a->ai->position.z;
+                put_ed(&v, tc_v3_add(a->ai->position, tc_v3(0, 15, 0)), 0);
+                for (i = 0; i < 60 * 5; i++) {
+                    tc_viewer_set_action(&v, TC_VA_JUMP, i >= 20 && i < 26);
+                    frame(&v, 1.0f / 60);
+                    boosted |= c->main->normal.behaviour == 74;
+                    if (ed(&v).z > top) top = ed(&v).z;
+                }
+                tc_viewer_release_all(&v);
+                snprintf(what, sizeof(what), "a LeCanyon tornado carries flying Ed up (B74: %s; %.1f above its middle at most)",
+                         boosted ? "yes" : "no", (double)(top - z0));
+                check(boosted && top - z0 > 15, what);
+            }
+            tc_viewer_free(&v);
+            /* the wings: dropped beside the start ledge, the fall takes the power; below YAS_RemoveWings he flies */
+            if (!open_viewer(&v, &level, names[n], ai, ai_size)) { check(0, "LeCanyon viewer"); free(ai); tc_level_free(&level); continue; }
+            c = tc_viewer_cast(&v);
+            run(&v, 1, 0);
+            if (!(a = actor_id(c, 129))) {
+                printf("  (LeCanyon without YAS_RemoveWings 129: skipped)\n");
+            } else {
+                put_ed(&v, tc_v3_add(a->ai->position, tc_v3(0, 2.5f, 103)), 0);
+                for (i = 0; i < 60 * 8 && !flew; i++) {
+                    frame(&v, 1.0f / 60);
+                    if (c->globals.powers < powers_low) powers_low = c->globals.powers;
+                    flew = c->main->normal.behaviour == 45 || c->main->normal.behaviour == 46;
+                }
+                snprintf(what, sizeof(what), "LeCanyon: the fall takes the flying power (%#x), below the marker his wings open "
+                         "(%s, %.0f below it)", (unsigned)powers_low, flew ? "flying" : "not flying",
+                         (double)(a->ai->position.z - ed(&v).z));
+                check(!(powers_low & 0x80) && flew && (c->globals.powers & 0x80), what);
+                if (flew) { /* the aim hover (Lateral held): he floats (port), level */
+                    float z0 = 0, drop = 0;
+                    int hovered = 0;
+                    run(&v, 1, 0);
+                    for (i = 0; i < 60 * 2; i++) {
+                        tc_viewer_set_action(&v, TC_VA_LATERAL, 1);
+                        frame(&v, 1.0f / 60);
+                        if (i == 30) z0 = ed(&v).z;
+                        if (i > 30) drop = fmaxf(drop, fabsf(ed(&v).z - z0)), hovered |= c->main->state == 268 || c->main->state == 269;
+                    }
+                    tc_viewer_release_all(&v);
+                    snprintf(what, sizeof(what), "flying, Lateral holds Ed in the aim hover (%s) at his height (moved %.2f in 1.5 s)",
+                             hovered ? "yes" : "no", (double)drop);
+                    check(hovered && drop < 0.1f, what);
+                }
+            }
+            tc_viewer_free(&v);
+        } else {
+            const tc_obstacles *os;
+            const tc_obstacle *block = NULL;
+            float miny = 1e9f, mid = 0, up = -999, along = -999, path_elev = 0;
+            uint32_t k;
+            /* the arena block: from 14 off its +Y side, fly at it */
+            if (!open_viewer(&v, &level, names[n], ai, ai_size)) { check(0, "sud0 viewer"); free(ai); tc_level_free(&level); continue; }
+            run(&v, 1, 0);
+            os = tc_viewer_player(&v)->world->obstacles;
+            for (k = 0; os && k < os->count; k++)
+                if (os->items[k].id == 117) block = &os->items[k];
+            if (!block) {
+                printf("  (sud0 without its arena block 117: skipped)\n");
+            } else {
+                tc_vec3 m = tc_v3_scale(tc_v3_add(block->lo, block->hi), 0.5f);
+                mid = m.y;
+                put_ed(&v, tc_v3(m.x, block->hi.y + 8, m.z + 13), 0);
+                for (i = 0; i < 60 * 4; i++) {
+                    tc_viewer_set_action(&v, TC_VA_JUMP, (i >= 4 && i < 8) || (i >= 30 && i < 34));
+                    frame(&v, 1.0f / 60);
+                    if (ed(&v).y < miny) miny = ed(&v).y;
+                }
+                tc_viewer_release_all(&v);
+                snprintf(what, sizeof(what), "sud0: flying Ed stops at the arena block (got to y %.1f; its middle %.1f)",
+                         (double)miny, (double)mid);
+                check(miny > mid, what);
+            }
+            tc_viewer_free(&v);
+            /* the bee in first person, looking 30 deg up: Action (the blowpipe out), Shoot */
+            if (!open_viewer(&v, &level, names[n], ai, ai_size)) { check(0, "sud0 viewer"); free(ai); tc_level_free(&level); continue; }
+            c = tc_viewer_cast(&v);
+            ((tc_cast *)c)->globals.values[0] = 20; /* bees */
+            run(&v, 1, 0);
+            tc_viewer_toggle_first_person(&v);
+            for (i = 0; i < 60 * 2 && up == -999; i++) {
+                v.camera.pitch = 30 * TC_PI / 180;
+                tc_viewer_set_action(&v, TC_VA_ACTION, i >= 10 && i < 14);
+                tc_viewer_set_action(&v, TC_VA_SHOOT, i >= 60 && i < 64);
+                frame(&v, 1.0f / 60);
+                up = bee_elevation(c);
+            }
+            tc_viewer_release_all(&v);
+            tc_viewer_free(&v);
+            /* ... and in flight, diving: along his path */
+            if (!open_viewer(&v, &level, names[n], ai, ai_size)) { check(0, "sud0 viewer"); free(ai); tc_level_free(&level); continue; }
+            c = tc_viewer_cast(&v);
+            ((tc_cast *)c)->globals.values[0] = 20;
+            run(&v, 1, 0);
+            put_ed(&v, tc_v3_add(ed(&v), tc_v3(0, 0, 40)), tc_viewer_player(&v)->heading);
+            for (i = 0; i < 60 * 3 && along == -999; i++) {
+                const tc_vec3 *w = &tc_viewer_player(&v)->velocity;
+                tc_viewer_set_action(&v, TC_VA_JUMP, i >= 10 && i < 14);
+                tc_viewer_set_action(&v, TC_VA_FORWARD, i >= 40);
+                tc_viewer_set_action(&v, TC_VA_SHOOT, i >= 90 && i < 94);
+                path_elev = atan2f(w->z, sqrtf(w->x * w->x + w->y * w->y)) * 180 / TC_PI;
+                frame(&v, 1.0f / 60);
+                along = bee_elevation(c);
+            }
+            tc_viewer_release_all(&v);
+            snprintf(what, sizeof(what), "Ed's bee leaves at %.1f deg looking 30 up in first person, at %.1f deg diving at %.1f deg",
+                     (double)up, (double)along, (double)path_elev);
+            check(up > 25 && up < 35 && along != -999 && fabsf(along - path_elev) < 5 && path_elev < -20, what);
+            tc_viewer_free(&v);
+        }
+        free(ai);
+        tc_level_free(&level);
+    }
+}
+
 /* A hint scene (docs/ENGINE.md "Walkable scenes", "Speech"): Ed stands where the scene's own Ed would and walks; the speaker
  * waits for him; Action within reach starts it; its line shows, in the game's font, Ed held; a fresh Jump dismisses it;
  * its script covers the screen and hands over to the main level. */
@@ -1476,6 +1669,7 @@ done:
     ride_scenario(dir);
     guide_scenario(dir);
     shoot_scenario(dir);
+    flight_scenario(dir);
     scene_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");

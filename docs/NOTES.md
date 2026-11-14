@@ -559,6 +559,9 @@ to switch to. What is known is under "The camera, first look" below.
   - whether the stick is in his mouth by default (the user recalls it is summoned: check the exe);
   - LeCanyon: when Ed spawns while falling, Jump doesn't deploy flight. Check the level's scripts and the exe; the
     user guesses a script forces flying mode.
+    **2026-11-14:** the user's guess holds: J2P_CutTrou1 takes the flying power on the fall, YAS_RemoveWings gives it back
+    below and forces his flight start; it was kept off Ed. docs/ENGINE.md "Flight: collision, the tornados, LeCanyon's
+    wings".
 - **Bring in decompiled game code subsystem by subsystem**, not piecemeal, discussing each one with the user first.
 
 Later, not next: Tonic Tooling (docs/TOOLING.md).
@@ -1485,7 +1488,8 @@ This was the simple demo I thought of making that eventually spiraled into remak
   an exact rotation. **Needs a look in the app**: if the flight animations were authored lying down, this would stand
   Ed upright instead (the exe's code says they are not).
 - Still not done: the flight collision body (the exe sweeps the state's ZDM spheres in this tilted pose, card NULL,
-  flags 0x10; the port uses tc_player's upright capsule), FUN_004c3dc3 after a hit (the post-collision velocity when
+  flags 0x10; the port uses tc_player's upright capsule; **done 2026-11-14**, docs/ENGINE.md "Flight: collision, the
+  tornados, LeCanyon's wings"), FUN_004c3dc3 after a hit (**done 2026-11-14**) (the post-collision velocity when
   before . after > DAT_004d3070, else the velocity from before the collision), the camera in flight.
 
 ### Swimming and water, decoded with types (2026-10-24, typing step 3)

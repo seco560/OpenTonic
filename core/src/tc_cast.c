@@ -152,17 +152,37 @@ static tc_vec3 rotate_z(float heading, tc_vec3 v) {
 
 static tc_result start_actor(tc_cast *c, tc_cast_actor *a);
 
-/* Port: where the main actor's shots start, in his axes (front = -Y): at his mouth, below his head sphere (1.95 up). */
-#define TC_CAST_SHOT_HEIGHT 1.7f
-#define TC_CAST_SHOT_FRONT -0.5f
+void tc_cast_launch_main(tc_cast *c, const tc_mat34 *m) {
+    tc_cast_actor *a = c ? c->main_actor : NULL, *g;
+    tc_vec3 x, y, z, at, v;
+    const float *pr;
+    if (!a || a->generated < 0 || (uint32_t)a->generated >= c->count) return;
+    g = &c->actors[a->generated];
+    a->generated = -1;
+    if (!g->ai->model || g->ai->dead || g->ai->active) return;
+    x = tc_v3_normalize(tc_v3(m->m[0], m->m[4], m->m[8])); /* the channel's axes (Ed's bones carry a little scale) */
+    y = tc_v3_normalize(tc_v3(m->m[1], m->m[5], m->m[9]));
+    z = tc_v3_normalize(tc_v3(m->m[2], m->m[6], m->m[10]));
+    at = tc_v3(m->m[3], m->m[7], m->m[11]);
+    pr = g->ai->motion.proposal; /* META 11's vector (AI_00488070), in the instance's axes, which are the channel's now */
+    v = tc_v3_add(tc_v3_add(tc_v3_scale(x, pr[1]), tc_v3_scale(y, pr[2])), tc_v3_scale(z, pr[3]));
+    g->ai->active = true;
+    g->ai->position = g->position_prev = at;
+    if (y.x * y.x + y.y * y.y > 1e-8f) g->ai->heading = atan2f(-y.x, y.y); /* its front, -Y, about Z */
+    g->rot_prev = tc_v3(0, 0, g->ai->heading);
+    g->dyn->velocity = g->ai->velocity = v;
+    g->sector.sector = c->main_sector;
+    g->sector.position = at;
+}
 
 /* META 11's instancing (GAM_Always_004259a0): the template's actor (TC_CAST_SPAWN). While its last instance is still out,
  * that one again, where it is (the generator's +0x30 object: META_SpawnInState_0049f190 reuses it); else it starts
  * afresh at the generator's place and heading, in its sector, inactive (GAM_Always ends with GAM_00423d40(.., 0)) and
- * linked to its generator (a->generated), until the generator's animation launches it (launch above; docs/ENGINE.md
- * "Launching generated objects"). Port: one instance per template, and the launch vector becomes its velocity too (its
- * scripts read Velocity at once: the bee's B2 aims its wall probe along it). The main actor's bee starts at once, from
- * the port's guessed mouth (his launch from channel 88 needs his pose, the viewer's). */
+ * linked to its generator (a->generated), until the generator's animation launches it (launch above, and
+ * tc_cast_launch_main for the main actor; docs/ENGINE.md "Launching generated objects"). Port: one instance per
+ * template, and the launch vector becomes its velocity too (its scripts read Velocity at once: the bee's B2 aims its
+ * wall probe along it). Before 2026-11-14 the main actor's bee started at once, level along his heading, from a guessed
+ * mouth (1.7 up, 0.5 in front). */
 static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc_vec3 launch) {
     tc_cast *c = (tc_cast *)user;
     tc_cast_actor *a;
@@ -177,10 +197,8 @@ static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc
         if (start_actor(c, a) != TC_OK) { memset(a->ai, 0, sizeof(*a->ai)); return NULL; }
         a->ai->sound_serial = (uint16_t)(serial + 1);
     }
-    a->ai->active = by == c->main; /* the exe's instance waits, inactive, for its generator's launch (below) */
+    a->ai->active = false; /* the exe's instance waits, inactive, for its generator's launch (above) */
     a->ai->position = by->position;
-    if (by == c->main) /* port: from his mouth, at once (his launch event, channel 88, is not taken from his pose yet) */
-        a->ai->position = tc_v3_add(by->position, rotate_z(by->heading, tc_v3(0, TC_CAST_SHOT_FRONT, TC_CAST_SHOT_HEIGHT)));
     a->ai->heading = by->heading;
     a->position_prev = a->ai->position;
     a->rot_prev = tc_v3(0, 0, by->heading);
@@ -188,7 +206,8 @@ static tc_ai_perso *cast_spawn(void *user, int32_t id, const tc_ai_perso *by, tc
     a->ai->velocity = a->dyn->velocity;
     a->sector.sector = c->main_sector;
     a->sector.position = a->ai->position;
-    if (by != c->main) { /* another generator: its sector, and its link to the instance (perso +0x30) */
+    if (by == c->main && c->main_actor) c->main_actor->generated = k; /* his link (perso +0x30) */
+    else { /* another generator: its sector, and its link to the instance (perso +0x30) */
         uint32_t i;
         for (i = 0; i < c->count; i++)
             if (c->actors[i].ai == by) {

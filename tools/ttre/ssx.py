@@ -78,8 +78,10 @@ NO_COLLISION = 17
 # The skier's cruise push on these courses (.ttlv SKIA; core tcx_ski_tick: custom gameplay, port choice): SSX's riders
 # propel themselves over the flats and dips, Tonic Trouble's skier has gravity only. Slower than CRUISE (TT units a
 # second; 14 = 11 m/s = 40 km/h at 1 unit = 80 cm, a slow SSX pace) along the board and on the ground, he is pushed
-# with up to PUSH (u/s^2; his gravity down a 9 degree slope).
-CRUISE, PUSH = 17.0, 6.0  # 17 u/s since 2026-11-14 (user: "a bit faster"; was 14)
+# with up to PUSH (u/s^2; his gravity down a 9 degree slope). Off the snow his weight is AIR_GRAVITY of the card's
+# (the retail skier falls at 10 g in the air: card +0x34 4 x +0x40 2.5), so SSX's gaps can be jumped.
+CRUISE, PUSH = 19.0, 7.0  # 19 / 7 since 2026-11-14 late (user: "just a smidge faster"; was 17 / 6, at first 14 / 6)
+AIR_GRAVITY = 0.8  # 2026-11-14 (user: "a bit less gravity ... he can't fly over some pits")
 
 
 # ---- the disc ----
@@ -681,7 +683,7 @@ def convert(iso, course, name=None):
 
     ig.write_level(name, groups, tris, spawn, donor=DONOR, heading=heading, floors=floors, tri_floors=tri_floors,
                    ttai=ttai, textures=sum(1 for v in pngs.values() if v), failed=missing, bounds=(lo, hi), quiet=True,
-                   extra=[('SKIA', struct.pack('<2f', CRUISE, PUSH))])
+                   extra=[('SKIA', struct.pack('<3f', CRUISE, PUSH, AIR_GRAVITY))])
     problems = ([f'{missing} patches without a texture'] if missing else []) + \
                ([f'no start found ({how})'] if not gate else []) + ([f'sky: {sky}'] if 'triangles' not in sky else [])
     print(f'{name}.ttlv: ' + ('; '.join(problems) if problems else 'ok'))

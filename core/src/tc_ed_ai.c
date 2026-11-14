@@ -4,6 +4,9 @@
 #include "tonic/tc_ed_ai.h"
 #include "tonic/tc_alloc.h"
 
+/* His in-flight aim hover's flag (B45 script 11: 1 while Lateral holds it, 2 for the 500 ms after) */
+#define TC_ED_HOVER_DSG 35
+
 static bool same_name(const char *a, const char *b) {
     for (; *a && *b; a++, b++)
         if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
@@ -507,6 +510,13 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
      * if a portal or SetPositionFrom moved him this step, as the exe sets the sector with the position) */
     track_sector(e);
     e->dyn.env_depth = tc_mec_env_at(e->sectors, e->sector.sector, p->position, &e->dyn.env);
+    /* Port: the in-flight aim hover floats. Lateral held in flight (B45 script 11: his dsg35 = 1) holds him in state
+     * 268 / 269 on card 31 (top speed 3, wing area 80) and turns his upper body upright (RotateChannelToward on channel
+     * 3, not drawn by the port). At 3 u/s its lift is 92 % of his weight: by the exe's maths he sinks about 1 u/s and
+     * leans 23 deg nose down (drawn head along the velocity). The user wants him floating: no climb or sink while it
+     * holds, so he also stays level. */
+    e->dyn.fly.hold_height = e->dyn.card_type == 5 && card && card->type == 5 &&
+                             (int32_t)tc_ai_dsgvar_float(a, TC_ED_HOVER_DSG) == 1;
     { /* his mechanics, as every perso's (tc_mec_perso.c) */
         tc_mec_perso x;
         x.ai = a;

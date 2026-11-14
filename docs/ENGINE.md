@@ -633,8 +633,68 @@ started at its feet before, so on their way back from a target they flew under i
 origin) and never hurt it (BUGS.md (d)); now a returning kernel bursts on it and takes 2 hit points (headless probe).
 The launch may come in a later state of the chain (sud0's navets: state 19 -> 20; the magic mushroom: 7 -> 8 -> 9); north's
 `SDO_Garde_NoeudPapillon` spawns in state 37, whose chain has none: its instance stays held, as in the exe (the port
-launched it at once from the guard's feet before). **Not yet:** Ed as a generator: his bee still starts at once at the port's guessed mouth (tc_cast.c
-TC_CAST_SHOT_HEIGHT 1.7 / FRONT 0.5; the channel says 1.30 / 0.79), as his pose is the viewer's, not the cast's.
+launched it at once from the guard's feet before).
+**Ed as a generator (2026-11-14):** his bee waits too, and leaves at his animation's launch event (state 126 frame 8,
+flight 187 / 325 / 326 frame 2) from his blowpipe channel: his drawn model matrix (tc_ed_ai_model_matrix, tilted in
+flight) times the channel's matrix in his state animation at that frame (tc_main.c launch_main ->
+tc_cast_launch_main), its META 11 vector in the channel's axes (**inferred**: the type 10 request 0x15 is not read; the
+cast's other generators get it in their heading's axes, as before). Read from the animations: standing (s126) the
+channel is 0.79 in front, 1.30 up, pointing ahead (1.2 deg down); in flight (s187) it points along the model's +Z, his
+head, so his shots follow the flight path (the vector adds his speed: B45's `-dsg32 - GetSpeed`). Before, the bee left
+at once, level along his heading, from a guessed mouth (1.7 up, 0.5 in front). **Port:** first person's look pitch
+(tc_main_input.aim_pitch) turns the launch about his right axis, at the channel: the original's stick mode B29 pitches
+his channel 3 by dsg30 (-70 .. 80 deg, eased) and the blowpipe follows; the port's first person does not run B29.
+Probe (sud0, 20 bees): looking 30 deg up the bee leaves at 28.7 deg; diving at -57 deg it leaves at -56.6 deg (level
+before both).
+
+## Flight: collision, the tornados, LeCanyon's wings (2026-11-14; **read** unless marked)
+- **The flight's body.** `DNM_IntegrateFly_004ac0da` moves Ed with `MEC_CollideMove_004be1bd` (no card, flags 0x10,
+  which no response reads): the state's ZDM spheres (Ed's flight set: r 1.2 at his origin, 0.25 at 1.4 along his head,
+  a hand point) posed as he is drawn, head first, against the static world **and the persos** (`MEC_SweepZones_0043bff0`,
+  as on foot). After a contact `FUN_004c3dc3`: the response's velocity if it still goes his way (before . after >
+  DAT_004d3070 = 0), else the one from before; R15 then lands him (B62) or bumps him (state 268). Port (tc_mec_perso.c
+  fly_move): the same through tc_mec_collide_move, the spheres posed with this frame's flight axes. Before, tc_player's
+  upright capsule against the static world only: he flew through moving platforms (BUGS.md queue 8). Probe (sud0's arena
+  block HEG_BlocArene01): before, he glided through it; now he stops at its face and lands.
+- **The tornados** (`Tornado`, model FRB_tornadodudes: LeCanyon 15, Transit 5, north, sud0, BigBoss). B1, every frame:
+  while Ed's origin is in its ZDD zone (COND 15, `GAM_AnyZoneHolds_004202c0`; a box 15.3 x 16.3 x 42 about its origin),
+  dsg5 = his height over its origin (InPersoContext(Ed, DistanceZ(Me))); within +-dsg3 (21) it sets Ed's dsg33 = 1 and
+  dsg84 = its push dsg0 ((0, 0, 2) in LeCanyon), scaled by 1 - dsg4 (0.1) x (dsg5 - dsg1) above dsg1 (15), and by 1 +
+  dsg4 x (dsg5 + dsg2) below -dsg2. Ed's flight B45 (script 8) goes to B74 (state 346) when dsg113's time + dsg114 has
+  passed (else it drops the flag); B74 (script 4) turns dsg33 into ProposalVecA(dsg84) + SetMechMode21: the fly
+  request's velocity change, every frame he is inside (capped by the card's top speed, 20); outside, PROC_35 (0, 0, 11)
+  in his axes and back to B45. Two port gaps had it dead: COND 15's zones were never exported (only COND 13's numbered
+  ones; tools/ttre/cast.py zones now exports all of a perso's zones for COND 15, and for COND 15 naming it), and the
+  cast may not write Ed's dsgvars unless allowed (cast.py MAY_FORCE_MAIN: `Tornado` added; it writes only dsg33 / 84).
+- **COND 15's other users, woken by the same export (not seen in the app):** marmite's pressure plates (JET_SwSallePoteau:
+  a box's origin on the plate) and strobe room (JET_SalleStrobo), pyramide's breaking platforms (MAD_PFTombeCasse: Ed on
+  one, its sound, 700 ms, it falls) and the chameleon columns' camera shot (MAD_GenCamelColo). **Held back** (cast.py
+  ZONES_HELD): sud0's catapult (IVP_la_catapultapette_du_doc): Ed on it 1 s -> it holds him (B15 + R4), sets a fixed
+  camera shot, starts Doc's tank and the inventory, then launches him (his B56: a (0, -20, 20) kick, the cover, B59). Its
+  forces on Ed are not allowed, so with its zone alone it would do all but the launch: to be looked at as a whole.
+- **LeCanyon's wings.** The fall into the canyon: `J2P_CutTrou1` sets the camera's fixed shot on the hole and takes power
+  0x80 (flying), so Jump cannot open his wings while he falls. `YAS_RemoveWings` (model YAS_EnleveAilePasSM, 136 below
+  the start ledge): once he has been above it, when he drops below it without 0x80: Ed's dsg136 = 265, dsg142 = 1, his
+  B67 (-> B63: with dsg142 = 1, state 44, falling, R34, B102), 300 ms, power 0x80, his R15 + B26 (the flight start), and
+  the camera's dsg44 = 1, dsg39 = 0. `SDO_ActiveLesAiles` (SDO_AA*, four of them): within dsg2 (30) of it, power 0x80 and
+  7, R15 + B26 at once (with dsg1 = 1 first B67 with his heading dsg0; all four have 0). Both were kept off Ed (not on
+  the allow list): the power came back, the flight never started, and he fell to the bottom. Now allowed
+  (MAY_FORCE_MAIN_MODELS). Probe before the change (Ed dropped in the air beside the start ledge, z 470): the power goes
+  at once (0xff7f), comes back below the marker, Jump does nothing, he lands 187 below at 100 u/s.
+- **Leaving a tornado, the aim hover (2026-11-14, after the user's first look: "Ed faces upwards after he is lifted";
+  sidestepping "makes Ed point downwards and lose some of his altitude").** Two port gaps: PROC 35 (Proc_ResetSpeed, the
+  velocity) was ignored in flight, and FUNC 100 / 101 (LocalToGlobalVec / GlobalToLocalVec, `0x49ab10`: the perso's
+  matrix) turned by the heading alone. B74's way out sets (0, 0, 11) in its axes; its cards (34, 36) have the roll byte 0,
+  the level pose, so that is 11 straight ahead: he left climbing at 40 instead, head up. B45, after the in-flight aim
+  hover (Lateral: dsg35, state 268 / 269, card 31: top speed 3, wing area 80, attack 2.94-2.95, his upper body turned
+  upright by RotateChannelToward on channel 3), sets 9 level along his path for 500 ms: dropped before. Both now taken
+  (tc_mec_perso.c, tc_ai.c axes_to_global). **Port:** the hover floats (tc_mec_fly.hold_height while his dsg35 = 1): by
+  the exe's maths its lift at 3 u/s is 92 % of his weight, so he sinks about 1 u/s, drawn 23 deg nose down (the exe draws
+  his upper body upright; the port does not run channel module control). The user wants him floating.
+- **Checks:** viewcheck's flight scenario: the LeCanyon tornado carries flying Ed 42 above its middle (B74); dropped
+  beside the start ledge he loses the power and flies below the marker; at sud0's arena block he stops (y 46, its middle
+  29.6; the old core: through to 3.1); the bee leaves at 28.7 deg looking 30 up and at his dive's own angle in flight (the
+  old core: 0 both). castcheck's lever scenario visits only allowed persos whose scripts force Ed (PROC 237 / 238).
 
 ## Game progress (2026-11-11; **read** unless marked)
 What the scripts read and write as progress, surveyed over every AI model of the 21 retail levels (a scratch survey of
@@ -901,6 +961,11 @@ unlicensed: read, not copied); the details are in the module's docstrings.
   tcx_ski_tick before each tick of the skier's mechanics: on the ground and slower than the cruise speed along the
   board, a push along its front, fading out over the upper half of that speed. SSX's riders propel themselves over
   the flats and dips; the skier has gravity only and sat still on them (Untracked's start is a plateau).
+  The user asked twice for "a bit faster": 17 / 6, then (2026-11-14 late) 19 / 7.
+- **Lighter in the air (custom gameplay, 2026-11-14; the user: "he can't fly over some pits that he really should"):**
+  SKIA's third value, AIR_GRAVITY 0.8. The skier's card makes him fall at 10 g off the snow (+0x34 4 x +0x40 2.5; 4 g
+  while the probe finds ground near); tcx_ski_tick lifts (1 - 0.8) of that while he had no contact last tick. Older
+  SKIA chunks (two values) read as 1.
 - **Port choices:** 1 SSX unit = 1 cm (Eddie's bone chain is ~182), scaled 1.25x so a rider would be ~2.28 to Ed's
   2.17 (user: size felt fine); 8 x 8 quads a patch. Music: Totalski's track for now (tools/music.tsv).
 - **Headless (aicheck AI_SCRIPT=ski, all 11):** he sets off by himself, 5-41 u/s at 2 s, 0 frames into the snow on

@@ -52,11 +52,13 @@ tc_result tcx_level_read(tc_level *level, const char tag[4], const uint8_t *data
     bool ski = memcmp(tag, "SKIA", 4) == 0;
     if (!ski && memcmp(tag, "VEHI", 4) != 0) return TC_OK;
     if (!x && !(x = level->custom = (tcx_level *)tc_calloc(1, sizeof(*x)))) return TC_ERR_OUT_OF_MEMORY;
-    if (ski) { /* .ttlv SKIA (tools/ttre/ssx.py): f32 cruise speed, f32 push */
+    if (ski) { /* .ttlv SKIA (tools/ttre/ssx.py): f32 cruise speed, f32 push[, f32 air gravity scale (since 2026-11-14)] */
         x->ski_cruise = rd_f32(r);
         x->ski_push = rd_f32(r);
+        x->ski_air_gravity = r->size >= 12 ? rd_f32(r) : 1;
         if (!(x->ski_cruise > 0 && x->ski_cruise < 1000 && x->ski_push > 0 && x->ski_push < 1000))
             x->ski_cruise = x->ski_push = 0;
+        if (!(x->ski_air_gravity > 0 && x->ski_air_gravity <= 1)) x->ski_air_gravity = 1;
         return r->error || r->offset != r->size ? TC_ERR_STALE : TC_OK;
     }
     tc_free(x->vehicles);
@@ -80,11 +82,19 @@ bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model) {
     return true;
 }
 
-void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, float mass) {
+void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, const tc_ai_card *card) {
     tc_vec3 front;
-    float along, k;
+    float along, k, mass = card ? tc_ai_card_f32(card, 4) : 0;
     if (!l || !(l->ski_cruise > 0) || !(mass > 0)) return;
-    if (!(contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE))) return; /* in the air: nothing to push against */
+    if (!(contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE | TC_AI_CONTACT_WALL))) {
+        /* off the snow: lift part of his weight (the card's: g x +0x34, x +0x40 when the probe finds no ground near;
+         * every level's air has g 9.81); nothing to push against */
+        float weight = mass * 9.81f * tc_ai_card_f32(card, 0x34) * (ski->near_ground ? 1 : tc_ai_card_f32(card, 0x40));
+        if (l->ski_air_gravity < 1 && weight > 0)
+            ski->force = tc_v3_add(ski->force, tc_v3(0, 0, weight * (1 - l->ski_air_gravity)));
+        return;
+    }
+    if (!(contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE))) return; /* against a wall only: no push either */
     front = tc_v3_scale(ski->y, -1);
     along = tc_v3_dot(velocity, front);
     if (along >= l->ski_cruise) return;

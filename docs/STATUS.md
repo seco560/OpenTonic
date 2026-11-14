@@ -20,7 +20,7 @@ Edition's sectors).
 | Ed on foot and in the air (his own scripts and physics) | yes | the ledge hang, below |
 | Portals and level changes | yes; no Ed clone any more | the walk-in passages in sud0 play the portals' transition, and should not |
 | The follow camera | yes: "fine, faithful down to the original's quirks" | it showed the insides of characters (Suzy, the tomatoes, Grogh's henchmen). Changed 2026-11-11; the user has not said whether it helped. Headless it is better, not gone (40 -> 10 frames on the worst probe) |
-| Lifts and platforms | most work | one sometimes disappears mid-path; Ed flying goes through moving platforms |
+| Lifts and platforms | most work | one sometimes disappears mid-path; Ed flying goes through moving platforms (changed 2026-11-14: flight collides with persos; not seen) |
 | Levers | most work | the lever and machine turn to face Ed; Ed should take his place at them |
 | Music, sounds of Ed, the intro, the menus | yes | some music tracks may be the wrong ones for their level (user, 2026-11-11): to check against the exe; not a priority |
 | Recordings and replays | yes: "decent" | a replay being locked and one file per run were changed after that; not known if seen |
@@ -38,7 +38,7 @@ Edition's sectors).
 | Dying | in some pits Ed hits the bottom; some pits do nothing; after a respawn he is shown falling for half a second; lava and deadly water do not kill |
 | Pushed things | cavedoc's crate moves but does not start the machine (fixed headless 2026-11-11 later: its snap marker's reference to it was dead; docs/BUGS.md "cavedoc playtest"). marmite's boxes fly off one way without colliding |
 | Enemies | they can be killed and they hurt Ed; no proper sounds or collision |
-| Shooting | aiming in first person does not tilt the blowpipe. "No shot leaves while one is in the air" (what the exe does there is not read) |
+| Shooting | aiming in first person does not tilt the blowpipe (changed 2026-11-14: from the blowpipe, with the look's pitch; in flight along the flight path; not seen). "No shot leaves while one is in the air" (what the exe does there is not read) |
 | Stick attacks | they hit, with no sound and no other feedback |
 | Sounds of the cast | many unheard. A laugh loops in cavedoc (near the popcorn puzzle). 3D placement (the original's falloff, pan, sector muting) added 2026-11-14, not heard yet |
 | Hint scenes and speech | only bar is reliable. spynorth sometimes. pharmmap, pyr_fou and mammyon skip to the level without the line. SpyCarota can leave Ed stuck |
