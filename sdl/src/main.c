@@ -38,7 +38,7 @@ static const char *controls_text =
     "  (simple collision and physics, not the original game's)\n"
     "\n"
     "Game menu:  Esc (pad: Start): the game holds; OPTIONS (gamma, animation speed, lighting, fog, Dolby Surround,\n"
-    "  HUD auto-hide, invert look, look speed), PHOTO MODE (the camera free round Ed; Esc back), MAIN MENU, QUIT GAME\n"
+    "  HUD auto-hide, invert look, look speed), PHOTO MODE (the camera free round Ed; Esc back), MAIN MENU\n"
     "  Menus:  arrows or W A S D, Enter, Esc back; the mouse points and clicks, right click goes back\n"
     "Lighting:  L  the original's (default) / the port's old one  -  HUD:  H auto-hide on / off  -  Photo mode:  P\n"
     "Lighting variant:  Alt + 1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain), Alt + 0 the level's own\n"
@@ -50,13 +50,13 @@ static const char *controls_text =
     "(field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Main menu:  arrows (W S A D) + Enter, Esc back; NEW GAME takes a typed name  -  Ctrl+L from a game (saved)\n"
-    "Levels grid (the menu's TONIC VIEWER):  arrow keys + Enter, or click  -  Ctrl+L from its levels  -  Esc the menu  -  V intro\n"
+    "Main menu:  arrows (W S A D) + Enter, Esc back; NEW GAME takes a typed name; REPLAYS: the recordings\n"
+    "Tonic Viewer (the levels grid):  arrow keys + Enter, or click  -  Ctrl+L back to the grid, from it the main menu  -  Esc the menu  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "Debug menu:  F4  the game's powers and save values, who uses them, switches; the game holds while it\n"
     "  is open  -  W / S or up / down choose, A / D or left / right change, Space or E switch\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
-    "Replays:  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
+    "Replays (the main menu's):  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
     "Watching one:  P or Cross pauses  -  Esc or Start back to the list\n"
     "Photo mode, a paused playback:  mouse, arrows, right stick and wheel move the camera round Ed, back where it was after\n"
     "\n"
@@ -157,6 +157,7 @@ typedef struct app {
      * back to the menu and on quitting. */
     char game[TC_MENU_NAME];
     uint32_t saved_serial;
+    bool new_run;                /* the level about to open starts a recording of its own (a new game's first level) */
     tc_options options;          /* the menu's options (menu.h: options.cfg), kept as the keys change them too */
 } app;
 
@@ -264,6 +265,7 @@ static bool demos_available(app *a);
 
 static void save_game(app *a);
 static void close_menu(app *a);
+static void show_main_menu(app *a);
 
 static void show_picker(app *a) {
     save_game(a);
@@ -316,7 +318,7 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     if (!v) return false;
     char err[512];
     /* No carry: from a menu, a new run; a portal's level goes on in this one. A playback isn't a run: the file is the record. */
-    if ((!carry || a->menu_on) && !a->replaying) {  /* a saved game opened from the menu is a new run too */
+    if ((!carry || a->menu_on || a->new_run) && !a->replaying) {  /* a saved game or a new game from the menu: new runs too */
         end_recording(a);
         a->recorder = record_start();
     }
@@ -436,8 +438,16 @@ static void show_replays(app *a) {
 /* A playback's end, or Esc / Start in one: back to the list. */
 static void back_to_replays(app *a, const char *why) {
     stop_playback(a, why);
-    show_picker(a);
-    if (!a->quit) show_replays(a);
+    end_recording(a);
+    sfx_stop_all();
+    char *audio = audio_dir(a);
+    if (audio) music_play("menu", audio);
+    SDL_free(audio);
+    set_captured(a, false);
+    close_level(a);
+    close_picker(a);
+    close_menu(a);
+    show_replays(a);  /* the main menu's (REPLAYS), on its own */
 }
 
 static bool playback_level(app *a, uint32_t i) {
@@ -669,7 +679,7 @@ static void finish_intro(app *a) {
 
 static void start_after_intro(app *a) {
     char *path = ski_slope(a, a->level_folder);
-    if (!path) { show_picker(a); return; }
+    if (!path) { if (a->game[0]) show_main_menu(a); else show_picker(a); return; }
     SDL_free(a->current_folder);
     a->current_folder = path_dir(path);  /* the loading screen's vignette is the edition's */
     a->current_cutscene = false;  /* a ski slope */
@@ -682,7 +692,13 @@ static void start_after_intro(app *a) {
 static void finish_loading(app *a) {
     char *path = a->next_level;
     a->next_level = NULL;
-    if (!open_level(a, path, NULL)) show_picker(a);
+    if (a->game[0]) { /* the main menu's NEW GAME: a new game's progress, as its own carry (tc_save_start_new_game) */
+        tc_viewer_carry fresh;
+        tc_save_start_new_game(&fresh, a->next_name);
+        a->new_run = true;
+        if (!open_level(a, path, &fresh)) { a->game[0] = 0; show_main_menu(a); }
+        a->new_run = false;
+    } else if (!open_level(a, path, NULL)) show_picker(a);  /* Tonic Viewer: every power, as any level of the grid */
     SDL_free(path);
 }
 
@@ -836,6 +852,7 @@ static void menu_command(app *a, tc_menu_command c) {
         break;
     }
     case TC_MC_TONIC_VIEWER: show_picker(a); break;
+    case TC_MC_REPLAYS: close_menu(a); show_replays(a); break;
     case TC_MC_EXIT: close_game_menu(a, false); a->quit = true; break;
     case TC_MC_OPTIONS:
         a->options = m->options;
@@ -861,11 +878,12 @@ static void menu_command(app *a, tc_menu_command c) {
     }
 }
 
-/* Ctrl+L, the pad's Start: from a game, the main menu (saved); from a level of the levels grid, the grid; from the grid,
- * the main menu. */
+/* Ctrl+L, Tonic Viewer's alone (the user): from a level of the levels grid, the grid; from the grid, the main menu.
+ * Nothing in a game (its way out is the game menu), on the menus, in a playback, the intro or a loading screen. */
 static void back_to_menu(app *a) {
-    if (a->game[0] || !a->view) show_main_menu(a);
-    else show_picker(a);
+    if (a->game[0] || a->replaying || a->menu_on || a->replays_on || a->intro || a->next_level || a->splash) return;
+    if (a->view) show_picker(a);
+    else if (a->picker_open) show_main_menu(a);
 }
 
 /* ---- input ---- */
@@ -1025,7 +1043,7 @@ static void replays_cancel(app *a) {
     else if (a->rp.confirm >= 0) a->rp.confirm = -1;
     else {
         close_replays(a);
-        set_title(a, "Open Tonic");
+        show_main_menu(a);  /* the Replays screen is the main menu's */
     }
 }
 
@@ -1420,8 +1438,8 @@ static void handle(app *a, const SDL_Event *e) {
             int i = picker_hit(&a->picker, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
             if (i == PICKER_INTRO) play_intro(a);
             else if (i == PICKER_RANDOM) open_random(a);
-            else if (i == PICKER_REPLAYS) show_replays(a);
             else if (i == PICKER_CONTROLS) a->help = true;
+            else if (i == PICKER_BACK) show_main_menu(a);
             else if (i == PICKER_PANE_LEFT) picker_pane(&a->picker, -1);
             else if (i == PICKER_PANE_RIGHT) picker_pane(&a->picker, 1);
             else open_entry(a, i);

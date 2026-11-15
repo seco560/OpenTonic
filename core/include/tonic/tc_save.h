@@ -42,6 +42,10 @@ bool tc_save_read_info(const void *data, size_t size, tc_save_info *out);
 /* The whole game; installs its level-saved variables (tc_cast_level_saves_*, replacing what is there): call it just
  * before making the level's viewer with out->carry. */
 tc_result tc_save_read(const void *data, size_t size, tc_save_game *out);
+/* A new game (the main menu's NEW GAME), as a carry for its first level's viewer: the level, the progress of a new game
+ * (GAM_00419290: no powers, save value 0 = 0, 1-6 = -1, the rest 0; three lives), nothing else; the level-saved table
+ * is cleared too (tc_cast_level_saves_clear). Recorded with the run, as any carry. */
+void tc_save_start_new_game(tc_viewer_carry *out, const char *level);
 /* The games LOAD GAME and DELETE GAME list (tc_menu_set_games), from their infos, in the order given. */
 void tc_save_menu_games(tc_menu *m, const tc_save_info *infos, int count);
 /* A new game's name as a file name: letters, digits and '_' for the rest ("ED 2" -> "ED_2"). */

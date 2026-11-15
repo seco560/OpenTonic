@@ -7,7 +7,7 @@
  * (NEW GAME, LOAD GAME, ENTER THE GAME NAME, CHOOSE YOUR GAME, the erase question, YES, NO ...).
  * The exe's main menu has START GAME (its own menu: NEW GAME, LOAD GAME), OPTIONS, TONIC ON-LINE, SHOW CREDITS, QUIT.
  * Port (the user, 2026-11-15): START GAME (NEW GAME: a name, then the intro; LOAD GAME; DELETE GAME, ours), OPTIONS (the
- * viewer's display settings), TONIC VIEWER (the levels grid), EXIT GAME; no credits yet. Ours too: Ed's head (the '§'
+ * viewer's display settings), TONIC VIEWER (the levels grid), REPLAYS (the recordings), EXIT GAME; no credits yet. Ours too: Ed's head (the '§'
  * glyph of FontPC, which the exe uses as MNU_CURSOR, the name field's cursor) beside the selected choice, whose letters
  * are a little larger (the exe's text effects at fix.gpt +0x220 are only partly read). The two EdMenu persos the exe
  * animates in the bottom corners are not drawn yet.
@@ -102,13 +102,13 @@ typedef enum tc_menu_command {
     TC_MC_LOAD_GAME,          /* tc_menu.command_game: the index into the list tc_menu_set_games gave */
     TC_MC_DELETE_GAME,        /* tc_menu.command_game: erase it, then give the menu the new list */
     TC_MC_TONIC_VIEWER,       /* the levels grid */
+    TC_MC_REPLAYS,            /* the recordings and the original demos (the Replays screen) */
     TC_MC_EXIT,
     TC_MC_OPTIONS,            /* tc_menu.options changed: keep them, give them to the level on show */
     TC_MC_RESUME,             /* the game menu: back to the game (RESUME GAME, Esc) */
     TC_MC_PHOTO_MODE,         /* the game menu: the game holds, the camera free round Ed (tc_viewer_toggle_pause) */
     TC_MC_MAIN_MENU           /* the game menu: save and leave the level for the main menu */
 } tc_menu_command;
-/* QUIT GAME, the game menu's last choice, is TC_MC_EXIT (saved first, as everywhere). */
 
 #define TC_MENU_NAME 15       /* MNU_GAMENAME1's capacity (14) + the terminator */
 #define TC_MENU_MAX_GAMES 64

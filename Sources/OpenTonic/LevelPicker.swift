@@ -144,7 +144,6 @@ final class LevelPicker: NSView {
         rightArrow.action = #selector(slideRight)
         addSubview(introButton)
         addSubview(randomButton)
-        addSubview(replaysButton)
         addSubview(leftArrow)
         addSubview(rightArrow)
         for (k, (heading, rule)) in zip(headings, rules).enumerated() where entries.contains(where: { $0.section == k }) {
@@ -253,9 +252,9 @@ final class LevelPicker: NSView {
         let rowWidth = CGFloat(cols) * cellW - pad
         // Centred, clear of the Controls button in the corner on both sides.
         let bh: CGFloat = 54, gap: CGFloat = 24, controls: CGFloat = 120
-        let bw = min(280, (width - 2 * controls - 2 * gap) / 3)
-        let bx = (width - 3 * bw - 2 * gap) / 2, by = pad + (introHeight - bh) / 2 - 8
-        for (i, button) in [introButton, randomButton, replaysButton].enumerated() {
+        let bw = min(280, (width - 2 * controls - gap) / 2)
+        let bx = (width - 2 * bw - gap) / 2, by = pad + (introHeight - bh) / 2 - 8
+        for (i, button) in [introButton, randomButton].enumerated() {  // Replays: the main menu's since 2026-11-15
             button.frame = NSRect(x: bx + CGFloat(i) * (bw + gap), y: by, width: bw, height: bh)
         }
         /// The tiles from `top` in their parent; the height they take.

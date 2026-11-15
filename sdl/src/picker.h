@@ -31,8 +31,9 @@ typedef struct picker {
     int heading_w[PICKER_SECTIONS], heading_h[PICKER_SECTIONS];
     SDL_GPUTexture *unknown;  /* "?": the picture of an imported level */
     int unknown_w, unknown_h;
-    SDL_GPUTexture *intro_text, *random_text, *replays_text, *controls_text, *left_text, *right_text;  /* the buttons' labels */
+    SDL_GPUTexture *intro_text, *random_text, *replays_text, *controls_text, *left_text, *right_text, *back_text;  /* labels */
     int intro_w, intro_h, random_w, random_h, replays_w, replays_h, controls_w, controls_h, left_w, left_h, right_w, right_h;
+    int back_w, back_h;
     float scale;              /* UI scale (display scale x pixel density) */
     float scroll;             /* the page's, pixels */
     int pane;                 /* the section of the pane showing: a selected tile of a pane is always in it */
@@ -54,10 +55,11 @@ void picker_close(picker *p);
 /* Tile under the point (target pixels), one of the PICKER_ button values, or -1. */
 #define PICKER_INTRO (-2)     /* the big "Play Intro Video" button at the top */
 #define PICKER_CONTROLS (-3)  /* "Controls (F1)", top right */
-#define PICKER_REPLAYS (-4)   /* "Replays", in the same row: the recordings (replays.h) */
+#define PICKER_REPLAYS (-4)   /* (gone: Replays is the main menu's since 2026-11-15; the number stays unused) */
 #define PICKER_PANE_LEFT (-5) /* the panes' arrows (when there is more than one pane: they go round) */
 #define PICKER_PANE_RIGHT (-6)
-#define PICKER_RANDOM (-7)    /* "Random Stage", between the intro's and the replays' */
+#define PICKER_RANDOM (-7)    /* "Random Stage", beside the intro's */
+#define PICKER_BACK (-8)      /* "< Main Menu", top left: back to the main menu (Esc) */
 int picker_hit(picker *p, float x, float y);
 void picker_set_hover(picker *p, float x, float y);
 /* A stage of either edition at random, -1 if none. Not the cutscenes (the Special Edition's pane has one too: its

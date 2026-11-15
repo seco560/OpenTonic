@@ -561,6 +561,9 @@ final class GameView: MTKView {
         case TC_MC_TONIC_VIEWER:
             menuView = nil
             showPicker()
+        case TC_MC_REPLAYS:
+            menuView = nil
+            showReplays()
         case TC_MC_EXIT: NSApp.terminate(nil)
         case TC_MC_OPTIONS:
             if let o = menuView?.state.pointee.options { ViewSettings.options = o }
@@ -664,10 +667,11 @@ final class GameView: MTKView {
         }
     }
 
-    /// Cmd-L, the pad's Start: from a game, the main menu (saved); from a level of the levels grid, the grid; from the
-    /// grid, the main menu.
+    /// Cmd-L, Tonic Viewer's alone (the user): from a level of the levels grid, the grid; from the grid, the main menu.
+    /// Nothing in a game (its way out is the game menu), on the menus, in a playback, the intro or a loading screen.
     @objc func backToMenu() {
-        if game != nil || renderer == nil { showMainMenu() } else { showPicker() }
+        guard game == nil, playback == nil, gameMenu == nil else { return }
+        if renderer != nil { showPicker() } else if window.contentView is PickerContainer { showMainMenu() }
     }
 
     /// False (nothing opened) when the file can't be played.
@@ -750,7 +754,7 @@ final class GameView: MTKView {
         stopPlayback("the Replays menu")
         leaveLevel()
         let screen = ReplaysScreen(frame: window.contentLayoutRect, folder: Recording.folder, hasDemos: !findDemos().isEmpty)
-        screen.onBack = { [weak self] in self?.showPicker() }
+        screen.onBack = { [weak self] in self?.showMainMenu() }  // the Replays screen is the main menu's
         screen.onPlay = { [weak self] url in _ = self?.startPlayback(url) }
         screen.onDemos = { [weak self] in self?.startDemos() }
         window.contentView = screen
@@ -846,7 +850,6 @@ final class GameView: MTKView {
             self?.openLevel(url)
         }
         picker.onIntro = { [weak self] in self?.playIntro() }
-        picker.onReplays = { [weak self] in self?.showReplays() }
         if picker.isEmpty {
             fail("No .ttlv levels in \(levelFolder.path). Please run your genuine installed Tonic Trouble files through the conversion step.")
         }
@@ -880,6 +883,14 @@ final class GameView: MTKView {
         help.frame.origin = NSPoint(x: container.bounds.width - help.frame.width - 16, y: container.bounds.height - help.frame.height - 12)
         help.autoresizingMask = [.minXMargin, .minYMargin]
         container.addSubview(help)
+        // Back to the main menu, top left (as Esc), clear of the grid's buttons (they keep 120 points free on both sides).
+        let back = NSButton(title: "‹ Main Menu", target: self, action: #selector(showMainMenu))
+        back.bezelStyle = .rounded
+        back.toolTip = "Back to the main menu (Esc)"
+        back.sizeToFit()
+        back.frame.origin = NSPoint(x: 16, y: container.bounds.height - back.frame.height - 12)
+        back.autoresizingMask = [.maxXMargin, .minYMargin]
+        container.addSubview(back)
         window.contentView = container
         window.makeFirstResponder(container)
         window.title = "Open Tonic"
@@ -912,7 +923,7 @@ final class GameView: MTKView {
         let out = levelFolder.deletingLastPathComponent()
         let files = (try? FileManager.default.contentsOfDirectory(at: levelFolder, includingPropertiesForKeys: nil)) ?? []
         guard let ski = files.first(where: { $0.lastPathComponent.lowercased() == "totalski.ttlv" }) else {
-            showPicker()
+            if game != nil { showMainMenu() } else { showPicker() }
             return
         }
         let backdrop = LoadingBackdrop(frame: window.contentLayoutRect)
@@ -947,8 +958,14 @@ final class GameView: MTKView {
             nextLevel = nil
             nextLevelTimer?.invalidate()
             nextLevelTimer = nil
-            openLevel(next.url)
-            if renderer == nil { showPicker() }  // it didn't load (openLevel showed why)
+            if game != nil {  // the main menu's NEW GAME: a new game's progress, as its own carry (tc_save_start_new_game)
+                var fresh = tc_viewer_carry()
+                tc_save_start_new_game(&fresh, next.url.deletingPathExtension().lastPathComponent)
+                openLevel(next.url, carry: fresh, newRun: true)
+            } else {
+                openLevel(next.url)  // Tonic Viewer: every power, as any level of the grid
+            }
+            if renderer == nil { if game != nil { showMainMenu() } else { showPicker() } }  // it didn't load (openLevel said why)
             return
         }
         let progress = min(1, (CACurrentMediaTime() - next.start) / Double(TC_VIEWER_LOADING_SECONDS))
@@ -964,9 +981,9 @@ final class GameView: MTKView {
             + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera round him "
             + "(L2 recentres it, Triangle / Y close-up, L3 first person), R3 (click) free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, "
             + "R1 lateral (free-fly: up), L1 free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, "
-            + "Start the main menu (a game is saved; from the levels grid's levels, the grid), Select / Options these controls; "
-            + "the debug menu is F4 on the keyboard. Main menu: arrows and Return, Esc back, Cross / Circle / Triangle; "
-            + "Cmd-L the menu, Esc on the levels grid the menu."
+            + "Start the game menu, Select / Options these controls; the debug menu is F4 on the keyboard. Menus: arrows and "
+            + "Return, Esc back, Cross / Circle / Triangle. Tonic Viewer: Cmd-L back to the levels grid, from it the main menu "
+            + "(Esc too)."
         alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
@@ -1112,8 +1129,7 @@ let delegate = AppDelegate()
 let menu = NSMenu(), appItem = NSMenuItem()
 menu.addItem(appItem)
 let appMenu = NSMenu()
-appMenu.addItem(withTitle: "Main Menu", action: #selector(AppDelegate.backToMenu), keyEquivalent: "l").target = delegate
-appMenu.addItem(withTitle: "Tonic Viewer", action: #selector(AppDelegate.showPicker), keyEquivalent: "t").target = delegate
+appMenu.addItem(withTitle: "Back (Tonic Viewer)", action: #selector(AppDelegate.backToMenu), keyEquivalent: "l").target = delegate
 appMenu.addItem(withTitle: "Controls", action: #selector(AppDelegate.showControls), keyEquivalent: "/").target = delegate
 appMenu.addItem(withTitle: "Toggle Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
     .keyEquivalentModifierMask = [.control, .command]

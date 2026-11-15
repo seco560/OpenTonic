@@ -726,7 +726,10 @@ the primitives below; 525 distinct uses). The state is small:
 freezes, and level.py `GATES_OPEN` leaves the gate sectors out (all but the river wall, below). Since 2026-11-11 the powers are real state in
 tc_ai_globals (the exe's test, PROC 200-202), and the powers, the lives and the save values go through a level change
 (tc_viewer_carry.has_progress; from a menu a level starts afresh; replaycheck's portal run checks it). The powers are
-not in the recordings' hash. The inventory is a stub.
+not in the recordings' hash. The inventory is a stub. Since 2026-11-15 (the user) a level opened from the levels grid
+starts with every power, Totalski too (until then a run starting at retail Totalski was a new game whatever opened it);
+the main menu's NEW GAME brings a new game's progress as its own carry (`tc_save_start_new_game`, recorded with the
+run), so the game's flow and Tonic Viewer's are apart.
 
 **Odd in the data (2026-11-11, from the survey below):** LeCanyon's YAS_GestionDuChrono and NBD_TransRetry call
 IncSaveValue(33), past the 31 values the port keeps (it ignores the call; FUNC 93 gives -1 out of range, as read). What the
@@ -863,16 +866,19 @@ menucheck`): the core keeps the screens and lays them out; the frontends draw tw
   speed (`tc_options`), given to every level's viewer (`tc_viewer_set_view`, recorded as door TC_RD_SET_VIEW) and kept
   across launches (Swift: UserDefaults; SDL: options.cfg in its pref path); the keys that change them in a level keep
   them too.
-- At launch: TT_pak.png three seconds (a key, a click or the pad skips), then the menu. Cmd-L / Ctrl+L: from a game the
-  menu (saved), from a level of the grid the grid; Esc / Circle on the grid: the menu.
+- At launch: TT_pak.png three seconds (a key, a click or the pad skips), then the menu. Esc / Circle on the grid, or its
+  "‹ Main Menu" button (top left, opposite Controls): the menu.
 - **The game menu** (the user, 2026-11-15; the exe's "InGame" has RESUME GAME, OPTIONS, MAIN MENU): Esc or Start in a
   level. GAME MENU: RESUME GAME, OPTIONS, PHOTO MODE (the old P: paused, the camera free round Ed; Esc back to the game),
-  MAIN MENU (saved), QUIT GAME (saved). Esc there resumes. Port: drawn over the game, dimmed (black at 0.55) under two
+  MAIN MENU (saved); quitting is the main menu's EXIT GAME alone (the user). Esc there resumes. Port: drawn over the game, dimmed (black at 0.55) under two
   translucent swirls of sud0's rainbow pool (Sud0/o_zarbi_auntxy) turning apart; the game holds and the camera drifts
   round Ed through the play camera, so against the level's surfaces (`tc_viewer_set_game_menu`, door TC_RD_GAME_MENU:
   0.11 rad/s one way or the other, rising and falling, a zoom of 3-9 picked from a hash of the clock, not the viewer's
   rng), everything back as it was on closing. The SDL build bakes the swirls' translucency into the picture (its overlay
   pipeline has no blend factor; no shader change).
+- REPLAYS (the recordings, the original demos) is the main menu's, below TONIC VIEWER (the user; the levels grid's button
+  is gone); its Back is the main menu. Cmd-L / Ctrl+L are Tonic Viewer's alone: a level of the grid back to the grid,
+  the grid to the main menu; nothing in a game, on the menus or in a playback.
 - **The pointer** (the user: clickable everywhere): each screen's choices, list rows and option rows are hit-tested from
   the last layout (`tc_menu_pointer` / `tc_menu_click`): over one selects it, a click takes it, an option's value steps
   back left of its middle and on right of it (its name: on); a right click is Back.

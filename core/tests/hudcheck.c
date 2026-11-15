@@ -41,7 +41,7 @@ static size_t hud_size;
 
 typedef struct game { tc_level level; tc_viewer v; bool ok; } game;
 
-static bool start(game *g, const char *dir, const char *name) {
+static bool start_with(game *g, const char *dir, const char *name, const tc_viewer_carry *carry) {
     char path[1024];
     size_t size, ai_size = 0;
     uint8_t *data, *ai;
@@ -61,6 +61,7 @@ static bool start(game *g, const char *dir, const char *name) {
     d.ai_data = ai;
     d.ai_size = ai_size;
     d.level_name = name;
+    d.carry = carry;
     if (tc_viewer_init(&g->v, &d) != TC_OK) { free(ai); tc_level_free(&g->level); check(0, "the viewer starts"); return false; }
     free(ai);
     if (!g->v.playing && tc_viewer_can_play(&g->v)) tc_viewer_toggle_play(&g->v);
@@ -68,6 +69,8 @@ static bool start(game *g, const char *dir, const char *name) {
     g->ok = true;
     return true;
 }
+
+static bool start(game *g, const char *dir, const char *name) { return start_with(g, dir, name, NULL); }
 
 static void stop(game *g) {
     if (!g->ok) return;
@@ -175,7 +178,11 @@ static void totalski(const char *dir) {
     int i, clock_slot = -1, first_ms = 0, last_ms = 0;
     uint32_t k;
     printf("Totalski, a new game:\n");
-    if (!start(&g, dir, "Totalski")) return;
+    {
+        tc_viewer_carry fresh;
+        tc_save_start_new_game(&fresh, "Totalski"); /* as the main menu's NEW GAME starts it */
+        if (!start_with(&g, dir, "Totalski", &fresh)) return;
+    }
     c = tc_viewer_cast(&g.v);
     if (!c) { check(0, "Totalski has a cast"); stop(&g); return; }
     snprintf(what, sizeof what, "a new game's progress: powers %#x, bees %d, Doc's objects %d", (unsigned)c->globals.powers,

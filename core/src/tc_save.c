@@ -270,6 +270,19 @@ tc_result tc_save_read(const void *data, size_t size, tc_save_game *out) {
     return chunk_end(&r);
 }
 
+void tc_save_start_new_game(tc_viewer_carry *out, const char *level) {
+    tc_ai_globals g;
+    memset(out, 0, sizeof(*out));
+    memset(&g, 0, sizeof(g));
+    tc_ai_globals_new_game(&g);
+    tcv_copy_text(out->level, sizeof(out->level), level);
+    out->has_progress = 1;
+    out->lives = 3; /* as a cast starts them (tc_cast.c: the user's, 2026-11-12) */
+    out->powers = g.powers;
+    memcpy(out->values, g.values, sizeof(out->values));
+    tc_cast_level_saves_clear();
+}
+
 void tc_save_menu_games(tc_menu *m, const tc_save_info *infos, int count) {
     tc_menu_game games[TC_MENU_MAX_GAMES];
     int k;

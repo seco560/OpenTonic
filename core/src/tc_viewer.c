@@ -178,12 +178,10 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         tcv_copy_text(v->arrival_place, sizeof(v->arrival_place), desc->carry->place);
         tcv_copy_text(v->arrival_camera_place, sizeof(v->arrival_camera_place), desc->carry->camera_place);
     }
-    /* Port (the user's, 2026-11-11): a run that starts at retail Totalski (picked, or after the intro movie) is the
-     * game's start: no powers. Every other fresh start keeps them all on (TC_AI_POWERS_ALL), and a level change carries
-     * them as they are. */
-    if (v->play && v->play->has_cast && !(desc->carry && desc->carry->has_progress) && desc->level &&
-        desc->level->edition == 0 && tcv_same_text(v->play->main.level_name, "Totalski"))
-        tc_ai_globals_new_game(&v->play->cast.globals); /* GAM_00419290: no powers, a new game's save values */
+    /* Port (the user, 2026-11-15): every fresh start keeps the powers all on (TC_AI_POWERS_ALL: Tonic Viewer, Totalski
+     * too); a new game (the main menu's NEW GAME) comes with its own carry (tc_save_start_new_game: no powers, a new game's
+     * save values), and a level change carries them as they are. Until then a run starting at retail Totalski was the
+     * game's start whatever opened it. */
     v->rec = desc->recorder;
     if (v->rec) tc_rec_begin(v->rec, v, desc);
     /* the meshes' bounding spheres, which culling needs (tc_viewer_set_aspect): made now, in the loading, not on the

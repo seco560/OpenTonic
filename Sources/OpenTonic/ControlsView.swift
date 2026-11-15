@@ -61,15 +61,15 @@ final class ControlsView: NSView {
 
     private let unit: CGFloat = 54, gap: CGFloat = 6, margin: CGFloat = 18
     private static let notes = [
-        "Esc (pad: Start): the game menu: options, photo mode, the main menu, quit; the game holds behind it.",
+        "Esc (pad: Start): the game menu: options, photo mode, the main menu; the game holds behind it.",
         "Mouse: looks round from the start (a click takes it back after a menu); or drag. Scroll: zoom / fly speed. Menus: point and click, right click back.",
         "Camera: mouse, arrows, right stick or Numpad 4 / 6 turn it round Ed; it stays while he stands, follows as he moves.",
         "X / middle button / L2 recentre; 5 (Triangle / Y) close-up, 0 (L3) first person (number row or numpad).",
         "As Ed with his AI (the default): he runs, Shift walks. Simple controller (I): Shift runs. Portals: walk into them.",
-        "Cmd-L the main menu (saves the game) · Cmd-T the levels grid · Cmd-/ help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 / ⌥0 lighting variants",
+        "Cmd-L (Tonic Viewer) back to the levels grid, from it the main menu · Cmd-/ help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 / ⌥0 light sets",
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
         "* V (or Play Intro Video) on the levels grid plays the intro movie; when it ends, or is skipped, the retail ski slope starts.",
-        "R (or Replays) on the levels grid: your recordings (play; Shift + Delete, Delete all) and the original demos (D); P pauses, Esc goes back.",
+        "REPLAYS (main menu): your recordings (play; Shift + Delete, Delete all) and the original demos (D); watching one, P pauses, Esc goes back.",
         "L: the original's lighting or the port's old one · H: the HUD's auto-hide · P: photo mode (all three in the menus' OPTIONS / game menu too).",
         "Photo mode (P, the game menu), or a paused replay: mouse, arrows and scroll move the camera round Ed, back where it was after; Esc back to the game.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",

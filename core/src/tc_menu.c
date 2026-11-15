@@ -249,9 +249,9 @@ static const char *text(const tc_menu *m, const char *name, const char *fallback
 
 /* ---- the screens' contents ---- */
 
-enum { MAIN_START, MAIN_OPTIONS, MAIN_VIEWER, MAIN_EXIT, MAIN_COUNT };
+enum { MAIN_START, MAIN_OPTIONS, MAIN_VIEWER, MAIN_REPLAYS, MAIN_EXIT, MAIN_COUNT };
 enum { START_NEW, START_LOAD, START_DELETE, START_COUNT };
-enum { GAME_RESUME, GAME_OPTIONS, GAME_PHOTO, GAME_MAIN, GAME_QUIT, GAME_COUNT };
+enum { GAME_RESUME, GAME_OPTIONS, GAME_PHOTO, GAME_MAIN, GAME_COUNT }; /* quitting: the main menu's EXIT GAME (the user) */
 #define LIST_ROWS 6 /* LOAD / DELETE GAME: games shown at once */
 enum { OPT_GAMMA, OPT_SPEED, OPT_LIGHTING, OPT_FOG, OPT_DOLBY, OPT_HUD, OPT_INVERT, OPT_LOOK, OPT_BACK, OPT_COUNT };
 
@@ -303,8 +303,8 @@ const char *tc_menu_label(const tc_menu *m, tc_menu_screen s, int item, char *bu
     if (item < 0 || item >= tc_menu_item_count(m, s)) return buf;
     switch (s) {
     case TC_MS_MAIN: {
-        static const char *fallback[] = {"START GAME", "OPTIONS", "TONIC VIEWER", "EXIT GAME"};
-        static const char *names[] = {"MNU_STARTGAME", "MNU_OPTIONS", NULL, NULL};
+        static const char *fallback[] = {"START GAME", "OPTIONS", "TONIC VIEWER", "REPLAYS", "EXIT GAME"};
+        static const char *names[] = {"MNU_STARTGAME", "MNU_OPTIONS", NULL, NULL, NULL};
         snprintf(buf, size, "%s", names[item] ? text(m, names[item], fallback[item]) : fallback[item]);
         break;
     }
@@ -314,9 +314,9 @@ const char *tc_menu_label(const tc_menu *m, tc_menu_screen s, int item, char *bu
         snprintf(buf, size, "%s", names[item] ? text(m, names[item], fallback[item]) : fallback[item]);
         break;
     }
-    case TC_MS_GAME: { /* InGame's RESUME GAME, OPTIONS, MAIN MENU (game.dsb); PHOTO MODE and QUIT GAME ours */
-        static const char *fallback[] = {"RESUME GAME", "OPTIONS", "PHOTO MODE", "MAIN MENU", "QUIT GAME"};
-        static const char *names[] = {"MNU_RESUMEGAME", "MNU_OPTIONS", NULL, "MNU_MAINMENU", NULL};
+    case TC_MS_GAME: { /* InGame's RESUME GAME, OPTIONS, MAIN MENU (game.dsb); PHOTO MODE ours */
+        static const char *fallback[] = {"RESUME GAME", "OPTIONS", "PHOTO MODE", "MAIN MENU"};
+        static const char *names[] = {"MNU_RESUMEGAME", "MNU_OPTIONS", NULL, "MNU_MAINMENU"};
         snprintf(buf, size, "%s", names[item] ? text(m, names[item], fallback[item]) : fallback[item]);
         break;
     }
@@ -443,6 +443,7 @@ void tc_menu_input_press(tc_menu *m, tc_menu_input in) {
             case MAIN_START: tc_menu_show(m, TC_MS_START); break;
             case MAIN_OPTIONS: tc_menu_show(m, TC_MS_OPTIONS); break;
             case MAIN_VIEWER: m->command = TC_MC_TONIC_VIEWER; break;
+            case MAIN_REPLAYS: m->command = TC_MC_REPLAYS; break;
             default: m->command = TC_MC_EXIT; break;
             }
         } else if (in == TC_MI_BACK) *sel = MAIN_EXIT;
@@ -516,8 +517,7 @@ void tc_menu_input_press(tc_menu *m, tc_menu_input in) {
             case GAME_RESUME: m->command = TC_MC_RESUME; break;
             case GAME_OPTIONS: tc_menu_show(m, TC_MS_OPTIONS); break;
             case GAME_PHOTO: m->command = TC_MC_PHOTO_MODE; break;
-            case GAME_MAIN: m->command = TC_MC_MAIN_MENU; break;
-            default: m->command = TC_MC_EXIT; break;
+            default: m->command = TC_MC_MAIN_MENU; break;
             }
         }
         break;
@@ -811,17 +811,17 @@ void tc_menu_build(tc_menu *m, float aspect) {
     if (!m->loaded) return;
     switch (m->screen) {
     case TC_MS_MAIN: {
-        /* StartUp's choices stand at y 1.0, 0.2, -0.6, -1.4 (-2.2: QUIT, read); the title is the user's: "Open Tonic" in
+        /* StartUp's five choices stand at y 1.0, 0.2, -0.6, -1.4, -2.2 (read); the title is the user's: "Open Tonic" in
          * the title font, a size up from the other screens' */
         put_text(&d, FONT_TITLE, "Open Tonic", 0, 2.75f, 1.3f, WHITE, false);
         for (k = 0; k < n; k++)
             put_choice(&d, tc_menu_label(m, TC_MS_MAIN, k, buf, sizeof(buf)), 0, 1.0f - 0.8f * (float)k, 1, k == sel, k);
         break;
     }
-    case TC_MS_GAME: /* InGame: its title at 3, its choices at 0.5, -0.5, -1.5 (read); ours make five, a step of 0.85 */
+    case TC_MS_GAME: /* InGame: its title at 3, its choices a step of 1 from 0.5 (read); PHOTO MODE makes four */
         put_title(&d, text(m, "MNU_TITLEGAMEMENU", "GAME MENU"));
         for (k = 0; k < n; k++)
-            put_choice(&d, tc_menu_label(m, TC_MS_GAME, k, buf, sizeof(buf)), 0, 1.2f - 0.85f * (float)k, 1, k == sel, k);
+            put_choice(&d, tc_menu_label(m, TC_MS_GAME, k, buf, sizeof(buf)), 0, 1.0f - 1.0f * (float)k, 1, k == sel, k);
         break;
     case TC_MS_START: /* StartGame: NEW GAME at 0.5, LOAD GAME at -0.5 (read); DELETE GAME, ours, a step below */
         put_title(&d, text(m, "MNU_TITLESTARTGAME", "START GAME"));

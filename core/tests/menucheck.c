@@ -80,8 +80,9 @@ static void menu_checks(const char *dir) {
               strstr(m.data.images[1].name, "TTSPACE_STARS"),
           "its backgrounds: TTSPACE_BKGRND, TTSPACE_STARS");
     check(!strcmp(label(&m, TC_MS_MAIN, 0), "START GAME") && !strcmp(label(&m, TC_MS_MAIN, 1), "OPTIONS") &&
-              !strcmp(label(&m, TC_MS_MAIN, 2), "TONIC VIEWER") && !strcmp(label(&m, TC_MS_MAIN, 3), "EXIT GAME"),
-          "the main menu: START GAME, OPTIONS, TONIC VIEWER, EXIT GAME");
+              !strcmp(label(&m, TC_MS_MAIN, 2), "TONIC VIEWER") && !strcmp(label(&m, TC_MS_MAIN, 3), "REPLAYS") &&
+              !strcmp(label(&m, TC_MS_MAIN, 4), "EXIT GAME"),
+          "the main menu: START GAME, OPTIONS, TONIC VIEWER, REPLAYS, EXIT GAME");
     check(!strcmp(label(&m, TC_MS_START, 0), "NEW GAME") && !strcmp(label(&m, TC_MS_START, 1), "LOAD GAME") &&
               !strcmp(label(&m, TC_MS_START, 2), "DELETE GAME"),
           "START GAME: NEW GAME, LOAD GAME (game.dsb's), DELETE GAME");
@@ -98,6 +99,9 @@ static void menu_checks(const char *dir) {
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_TONIC_VIEWER, "TONIC VIEWER asks for the levels grid");
+    tc_menu_input_press(&m, TC_MI_DOWN);
+    tc_menu_input_press(&m, TC_MI_CONFIRM);
+    check(tc_menu_take_command(&m) == TC_MC_REPLAYS, "REPLAYS asks for the recordings");
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_EXIT, "EXIT GAME asks to quit");
@@ -156,8 +160,8 @@ static void menu_checks(const char *dir) {
     tc_menu_show(&m, TC_MS_GAME);
     check(!strcmp(label(&m, TC_MS_GAME, 0), "RESUME GAME") && !strcmp(label(&m, TC_MS_GAME, 1), "OPTIONS") &&
               !strcmp(label(&m, TC_MS_GAME, 2), "PHOTO MODE") && !strcmp(label(&m, TC_MS_GAME, 3), "MAIN MENU") &&
-              !strcmp(label(&m, TC_MS_GAME, 4), "QUIT GAME") && tc_menu_in_game(&m),
-          "the game menu: RESUME GAME, OPTIONS, PHOTO MODE, MAIN MENU, QUIT GAME");
+              tc_menu_item_count(&m, TC_MS_GAME) == 4 && tc_menu_in_game(&m),
+          "the game menu: RESUME GAME, OPTIONS, PHOTO MODE, MAIN MENU (quitting is the main menu's)");
     tc_menu_input_press(&m, TC_MI_BACK);
     check(tc_menu_take_command(&m) == TC_MC_RESUME, "Esc there resumes the game");
     tc_menu_input_press(&m, TC_MI_DOWN);
@@ -476,11 +480,55 @@ static void save_checks(const char *dir) {
     free(ai);
 }
 
+/* Totalski: opened from the levels grid (no carry) with every power, as any level; the main menu's NEW GAME (its carry)
+ * a new game. */
+static void new_game_checks(const char *dir) {
+    char path[512];
+    size_t size, ai_size;
+    uint8_t *data, *ai_bytes;
+    tc_level lv;
+    printf("Totalski: Tonic Viewer and a new game\n");
+    snprintf(path, sizeof path, "%s/Totalski.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) {
+        printf("  info  no Totalski: skipped\n");
+        free(data);
+        return;
+    }
+    snprintf(path, sizeof path, "%s/Totalski.ttai", dir);
+    ai_bytes = read_file(path, &ai_size);
+    for (int fresh = 0; fresh < 2; fresh++) {
+        tc_viewer v;
+        tc_viewer_desc d;
+        tc_viewer_carry carry;
+        tc_cast_level_value lvv;
+        const tc_cast *c;
+        memset(&d, 0, sizeof d);
+        memset(&lvv, 0, sizeof lvv);
+        lvv.size = 1;
+        tc_cast_level_saves_put(&lvv); /* something left from an earlier run */
+        if (fresh) tc_save_start_new_game(&carry, "Totalski");
+        d.level = &lv;
+        d.ai_data = ai_bytes;
+        d.ai_size = ai_size;
+        d.level_name = "Totalski";
+        d.carry = fresh ? &carry : NULL;
+        if (tc_viewer_init(&v, &d) != TC_OK || !(c = tc_viewer_cast(&v))) { check(0, "Totalski plays"); break; }
+        if (!fresh) check(c->globals.powers == TC_AI_POWERS_ALL, "opened from the levels grid: every power");
+        else check(c->globals.powers == 0 && c->globals.values[1] == -1 && c->globals.lives == 3 && tc_cast_level_saves_count() == 0,
+                   "NEW GAME's carry: no powers, a new game's save values, three lives, no level-saved values left");
+        tc_viewer_free(&v);
+    }
+    free(ai_bytes);
+    tc_level_free(&lv);
+    free(data);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv";
     g_prefix = argc > 2 ? argv[2] : NULL;
     menu_checks(dir);
     save_checks(dir);
+    new_game_checks(dir);
     printf("%s\n", failures ? "menucheck: FAILED" : "menucheck: ok");
     return failures ? 1 : 0;
 }
