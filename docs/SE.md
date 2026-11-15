@@ -562,6 +562,42 @@ only PROC 72 no longer listed as skipped). Not ported: the inventory itself (`Pr
 just leaves), the SE's sounds, `Proc_DisplayChrono` (SE Totalski's World, every frame: a race timer?). **Not seen in
 the app.**
 
+## Crazy Town (2026-11-15): the cut level, rebuilt
+**What survives (read).** No level: neither disc has a Crazy Town snapshot, geometry, collision, scripts or loading
+screen (the retail disc's `tt1-4.cnt` are not hidden data: all four are byte-identical for the first 183 MB, the
+shortest's whole length: one region of the disc listed four times, a copy-protection decoy). What is left:
+- **Special Edition:** Textures.cnt `crazy town` (112 textures: striped crooked walls `mr_fou1-5`, `mr_maisonfou`,
+  polka dots `mr_poisvert`, a windmill hub `MR_moulin`, slate `tt_ardoise`, stained glass, plank doors and bridges, the
+  privy door `xx_wc`, a bathtub, roadworks `xx_barietrav01` / `xx_panotrav01`, the skull sign, the lunatics' props:
+  funnel, colander, crown, CD; grass, rock, river, the sunset sky `CIEL12`, far peaks `rendu6_NZ`). No SE level uses
+  one of them. The world map (`INVENTOR/MONDE.IMD`) has a region `monde_sl_crazytown`; `MONDE.INV`'s item `cd_fou01`,
+  between Karota and Canyon, is `Info2("crazytown_not_used")`; `TEXT.INV` string 3 is "Crazy Town" in all five
+  languages. Its music `CRAZYTH1-6.MPX` (+ `.CSB`, resources `VILL00xF`) and ambiences `FOUAMB1/2` are loaded by
+  `ED_MAIN.LCB`; the MPX format is not read (vgmstream refuses it).
+- **Retail:** the gate sign `gen_arche/arche_crazy` ("Crazy Tower", English and German): sud0 loads the other eight
+  world signs, not this one (nor `arche_grogh`). The unused lunatic skin `Fou1` (Fou4 is the Pyramid's, pyr_fou's) and
+  Fou4's `napo_*`. Bnk_89's first song matches the soundtrack's "Bonus (Crazy Town)" (docs/NOTES.md "Audio").
+
+**The rebuild (ours, not a restoration): `tools/ttre/crazytown.py`** (tools/convert_files.sh step 6d, when the SE's
+textures and the retail bar are there) makes `CrazyTown`, one of the Special Edition's levels (`se/ttlv`, EDIT 1;
+textures in `se/Imported/CrazyTown`, loading screen `se/Vignette/Level/CrazyTown.png`; Ed from the retail bar, music
+Bnk_89_1): a crooked village round a leaning six-drum **Crazy Tower** (stained glass, a funnel for a roof, a crown round
+it) with a plank stair round it to the top (rise 0.4, every tenth step missing: a jump), nine twisted houses, a
+windmill, the privy, a bathtub, a giant CD, a road to nowhere closed for works, a shallow river (Ed wades it) with a
+plank bridge and a humpback "crazy bridge", trees, cliffs all round, the peaks and the sunset dome. Reached by the
+custom layer's "Crazy Tower" gate in the Special Edition's sud0, round the corner of Doc's house from LibertyCity2001's (docs/PORTALS.md
+"Extensions"). (First made the same day among the retail levels, its gate in retail sud0; the script takes those
+files away.)
+
+**Checks (headless, 2026-11-15):** `AI_SCRIPT=wander aicheck` from 12 starts: largest step 0.551-0.586 (retail's
+range), no stalls, no blocked frames; a scratch driver climbs the stair to the top (83 of 83 waypoints, the 8 jumps,
+no falls, ~23 s) and crosses both bridges from the arrival to the square (repeated after the move to se/ttlv);
+portalcheck: both arches and the arrivals.
+Two finds on the way, both answered in the level: Ed opening his wings at the foot of a height-field cliff (a shallow
+crease under a 79-degree face) was thrown up to 4 units in a frame (the flight's spheres pushed out of both faces), so
+the cliffs got an upright rock foot; and at a 0.55 rise he stood at the stair's second riser, though Ed's step-up is
+given as 1 (docs/NOTES.md "Step-up"; mechcheck 0.9): not looked into, the stair uses 0.4. **Not seen in the app.**
+
 ## Ultimate Goal
 
 The long-term goal these steps lead to (user, 2026-11-05): Open Tonic as one merged Definitive Edition, Ed moving

@@ -46,6 +46,8 @@ Totalski	Bnk_80_1.wav
 Transit	Bnk_21_2.wav
 # Imported levels (the custom layer's; names as their .ttlv)
 LibertyCity2001	Bnk_9_8.wav
+# Crazy Town (tools/ttre/crazytown.py; a Special Edition level, the table is shared): the soundtrack's "Bonus (Crazy Town)" (Bnk_89: no level's .snd names it)
+CrazyTown	Bnk_89_1.wav
 # SSX Tricky courses (tools/ttre/ssx.py): Totalski's track until their own music is converted
 SSX_Alaska	Bnk_80_1.wav
 SSX_AlohaIceJam	Bnk_80_1.wav

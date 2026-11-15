@@ -290,6 +290,10 @@ else echo "== SSX Tricky courses: current (skip)"; fi
 # files/sources/GLTF Imports), redone only when missing or changed; Ed comes from bar ----
 [ -e "$OUT/ttlv/bar.ttlv" ] && python3 -m tools.ttre.imports "$OUT"
 
+# ---- 6d. Crazy Town (custom layer: the Special Edition's cut level, rebuilt from its textures; tools/ttre/crazytown.py),
+# needs the Special Edition's textures (step 4b) and the retail bar (Ed); redone only when its record changes ----
+python3 -m tools.ttre.crazytown "$OUT" || echo "Crazy Town: failed (skipped)" >&2
+
 # ---- 7. the custom layer: our own edits on top of the levels (tools/ttre/custom.py; every run, it is quick) ----
 python3 -m tools.ttre.custom "$OUT"
 

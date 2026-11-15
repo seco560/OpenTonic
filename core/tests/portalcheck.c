@@ -726,6 +726,24 @@ int main(int argc, char **argv) {
             printf("  LibertyCity2001: arrived %.2f from its arch\n", (double)d);
             check(d > 4 && d < 7, "LibertyCity2001 from the Special Edition: Ed arrives in front of the arch back");
         } else printf("  (no arch in LibertyCity2001; skipped)\n");
+        /* Crazy Town (tools/ttre/crazytown.py), a Special Edition level: the Special Edition sud0's "Crazy Tower" gate
+         * beside LibertyCity2001's and the way back (pair 'crazy'); plain level names: the same edition */
+        if (has_custom_portal(se_dir, "sud0", "CrazyTown") == 1 && has_custom_portal(se_dir, "CrazyTown", "sud0") == 1) {
+            if (in_game(se_dir, "sud0", TC_AI_POP_LEVEL, "CrazyTown", 0, &g)) {
+                check(g.captured && g.saw_228 && g.covers >= 1 && tcv_same(g.level, "CrazyTown"),
+                      "Special Edition sud0, in the game: the Crazy Tower arch to CrazyTown (walk-in, cover, the level)");
+            } else failures++;
+            if (in_game(se_dir, "CrazyTown", TC_AI_POP_LEVEL, "sud0", 0, &g)) {
+                check(g.captured && g.saw_228 && g.covers >= 1 && tcv_same(g.level, "sud0"),
+                      "CrazyTown, in the game: the arch back to the Special Edition's sud0");
+            } else failures++;
+            d = arrive_before(se_dir, "CrazyTown", "custom_portal_ed_crazy", "sud0");
+            printf("  CrazyTown: arrived %.2f from its arch\n", (double)d);
+            check(d > 4 && d < 7, "CrazyTown from sud0: Ed arrives in front of the arch back");
+            d = arrive_before(se_dir, "sud0", "custom_portal_ed_crazy", "CrazyTown");
+            printf("  Special Edition sud0: arrived %.2f from the Crazy Tower arch\n", (double)d);
+            check(d > 4 && d < 7, "Special Edition sud0 from CrazyTown: Ed arrives in front of the Crazy Tower arch");
+        } else printf("  (no Crazy Town: the Special Edition's textures are not converted; skipped)\n");
     }
     {
         doc_result d;

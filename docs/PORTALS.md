@@ -280,8 +280,13 @@ whose edits all went away is restored from `.custom-base`):
 - **The Special Edition's sud0 -> LibertyCity2001:** the plain arch with a green swirl against the west wall of Doc's
   house, facing the middle of the map; **back:** the Special Edition's arch with its South Plain picture in the first car's parking lot,
   facing it. The pair's places put Ed in front of the other arch each way.
+- **The Special Edition's sud0 -> CrazyTown (2026-11-15; docs/SE.md "Crazy Town"):** the ski arch (red swirl kept)
+  wearing retail's unused "Crazy Tower" sign (`gen_arche/arche_crazy`), round the corner from LibertyCity2001's arch:
+  its back to the south wall of Doc's house, 7 along it from the corner, facing south, a quarter turn from that arch
+  (whose back is to the west wall); **back:** the Special Edition's arch with its South Plain picture at the south end
+  of the town, facing in. Pair `crazy`; both a Special Edition level's, so the names are plain.
 - **Loading screens:** Vignette/Level/SSX_<course>.png (the badge over the darkened orange swirl); an imported level
   without one gets a map of its collision from above (LibertyCity2001, SSX_Trick, the next glTF imports).
 - The progress (lives, powers, story values) passes through a level without a cast (tcv_arrive keeps the carry's).
 - portalcheck "custom layer's portals": the arch to SSX_Alaska, SSX_Trick's end back to sud0 in front of its arch, both
-  LibertyCity2001 arches; skipped when their files are not there.
+  LibertyCity2001 arches, both Crazy Town arches and the arrivals each way; skipped when their files are not there.

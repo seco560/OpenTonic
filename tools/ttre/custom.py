@@ -105,6 +105,23 @@ EDITS += [Arch('se/ttlv/sud0', 'gta', ARCH_PLAIN, (-9.063, -3.099, -4.343), -1.5
           Arch('ttlv/LibertyCity2001', 'gta', ARCH_SE, (-137.391, 641.739, -5.0722), 1.5708, 'se:sud0', SE_TEXTURES,
                ('se/ttlv/sud0.ttlv',))]
 
+# Crazy Town (tools/ttre/crazytown.py: the Special Edition's cut level, rebuilt from its textures, among the Special
+# Edition's levels; user, 2026-11-15): in the Special Edition's sud0, round the corner from LibertyCity2001's arch (user:
+# "perpendicular to the liberty city portal, on the other side of the wall"): that arch has its back to the west wall
+# of Doc's house and faces west; this one has its back to the house's south wall ((-7.37, -7.07) to (13.72, -9.34) at
+# the ground), 0.3 off it, 7 along it from the corner, and faces south, along the wall's normal (-0.107, -0.994): a
+# quarter turn from it, their middles 10.6 apart. Retail sud0's red world gate (the Ski Slope's arch: 6.2 wide, 2.5
+# deep) wearing retail's own unused "Crazy Tower" sign (gen_arche/arche_crazy, which retail sud0 never loads; look
+# 'crazy'). Checked against the collision by a scratch script: nothing solid in its footprint, the ground under it
+# within 0.2, flat and clear 5.5-10 in front; each arch's arrival point over 14 from the other arch. (Before: in retail
+# sud0 by the Pressure Cooker gate; then in the road 11.4 south of LibertyCity2001's.) Its way back: the Special
+# Edition's arch with its South Plain picture at the south end of Crazy Town, facing north into the town (crazytown.py
+# reads this spot: the ground there is flattened to 0, Ed starts before it).
+EDITS += [Arch('se/ttlv/sud0', 'crazy', ARCH_SKI, (-0.576, -9.360, -4.3598), -0.1072, 'CrazyTown', RETAIL_TEXTURES,
+               ('se/ttlv/CrazyTown.ttlv', 'Textures/gen_arche/arche_crazy.png'), ('crazy',)),
+          Arch('se/ttlv/CrazyTown', 'crazy', ARCH_SE, (0.0, -60.0, 0.0), math.pi, 'sud0', OWN_TEXTURES,
+               ('se/ttlv/sud0.ttlv',))]
+
 # The way back from an SSX course: once the skier comes within FINISH_RADIUS of the course's end (ssx_course_end: the
 # lowest point of its AI paths, the finish's run-out), the cover at once and, behind it, sud0 in front of the course's
 # arch. A portal record in the course's .ttai, as Totalski's finish (ai.ski_portals): the skier's driver runs it.
@@ -555,11 +572,16 @@ def ssx_course_end(iso, course):
 def arch_look(out, level, look, iso):
     """{texture path in the arch's level: replacement relative to `level`'s folder} for an arch's look, the textures
     made under MADE_TEXTURES: ('ssx', course) the orange swirl and the course's badge on the ski sign, ('gta',) the
-    green swirl. Leaves out what it can't make (no retail textures, no disc: the plain look)."""
+    green swirl, ('crazy',) the red swirl kept and retail's unused "Crazy Tower" sign on the ski sign's plank (no
+    texture made). Leaves out what it can't make (no retail textures, no disc: the plain look)."""
     if not look:
         return {}
     src, made = os.path.join(out, 'Textures', 'gen_arche'), os.path.join(out, MADE_TEXTURES)
     here = os.path.dirname(os.path.join(out, level))
+    if look[0] == 'crazy':
+        sign = os.path.join(src, 'arche_crazy.png')
+        return {'../Textures/gen_arche/arche_ski.png': os.path.relpath(sign, here).replace(os.sep, '/')} \
+            if os.path.exists(sign) else {}
     swap = {}
     names, colour = SWIRLS[look[0]]
     for n in names:
