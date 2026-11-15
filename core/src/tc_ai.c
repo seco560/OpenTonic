@@ -2311,6 +2311,7 @@ static uint32_t procedure(run *r, uint32_t i) {
     }
     case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */
     case 104: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->speech_stop = true; return 0; }
+    case 118: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->save_serial++; return 0; } /* SaveGame: the host saves */
     case 16: p->motion.detach = true; return 0; /* PROC_12Etc_00488340 -> GAM_00428ea0: off its carrier */
     case 25: case 26: case 32: case 33: case 70: case 71: case 80:
     case 105: case 106: case 107: case 108:

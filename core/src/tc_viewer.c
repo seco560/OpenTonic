@@ -173,6 +173,11 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     if (desc->carry && desc->carry->orbit_distance > 0) v->orbit_distance = desc->carry->orbit_distance;
     if (desc->carry) v->cam.closeup = desc->carry->closeup != 0;
     if (desc->carry && v->play) tcv_arrive(v, desc->carry);
+    tcv_copy_text(v->level_name, sizeof(v->level_name), desc->level_name);
+    if (desc->carry) {
+        tcv_copy_text(v->arrival_place, sizeof(v->arrival_place), desc->carry->place);
+        tcv_copy_text(v->arrival_camera_place, sizeof(v->arrival_camera_place), desc->carry->camera_place);
+    }
     /* Port (the user's, 2026-11-11): a run that starts at retail Totalski (picked, or after the intro movie) is the
      * game's start: no powers. Every other fresh start keeps them all on (TC_AI_POWERS_ALL), and a level change carries
      * them as they are. */
@@ -355,6 +360,46 @@ void tc_viewer_toggle_pause(tc_viewer *v) {
 void tc_viewer_step_gamma(tc_viewer *v, bool up) {
     REC_DOOR(TC_RD_STEP_GAMMA, up, 0);
     v->gamma = fmaxf(0.5f, fminf(2.5f, v->gamma * (up ? 1.1f : 1 / 1.1f)));
+}
+
+void tc_viewer_set_game_menu(tc_viewer *v, bool on) {
+    uint32_t h;
+    if (on == v->game_menu) return;
+    REC_DOOR(TC_RD_GAME_MENU, on ? 1 : 0, 0);
+    if (on) {
+        if (v->paused) tc_viewer_toggle_pause(v); /* out of photo mode first: its camera comes back */
+        v->paused = true;
+        tcv_set_inspecting(v, v->playing);
+        /* a zoom and a way to turn of its own, from where the game is (not the viewer's rng: the transitions draw it) */
+        h = (uint32_t)(v->animation_time * 1000.0f) * 2654435761u ^ v->draw_count * 40503u;
+        h ^= h >> 15, h *= 2246822519u, h ^= h >> 13;
+        v->game_menu = true;
+        v->game_menu_time = 0;
+        v->game_menu_turn = h & 1 ? 1.0f : -1.0f;
+        v->game_menu_phase = (float)((h >> 1) & 1023) / 1023.0f * 2 * TC_PI;
+        if (v->playing) v->orbit_distance = 3.0f + 6.0f * (float)((h >> 11) & 1023) / 1023.0f;
+    } else {
+        v->game_menu = false;
+        v->paused = false;
+        tcv_set_inspecting(v, false); /* the camera and its zoom as they were */
+    }
+}
+
+void tc_viewer_set_view(tc_viewer *v, float gamma, float animation_speed, bool fog, uint32_t lighting) {
+    static const float steps[] = {0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 0.75f, 1, 1.5f, 2};
+    int s, best = 5;
+    for (s = 0; s < 8; s++)
+        if (fabsf(steps[s] - animation_speed) < fabsf(steps[best] - animation_speed)) best = s;
+    if (!(gamma == gamma)) gamma = 1;
+    REC_DOOR(TC_RD_SET_VIEW, (fog ? 1 : 0) | (int32_t)((lighting & 7) << 1) | (best << 4), gamma);
+    v->gamma = fmaxf(0.5f, fminf(2.5f, gamma));
+    v->animation_speed = steps[best];
+    v->fog_enabled = fog;
+    if (v->level->has_lighting && lighting < TC_VL_COUNT) v->lighting = (tc_view_lighting)lighting;
+}
+
+uint32_t tc_viewer_save_serial(const tc_viewer *v) {
+    return v->play && v->play->has_cast ? v->play->cast.globals.save_serial : 0;
 }
 
 void tc_viewer_step_fov(tc_viewer *v, int dir) {

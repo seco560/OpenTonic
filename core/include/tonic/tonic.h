@@ -19,6 +19,8 @@
 #include "tc_debug.h"
 #include "tc_hud.h"
 #include "tc_viewer.h"
+#include "tc_menu.h"
+#include "tc_save.h"
 #include "tc_rec.h"
 #include "tc_tape.h"
 #include "tc_mec.h"

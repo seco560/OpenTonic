@@ -83,6 +83,8 @@ install -m 755 sdl/build/opentonic "$DEST/opentonic"
 $SYNC --exclude '*_ai.txt' "$OUT/ttlv/" "$D/ttlv/"  # the AI listings next to the .ttai: debugging only
 if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$D/Textures/"; else rm -rf "$D/Textures"; fi
 [ -d "$OUT/Vignette/Level" ] && $SYNC "$OUT/Vignette/Level/" "$D/Vignette/Level/"
+# The picture before the main menu (game.bpg's TT_Pak.bmp).
+[ -e "$OUT/Vignette/TT_pak.png" ] && cp "$OUT/Vignette/TT_pak.png" "$D/Vignette/"
 # The original demo tapes (tools/ttre/demos.py): Replays' demo button.
 if [ -d "$OUT/demos" ]; then $SYNC "$OUT/demos/" "$D/demos/"; else rm -rf "$D/demos"; fi
 # Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".

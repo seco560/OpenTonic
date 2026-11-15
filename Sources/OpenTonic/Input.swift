@@ -36,8 +36,8 @@ struct KeyBindings {
 }
 
 /// The HUD's auto-hide (tc_viewer_set_hud_auto_hide: each element shows for five seconds when it changes, then slides
-/// out; off, the default, it stays). Kept across levels and launches in UserDefaults ("hudAutoHide"); H and the pad's
-/// D-pad right toggle it.
+/// out; off, the default, it stays). Kept across levels and launches in UserDefaults ("hudAutoHide"); H and the menus'
+/// OPTIONS set it.
 @MainActor enum HudSettings {
     static func apply(_ v: UnsafeMutablePointer<tc_viewer>) {
         tc_viewer_set_hud_auto_hide(v, UserDefaults.standard.bool(forKey: "hudAutoHide"))

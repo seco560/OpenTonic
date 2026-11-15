@@ -6,10 +6,11 @@ import TonicCore
 /// zones are the core's), buttons hold the same actions as their keys. Positional: buttonA is Cross on a PlayStation
 /// pad, A on an Xbox one. Polled once a frame by the renderer, before tc_viewer_update.
 @MainActor final class Gamepad {
-    /// What the app does rather than the viewer: Start = level select, Select = the controls, R3 = play / free-fly,
-    /// L2 = recentre the camera, the touchpad = mark this moment in the recording (F9), Cross = pause a playback,
-    /// Triangle = the close-up camera (5), D-pad right = the HUD's auto-hide (H); press: one of the face buttons went down. The debug menu is the keyboard's (F4).
-    enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, closeup, hudAutoHide, press, mark, pausePlayback }
+    /// What the app does rather than the viewer: Start = the game menu (Esc; a playback: back to the list), Select = the
+    /// controls, R3 = play / free-fly, L2 = recentre the camera, the touchpad = mark this moment in the recording (F9),
+    /// Cross = pause a playback, Triangle = the close-up camera (5); press: one of the face buttons went down. The debug
+    /// menu is the keyboard's (F4). The HUD's auto-hide (D-pad right before) is the game menu's OPTIONS now.
+    enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, closeup, press, mark, pausePlayback }
 
     private var pressed: [ObjectIdentifier: Bool] = [:]
     private var fast = false, recenter = false
@@ -52,7 +53,6 @@ import TonicCore
         let touchpad = (pad as? GCDualSenseGamepad)?.touchpadButton ?? (pad as? GCDualShockGamepad)?.touchpadButton
         if let touchpad, changed(touchpad) == true { commands.append(.mark) }
         if recentred { commands.append(.recenter) }
-        if changed(pad.dpad.right) == true, !watching { commands.append(.hudAutoHide) }  // D-pad right: the HUD's auto-hide (H)
         if changed(pad.buttonY) == true {  // Triangle: the close-up camera (5)
             commands.append(.press)
             if !watching { commands.append(.closeup) }

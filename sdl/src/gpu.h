@@ -104,6 +104,9 @@ void gpu_quad_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUText
  * uv in viewport units (0..1, y down), triangles 0 1 2 and 1 3 2; NULL = the whole viewport and texture. */
 void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, const float corners[4][2],
                  const float uv[4][2], int mode, float threshold);
+/* The same with a given sampler (repeat_sampler: the main menu's turning backgrounds). */
+void gpu_overlay_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, SDL_GPUSampler *sampler,
+                         const float corners[4][2], const float uv[4][2], int mode, float threshold);
 
 /* Ed's shadow disc (tc_viewer_shadow) in the level's 3D pass, after the opaque draws. */
 typedef struct gpu_shadow {

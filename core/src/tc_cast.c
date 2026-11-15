@@ -345,6 +345,41 @@ static void save_actor(uint32_t level, const tc_cast_actor *a) {
     }
 }
 
+uint32_t tc_cast_level_saves_count(void) { return g_save_count; }
+
+bool tc_cast_level_saves_get(uint32_t i, tc_cast_level_value *out) {
+    const level_save *s = i < g_save_count ? &g_saves[i] : NULL;
+    if (!s) return false;
+    out->level = s->level;
+    out->perso = s->perso;
+    out->var = s->var;
+    out->size = s->size;
+    memcpy(out->bytes, s->bytes, sizeof(out->bytes));
+    return true;
+}
+
+bool tc_cast_level_saves_put(const tc_cast_level_value *v) {
+    level_save *s = find_save(v->level, v->perso, v->var);
+    if (!s) {
+        if (g_save_count == g_save_room) {
+            uint32_t room = g_save_room ? g_save_room * 2 : 256;
+            level_save *more = (level_save *)tc_calloc(room, sizeof(*more));
+            if (!more) return false;
+            if (g_saves) memcpy(more, g_saves, g_save_count * sizeof(*more));
+            tc_free(g_saves);
+            g_saves = more;
+            g_save_room = room;
+        }
+        s = &g_saves[g_save_count++];
+        s->level = v->level;
+        s->perso = v->perso;
+        s->var = v->var;
+    }
+    s->size = v->size <= sizeof(s->bytes) ? v->size : (uint8_t)sizeof(s->bytes);
+    memcpy(s->bytes, v->bytes, s->size);
+    return true;
+}
+
 void tc_cast_level_save(const tc_cast *c) {
     uint32_t i, level = level_key(c);
     for (i = 0; i < c->count; i++) save_actor(level, &c->actors[i]);
@@ -782,6 +817,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
             c->globals.has_checkpoint = true;
             c->globals.checkpoint = c->main->position;
             c->globals.checkpoint_heading = c->main->heading;
+            c->globals.save_serial++;
         }
         /* the game's requests (the engine states the scripts set): the cover, a level change */
         if (p->cover_requested) p->cover_requested = false, c->game_cover = true;

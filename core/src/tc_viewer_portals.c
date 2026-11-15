@@ -118,6 +118,21 @@ void tcv_arrive(tc_viewer *v, const tc_viewer_carry *c) {
             tc_player_teleport(&p->main.player, m->places[i].position, m->places[i].heading);
     for (i = 0; c->camera_place[0] && i < m->place_count; i++)
         if (m->places[i].name && tcv_same_text(m->places[i].name, c->camera_place)) aim_camera(v, m->places[i].position);
+    if (c->has_checkpoint) { /* a saved game: back where its save point left him (tc_save.h) */
+        tc_vec3 at = tc_v3(c->checkpoint[0], c->checkpoint[1], c->checkpoint[2]);
+        tc_player_teleport(&p->main.player, at, c->checkpoint_heading);
+        if (p->has_cast) {
+            p->cast.globals.has_checkpoint = true;
+            p->cast.globals.checkpoint = at;
+            p->cast.globals.checkpoint_heading = c->checkpoint_heading;
+        }
+        v->camera.yaw = c->checkpoint_heading; /* behind him (the follow camera's yaw is his heading) */
+    }
+    if (c->hit_points_max > 0) {
+        tc_ai_perso *a = &p->main.driver.ai;
+        a->hit_points_max = c->hit_points_max;
+        a->hit_points = c->hit_points > 0 && c->hit_points <= c->hit_points_max ? c->hit_points : c->hit_points_max;
+    }
     tcv_start_transition(v, true);
 }
 
@@ -170,6 +185,8 @@ void tcv_update_portals(tc_viewer *v, float dt) {
                 c->powers = g->powers;
                 memcpy(c->values, g->values, sizeof c->values);
             }
+            c->has_checkpoint = 0; /* a saved game's arrival only (tc_save.h) */
+            c->hit_points = c->hit_points_max = 0;
             v->carry = c;
             v->phase = TC_VP_LOADING;
             v->loading_time = 0;

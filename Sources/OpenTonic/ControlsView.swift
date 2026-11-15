@@ -14,8 +14,8 @@ final class ControlsView: NSView {
             case .ed: return "Ed: jump, act, shoot, side-step"
             case .fly: return "Free-fly up / down"
             case .mode: return "Play as Ed / free-fly viewer / simple walking"
-            case .view: return "View: speed, lighting, gamma, FOV, fog, sectors, AA, SS"
-            case .app: return "App: music, mouse, help, full screen"
+            case .view: return "View: lighting, photo mode, HUD, FOV, sectors, AA, SS"
+            case .app: return "App: game menu, music, help, full screen"
             }
         }
 
@@ -41,17 +41,17 @@ final class ControlsView: NSView {
 
     /// A US layout, as compact as the bindings allow. Gaps are keys with an empty label and width.
     private static let rows: [[Key]] = [
-        [k("Esc", 1, .app, "mouse"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4", 1, .app, "debug"), k("", 0.5),
+        [k("Esc", 1, .app, "menu"), k("", 0.5), k("F1", 1, .app, "help"), k("F2", 1, .view, "AA"), k("F3", 1, .view, "SS"), k("F4", 1, .app, "debug"), k("", 0.5),
          k("F5"), k("F6"), k("F7"), k("F8"), k("", 0.5), k("F9", 1, .app, "mark"), k("F10"), k("F11"), k("F12")],
         [k("`"), k("1", 1, .view, "⌥ light 1"), k("2", 1, .view, "⌥ light 2"), k("3", 1, .view, "⌥ light 3"), k("4", 1, .view),
          k("5", 1, .camera, "close-up"), k("6", 1, .view), k("7", 1, .view), k("8", 1, .view), k("9", 1, .view),
          k("0", 1, .camera, "1st pers"),
-         k("-", 1, .view, "darker"), k("=", 1, .view, "brighter"), k("Delete", 1.5)],
+         k("-"), k("="), k("Delete", 1.5)],
         [k("Tab", 1.5, .mode, "Ed / fly"), k("Q", 1, .ed, "shoot"), k("W", 1, .move, "forward"), k("E", 1, .ed, "act"),
-         k("R", 1, .fly, "up"), k("T"), k("Y", 1, .camera, "invert"), k("U"), k("I", 1, .mode, "AI mode"), k("O"), k("P", 1, .view, "pause"),
-         k("[", 1, .view, "slower"), k("]", 1, .view, "faster"), k("\\")],
+         k("R", 1, .fly, "up"), k("T"), k("Y"), k("U"), k("I", 1, .mode, "AI mode"), k("O"), k("P", 1, .view, "photo"),
+         k("["), k("]"), k("\\")],
         [k("Caps", 1.75), k("A", 1, .move, "left"), k("S", 1, .move, "back"), k("D", 1, .move, "right"), k("F", 1, .fly, "down"),
-         k("G", 1, .view, "fog"), k("H", 1, .view, "HUD hide"), k("J", 1, .view, "Dolby"), k("K", 1, .view, "sectors"), k("L", 1, .view, "old light"), k(";", 1, .camera, "look -"), k("'", 1, .camera, "look +"), k("Return", 1.75)],
+         k("G"), k("H", 1, .view, "HUD hide"), k("J"), k("K", 1, .view, "sectors"), k("L", 1, .view, "old light"), k(";"), k("'"), k("Return", 1.75)],
         [k("Shift", 2.25, .ed, "walk / fast"), k("Z"), k("X", 1, .camera, "recentre"), k("C", 1, .ed, "side-step"), k("V", 1, .app, "intro*"), k("B"), k("N"),
          k("M", 1, .app, "mute"), k(",", 1, .view, "FOV -"), k(".", 1, .view, "FOV +"), k("/"), k("Shift", 2.25, .ed, "walk / fast")],
         [k("Ctrl", 1.25), k("Opt", 1.25), k("Cmd", 1.5, .app, "see below"), k("Space", 5, .ed, "jump"), k("Cmd", 1.5, .app, "see below"),
@@ -61,19 +61,18 @@ final class ControlsView: NSView {
 
     private let unit: CGFloat = 54, gap: CGFloat = 6, margin: CGFloat = 18
     private static let notes = [
-        "Mouse: click the view to capture it and look around, Esc releases it; or drag. Scroll: camera zoom (as Ed) / fly speed (free-fly).",
+        "Esc (pad: Start): the game menu: options, photo mode, the main menu, quit; the game holds behind it.",
+        "Mouse: looks round from the start (a click takes it back after a menu); or drag. Scroll: zoom / fly speed. Menus: point and click, right click back.",
         "Camera: mouse, arrows, right stick or Numpad 4 / 6 turn it round Ed; it stays while he stands, follows as he moves.",
         "X / middle button / L2 recentre; 5 (Triangle / Y) close-up, 0 (L3) first person (number row or numpad).",
         "As Ed with his AI (the default): he runs, Shift walks. Simple controller (I): Shift runs. Portals: walk into them.",
-        "Cmd-L level select · Cmd-/ this help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 lighting variants (day / night levels), ⌥0 the level's own",
+        "Cmd-L the main menu (saves the game) · Cmd-T the levels grid · Cmd-/ help · Ctrl-Cmd-F full screen · Cmd-Q quit · ⌥1-9 / ⌥0 lighting variants",
         "K: the sectors drawn: Ed's sector and the ones it sees, sky included (the default), all of them, or his sector alone; named in the title bar.",
-        "L: the original's lighting (the default: its formula, the lights and fog of Ed's sector) or the port's old one, to compare.",
-        "* V (or Play Intro Video) plays the intro movie from the level select screen; when it ends, or is skipped, the retail ski slope starts.",
-        "R (or Replays) on the level select screen: your recorded sessions, to play or delete (Shift + Delete, or Delete all: every one, after one question), and the original demos (D). Watching one, P pauses and Esc goes back.",
-        "Paused, in a replay or in play: mouse, arrows and scroll move the camera round Ed, back where it was on resuming.",
+        "* V (or Play Intro Video) on the levels grid plays the intro movie; when it ends, or is skipped, the retail ski slope starts.",
+        "R (or Replays) on the levels grid: your recordings (play; Shift + Delete, Delete all) and the original demos (D); P pauses, Esc goes back.",
+        "L: the original's lighting or the port's old one · H: the HUD's auto-hide · P: photo mode (all three in the menus' OPTIONS / game menu too).",
+        "Photo mode (P, the game menu), or a paused replay: mouse, arrows and scroll move the camera round Ed, back where it was after; Esc back to the game.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
-        "H (D-pad right): the HUD's auto-hide, the game's other mode: each element shows for five seconds when it changes, then slides out. Kept across levels.",
-        "J: Dolby Surround, the original's sound option: sounds behind the camera go to the rear channel of a surround decoder (Pro Logic); in plain stereo they sound wide and hollow. Off by default, as in the original. Kept across launches.",
         "F4: the debug menu: the game's powers and save values, who uses them, switches. The game holds while it is open; W / S choose, A / D change, Space or E switch.",
     ]
 

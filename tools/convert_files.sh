@@ -252,6 +252,10 @@ if [ "$RETAIL" = 1 ]; then
   if outdated hud "$OUT/ttlv/hud.tthd" hud; then
     if python3 -m tools.ttre.hud "$OUT"; then record hud; else echo "HUD: failed (skipped)" >&2; fi
   else echo "== HUD: current (skip)"; fi
+  # ---- 5e. the main menu: its fonts, the game's menu texts, the space backgrounds (docs/ENGINE.md "The menus") ----
+  if outdated menu "$OUT/ttlv/menu.ttmn" menu; then
+    if python3 -m tools.ttre.menu "$OUT"; then record menu; else echo "menu: failed (skipped)" >&2; fi
+  else echo "== menu: current (skip)"; fi
 fi
 
 # ---- 5b. intro movie (needs the disc's Videos folder) ----

@@ -226,6 +226,12 @@ void tc_cast_respawn(tc_cast *c);
  * tc_cast_level_save on the way out (the actors' current values); an actor's start takes them back; a new run clears. */
 void tc_cast_level_save(const tc_cast *c);
 void tc_cast_level_saves_clear(void);
+/* The table itself, for a save game's file (tc_save.h): one entry per actor's level-saved variable, `level` a hash of the
+ * edition and the level's name. get: false past the end. put: adds or replaces one (false: out of memory). */
+typedef struct tc_cast_level_value { uint32_t level; uint16_t perso, var; uint8_t size, bytes[12]; } tc_cast_level_value;
+uint32_t tc_cast_level_saves_count(void);
+bool tc_cast_level_saves_get(uint32_t i, tc_cast_level_value *out);
+bool tc_cast_level_saves_put(const tc_cast_level_value *v);
 
 #ifdef __cplusplus
 }

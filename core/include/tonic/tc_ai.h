@@ -362,6 +362,9 @@ typedef struct tc_ai_globals {
     bool has_checkpoint;
     tc_vec3 checkpoint;
     float checkpoint_heading;
+    /* Port: the game asked to be saved (PROC 118 SaveGame; a save point, as the checkpoint above): the host saves
+     * (tc_viewer_save_serial, tc_save.h). The exe writes its files there (SAI, GAM_00421500). */
+    uint32_t save_serial;
     /* The camera's direction from the level's scripts (the cast; the main actor's own camera writes go to his camera
      * perso's dsgvars instead): PROC 177 SetCameraMode (record +0x98; 0, the follow, until set), 180 SetCameraTarget (cine +0x10: a
      * perso id, 0 none), 178 ChangeFocal (record +0x8C: the horizontal field of view, radians; 0 none). The host shoots

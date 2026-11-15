@@ -828,6 +828,81 @@ A new game (`GAM_00419290`): no powers, slot 0 = 0, slots 1-6 = -1, the rest 0.
   (`GAM_004189e0`, drawn by `GAM_00419070`); saving; what gives the first life count. Seen in sud0: a scarab hive
   (HEG_RucheScarab01) starts by itself a few seconds in and gives a bee; its ZDE test against Ed is the suspect.
 
+## The menus (2026-11-15; **read** where marked, the rest **port**)
+**Read** (fix.sna / fix.gpt, game.dsb, the exe's MNU module): the menus are binary records in fix.sna. fix.gpt +0x0C holds
+100 menu pointers (`GAM_Initeng_0040d700` reads them into `DAT_0093e460`; 53 set, found by name with
+`MNU_mnubase_0044ea50`). A menu: +0 its name, +0x34 u8 item count, +0x35 the selection, +0x38 the items, +0x100 / +0x104
+its backgrounds. An item: +0 a text (or a record of texts), +4 type (0 label, 1 choice, 0x201 / 0x202 a name field,
+0x204 / 0x208 a choice with a value or arrows, 0x402 an animated perso), +9 selected, +0xA enabled, +0xB shown, +0xC x,
+y, z in the HUD's units. Actions are bound by name (`GAM_00412a40`: LaunchIntro, QuitGame, ReturnMainMenu ...;
+`GAM_004334d0`: MenuForLoadGame ...). The main menu, "StartUp": the title MNU_TITLEMAINMENU in TitleEd at y 3; START GAME,
+OPTIONS, TONIC ON-LINE, SHOW CREDITS, QUIT in FontPC at y 1.0, 0.2, -0.6, -1.4, -2.2; two EdMenu persos (EdMenu1 / 2,
+played with PlayAnim) at (+-8, -6.5, depth 5). "StartGame": NEW GAME at 0.5, LOAD GAME at -0.5. "NewGame": ENTER THE GAME
+NAME at 0.5, the name field at -1.0 with MNU_CURSOR ('§': FontPC's 3D Ed head) after it. "NewGameDeleteSavedGame": the
+name as title at 2.8, the erase question at 0.5, YES / NO at (-1, -1) / (1, -1). "LoadGame": CHOOSE YOUR GAME, one game
+at a time between arrows (type 0x204). Backgrounds (`MNU_0044df60`): MENU\TTSPACE_BKGRND.TGA then MENU\TTSPACE_STARS.TGA
+over the whole screen; with flag 1 the four corners' uv circle a drifting centre at 135, 45, 225, 315 degrees, the
+half size breathing and the whole turning, stepped once a frame (the float constants at 0x4d2718 ... 0x4d2734). The
+picture shown while the game loads, before the menu: game.bpg (decrypted) names TT_Pak.bmp, loaded by `SNA_0045bd30`
+as the vignette (UbiSoft.bmp, game.dsb's, comes earlier).
+**Partly read:** the texts' effects (fix.gpt +0x220, `DAT_0051b8c0`: four 0x24 records for an item's states, applied per
+letter by `FUN_004cc100`): bytes x 0.02 give ranges (0.7 - 1.3 in both states; the selected state's other range is 1.2x
+the unselected one's); which property each drives is not read. **Not done:** the EdMenu persos, the credits, the sound
+and video menus, the in-game menu ("InGame": RESUME GAME, OPTIONS, MAIN MENU).
+**Port** (tools/ttre/menu.py -> files/out/ttlv/menu.ttmn; core tc_menu.c; Swift MenuScreen.swift; SDL menu.c; `make
+menucheck`): the core keeps the screens and lays them out; the frontends draw two layers and tinted quads.
+- Our organisation (the user): START GAME (NEW GAME, LOAD GAME, DELETE GAME), OPTIONS, TONIC VIEWER (the levels grid),
+  EXIT GAME; the title "Open Tonic" in TitleEd, a size up. LOAD and DELETE GAME are lists (the user), with each game's
+  level by the inventory's names (MNU_INV_*NAME). Ed's head turns beside the selected choice (ours: the exe has no
+  selection marker) and at the end of the name (the exe's, a 3D model there: here the atlas picture narrowed to fake
+  the turn). A selected choice is 1.12x larger, its letters bob; the others are dimmed (not the exe's effects).
+- FontPC's '<' and '/' come out mirrored from their models: the left arrow is a flipped '>', no slashes are printed.
+  Its line step (the space's) is shorter than its capitals: lines are at least a capital apart.
+- A wider screen sees more of the backgrounds across (the uv spread x aspect / (4/3)) instead of a stretched picture.
+- OPTIONS: gamma, animation speed, lighting (original / port), fog, Dolby Surround, HUD auto-hide, invert look, look
+  speed (`tc_options`), given to every level's viewer (`tc_viewer_set_view`, recorded as door TC_RD_SET_VIEW) and kept
+  across launches (Swift: UserDefaults; SDL: options.cfg in its pref path); the keys that change them in a level keep
+  them too.
+- At launch: TT_pak.png three seconds (a key, a click or the pad skips), then the menu. Cmd-L / Ctrl+L: from a game the
+  menu (saved), from a level of the grid the grid; Esc / Circle on the grid: the menu.
+- **The game menu** (the user, 2026-11-15; the exe's "InGame" has RESUME GAME, OPTIONS, MAIN MENU): Esc or Start in a
+  level. GAME MENU: RESUME GAME, OPTIONS, PHOTO MODE (the old P: paused, the camera free round Ed; Esc back to the game),
+  MAIN MENU (saved), QUIT GAME (saved). Esc there resumes. Port: drawn over the game, dimmed (black at 0.55) under two
+  translucent swirls of sud0's rainbow pool (Sud0/o_zarbi_auntxy) turning apart; the game holds and the camera drifts
+  round Ed through the play camera, so against the level's surfaces (`tc_viewer_set_game_menu`, door TC_RD_GAME_MENU:
+  0.11 rad/s one way or the other, rising and falling, a zoom of 3-9 picked from a hash of the clock, not the viewer's
+  rng), everything back as it was on closing. The SDL build bakes the swirls' translucency into the picture (its overlay
+  pipeline has no blend factor; no shader change).
+- **The pointer** (the user: clickable everywhere): each screen's choices, list rows and option rows are hit-tested from
+  the last layout (`tc_menu_pointer` / `tc_menu_click`): over one selects it, a click takes it, an option's value steps
+  back left of its middle and on right of it (its name: on); a right click is Back.
+- **The keys the menus took over are gone** (the user): - = gamma, [ ] speed, G fog, J Dolby, ; ' Y look, the pad's
+  D-pad right (the HUD); L (lighting), H (the HUD's auto-hide) and P (photo mode) stay as well, kept in the options
+  (the user, the same day). Esc no longer just frees the mouse (the game menu does). docs/controls.png re-rendered
+  (tools/render_controls.sh).
+
+## Saved games (2026-11-15; **port**, its triggers **read**)
+**Read:** the original saves per game in GameData/SaveGame/<game>/ (encrypted): General.sav (the list), General%03d.sav,
+Level%03d.sav (the player's state, where he is) and <Level>.sav per level visited (its actors' level-saved dsgvars, flag
+0x800; "Saved variables" below). It saves when the scripts call PROC 118 SaveGame and at the save points, and on a
+level change. The player's save holds Ed's dsgvars with flag 0x200 only.
+**Port** (core tc_save.c; `make menucheck` saves on sud0 and loads into a new viewer):
+- One file per game, <NAME>.ttsv (Swift: ~/Library/Application Support/OpenTonic/Saves; SDL: its pref path's Saves;
+  TONIC_SAVES elsewhere), the chunk container (tc_reader.h) with magic TTSV: INFO (name, level, edition, time, lives,
+  powers), CARY (the arrival place and camera place, Ed's dsgvars, the progress: lives, powers, the 31 save values; the
+  checkpoint; Ed's hit points and their maximum; the camera's field of view, zoom and close-up), LSAV (the whole table
+  of level-saved values: level hash, perso id, dsgvar index, bytes).
+- A save is a `tc_viewer_carry`: loading opens the level as a portal's arrival does, then puts Ed at the checkpoint
+  (the carry's new tail: has_checkpoint, checkpoint, hit points; `tcv_arrive`), so a recording of a loaded game replays
+  it. Ed's dsgvars: the player-saved ones (0x200) as they are, the rest the model's initial values (a portal carries
+  them all, mid-behaviour state included). While a level change is under way, the save is the next level's arrival.
+- When: a game's arrival in a level (its start after the intro, each portal, a load), PROC 118 SaveGame and the save
+  points (`tc_ai_globals.save_serial`, `tc_viewer_save_serial`; 118 was skipped before), the way back to the menu, and
+  quitting. A new game of an existing name erases it (the exe's question).
+- **Open:** the level-saved table is keyed by the cast's perso ids and dsgvar indices: a re-export that renumbers a
+  level's persos (an edited level, Tonic Tooling's cook) would mismatch old saves; keying by instance name would not.
+  Hit points still don't go through a portal (as before); a load restores them.
+
 ## Saved variables, the skier's start, restarts (2026-11-13; **read** unless marked)
 - **A dsgvar's info says how it is saved** (third word: the save module's flags; `SAI_SAI_Save_00481b90` tests 0xA00 =
   "the current value"): 0x200 with the player's save (the fix Ed's dsg133, 135-151), 0x800 with the level's own file,

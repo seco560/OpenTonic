@@ -15,6 +15,7 @@
 #   make hudcheck   -> the game's HUD (tc_hud.h): its data, Totalski's start text and clock, the standard HUD, the inventory
 #   make debugcheck -> the debug menu (tc_debug.h) on sud0: its moves, a power switched off, reload, a replay
 #   make soundcheck -> 3D sound (tc_sound.h): the exe's maths on hand-worked cases, sud0's SND3 data, a perso heard
+#   make menucheck  -> the main menu (tc_menu.h: menu.ttmn, its screens and layout) and saved games (tc_save.h) on sud0
 #   make checkall   -> THE GATE: every check above in turn, one line each, logs in build/logs; fails if any does. Also the
 #                      Special Edition's sectors when ../files/out/se/ttlv is there. Imported levels (out/Imported) are
 #                      passed by (tests/testlevels.h). Run it before and after a change.
@@ -43,7 +44,7 @@ SRC := $(wildcard src/*.c) $(wildcard src/custom/*.c)
 endif
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/perfcheck $(BUILD)/replay
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -90,6 +91,9 @@ $(BUILD)/replaycheck: tests/replaycheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 $(BUILD)/debugcheck: tests/debugcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+$(BUILD)/menucheck: tests/menucheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD)/hudcheck: tests/hudcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 $(BUILD)/soundcheck: tests/soundcheck.c $(BUILD)/libtoniccore.a
@@ -164,8 +168,11 @@ hudcheck: $(BUILD)/hudcheck
 soundcheck: $(BUILD)/soundcheck
 	$(BUILD)/soundcheck ../files/out/ttlv
 
+menucheck: $(BUILD)/menucheck
+	$(BUILD)/menucheck ../files/out/ttlv
+
 # The gate. Each check runs whatever the others did; a red line names its log.
-GATE := check mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck
+GATE := check mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck
 SE_TTLV := ../files/out/se/ttlv
 checkall: all
 	@mkdir -p $(BUILD)/logs; failed=""; \
@@ -182,4 +189,4 @@ checkall: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck tapecheck perfcheck replay clean
+.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay clean

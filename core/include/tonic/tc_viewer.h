@@ -162,6 +162,11 @@ typedef struct tc_viewer_carry {
     uint8_t lives;
     uint16_t powers;
     int16_t values[31];
+    /* A saved game's (tc_save.h; a portal's carry has none): Ed comes back where its last save point left him (and that
+     * is the level's checkpoint again), with his life as it was; hit_points_max 0: as the level starts him. */
+    uint8_t has_checkpoint;
+    float checkpoint[3], checkpoint_heading;
+    int32_t hit_points, hit_points_max;
 } tc_viewer_carry;
 
 typedef struct tc_recorder tc_recorder; /* tc_rec.h */
@@ -383,6 +388,16 @@ typedef struct tc_viewer {
 
     tc_recorder *rec;             /* tc_viewer_desc.recorder */
     tc_viewer_tape *tape;         /* an original demo playing (tc_viewer_play_tape), NULL none */
+
+    /* What a save of the game needs (tc_save.h): the level's name (tc_viewer_desc.level_name) and where Ed came in (the
+     * carry's place and camera place; "": his start). */
+    char level_name[64], arrival_place[64], arrival_camera_place[64];
+
+    /* The game menu is over the game (tc_viewer_set_game_menu): paused, the camera drifting round Ed from a zoom picked
+     * on opening, turning game_menu_turn (+-1) a way, rising and falling (game_menu_phase); through the play camera, so
+     * against the level's surfaces as ever. */
+    bool game_menu;
+    float game_menu_time, game_menu_turn, game_menu_phase;
 } tc_viewer;
 
 /* Sets up the start camera (the middle of the level), the play session (with Ed's AI when ai_data loads) and
@@ -488,11 +503,22 @@ bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float eve
 void tc_viewer_step_speed(tc_viewer *v, int dir);   /* [ ]: 1/4, 1/3, 1/2, 2/3, 3/4, 1, 1.5, 2 */
 /* P. Playing, the look inputs and the wheel still move the camera round Ed; resuming puts it back. */
 void tc_viewer_toggle_pause(tc_viewer *v);
+/* The game menu (Esc, Start; tc_menu.h TC_MS_GAME) opened over the game or closed: the game holds while it is open (the
+ * exe's in-game menu does), the camera drifts slowly round Ed, from a zoom picked at random, against the level as the
+ * play camera is; closing gives the game and the camera back as they were. Photo mode is tc_viewer_toggle_pause. */
+void tc_viewer_set_game_menu(tc_viewer *v, bool on);
 /* That camera, for a frontend that isn't calling tc_viewer_update (a paused playback, tc_replay_pause). */
 void tc_viewer_paused_look(tc_viewer *v, float dt);
 void tc_viewer_set_light_set(tc_viewer *v, uint32_t n);  /* 1-9: that set, held; ignored past light_set_count */
 void tc_viewer_follow_light(tc_viewer *v);   /* 0: the level's light persos set the light again (if it has any) */
 void tc_viewer_step_gamma(tc_viewer *v, bool up);   /* - =: x1.1, 0.5-2.5 */
+/* The menu's display options at once (tc_options, tc_menu.h): gamma (0.5-2.5), the animation speed (the nearest of
+ * tc_viewer_step_speed's steps), the fog on or off, the lighting (tc_view_lighting; levels without the original's keep
+ * the port's). Recorded as one setting, so a replay shows what the run showed. */
+void tc_viewer_set_view(tc_viewer *v, float gamma, float animation_speed, bool fog, uint32_t lighting);
+/* Counts the game's requests to save (the scripts' SaveGame, PROC 118, and the save points taking themselves out):
+ * a frontend saves the game when it changes (tc_save.h). 0 on levels without a cast. */
+uint32_t tc_viewer_save_serial(const tc_viewer *v);
 void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps of the horizontal at 4:3 (86 default), 50-120 */
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
 void tc_viewer_cycle_lighting(tc_viewer *v);        /* L: the original's lighting <-> the port's earlier one */

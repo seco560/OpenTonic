@@ -703,6 +703,11 @@ _Static_assert(sizeof(overlay_quad) == 64, "overlay_quad must match shaders/over
 
 void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, const float corners[4][2],
                  const float uv[4][2], int mode, float threshold) {
+    gpu_overlay_sampled(g, f, pass, tex, g->ui_sampler, corners, uv, mode, threshold);
+}
+
+void gpu_overlay_sampled(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *tex, SDL_GPUSampler *sampler,
+                         const float corners[4][2], const float uv[4][2], int mode, float threshold) {
     static const float full[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
     overlay_quad q;
     for (int i = 0; i < 4; i++) {
@@ -712,7 +717,7 @@ void gpu_overlay(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, SDL_GPUTexture *
         q.corner[i][3] = uv ? uv[i][1] : full[i][1];
     }
     overlay_params p = {(Uint32)mode, threshold, {0, 0}};
-    SDL_GPUTextureSamplerBinding binding = {tex ? tex : g->white, g->ui_sampler};
+    SDL_GPUTextureSamplerBinding binding = {tex ? tex : g->white, sampler ? sampler : g->ui_sampler};
     SDL_BindGPUGraphicsPipeline(pass, g->overlay);
     SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
     SDL_PushGPUVertexUniformData(f->cmd, 0, &q, sizeof q);

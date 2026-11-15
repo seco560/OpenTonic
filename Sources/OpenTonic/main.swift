@@ -197,6 +197,8 @@ final class GameView: MTKView {
     /// look inputs get through.
     var onPlaybackBack: (() -> Void)?
     var onPlaybackPause: (() -> Void)?
+    /// Esc (and the pad's Start, through the renderer): the game menu.
+    var onEscape: (() -> Void)?
     private var inPlayback: Bool { renderer?.playback != nil }
     private var playbackPaused: Bool { renderer?.playback?.paused == true }
 
@@ -298,7 +300,10 @@ final class GameView: MTKView {
             }
             return
         }
-        if event.keyCode == 53 { setCaptured(false); return }  // Esc
+        if event.keyCode == 53 {  // Esc: the game menu (photo mode: back to the game)
+            if !event.isARepeat { onEscape?() }
+            return
+        }
         if event.keyCode == 101 {  // F9: mark this moment in the recording
             if !event.isARepeat, Recording.shared.mark() { updateTitle() }
             return
@@ -336,10 +341,6 @@ final class GameView: MTKView {
             if let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, true) }
             return
         }
-        if event.keyCode == 33 || event.keyCode == 30 {  // [ / ]: animation speed
-            if !event.isARepeat { tc_viewer_step_speed(v, event.keyCode == 30 ? 1 : -1); updateTitle() }
-            return
-        }
         // 5 and 0, on the number row or the numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person).
         if event.keyCode == 23 || event.keyCode == 87 || event.keyCode == 29 || event.keyCode == 82,
            !event.modifierFlags.contains(.option) {
@@ -350,7 +351,8 @@ final class GameView: MTKView {
             return
         }
         // Option + 1-9: hold a baked lighting set (sud0 and Land have three); Option + 0: the level's own light again
-        // (sud0's day / night cycle, Land's lightning); - / =: display gamma.
+        // (sud0's day / night cycle, Land's lightning). Gamma, the speed, fog, Dolby and the look settings are the game
+        // menu's (Esc) since 2026-11-15; L, H and P stay as well (the user).
         let digits: [UInt16: UInt32] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
         if event.modifierFlags.contains(.option), let n = digits[event.keyCode] {
             tc_viewer_set_light_set(v, n)
@@ -359,11 +361,6 @@ final class GameView: MTKView {
         }
         if event.keyCode == 29, event.modifierFlags.contains(.option) {
             tc_viewer_follow_light(v)
-            updateTitle()
-            return
-        }
-        if event.keyCode == 27 || event.keyCode == 24 {
-            tc_viewer_step_gamma(v, event.keyCode == 24)
             updateTitle()
             return
         }
@@ -380,20 +377,16 @@ final class GameView: MTKView {
             updateTitle()
             return
         }
-        if event.keyCode == 4 {  // H: the HUD's auto-hide (kept across levels)
+        if event.keyCode == 4 {  // H: the HUD's auto-hide (as the menus' OPTIONS; kept)
             if !event.isARepeat { HudSettings.toggle(v); updateTitle() }
             return
         }
-        if event.keyCode == 38 {  // J: Dolby Surround (the original's sound menu option; kept across launches)
-            if !event.isARepeat { Sfx.shared.dolby.toggle(); updateTitle() }
+        if event.keyCode == 37 {  // L: lighting: the original's / the port's earlier one (as the menus' OPTIONS; kept)
+            if !event.isARepeat { tc_viewer_cycle_lighting(v); ViewSettings.save(v); updateTitle() }
             return
         }
-        if event.keyCode == 5 {  // G: level fog on/off
-            if !event.isARepeat { tc_viewer_toggle_fog(v); updateTitle() }
-            return
-        }
-        if event.keyCode == 37 {  // L: lighting: the original's / the port's earlier one (comparing)
-            if !event.isARepeat { tc_viewer_cycle_lighting(v); updateTitle() }
+        if event.keyCode == 35 {  // P: pause, the camera free round Ed (the game menu's PHOTO MODE)
+            if !event.isARepeat { tc_viewer_toggle_pause(v); updateTitle() }
             return
         }
         if event.keyCode == 40 {  // K: sectors drawn: Ed's and its list (default) / all / his alone
@@ -402,18 +395,6 @@ final class GameView: MTKView {
         }
         if event.keyCode == 7 {  // X: recentre the camera behind Ed
             if !event.isARepeat { tc_viewer_recenter_camera(v); updateTitle() }
-            return
-        }
-        if event.keyCode == 41 || event.keyCode == 39 || event.keyCode == 16 {  // ; ': look sensitivity, Y: invert up / down
-            if !event.isARepeat {
-                if event.keyCode == 16 { tc_viewer_toggle_invert_y(v) } else { tc_viewer_step_look(v, event.keyCode == 39 ? 1 : -1) }
-                LookSettings.save(v)
-                updateTitle()
-            }
-            return
-        }
-        if event.keyCode == 35 {  // P: pause/resume animation
-            if !event.isARepeat { tc_viewer_toggle_pause(v); updateTitle() }
             return
         }
         if let a = bindings.action(event.keyCode) { tc_viewer_set_action(v, a, true) } else { super.keyDown(with: event) }
@@ -455,6 +436,14 @@ final class GameView: MTKView {
     private var nextLevelTimer: Timer?
     /// Playing a recording back (the Replays menu, --replay [file]): Playback.
     private var playback: Playback?
+    /// The game being played (the main menu's NEW GAME / LOAD GAME): its name, under which it is saved; nil: no game
+    /// (the levels grid's Tonic Viewer, a playback). Saved on each level's arrival, when the game asks (its SaveGame and
+    /// save points: tc_viewer_save_serial), on the way back to the menu and on quitting.
+    private var game: String?
+    private var savedSerial: UInt32 = 0
+    private var menuView: MenuView?
+    /// The game menu over the level on show (Esc, Start): a see-through MenuView on top of the GameView.
+    private var gameMenu: MenuView?
     /// The original demos' round (the Replays menu's button): the tapes, and the next one to play.
     private var demoTapes: [URL] = []
     private var demoAt = 0
@@ -497,7 +486,7 @@ final class GameView: MTKView {
             openLevel(url)
         } else {
             if args.count > 1 { levelFolder = URL(fileURLWithPath: args[1]) }
-            showPicker()
+            showSplash()
         }
         // Dock icon: Ed's original icon on the sud0 water swirl, generated into files/out/icon by tools/make_icon.sh.
         let iconDir = levelFolder.deletingLastPathComponent().appendingPathComponent("icon")
@@ -510,7 +499,176 @@ final class GameView: MTKView {
         print("Controls: WASD move, arrow keys look, R/F up/down, Shift fast; click to capture mouse-look, Esc to release; scroll = fly speed / play-mode zoom; , / . field of view; P pause animation; starts as Ed when the level has him, Tab toggles free-fly (Space jump); ⌘L level select; ⌃⌘F fullscreen")
     }
 
-    func applicationWillTerminate(_ note: Notification) { Recording.shared.stop() }
+    func applicationWillTerminate(_ note: Notification) {
+        saveGame()
+        Recording.shared.stop()
+    }
+
+    // ---- The main menu (tc_menu.h) and the game's saves (tc_save.h) ----
+
+    /// At launch: the retail game's picture before its menu (Vignette/TT_pak.png), three seconds, then the menu.
+    private func showSplash() {
+        let out = levelFolder.deletingLastPathComponent(), vignettes = out.appendingPathComponent("Vignette")
+        Music.shared.play(level: "menu", audioDir: out.appendingPathComponent("audio"))
+        let files = (try? FileManager.default.contentsOfDirectory(at: vignettes, includingPropertiesForKeys: nil)) ?? []
+        guard let picture = files.first(where: { $0.lastPathComponent.lowercased() == "tt_pak.png" }) else {
+            showMainMenu()
+            return
+        }
+        let splash = SplashView(frame: window.contentLayoutRect, picture: picture, seconds: 3) { [weak self] in
+            self?.showMainMenu()
+        }
+        window.contentView = splash
+        window.makeFirstResponder(splash)
+        window.title = "Open Tonic"
+    }
+
+    /// The main menu; the game being played is saved and left. Without menu.ttmn (an older conversion): the levels grid.
+    @objc func showMainMenu() {
+        saveGame()
+        game = nil
+        stopPlayback("the main menu")
+        leaveLevel()
+        let data = try? Data(contentsOf: levelFolder.appendingPathComponent("menu.ttmn"))
+        guard let data, let view = MenuView(frame: window.contentLayoutRect, data: data, options: ViewSettings.options,
+                                            games: GameSaves.list().map { $0.info }) else {
+            if data == nil { print("No menu.ttmn in \(levelFolder.path): the levels grid instead (run the conversion)") }
+            showPicker()
+            return
+        }
+        view.onCommand = { [weak self] command, index, name in self?.menuCommand(command, index, name) }
+        menuView = view
+        window.contentView = view
+        window.makeFirstResponder(view)
+        window.title = "Open Tonic"
+    }
+
+    private func menuCommand(_ command: tc_menu_command, _ index: Int, _ name: String) {
+        switch command {
+        case TC_MC_NEW_GAME:  // a new game of that name (an old one of that name was agreed to be erased): the intro first
+            if let url = GameSaves.url(for: name) { try? FileManager.default.removeItem(at: url) }
+            menuView = nil
+            game = name
+            playIntro()
+        case TC_MC_LOAD_GAME:
+            let saves = GameSaves.list()
+            guard index < saves.count, let g = GameSaves.read(saves[index].url) else { return }
+            loadGame(g)
+        case TC_MC_DELETE_GAME:
+            let saves = GameSaves.list()
+            if index < saves.count { try? FileManager.default.removeItem(at: saves[index].url) }
+            menuView?.setGames(GameSaves.list().map { $0.info })
+        case TC_MC_TONIC_VIEWER:
+            menuView = nil
+            showPicker()
+        case TC_MC_EXIT: NSApp.terminate(nil)
+        case TC_MC_OPTIONS:
+            if let o = menuView?.state.pointee.options { ViewSettings.options = o }
+        default: break
+        }
+    }
+
+    /// A saved game: its level (the Special Edition's folder for its levels), entered as its save says.
+    private func loadGame(_ g: tc_save_game) {
+        let name = cString(g.info.level).lowercased()
+        let folder = g.info.edition != 0 ? levelFolder.deletingLastPathComponent().appendingPathComponent("se/ttlv") : levelFolder
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        guard let url = files.first(where: { $0.pathExtension.lowercased() == "ttlv"
+                                             && $0.deletingPathExtension().lastPathComponent.lowercased() == name }) else {
+            let alert = NSAlert()
+            alert.messageText = "No level \(name)"
+            alert.informativeText = "This game was saved in \(name), which is not in \(folder.path)."
+            alert.runModal()
+            return
+        }
+        menuView = nil
+        game = cString(g.info.name)
+        openLevel(url, carry: g.carry, newRun: true)
+        if renderer == nil { showMainMenu() }  // it didn't load (openLevel showed why)
+    }
+
+    /// The game on show, under its name (nothing without a game, in a playback, or with no level).
+    private func saveGame() {
+        guard let name = game, playback == nil, let v = renderer?.viewer?.raw else { return }
+        if GameSaves.save(v, name: name) { print("Saved \(name)") }
+        savedSerial = tc_viewer_save_serial(v)
+    }
+
+    /// The game asked to be saved (its SaveGame, a save point) since the last save.
+    private func pollSave() {
+        guard game != nil, let v = renderer?.viewer?.raw, tc_viewer_save_serial(v) != savedSerial else { return }
+        saveGame()
+    }
+
+    /// Esc, the pad's Start in a level: the game menu over it (the game holds, the camera drifts round Ed: tc_viewer.h
+    /// tc_viewer_set_game_menu). In photo mode Esc leaves photo mode instead.
+    func openGameMenu() {
+        guard gameMenu == nil, playback == nil, let view = gameView, let v = renderer?.viewer?.raw else { return }
+        if v.pointee.paused && !v.pointee.game_menu {  // photo mode: back to the game
+            tc_viewer_toggle_pause(v)
+            view.setCaptured(true)
+            view.updateTitle()
+            return
+        }
+        let out = levelFolder.deletingLastPathComponent()
+        let swirl = out.appendingPathComponent("Textures/Sud0/o_zarbi_auntxy.png")
+        guard let data = try? Data(contentsOf: levelFolder.appendingPathComponent("menu.ttmn")),
+              let menu = MenuView(frame: view.bounds, data: data, options: ViewSettings.options, games: [],
+                                  swirl: FileManager.default.fileExists(atPath: swirl.path) ? swirl : nil) else {
+            view.setCaptured(false)  // no menu data: Esc releases the mouse, as it did
+            return
+        }
+        view.setCaptured(false)
+        tc_viewer_set_game_menu(v, true)
+        menu.show(TC_MS_GAME)
+        menu.onCommand = { [weak self] command, _, _ in self?.gameMenuCommand(command) }
+        view.addSubview(menu)
+        window.makeFirstResponder(menu)
+        gameMenu = menu
+        view.updateTitle()
+    }
+
+    private func closeGameMenu(capture: Bool) {
+        guard let menu = gameMenu else { return }
+        menu.removeFromSuperview()
+        gameMenu = nil
+        if let v = renderer?.viewer?.raw { tc_viewer_set_game_menu(v, false) }
+        if let view = gameView {
+            window.makeFirstResponder(view)
+            if capture { view.setCaptured(true) }
+            view.updateTitle()
+        }
+    }
+
+    private func gameMenuCommand(_ command: tc_menu_command) {
+        switch command {
+        case TC_MC_RESUME: closeGameMenu(capture: true)
+        case TC_MC_PHOTO_MODE:  // the game holds, the camera free round Ed (the mouse, the arrows, the right stick)
+            closeGameMenu(capture: true)
+            if let v = renderer?.viewer?.raw { tc_viewer_toggle_pause(v) }
+            gameView?.updateTitle()
+        case TC_MC_MAIN_MENU:
+            closeGameMenu(capture: false)
+            showMainMenu()
+        case TC_MC_EXIT:
+            closeGameMenu(capture: false)
+            NSApp.terminate(nil)
+        case TC_MC_OPTIONS:
+            if let o = gameMenu?.state.pointee.options { ViewSettings.options = o }
+            if let v = renderer?.viewer?.raw {
+                ViewSettings.apply(v)
+                LookSettings.apply(v)
+                HudSettings.apply(v)
+            }
+        default: break
+        }
+    }
+
+    /// Cmd-L, the pad's Start: from a game, the main menu (saved); from a level of the levels grid, the grid; from the
+    /// grid, the main menu.
+    @objc func backToMenu() {
+        if game != nil || renderer == nil { showMainMenu() } else { showPicker() }
+    }
 
     /// False (nothing opened) when the file can't be played.
     private func startPlayback(_ url: URL?) -> Bool {
@@ -602,6 +760,8 @@ final class GameView: MTKView {
 
     /// Out of the level on show, into the menu's music. The run ends here: what follows from a menu is another.
     private func leaveLevel() {
+        gameMenu?.removeFromSuperview()
+        gameMenu = nil
         Recording.shared.stop()
         Sfx.shared.stopAll()
         Music.shared.play(level: "menu", audioDir: levelFolder.deletingLastPathComponent().appendingPathComponent("audio"))
@@ -667,6 +827,9 @@ final class GameView: MTKView {
     }
 
     @MainActor @objc func showPicker() {
+        saveGame()
+        game = nil
+        menuView = nil
         stopPlayback("the level select")
         leaveLevel()
         // Loading screens live next to the ttlv folder: out/ttlv -> out/Vignette/Level. The Special Edition's levels
@@ -705,6 +868,7 @@ final class GameView: MTKView {
         container.appearance = NSAppearance(named: .darkAqua)  // a dark screen in light mode too (readable text)
         container.onIntro = { [weak self] in self?.playIntro() }
         container.onSlide = { [weak picker] dir in picker?.slide(dir) }
+        container.onBack = { [weak self] in self?.showMainMenu() }
         scroll.frame = container.bounds
         scroll.autoresizingMask = [.width, .height]
         container.addSubview(scroll)
@@ -725,6 +889,7 @@ final class GameView: MTKView {
     @MainActor func playIntro() {
         let url = levelFolder.deletingLastPathComponent().appendingPathComponent("video/intro.mp4")
         guard FileManager.default.fileExists(atPath: url.path) else {
+            if game != nil { startAfterIntro(); return }  // a new game goes on without it
             let alert = NSAlert()
             alert.messageText = "No intro movie"
             alert.informativeText = "\(url.path) is missing. Build it from the disc's Videos/EDPROL.AVI (docs/BUILD.md, \"Intro video\")."
@@ -799,7 +964,9 @@ final class GameView: MTKView {
             + "Gamepad: left stick moves Ed (push further to run) or flies, right stick turns the camera round him "
             + "(L2 recentres it, Triangle / Y close-up, L3 first person), R3 (click) free-fly / play. Cross / A jump, Square / X action, Circle / B shoot, "
             + "R1 lateral (free-fly: up), L1 free-fly down, R2 fly faster, D-pad up / down camera distance or fly speed, "
-            + "Start level select, Select / Options these controls; the debug menu is F4 on the keyboard."
+            + "Start the main menu (a game is saved; from the levels grid's levels, the grid), Select / Options these controls; "
+            + "the debug menu is F4 on the keyboard. Main menu: arrows and Return, Esc back, Cross / Circle / Triangle; "
+            + "Cmd-L the menu, Esc on the levels grid the menu."
         alert.accessoryView = ControlsView(frame: .zero)
         alert.runModal()
     }
@@ -830,7 +997,9 @@ final class GameView: MTKView {
         openLevel(url, carry: carry)
     }
 
-    func openLevel(_ url: URL, carry: tc_viewer_carry? = nil, seed: UInt32 = 0) {
+    func openLevel(_ url: URL, carry: tc_viewer_carry? = nil, seed: UInt32 = 0, newRun: Bool = false) {
+        gameMenu?.removeFromSuperview()
+        gameMenu = nil
         currentLevelFolder = url.deletingLastPathComponent()
         currentLevelName = url.deletingPathExtension().lastPathComponent
         // The old view may hold the mouse (cursor hidden and detached): release it, and capture again in the new view so
@@ -848,15 +1017,17 @@ final class GameView: MTKView {
             let r = try Renderer(view: view)
             // No carry: from a menu, a new run; a portal's level goes on in this one. A playback isn't a run: the file is
             // the record.
-            if carry == nil, playback == nil { Recording.shared.start() }
+            if carry == nil || newRun, playback == nil { Recording.shared.start() }
             let loaded = try Viewer(level: Level(url: url), carry: carry, seed: seed,
                                     recorder: playback == nil ? Recording.shared.recorder : nil)
             LookSettings.apply(loaded.raw)
             HudSettings.apply(loaded.raw)
+            ViewSettings.apply(loaded.raw)
             r.load(loaded)
             r.onLoading = { [weak view] in view?.showLoading($0) }
             r.onPicture = { [weak view] in view?.showPicture($0) }
             r.onPendingLevel = { [weak self] in self?.openPortalLevel($0) }
+            view.onEscape = { [weak self] in self?.openGameMenu() }
             r.onGamepad = { [weak self, weak view] command in
                 if self?.playback != nil {  // Start: back to the list, Cross: pause; the others are the recording's
                     if command == .levelSelect { self?.backToReplays("back to the list") }
@@ -866,7 +1037,7 @@ final class GameView: MTKView {
                 switch command {
                 case .mark:
                     if Recording.shared.mark() { view?.updateTitle() }
-                case .levelSelect: self?.showPicker()
+                case .levelSelect: self?.openGameMenu()
                 case .controls: self?.showControls()
                 case .togglePlay:
                     if let v = view?.renderer?.viewer?.raw {
@@ -881,11 +1052,6 @@ final class GameView: MTKView {
                 case .recenter:
                     if let v = view?.renderer?.viewer?.raw {
                         tc_viewer_recenter_camera(v)
-                        view?.updateTitle()
-                    }
-                case .hudAutoHide:  // as H on the keyboard
-                    if let v = view?.renderer?.viewer?.raw {
-                        HudSettings.toggle(v)
                         view?.updateTitle()
                     }
                 case .closeup:  // as 5 on the keyboard, which the debug menu takes while it is open
@@ -921,11 +1087,14 @@ final class GameView: MTKView {
         window.title = "Open Tonic — \(viewer.level.name)"
         view.updateTitle()  // play mode is on from the start when the level has Ed
         titleTimer?.invalidate()
-        titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak view] _ in
+        titleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self, weak view] _ in
             MainActor.assumeIsolated {
                 if let v = view, v.renderer?.viewer?.statusLive == true { v.updateTitle() }
+                self?.pollSave()
             }
         }
+        // a game's arrival in a level (a new game's start, a portal's level, a loaded game) is saved
+        if game != nil, playback == nil { saveGame() }
         print("Loaded \(url.lastPathComponent): \(s.meshes) meshes, \(s.persos) persos (\(s.parts) parts), \(s.triangles) triangles, \(r.textureCount) textures, \(r.missingTextures) missing")
     }
 
@@ -943,7 +1112,8 @@ let delegate = AppDelegate()
 let menu = NSMenu(), appItem = NSMenuItem()
 menu.addItem(appItem)
 let appMenu = NSMenu()
-appMenu.addItem(withTitle: "Level Select", action: #selector(AppDelegate.showPicker), keyEquivalent: "l").target = delegate
+appMenu.addItem(withTitle: "Main Menu", action: #selector(AppDelegate.backToMenu), keyEquivalent: "l").target = delegate
+appMenu.addItem(withTitle: "Tonic Viewer", action: #selector(AppDelegate.showPicker), keyEquivalent: "t").target = delegate
 appMenu.addItem(withTitle: "Controls", action: #selector(AppDelegate.showControls), keyEquivalent: "/").target = delegate
 appMenu.addItem(withTitle: "Toggle Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
     .keyEquivalentModifierMask = [.control, .command]

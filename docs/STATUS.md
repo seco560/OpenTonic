@@ -63,7 +63,8 @@ These are not bugs: they are parts of the game that are faked or missing.
 |---|---|
 | Story progress | powers all on; removals under a story test are turned into frozen props at export; four of sud0's five gates are left out at export |
 | Inventory | real since 2026-11-12 (docs/ENGINE.md "The HUD"): pickups count on the save values, Ed's shots take bees, and he starts with none |
-| Saving | the scripts' SaveGame is skipped |
+| Saving | 2026-11-15 (docs/ENGINE.md "Saved games"): one file per game, saved on arrival, SaveGame, save points, the way to the menu, quitting; loads into the level with the progress, checkpoint and level-saved values. Checked headless (menucheck); not seen in the app |
+| Main menu | 2026-11-15 (docs/ENGINE.md "The menus"): the original's fonts, backgrounds and layout, our organisation; checked headless (menucheck, pictures); not seen in the app. EdMenu persos, credits, in-game menu not done |
 | What the powers 7, 8, 0x70, 0x100 and 0x200 are | not read (0x80 is flying) |
 | HUD: counters, boss bars, strings | built 2026-11-12, first pass seen by the user the same day; boss bars never seen; Ed's head is one still frame |
 | Lip sync | read, not built |

@@ -5,6 +5,7 @@
 #include <SDL3/SDL_main.h>
 #include "input.h"
 #include "intro.h"
+#include "menu.h"
 #include "music.h"
 #include "picker.h"
 #include "record.h"
@@ -22,7 +23,7 @@ static const char *controls_text =
     "\n"
     "Move:  W A S D  (W/S fly where the camera looks)\n"
     "Up / down:  R / F\n"
-    "Look:  arrow keys, or click to capture the mouse (Esc releases)\n"
+    "Look:  arrow keys, or the mouse (it looks from the start of a level; a click takes it back after a menu)\n"
     "Faster:  hold Shift  -  mouse wheel: fly speed (free-fly) / camera zoom (play mode)\n"
     "Field of view:  , narrower  -  . wider\n"
     "\n"
@@ -33,39 +34,38 @@ static const char *controls_text =
     "  Simple controller:  hold Shift to run\n"
     "  Camera:  the mouse, the right stick, the arrow keys or Numpad 4 / 6 turn it round Ed (up / down raise or lower\n"
     "    it); it stays while he stands and eases back behind him once he moves  -  X (middle mouse, L2) recentres it\n"
-    "    5 close-up (Triangle), 0 first person (number row or numpad; L3)  -  ; less / ' more look sensitivity  -  Y invert\n"
-    "    up / down  -  the mouse looks from the start of a level (Esc releases it, a click takes it again)\n"
-    "    (TONIC_LOOK=percent and TONIC_INVERT=x|y|xy set where they start)\n"
+    "    5 close-up (Triangle), 0 first person (number row or numpad; L3)\n"
     "  (simple collision and physics, not the original game's)\n"
     "\n"
-    "Animation:  P pause / resume  -  [ slower  -  ] faster\n"
+    "Game menu:  Esc (pad: Start): the game holds; OPTIONS (gamma, animation speed, lighting, fog, Dolby Surround,\n"
+    "  HUD auto-hide, invert look, look speed), PHOTO MODE (the camera free round Ed; Esc back), MAIN MENU, QUIT GAME\n"
+    "  Menus:  arrows or W A S D, Enter, Esc back; the mouse points and clicks, right click goes back\n"
+    "Lighting:  L  the original's (default) / the port's old one  -  HUD:  H auto-hide on / off  -  Photo mode:  P\n"
     "Lighting variant:  Alt + 1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain), Alt + 0 the level's own\n"
-    "Gamma:  - darker  -  = brighter  -  Fog:  G on / off (levels with fog, e.g. north, Totalski)\n"
-    "HUD:  H auto-hide on / off (each element shows for five seconds when it changes, then slides out; D-pad right)\n"
-    "Sound:  J Dolby Surround on / off (the original's option: sounds behind the camera to a surround decoder's rear; TONIC_DOLBY=1)\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
-    "Lighting:  L  the original's (default: its formula, the lights and fog of Ed's sector) / the port's old one\n"
     "Antialiasing:  F2  off / 2x / 4x / 8x  (TONIC_MSAA=n sets the start value, default 2)\n"
     "Supersampling:  F3  off / 1.5x / 2x  (draws the level at that many times the window's pixels; TONIC_SCALE=150|200)\n"
     "Occlusion culling:  F5  on (default) / off  (imported levels: leaves out what is hidden behind walls and ground;\n"
     "  the terminal says what the frame drew; TONIC_OCCLUSION=0 starts with it off)\n"
-    "(speed, gamma, field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
+    "(field of view, lighting variant, antialiasing, supersampling and play mode are in the title bar)\n"
     "\n"
     "Music and sound effects:  M mute / unmute  (level -> track table: out/audio/music.tsv)\n"
-    "Level select:  arrow keys + Enter, or click (past a pane's side: Retail / Special / Cutscenes)  -  Ctrl+L from a level  -  V intro\n"
+    "Main menu:  arrows (W S A D) + Enter, Esc back; NEW GAME takes a typed name  -  Ctrl+L from a game (saved)\n"
+    "Levels grid (the menu's TONIC VIEWER):  arrow keys + Enter, or click  -  Ctrl+L from its levels  -  Esc the menu  -  V intro\n"
     "Controls:  F1  -  Full screen:  F11  -  Quit:  Ctrl+Q\n"
     "Debug menu:  F4  the game's powers and save values, who uses them, switches; the game holds while it\n"
     "  is open  -  W / S or up / down choose, A / D or left / right change, Space or E switch\n"
     "Recording:  always on  -  F9 or the touchpad marks this moment\n"
     "Replays:  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
     "Watching one:  P or Cross pauses  -  Esc or Start back to the list\n"
-    "Paused:  mouse, arrows, right stick and wheel move the camera round Ed, back where it was on resuming\n"
+    "Photo mode, a paused playback:  mouse, arrows, right stick and wheel move the camera round Ed, back where it was after\n"
     "\n"
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
     "  Cross:  Jump  -  Square:  Action  -  Circle:  Shoot  -  R1:  Lateral / fly up  -  L1:  fly down\n"
     "  R2:  fly faster  -  L2:  recentre the camera  -  Triangle:  close-up  -  L3 (click):  first person\n"
-    "  D-pad up / down:  camera distance / fly speed  -  D-pad right:  HUD auto-hide  -  Start:  level select  -  Select:  controls\n"
+    "  D-pad up / down:  camera distance / fly speed  -  Start:  the game menu  -  Select:  controls\n"
+    "  Menu:  D-pad or left stick, Cross / Start choose, Circle back, Triangle erases  -  Levels grid:  Circle the menu\n"
     "  Level select:  D-pad or left stick, Cross opens, Triangle plays the intro  -  Intro:  Cross, Circle or Start skip\n"
     "\n"
     "F1 or Esc closes this";
@@ -145,6 +145,19 @@ typedef struct app {
     char title[1024];
     Uint64 last_title_ns;
     bool quit;
+    /* The main menu (menu.h) and the picture before it (game.bpg's TT_Pak, three seconds). */
+    menu_screen menu;
+    bool menu_on;
+    bool game_menu;              /* the menu is the game menu, over the level (Esc, Start; tc_viewer_set_game_menu) */
+    SDL_GPUTexture *splash;
+    int splash_w, splash_h;
+    float splash_time;           /* seconds left; the splash shows while > 0 */
+    /* The game being played (the menu's NEW GAME / LOAD GAME): its name, under which it is saved ("": none, as in the
+     * levels grid's Tonic Viewer). Saved on each level's arrival, when the game asks (tc_viewer_save_serial), on the way
+     * back to the menu and on quitting. */
+    char game[TC_MENU_NAME];
+    uint32_t saved_serial;
+    tc_options options;          /* the menu's options (menu.h: options.cfg), kept as the keys change them too */
 } app;
 
 /* ---- title bar ---- */
@@ -249,7 +262,13 @@ static void stop_playback(app *a, const char *why);
 static void demo_forget(app *a);
 static bool demos_available(app *a);
 
+static void save_game(app *a);
+static void close_menu(app *a);
+
 static void show_picker(app *a) {
+    save_game(a);
+    a->game[0] = 0;
+    close_menu(a);
     stop_playback(a, "the level select");
     end_recording(a);
     close_replays(a);
@@ -297,7 +316,7 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     if (!v) return false;
     char err[512];
     /* No carry: from a menu, a new run; a portal's level goes on in this one. A playback isn't a run: the file is the record. */
-    if (!carry && !a->replaying) {
+    if ((!carry || a->menu_on) && !a->replaying) {  /* a saved game opened from the menu is a new run too */
         end_recording(a);
         a->recorder = record_start();
     }
@@ -322,6 +341,8 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     SDL_free(stem);
     a->pad_fast = false;  /* the new viewer holds nothing */
     tc_viewer_set_look(&v->viewer, a->look_sensitivity, a->invert_x, a->invert_y);
+    tc_viewer_set_view(&v->viewer, a->options.gamma, a->options.animation_speed, a->options.fog, a->options.lighting);
+    close_menu(a);
     /* Level music from the user-edited table out/audio/music.tsv (next to out/ttlv); sound effects from out/audio/sfx. */
     char *audio = audio_dir(a);
     sfx_stop_all();
@@ -339,6 +360,7 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     update_title(a);  /* play mode is on from the start when the level has Ed */
     SDL_Log("Loaded %s: %u meshes, %u persos (%u parts), %u triangles, %u textures, %u missing", v->level.name, s->meshes,
             s->persos, s->parts, s->triangles, textures, v->missing_textures);
+    if (a->game[0] && !a->replaying) save_game(a);  /* a game's arrival: a new game's start, a portal's level, a load */
     return true;
 }
 
@@ -585,12 +607,20 @@ static void playback_tick(app *a, float dt) {
 }
 
 /* The intro movie, from the level select screen (V): out/video/intro.mpg next to the ttlv folder. */
+static void start_after_intro(app *a);
+
 static void play_intro(app *a) {
     char *video = path_join(a->data_dir, "video");
     char *path = video ? path_join(video, "intro.mpg") : NULL;
     SDL_free(video);
     if (!path) return;
     char msg[1024];
+    if (!path_is_file(path) && a->game[0]) {  /* a new game goes on without it */
+        SDL_free(path);
+        a->intro = NULL;
+        start_after_intro(a);
+        return;
+    }
     if (!path_is_file(path)) {
         SDL_snprintf(msg, sizeof msg, "%s is missing. Build it from the disc's Videos/EDPROL.AVI with "
                                       "tools/make_intro.sh mpg (docs/SDL3.md).", path);
@@ -634,6 +664,10 @@ static void finish_intro(app *a) {
     if (!a->intro) return;
     intro_close(a->intro);
     a->intro = NULL;
+    start_after_intro(a);
+}
+
+static void start_after_intro(app *a) {
     char *path = ski_slope(a, a->level_folder);
     if (!path) { show_picker(a); return; }
     SDL_free(a->current_folder);
@@ -652,12 +686,194 @@ static void finish_loading(app *a) {
     SDL_free(path);
 }
 
+/* ---- the main menu (menu.h) and the game's saves ---- */
+
+static void save_game(app *a) {
+    if (!a->game[0] || a->replaying || !a->view) return;
+    if (saves_write(&a->view->viewer, a->game)) SDL_Log("Saved %s", a->game);
+    a->saved_serial = tc_viewer_save_serial(&a->view->viewer);
+}
+
+static void close_menu(app *a) {
+    if (!a->menu_on) return;
+    menu_close(&a->menu, a->window);
+    a->menu_on = false;
+    a->game_menu = false;
+}
+
+/* Esc, the pad's Start in a level: the game menu over it (the game holds, the camera drifts round Ed). In photo mode
+ * Esc leaves photo mode instead. */
+static void open_game_menu(app *a) {
+    tc_viewer *v = a->view ? &a->view->viewer : NULL;
+    if (!v || a->menu_on || a->replaying) return;
+    if (v->paused && !v->game_menu) { /* photo mode: back to the game */
+        tc_viewer_toggle_pause(v);
+        set_captured(a, true);
+        update_title(a);
+        return;
+    }
+    char *textures = path_join(a->data_dir, "Textures"), *sud0 = textures ? path_join(textures, "Sud0") : NULL;
+    char *swirl = sud0 ? path_join(sud0, "o_zarbi_auntxy.png") : NULL;
+    bool ok = menu_open(&a->menu, &a->g, a->window, a->level_folder, &a->options, swirl && path_is_file(swirl) ? swirl : NULL);
+    SDL_free(textures);
+    SDL_free(sud0);
+    SDL_free(swirl);
+    set_captured(a, false);
+    if (!ok) return; /* no menu data: Esc frees the mouse, as it did */
+    a->menu_on = a->game_menu = true;
+    tc_menu_show(a->menu.m, TC_MS_GAME);
+    tc_viewer_set_game_menu(v, true);
+    update_title(a);
+}
+
+static void close_game_menu(app *a, bool capture) {
+    if (!a->game_menu) return;
+    close_menu(a);
+    if (a->view) tc_viewer_set_game_menu(&a->view->viewer, false);
+    if (capture && a->view) set_captured(a, true);
+    if (a->view) update_title(a);
+}
+
+/* The main menu; the game being played is saved and left. Without menu.ttmn (an older conversion): the levels grid. */
+static void show_main_menu(app *a) {
+    save_game(a);
+    a->game[0] = 0;
+    stop_playback(a, "the main menu");
+    end_recording(a);
+    close_replays(a);
+    sfx_stop_all();
+    char *audio = audio_dir(a);
+    if (audio) music_play("menu", audio);
+    SDL_free(audio);
+    set_captured(a, false);
+    close_level(a);
+    close_picker(a);
+    if (a->game_menu) close_menu(a);
+    if (!a->menu_on && !menu_open(&a->menu, &a->g, a->window, a->level_folder, &a->options, NULL)) {
+        show_picker(a);
+        return;
+    }
+    a->menu_on = true;
+    set_title(a, "Open Tonic");
+}
+
+/* At launch: the retail game's picture before its menu (Vignette/TT_pak.png), three seconds, then the menu. */
+static void show_splash(app *a) {
+    char *vignette = path_join(a->data_dir, "Vignette");
+    int n = 0;
+    char **files = vignette ? SDL_GlobDirectory(vignette, "tt_pak.png", SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    char *path = files && n > 0 ? path_join(vignette, files[0]) : NULL;
+    gpu_upload u;
+    char *audio = audio_dir(a);
+    if (audio) music_play("menu", audio);
+    SDL_free(audio);
+    if (path && gpu_upload_begin(&a->g, &u)) {
+        a->splash = gpu_upload_png(&a->g, &u, path, false, &a->splash_w, &a->splash_h);
+        gpu_upload_end(&a->g, &u);
+    }
+    SDL_free(files);
+    SDL_free(vignette);
+    SDL_free(path);
+    if (!a->splash) { show_main_menu(a); return; }
+    a->splash_time = 3;
+    set_title(a, "Open Tonic");
+}
+
+static void end_splash(app *a) {
+    a->splash_time = 0;
+    if (a->splash) {
+        SDL_WaitForGPUIdle(a->g.device);
+        SDL_ReleaseGPUTexture(a->g.device, a->splash);
+        a->splash = NULL;
+        show_main_menu(a);
+    }
+}
+
+/* A saved game (LOAD GAME's i): its level (the Special Edition's folder for its levels), entered as its save says. */
+static void load_game(app *a, int i) {
+    tc_save_game g;
+    char *path = menu_save_path(i), pattern[80], *folder, *level = NULL;
+    int n = 0;
+    if (!path || !saves_read(path, &g)) { SDL_free(path); return; }
+    SDL_free(path);
+    if (g.info.edition) {
+        char *se = path_join(a->data_dir, "se");
+        folder = se ? path_join(se, "ttlv") : NULL;
+        SDL_free(se);
+    } else folder = SDL_strdup(a->level_folder);
+    SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", g.info.level);
+    char **levels = folder ? SDL_GlobDirectory(folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
+    if (levels && n > 0) level = path_join(folder, levels[0]);
+    SDL_free(levels);
+    if (!level) {
+        char msg[512];
+        SDL_snprintf(msg, sizeof msg, "This game was saved in %s, which is not in %s.", g.info.level, folder ? folder : "?");
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "No level", msg, a->window);
+    } else {
+        SDL_strlcpy(a->game, g.info.name, sizeof a->game);
+        if (!open_level(a, level, &g.carry)) a->game[0] = 0;
+    }
+    SDL_free(level);
+    SDL_free(folder);
+}
+
+static void menu_command(app *a, tc_menu_command c) {
+    tc_menu *m = a->menu.m;
+    switch (c) {
+    case TC_MC_NEW_GAME: /* a new game of that name (an old one of that name was agreed to be erased): the intro first */
+        saves_delete_named(tc_menu_name(m));
+        SDL_strlcpy(a->game, tc_menu_name(m), sizeof a->game);
+        close_menu(a);
+        play_intro(a);
+        if (!a->intro && !a->next_level && !a->view) show_main_menu(a);
+        break;
+    case TC_MC_LOAD_GAME: load_game(a, m->command_game); break;
+    case TC_MC_DELETE_GAME: {
+        char *path = menu_save_path(m->command_game);
+        if (path) SDL_RemovePath(path);
+        SDL_free(path);
+        menu_refresh_games(&a->menu);
+        break;
+    }
+    case TC_MC_TONIC_VIEWER: show_picker(a); break;
+    case TC_MC_EXIT: close_game_menu(a, false); a->quit = true; break;
+    case TC_MC_OPTIONS:
+        a->options = m->options;
+        sfx_set_dolby(a->options.dolby);
+        a->hud_auto_hide = a->options.hud_auto_hide;
+        a->invert_y = a->options.invert_y;
+        a->look_sensitivity = a->options.look_sensitivity;
+        options_store(&a->options);
+        if (a->view) { /* the game menu's: the level on show at once */
+            tc_viewer *v = &a->view->viewer;
+            tc_viewer_set_view(v, a->options.gamma, a->options.animation_speed, a->options.fog, a->options.lighting);
+            tc_viewer_set_look(v, a->look_sensitivity, a->invert_x, a->invert_y);
+            tc_viewer_set_hud_auto_hide(v, a->hud_auto_hide);
+        }
+        break;
+    case TC_MC_RESUME: close_game_menu(a, true); break;
+    case TC_MC_PHOTO_MODE: /* the game holds, the camera free round Ed (the mouse, the arrows, the right stick) */
+        close_game_menu(a, true);
+        if (a->view) tc_viewer_toggle_pause(&a->view->viewer);
+        break;
+    case TC_MC_MAIN_MENU: close_game_menu(a, false); show_main_menu(a); break;
+    default: break;
+    }
+}
+
+/* Ctrl+L, the pad's Start: from a game, the main menu (saved); from a level of the levels grid, the grid; from the grid,
+ * the main menu. */
+static void back_to_menu(app *a) {
+    if (a->game[0] || !a->view) show_main_menu(a);
+    else show_picker(a);
+}
+
 /* ---- input ---- */
 
 static void level_key(app *a, const SDL_KeyboardEvent *k) {
     tc_viewer *v = &a->view->viewer;
     SDL_Scancode sc = k->scancode;
-    if (sc == SDL_SCANCODE_ESCAPE) { set_captured(a, false); return; }
+    if (sc == SDL_SCANCODE_ESCAPE) { if (!k->repeat) open_game_menu(a); return; }  /* the game menu (photo mode: out of it) */
     if (sc == SDL_SCANCODE_F4) {  /* F4: the debug menu (tc_debug.h) */
         if (!k->repeat) tc_viewer_toggle_debug(v);
         return;
@@ -667,12 +883,9 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
         if (action >= 0) tc_viewer_set_action(v, (tc_view_action)action, true);
         return;
     }
-    if (sc == SDL_SCANCODE_LEFTBRACKET || sc == SDL_SCANCODE_RIGHTBRACKET) {  /* [ / ]: animation speed */
-        if (!k->repeat) { tc_viewer_step_speed(v, sc == SDL_SCANCODE_RIGHTBRACKET ? 1 : -1); update_title(a); }
-        return;
-    }
     /* Alt + 1-9: hold a baked lighting set (sud0 and Land have three); Alt + 0: the level's own light again (sud0's day /
-     * night cycle, Land's lightning); 5 and 0 alone: the camera; - / =: display gamma. */
+     * night cycle, Land's lightning); 5 and 0 alone: the camera. Gamma, the speed, fog, Dolby and the look settings are
+     * the game menu's (Esc) since 2026-11-15; L, H and P stay as well (the user). */
     bool alt = (k->mod & SDL_KMOD_ALT) != 0;
     if (!alt && (sc == SDL_SCANCODE_5 || sc == SDL_SCANCODE_KP_5 || sc == SDL_SCANCODE_0 || sc == SDL_SCANCODE_KP_0)) {
         /* 5 and 0, number row or numpad: the original's camera keys (Numpad 5 close-up, Numpad 0 first person) */
@@ -693,11 +906,6 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
         update_title(a);
         return;
     }
-    if (sc == SDL_SCANCODE_MINUS || sc == SDL_SCANCODE_EQUALS || sc == SDL_SCANCODE_KP_MINUS || sc == SDL_SCANCODE_KP_PLUS) {
-        tc_viewer_step_gamma(v, sc == SDL_SCANCODE_EQUALS || sc == SDL_SCANCODE_KP_PLUS);
-        update_title(a);
-        return;
-    }
     if (sc == SDL_SCANCODE_I) {  /* I: Ed's AI / simple controller */
         if (!k->repeat) { tc_viewer_toggle_ai(v); update_title(a); }
         return;
@@ -711,24 +919,29 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
         update_title(a);
         return;
     }
-    if (sc == SDL_SCANCODE_H) {  /* H: the HUD's auto-hide (kept across levels) */
+    if (sc == SDL_SCANCODE_H) {  /* H: the HUD's auto-hide (as the menus' OPTIONS; kept) */
         if (!k->repeat) {
             a->hud_auto_hide = !a->hud_auto_hide;
             tc_viewer_set_hud_auto_hide(v, a->hud_auto_hide);
+            a->options.hud_auto_hide = a->hud_auto_hide;
+            options_store(&a->options);
             update_title(a);
         }
         return;
     }
-    if (sc == SDL_SCANCODE_J) {  /* J: Dolby Surround (the original's sound menu option; TONIC_DOLBY=1 at the start) */
-        if (!k->repeat) { sfx_set_dolby(!sfx_dolby()); update_title(a); }
+    if (sc == SDL_SCANCODE_L) {  /* L: lighting: the original's / the port's earlier one (as the menus' OPTIONS; kept) */
+        if (!k->repeat) {
+            tc_viewer_cycle_lighting(v);
+            if (v->level->has_lighting) {
+                a->options.lighting = (uint8_t)v->lighting;
+                options_store(&a->options);
+            }
+            update_title(a);
+        }
         return;
     }
-    if (sc == SDL_SCANCODE_G) {  /* G: level fog on/off */
-        if (!k->repeat) { tc_viewer_toggle_fog(v); update_title(a); }
-        return;
-    }
-    if (sc == SDL_SCANCODE_L) {  /* L: lighting: the original's / the port's earlier one (comparing) */
-        if (!k->repeat) { tc_viewer_cycle_lighting(v); update_title(a); }
+    if (sc == SDL_SCANCODE_P) {  /* P: pause, the camera free round Ed (the game menu's PHOTO MODE) */
+        if (!k->repeat) { tc_viewer_toggle_pause(v); update_title(a); }
         return;
     }
     if (sc == SDL_SCANCODE_K) {  /* K: sectors drawn: Ed's and its list (default) / all / his alone */
@@ -737,20 +950,6 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     }
     if (sc == SDL_SCANCODE_X) {  /* X: recentre the camera behind Ed */
         if (!k->repeat) { tc_viewer_recenter_camera(v); update_title(a); }
-        return;
-    }
-    if (sc == SDL_SCANCODE_SEMICOLON || sc == SDL_SCANCODE_APOSTROPHE || sc == SDL_SCANCODE_Y) {  /* ; ': look sensitivity, Y: invert */
-        if (!k->repeat) {
-            if (sc == SDL_SCANCODE_Y) tc_viewer_toggle_invert_y(v);
-            else tc_viewer_step_look(v, sc == SDL_SCANCODE_APOSTROPHE ? 1 : -1);
-            a->look_sensitivity = v->look_sensitivity;
-            a->invert_y = v->invert_y;
-            update_title(a);
-        }
-        return;
-    }
-    if (sc == SDL_SCANCODE_P) {  /* P: pause/resume animation */
-        if (!k->repeat) tc_viewer_toggle_pause(v);
         return;
     }
     int action = input_action(sc);
@@ -781,6 +980,9 @@ static void picker_key(app *a, const SDL_KeyboardEvent *k) {
     case SDL_SCANCODE_DOWN: picker_move(p, 0, 1); break;
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
         if (!k->repeat) open_selected(a);
+        break;
+    case SDL_SCANCODE_ESCAPE:  /* Esc: the main menu */
+        if (!k->repeat) show_main_menu(a);
         break;
     case SDL_SCANCODE_V:  /* V: the intro movie */
         if (!k->repeat && !(k->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) play_intro(a);
@@ -894,7 +1096,25 @@ static void key_down(app *a, const SDL_KeyboardEvent *k) {
     SDL_Scancode sc = k->scancode;
     bool ctrl = (k->mod & SDL_KMOD_CTRL) != 0, alt = (k->mod & SDL_KMOD_ALT) != 0;
     if (ctrl && sc == SDL_SCANCODE_Q) { a->quit = true; return; }
-    if (ctrl && sc == SDL_SCANCODE_L) { if (!k->repeat && a->view) show_picker(a); return; }
+    if (ctrl && sc == SDL_SCANCODE_L) { if (!k->repeat && !a->menu_on && !a->splash) back_to_menu(a); return; }
+    if (a->splash) {  /* a key skips the picture */
+        if (!k->repeat) end_splash(a);
+        return;
+    }
+    if (a->menu_on && !a->help) {
+        if (sc == SDL_SCANCODE_F11 || (alt && (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER))) {
+            if (!k->repeat) SDL_SetWindowFullscreen(a->window, (SDL_GetWindowFlags(a->window) & SDL_WINDOW_FULLSCREEN) == 0);
+            return;
+        }
+        if (sc == SDL_SCANCODE_M && a->menu.m->screen != TC_MS_NEW_GAME) {
+            if (!k->repeat) music_set_muted(!music_muted());
+            return;
+        }
+        if (sc != SDL_SCANCODE_F1) {
+            menu_command(a, menu_key(&a->menu, k));
+            return;
+        }
+    }
     /* The intro: Esc, Space, Return, keypad Enter skip; M, F11 and Ctrl+Q as everywhere (only those on the loading
      * screen after it). */
     if (a->intro || a->next_level) {
@@ -982,6 +1202,11 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         if (a->view) pad_actions(a, input_pad_actions(button), false);
         return;
     }
+    if (a->splash) { end_splash(a); return; }
+    if (a->menu_on && !a->help) {
+        menu_command(a, menu_pad_button(&a->menu, button));
+        return;
+    }
     if (a->intro) {  /* Cross, Circle, Start skip */
         if (button == SDL_GAMEPAD_BUTTON_SOUTH || button == SDL_GAMEPAD_BUTTON_EAST || button == SDL_GAMEPAD_BUTTON_START)
             finish_intro(a);
@@ -999,7 +1224,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     }
     if (a->view) {
         if (button == SDL_GAMEPAD_BUTTON_TOUCHPAD) { mark_moment(a); return; }  /* F9 */
-        if (button == SDL_GAMEPAD_BUTTON_START) { show_picker(a); return; }  /* level select (Ctrl+L) */
+        if (button == SDL_GAMEPAD_BUTTON_START) { open_game_menu(a); return; }  /* the game menu (Esc) */
         if (tc_viewer_debug_open(&a->view->viewer)) {  /* the menu (F4) takes the held actions and nothing else */
             pad_actions(a, input_pad_actions(button), true);
             return;
@@ -1013,12 +1238,6 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         }
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {  /* L3: first person (0) */
             tc_viewer_toggle_first_person(&a->view->viewer);
-            update_title(a);
-            return;
-        }
-        if (button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) {  /* D-pad right: the HUD's auto-hide (H) */
-            a->hud_auto_hide = !a->hud_auto_hide;
-            tc_viewer_set_hud_auto_hide(&a->view->viewer, a->hud_auto_hide);
             update_title(a);
             return;
         }
@@ -1052,6 +1271,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: picker_move(&a->picker, 0, 1); break;
     case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_START: open_selected(a); break;
     case SDL_GAMEPAD_BUTTON_NORTH: play_intro(a); break;  /* Triangle: the intro (V) */
+    case SDL_GAMEPAD_BUTTON_EAST: show_main_menu(a); break;  /* Circle: the main menu (Esc) */
     default: break;
     }
 }
@@ -1152,6 +1372,7 @@ static void handle(app *a, const SDL_Event *e) {
         if (a->picker_open) a->picker.scale = SDL_GetWindowDisplayScale(a->window);
         break;
     case SDL_EVENT_KEY_DOWN: key_down(a, &e->key); break;
+    case SDL_EVENT_TEXT_INPUT: if (a->menu_on) menu_text(&a->menu, e->text.text); break;
     case SDL_EVENT_GAMEPAD_ADDED:
         if (SDL_OpenGamepad(e->gdevice.which)) {
             if (!a->pad) a->pad = e->gdevice.which;
@@ -1184,7 +1405,15 @@ static void handle(app *a, const SDL_Event *e) {
             update_title(a);
             break;
         }
-        if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro || a->next_level) break;
+        if (a->splash) { end_splash(a); break; }
+        if (a->menu_on && !a->help && (e->button.button == SDL_BUTTON_LEFT || e->button.button == SDL_BUTTON_RIGHT)) {
+            int w = 1, h = 1;
+            SDL_GetWindowSizeInPixels(a->window, &w, &h);
+            menu_command(a, menu_click(&a->menu, to_pixels(a, e->button.x), to_pixels(a, e->button.y), (float)w, (float)h,
+                                       e->button.button == SDL_BUTTON_RIGHT));
+            break;
+        }
+        if (e->button.button != SDL_BUTTON_LEFT || a->help || a->intro || a->next_level || a->menu_on) break;
         if (a->view) set_captured(a, true);
         else if (a->replays_on) replays_click(a, to_pixels(a, e->button.x), to_pixels(a, e->button.y));
         else if (a->picker_open) {
@@ -1199,7 +1428,11 @@ static void handle(app *a, const SDL_Event *e) {
         }
         break;
     case SDL_EVENT_MOUSE_MOTION:
-        if (a->view && a->captured) {
+        if (a->menu_on && !a->help) {
+            int w = 1, h = 1;
+            SDL_GetWindowSizeInPixels(a->window, &w, &h);
+            menu_pointer(&a->menu, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y), (float)w, (float)h);
+        } else if (a->view && a->captured) {
             if (a->skip_motion) { a->skip_motion = false; break; }
             tc_viewer_mouse_look(&a->view->viewer, e->motion.xrel, e->motion.yrel);
         } else if (a->replays_on) {
@@ -1467,7 +1700,7 @@ static void draw(app *a) {
         view_draw_frame(a->view, &f);
         bool sight = view_draw_crosshair(a->view, &f, NULL);
         bool speech = a->speech_on && a->speech, menu = a->debug_on && a->debug, hud = a->hud_on && a->hud;
-        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu || hud) {  /* screen transition or loading screen, the gunsight, the controls */
+        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu || hud || a->menu_on) {  /* screen transition or loading screen, the gunsight, the controls */
             SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, false, (SDL_FColor){0, 0, 0, 1});
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
@@ -1477,9 +1710,20 @@ static void draw(app *a) {
                 if (o.kind == TC_VO_LOADING) draw_loading(a, &f, pass, o.progress);
                 if (o.kind == TC_VO_PICTURE) draw_picture(a, &f, pass);
                 if (menu) draw_debug(a, &f, pass);
+                if (a->menu_on) menu_draw(&a->menu, &f, pass);  /* the game menu */
                 if (a->help) draw_help(a, &f, pass);
                 SDL_EndGPURenderPass(pass);
             }
+        }
+    } else if (a->splash || a->menu_on) {  /* the picture before the menu (4:3 on black), the menu */
+        SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, true, (SDL_FColor){0, 0, 0, 1});
+        if (pass) {
+            if (a->splash) {
+                float W = (float)f.width, H = (float)f.height, w = SDL_min(W, H * 4 / 3), h = w * 3 / 4;
+                gpu_quad(&a->g, &f, pass, a->splash, (SDL_FRect){(W - w) / 2, (H - h) / 2, w, h}, NULL, (SDL_FColor){1, 1, 1, 1});
+            } else menu_draw(&a->menu, &f, pass);
+            if (a->help) draw_help(a, &f, pass);
+            SDL_EndGPURenderPass(pass);
         }
     } else {
         SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, true, (SDL_FColor){0.08f, 0.09f, 0.14f, 1});
@@ -1563,7 +1807,12 @@ int main(int argc, char **argv) {
         const char *e = SDL_getenv("TONIC_OCCLUSION");
         if (e && e[0] == '0') view_set_occlusion(false);
     }
-    look_settings(&a);
+    options_load(&a.options);  /* the menu's options (options.cfg); TONIC_LOOK / TONIC_INVERT / TONIC_DOLBY still win */
+    a.hud_auto_hide = a.options.hud_auto_hide;
+    sfx_set_dolby(a.options.dolby);
+    a.look_sensitivity = a.options.look_sensitivity;
+    a.invert_y = a.options.invert_y;
+    if (SDL_getenv("TONIC_LOOK") || SDL_getenv("TONIC_INVERT")) look_settings(&a);
     { const char *d = SDL_getenv("TONIC_DOLBY"); if (d && d[0] == '1') sfx_set_dolby(true); } /* J toggles it */
 
     /* --replay [file]: plays a recording back (the newest without one); the rest as usual. */
@@ -1610,7 +1859,9 @@ int main(int argc, char **argv) {
             "him, Tab toggles free-fly (Space jump); Ctrl+L level select; F1 controls; F11 fullscreen");
     if (want_replay && !replay_file) replay_file = record_latest();
     if (want_replay && start_playback(&a, replay_file)) {}
-    else if (!level_file || !open_level(&a, level_file, NULL)) show_picker(&a);
+    else if (level_file && open_level(&a, level_file, NULL)) {}
+    else if (level_file) show_picker(&a);
+    else show_splash(&a);  /* the picture, then the main menu */
     SDL_free(replay_file);
 
     Uint64 last = SDL_GetTicksNS();
@@ -1621,6 +1872,12 @@ int main(int argc, char **argv) {
         Uint64 now = SDL_GetTicksNS();
         float dt = SDL_min((float)(now - last) / 1e9f, 0.1f);
         last = now;
+        if (a.splash && (a.splash_time -= dt) <= 0) end_splash(&a);
+        if (a.menu_on) {
+            SDL_Gamepad *g = a.pad ? SDL_GetGamepadFromID(a.pad) : NULL;
+            menu_command(&a, menu_update(&a.menu, a.window, a.help ? NULL : g, dt));
+        }
+        if (a.view && a.game[0] && tc_viewer_save_serial(&a.view->viewer) != a.saved_serial) save_game(&a);
         if (a.intro && !intro_update(a.intro, dt)) finish_intro(&a);
         if (a.next_level) a.next_time += dt;
         update_cursor(&a);
@@ -1646,6 +1903,9 @@ int main(int argc, char **argv) {
         if (a.next_level && a.next_time >= TC_VIEWER_LOADING_SECONDS) finish_loading(&a);
     }
 
+    save_game(&a);
+    close_menu(&a);
+    if (a.splash) SDL_ReleaseGPUTexture(a.g.device, a.splash);
     music_stop();
     sfx_quit();
     intro_close(a.intro);

@@ -715,6 +715,13 @@ static void apply_door(tc_viewer *v, uint32_t door, int32_t a, float x) {
     case TC_RD_TOGGLE_AI: tc_viewer_toggle_ai(v); break;
     case TC_RD_DEBUG: tc_viewer_toggle_debug(v); break;
     case TC_RD_HUD: tc_viewer_hud_waits(v, true); break;
+    case TC_RD_GAME_MENU: tc_viewer_set_game_menu(v, a != 0); break;
+    case TC_RD_SET_VIEW: {
+        static const float speeds[] = {0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 0.75f, 1, 1.5f, 2};
+        int s = (a >> 4) & 15;
+        tc_viewer_set_view(v, x, speeds[s < 8 ? s : 5], (a & 1) != 0, (uint32_t)(a >> 1) & 7);
+        break;
+    }
     case TC_RD_DEMO_ON: case TC_RD_DEMO_OFF: case TC_RD_COUNT: break;
     }
 }

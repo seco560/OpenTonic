@@ -76,11 +76,16 @@ final class IntroView: NSView {
 final class PickerContainer: NSView {
     var onIntro: (() -> Void)?
     var onSlide: ((Int) -> Void)?
+    var onBack: (() -> Void)?  // Esc: the main menu
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
         let plain = event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        if plain, event.keyCode == 53, let onBack {  // Esc
+            onBack()
+            return
+        }
         if plain, event.keyCode == 123 || event.keyCode == 124 {  // left, right
             onSlide?(event.keyCode == 123 ? -1 : 1)
             return

@@ -112,6 +112,13 @@ static float axis(const tc_viewer *v, tc_view_action pos, tc_view_action neg) {
  * they turn the play camera round Ed and raise or lower it (tc_cam_look). */
 void tcv_look(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
+    if (v->game_menu && v->playing && v->play) { /* port (the user): behind the game menu, the camera drifts round Ed */
+        float t = v->game_menu_time += dt;
+        v->mouse_dx = v->mouse_dy = 0;
+        v->looked = true;
+        tc_cam_look(&v->cam, c, v->game_menu_turn * 0.11f * dt, 0.09f * cosf(0.31f * t + v->game_menu_phase) * dt);
+        return;
+    }
     float yaw_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_RIGHT, TC_VA_LOOK_LEFT) + v->look_x));
     float pitch_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_UP, TC_VA_LOOK_DOWN) + v->look_y));
     float yaw = (yaw_rate * v->turn_speed * dt + v->mouse_dx * 0.003f) * v->look_sensitivity;
