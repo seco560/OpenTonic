@@ -37,9 +37,10 @@ static const char *controls_text =
     "    5 close-up (Triangle), 0 first person (number row or numpad; L3)\n"
     "  (simple collision and physics, not the original game's)\n"
     "\n"
-    "Game menu:  Esc (pad: Start): the game holds; OPTIONS (gamma, animation speed, lighting, fog, Dolby Surround,\n"
-    "  HUD auto-hide, invert look, look speed), PHOTO MODE (the camera free round Ed; Esc back), MAIN MENU\n"
-    "  Menus:  arrows or W A S D, Enter, Esc back; the mouse points and clicks, right click goes back\n"
+    "Game menu:  Esc (pad: Start): the game holds; OPTIONS (music and sound volume, Dolby Surround, field of view,\n"
+    "  gamma, lighting, fog, HUD auto-hide, look speed, invert look, animation speed), PHOTO MODE (Esc back), MAIN MENU\n"
+    "  Menus:  arrows or W A S D, Enter, Esc back; the mouse points, clicks and drags the sliders, the wheel scrolls,\n"
+    "  right click goes back\n"
     "Lighting:  L  the original's (default) / the port's old one  -  HUD:  H auto-hide on / off  -  Photo mode:  P\n"
     "Lighting variant:  Alt + 1, 2, 3 ...  (levels with day/night lighting, e.g. South Plain), Alt + 0 the level's own\n"
     "Sectors:  K  Ed's sector and what it sees, sky included (default) / all of them / his sector alone  (title bar: his sector)\n"
@@ -344,6 +345,7 @@ static bool open_level_seeded(app *a, const char *path, const tc_viewer_carry *c
     a->pad_fast = false;  /* the new viewer holds nothing */
     tc_viewer_set_look(&v->viewer, a->look_sensitivity, a->invert_x, a->invert_y);
     tc_viewer_set_view(&v->viewer, a->options.gamma, a->options.animation_speed, a->options.fog, a->options.lighting);
+    tc_viewer_set_fov(&v->viewer, a->options.fov);
     close_menu(a);
     /* Level music from the user-edited table out/audio/music.tsv (next to out/ttlv); sound effects from out/audio/sfx. */
     char *audio = audio_dir(a);
@@ -857,6 +859,9 @@ static void menu_command(app *a, tc_menu_command c) {
     case TC_MC_OPTIONS:
         a->options = m->options;
         sfx_set_dolby(a->options.dolby);
+        sfx_set_volume(a->options.sound_volume);
+        music_set_volume(a->options.music_volume);
+        if (a->intro) intro_set_muted(a->intro, music_muted());
         a->hud_auto_hide = a->options.hud_auto_hide;
         a->invert_y = a->options.invert_y;
         a->look_sensitivity = a->options.look_sensitivity;
@@ -864,6 +869,7 @@ static void menu_command(app *a, tc_menu_command c) {
         if (a->view) { /* the game menu's: the level on show at once */
             tc_viewer *v = &a->view->viewer;
             tc_viewer_set_view(v, a->options.gamma, a->options.animation_speed, a->options.fog, a->options.lighting);
+            if (tc_viewer_fov(v) != a->options.fov) tc_viewer_set_fov(v, a->options.fov);
             tc_viewer_set_look(v, a->look_sensitivity, a->invert_x, a->invert_y);
             tc_viewer_set_hud_auto_hide(v, a->hud_auto_hide);
         }
@@ -934,6 +940,8 @@ static void level_key(app *a, const SDL_KeyboardEvent *k) {
     }
     if (sc == SDL_SCANCODE_COMMA || sc == SDL_SCANCODE_PERIOD) {  /* , / .: field of view (vertical, 5 degree steps) */
         tc_viewer_step_fov(v, sc == SDL_SCANCODE_PERIOD ? 1 : -1);
+        a->options.fov = tc_viewer_fov(v);  /* the menus' FIELD OF VIEW says the same, and the next level keeps it */
+        options_store(&a->options);
         update_title(a);
         return;
     }
@@ -1450,6 +1458,8 @@ static void handle(app *a, const SDL_Event *e) {
             int w = 1, h = 1;
             SDL_GetWindowSizeInPixels(a->window, &w, &h);
             menu_pointer(&a->menu, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y), (float)w, (float)h);
+            if (e->motion.state & SDL_BUTTON_LMASK)  /* held: a slider follows */
+                menu_command(a, menu_drag(&a->menu, to_pixels(a, e->motion.x), to_pixels(a, e->motion.y), (float)w, (float)h));
         } else if (a->view && a->captured) {
             if (a->skip_motion) { a->skip_motion = false; break; }
             tc_viewer_mouse_look(&a->view->viewer, e->motion.xrel, e->motion.yrel);
@@ -1461,7 +1471,9 @@ static void handle(app *a, const SDL_Event *e) {
         break;
     case SDL_EVENT_MOUSE_WHEEL: {
         float y = e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e->wheel.y : e->wheel.y;
-        if (a->view) {
+        if (a->menu_on) {  /* the menus' lists (OPTIONS, LOAD / DELETE GAME); over a level too: the game holds */
+            if (!a->help) menu_wheel(&a->menu, y > 0 ? -1 : y < 0 ? 1 : 0);
+        } else if (a->view) {
             if (!a->replaying || a->replay_paused) tc_viewer_wheel(&a->view->viewer, y);  /* camera zoom in play mode, fly speed in free-fly */
         } else if (a->replays_on) {
             replays_scroll(&a->rp, -y * 80 * a->rp.scale);
@@ -1828,6 +1840,8 @@ int main(int argc, char **argv) {
     options_load(&a.options);  /* the menu's options (options.cfg); TONIC_LOOK / TONIC_INVERT / TONIC_DOLBY still win */
     a.hud_auto_hide = a.options.hud_auto_hide;
     sfx_set_dolby(a.options.dolby);
+    sfx_set_volume(a.options.sound_volume);
+    music_set_volume(a.options.music_volume);
     a.look_sensitivity = a.options.look_sensitivity;
     a.invert_y = a.options.invert_y;
     if (SDL_getenv("TONIC_LOOK") || SDL_getenv("TONIC_INVERT")) look_settings(&a);

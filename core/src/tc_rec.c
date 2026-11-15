@@ -156,7 +156,8 @@ const char *tc_rec_door_name(uint32_t door) {
     static const char *const names[TC_RD_COUNT] = {
         "?", "step speed", "pause", "recentre camera", "close-up", "first person", "look settings", "step look",
         "invert y", "light set", "follow light", "step gamma", "step fov", "fog", "lighting", "sectors", "wheel",
-        "play / free-fly", "AI / simple controller", "demo on", "demo off", "debug menu", "hud"
+        "play / free-fly", "AI / simple controller", "demo on", "demo off", "debug menu", "hud", "view settings",
+        "game menu", "field of view"
     };
     return door < TC_RD_COUNT ? names[door] : "?";
 }
@@ -716,6 +717,7 @@ static void apply_door(tc_viewer *v, uint32_t door, int32_t a, float x) {
     case TC_RD_DEBUG: tc_viewer_toggle_debug(v); break;
     case TC_RD_HUD: tc_viewer_hud_waits(v, true); break;
     case TC_RD_GAME_MENU: tc_viewer_set_game_menu(v, a != 0); break;
+    case TC_RD_SET_FOV: tc_viewer_set_fov(v, x); break;
     case TC_RD_SET_VIEW: {
         static const float speeds[] = {0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 0.75f, 1, 1.5f, 2};
         int s = (a >> 4) & 15;

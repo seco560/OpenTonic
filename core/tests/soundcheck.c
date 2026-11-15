@@ -6,6 +6,7 @@
  *   - a cast's sounds heard from a listener: one placed at a perso hears it at full volume, centred; one 200 units away
  *     hears nothing of it (default rolloff: silent from 64); a perso without a sector is not heard; a perso's own sound
  *     stops once it is deactivated.
+ *   - the mixer (tc_mixer.h) on hand-made samples.
  * Usage: soundcheck [out/ttlv]. Test-only stdio. */
 #include <math.h>
 #include <stdio.h>
@@ -81,6 +82,18 @@ static void maths(void) {
         tc_sound_gains(127, 64, 127, 1, true, &m);
         expect_near("dolby behind, left", m.left, 252.0f / 65536);
         expect_near("dolby behind, rear", m.rear, 32004.0f / 65536);
+        /* off the middle and ahead: 126 x 62 x 128 >> 5 = 31248 on the left; the right's 126 x 66 x 128 >> 5 = 33264
+         * is past a 16-bit word (the exe's reads -32272): held at 32767 (DECOMP.md, not the exe 13) */
+        tc_sound_gains(127, 66, 0, 1, true, &m);
+        expect_near("dolby, a little right: left", m.left, 31248.0f / 65536);
+        expect_near("dolby, a little right: right held", m.right, 32767.0f / 65536);
+        /* hard left: 126 x 128 x 128 >> 5 = 64512 */
+        tc_sound_gains(127, 0, 0, 1, true, &m);
+        expect_near("dolby, hard left: left held", m.left, 32767.0f / 65536);
+        expect_near("dolby, hard left: right", m.right, 0);
+        /* half volume never gets there: 63 x 127 x 128 >> 5 = 32004 */
+        tc_sound_gains(64, 127, 0, 1, true, &m);
+        expect_near("dolby, half volume hard right", m.right, 32004.0f / 65536);
     }
     /* the rear value: ahead 0, behind 127, to the side 63; (3, 4, 0) with front +Y: 63 - 1024 x 127 / 2816 = 17 */
     expect_int("dolby ahead", tc_sound_dolby(tc_v3(0, 5, 0), tc_v3(0, 1, 0)), 0);
@@ -183,15 +196,142 @@ static void level_data(const char *dir) {
         cast.actors[0].ai->sound_serial++;
         s.kind = TC_SOUND_OWN;
         expect_int("its own sound after a deactivation: stop", tc_cast_sound_place(&cast, &s, &l, &pan, &dolby), -1);
+        /* one emitter for the main actor; a sound from no perso of the level is lost, his and a flat one are not */
+        expect_int("the main actor's id is his emitter", tc_cast_sound_emitter(&cast, cast.main_id),
+                   cast.main_id > 0 ? TC_SOUND_EMITTER_MAIN : cast.main_id);
+        memset(&s, 0, sizeof(s));
+        s.kind = TC_SOUND_OTHER, s.emitter = (int32_t)cast.id_count + 5;
+        expect_int("a sound from no perso: lost", tc_cast_sound_lost(&cast, &s), 1);
+        s.emitter = TC_SOUND_EMITTER_MAIN;
+        expect_int("the main actor's: not lost", tc_cast_sound_lost(&cast, &s), 0);
+        s.kind = TC_SOUND_FLAT, s.emitter = (int32_t)cast.id_count + 5;
+        expect_int("a flat sound: not lost", tc_cast_sound_lost(&cast, &s), 0);
         tc_cast_free(&cast);
     }
     tc_level_free(&lv);
     free(data);
 }
 
+/* The mixer (tc_mixer.h) on hand-made samples: voices end by themselves and are free again, the 65th is not played, a
+ * loop goes on until its stop, the gains, the pitch's steps, the mute, saturation, the Dolby encoder's two sides. */
+static void mixer(void) {
+    static tc_mixer m;
+    static float ones[100], out[2 * 4096];
+    tc_mixer_voice v;
+    tc_sound_source flat, from7, from8;
+    int i, n;
+    for (i = 0; i < 100; i++) ones[i] = 1;
+    memset(&flat, 0, sizeof(flat));
+    from7 = flat, from7.kind = TC_SOUND_OTHER, from7.emitter = 7;
+    from8 = from7, from8.emitter = 8;
+    memset(&v, 0, sizeof(v));
+    v.samples = ones, v.count = 100, v.pitch = 1, v.loop = -1, v.left = 0.25f, v.right = 0.5f;
+    tc_mixer_init(&m, 44100);
+    expect_int("mixer: 64 taps at 44100 Hz", m.taps, 64);
+    expect_int("mixer: silent when empty", tc_mixer_render(&m, out, 64), 0);
+
+    /* the bug of 2026-11-15: a thousand one-shots, one after another, each ends and frees its voice */
+    for (i = 0, n = 0; i < 1000; i++) {
+        if (tc_mixer_start(&m, &v) < 0) n++;
+        tc_mixer_render(&m, out, 128);
+    }
+    expect_int("mixer: 1000 one-shots in turn, not played", n, 0);
+    expect_int("mixer: all ended", tc_mixer_playing(&m), 0);
+    expect_int("mixer: none dropped", m.dropped, 0);
+
+    /* gains, and the end: 100 samples then silence */
+    tc_mixer_start(&m, &v);
+    expect_int("mixer: sounding", tc_mixer_render(&m, out, 128), 1);
+    expect_near("mixer: left gain", out[0], 0.25f);
+    expect_near("mixer: right gain", out[1], 0.5f);
+    expect_near("mixer: last sample, right", out[2 * 99 + 1], 0.5f);
+    expect_near("mixer: after the end", out[2 * 100 + 1], 0);
+
+    /* the menus' SOUND VOLUME: every voice's gains times it */
+    m.gain = 0.5f;
+    tc_mixer_start(&m, &v);
+    tc_mixer_render(&m, out, 128);
+    expect_near("mixer: half volume, left", out[0], 0.125f);
+    expect_near("mixer: half volume, right", out[1], 0.25f);
+    m.gain = 1;
+
+    /* 65 at once: 64 play, summed and saturated; one is dropped */
+    for (i = 0, n = 0; i < 65; i++) n += tc_mixer_start(&m, &v) == TC_MIXER_BUSY;
+    expect_int("mixer: the 65th is not played", n, 1);
+    expect_int("mixer: dropped", m.dropped, 1);
+    tc_mixer_render(&m, out, 10);
+    expect_near("mixer: saturated", out[0], 1);
+    m.muted = true;
+    tc_mixer_render(&m, out, 10);
+    expect_near("mixer: muted", out[0], 0);
+    m.muted = false;
+    tc_mixer_stop_all(&m);
+    expect_int("mixer: stop all", tc_mixer_playing(&m), 0);
+    expect_int("mixer: stop all, dropped", m.dropped, 0);
+
+    /* pitch 2: over in 50 frames; pitch 0.5: each sample twice (200 frames) */
+    v.pitch = 2;
+    tc_mixer_start(&m, &v);
+    tc_mixer_render(&m, out, 128);
+    expect_near("mixer: pitch 2, frame 49", out[2 * 49], 0.25f);
+    expect_near("mixer: pitch 2, frame 50", out[2 * 50], 0);
+    v.pitch = 0.5;
+    tc_mixer_start(&m, &v);
+    tc_mixer_render(&m, out, 256);
+    expect_near("mixer: pitch 0.5, frame 199", out[2 * 199], 0.25f);
+    expect_near("mixer: pitch 0.5, frame 200", out[2 * 200], 0);
+    expect_int("mixer: both ended", tc_mixer_playing(&m), 0);
+    v.pitch = 1;
+
+    /* loops: one per event and emitter, going on over its end; stopped by its emitter's stop, or a flat one */
+    v.loop = 5, v.source = from7;
+    expect_int("mixer: a loop starts", tc_mixer_start(&m, &v) >= 0, 1);
+    expect_int("mixer: retriggered, it goes on", tc_mixer_start(&m, &v), TC_MIXER_PLAYING);
+    v.source = from8;
+    expect_int("mixer: the same loop from another emitter", tc_mixer_start(&m, &v) >= 0, 1);
+    tc_mixer_render(&m, out, 4096);
+    expect_int("mixer: loops go on", tc_mixer_playing(&m), 2);
+    expect_near("mixer: two loops, frame 4000", out[2 * 4000], 0.5f);
+    tc_mixer_stop_loop(&m, 6, &from7);
+    expect_int("mixer: another event's stop", tc_mixer_playing(&m), 2);
+    tc_mixer_stop_loop(&m, 5, &from7);
+    expect_int("mixer: its emitter's stop", tc_mixer_playing(&m), 1);
+    tc_mixer_stop_loop(&m, 5, &flat);
+    expect_int("mixer: a global stop", tc_mixer_playing(&m), 0);
+
+    /* speech: stopped by name, the others left */
+    v.loop = -1, v.source = flat, v.speech = true;
+    tc_mixer_start(&m, &v);
+    v.speech = false;
+    tc_mixer_start(&m, &v);
+    tc_mixer_stop_speech(&m);
+    expect_int("mixer: the line stopped", tc_mixer_playing(&m), 1);
+    tc_mixer_stop_all(&m);
+
+    /* Dolby: a rear-only voice comes out of the encoder, as much on the left as taken from the right; off, not at all */
+    v.left = v.right = 0, v.rear = 0.5f;
+    tc_mixer_start(&m, &v);
+    tc_mixer_render(&m, out, 256);
+    for (i = 0, n = 0; i < 512; i++) n += out[i] != 0;
+    expect_int("mixer: Dolby off, the rear is unheard", n, 0);
+    m.dolby = true;
+    tc_mixer_start(&m, &v);
+    tc_mixer_render(&m, out, 256);
+    {
+        float sum = 0, peak = 0;
+        for (i = 0; i < 256; i++) {
+            sum += fabsf(out[2 * i] + out[2 * i + 1]);
+            if (fabsf(out[2 * i]) > peak) peak = fabsf(out[2 * i]);
+        }
+        expect_near("mixer: Dolby, left = -right", sum, 0);
+        expect_int("mixer: Dolby, the rear is heard", peak > 0.01f, 1);
+    }
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv";
     maths();
+    mixer();
     level_data(dir);
     printf(failures ? "FAIL (%d)\n" : "ok\n", failures);
     return failures ? 1 : 0;

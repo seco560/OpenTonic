@@ -29,6 +29,7 @@ private final class Mixer: @unchecked Sendable {
     private let lock = os_unfair_lock_t.allocate(capacity: 1)
     private var isMuted = false
     private var isDolby = false
+    private var gain: Float = 1  // the menus' SOUND VOLUME
 
     // The Dolby encoder: its filter made for this rate (the original's 32 taps at 22050 Hz: as long a span), the rear
     // signal of the block and the taps' worth before it.
@@ -60,6 +61,11 @@ private final class Mixer: @unchecked Sendable {
     var dolby: Bool {
         get { locked { isDolby } }
         set { locked { isDolby = newValue } }
+    }
+
+    var volume: Float {
+        get { locked { gain } }
+        set { locked { gain = min(max(newValue, 0), 1) } }
     }
 
     private var serials: UInt32 = 0
@@ -147,8 +153,8 @@ private final class Mixer: @unchecked Sendable {
         for i in 0..<Self.capacity {
             guard let samples = voices[i].samples else { continue }
             sounding = true
-            let gl = isMuted ? 0 : voices[i].left, gr = isMuted ? 0 : voices[i].right
-            let gb = isMuted || !isDolby ? 0 : voices[i].rear
+            let gl = isMuted ? 0 : voices[i].left * gain, gr = isMuted ? 0 : voices[i].right * gain
+            let gb = isMuted || !isDolby ? 0 : voices[i].rear * gain
             let count = voices[i].count, step = voices[i].pitch, heard = gl != 0 || gr != 0 || gb != 0
             var at = voices[i].at, frac = voices[i].frac
             for j in 0..<frames {
@@ -235,6 +241,13 @@ final class Sfx {
             UserDefaults.standard.set(dolby, forKey: "dolbySurround")
         }
     }
+    /// The menus' SOUND VOLUME, 0...1 (the sounds playing too), kept across launches.
+    var volume = UserDefaults.standard.object(forKey: "soundVolume") as? Float ?? 1 {
+        didSet {
+            mixer.volume = volume
+            UserDefaults.standard.set(volume, forKey: "soundVolume")
+        }
+    }
     private var folder: URL?
 
     /// Reads the event table and the sounds from `audioDir`/sfx (once per folder).
@@ -266,6 +279,7 @@ final class Sfx {
                                        spread: c.count > 6 ? Float(c[6]) ?? 0 : 0)
         }
         mixer.dolby = dolby
+        mixer.volume = volume
         startEngine()
     }
 

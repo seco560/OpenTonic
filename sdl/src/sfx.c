@@ -1,20 +1,18 @@
 #include "sfx.h"
 #include <SDL3/SDL.h>
+#include "tonic/tc_mixer.h"
 #include "util.h"
 
 typedef enum sfx_kind { SFX_NONE, SFX_PLAY, SFX_LOOP, SFX_STOP, SFX_VOICE } sfx_kind;
 #define VOICE_STOP 8191 /* the core's TC_AI_VOICE_STOP: a line was dismissed */
-#define SPEECH_VOICE (-2) /* sfx_voice.loop: a character's line */
-#define MAX_VOICES 64     /* the original's software mixer's (WAVMWSVR.DLL: 0x40); all busy, a sound isn't played */
-#define MAX_TAPS 256      /* the Dolby encoder's filter: the original's 32 taps at 22050 Hz, as long a span at a sound's rate */
+#define MIX_RATE 44100  /* the mixer's: the highest among the files (nearly all are 22050); every sound is read to it */
 
-/* A WAV, read once and made mono float at its own rate. Heap-allocated so its address stays put: a voice's audio thread
- * callback reads it. */
+/* A WAV, read once and made mono float at MIX_RATE. Heap-allocated so its address stays put: the mixer's voices read
+ * it on the audio thread. */
 typedef struct sfx_sound {
     char *file;
-    int rate;
     float *samples;
-    int count;                   /* 0: could not be read (not retried) */
+    int count;                   /* 0: could not be read (not retried until the next level) */
 } sfx_sound;
 
 typedef struct sfx_event {
@@ -26,36 +24,32 @@ typedef struct sfx_event {
     float spread;                /* its pitch spread (0: none) */
 } sfx_event;
 
-/* A voice: a stereo stream bound to the device, fed by feed() from its sound at its gains (the stream's lock guards
- * them). Heap-allocated: the callback holds its address. */
-typedef struct sfx_voice {
-    SDL_AudioStream *stream;
-    const sfx_sound *sound;
-    int at;                      /* the next sample */
-    bool ended;                  /* a one-shot that has fed its last sample */
-    int loop;                    /* the loop event it plays, -1 = a one-shot sound, SPEECH_VOICE */
-    float left, right, rear;     /* its gains now */
-    float volume;                /* its event's */
-    int taps;                    /* Dolby: its encoder's filter, at its sound's rate */
-    float coef[MAX_TAPS];
-    float history[MAX_TAPS];     /* the rear signal's last taps samples, oldest first */
-    bool follow;
-    tc_sound_source source;
-    sfx_sound *owned;            /* a line's sound, freed with the voice */
-} sfx_voice;
-
+/* One stream to the device, fed by feed() from the core's mixer (tc_mixer.h): the stream's lock guards the mixer. */
 static struct {
-    SDL_AudioDeviceID device;
-    bool no_audio;
+    SDL_AudioStream *stream;
+    bool no_audio;               /* the device could not be opened (tried again at the next level) */
     char *folder;                /* out/audio/sfx */
     sfx_event *events;           /* by event index */
     int event_count;
     sfx_sound **sounds;
     int sound_count, sound_cap;
-    sfx_voice *voices[MAX_VOICES];
-    int voice_count;
-    bool muted, dolby, regain;   /* regain: the Dolby switch changed, every voice's gains again at the next update */
+    sfx_sound *speech;           /* the line being said: read when said (163 of them), freed at the next */
+    tc_mixer mixer;
+    bool mixer_made;
+    bool dolby, regain;          /* regain: the Dolby switch changed, every voice's gains again at the next update */
+    bool full_logged;            /* "all voices busy" said for this level */
 } sfx;
+
+static void lock(void) { if (sfx.stream) SDL_LockAudioStream(sfx.stream); }
+static void unlock(void) { if (sfx.stream) SDL_UnlockAudioStream(sfx.stream); }
+
+static tc_mixer *mixer(void) {
+    if (!sfx.mixer_made) {
+        tc_mixer_init(&sfx.mixer, MIX_RATE);
+        sfx.mixer_made = true;
+    }
+    return &sfx.mixer;
+}
 
 static bool grow(void **p, int *cap, int need, size_t elem) {
     if (need <= *cap) return true;
@@ -68,20 +62,38 @@ static bool grow(void **p, int *cap, int need, size_t elem) {
     return true;
 }
 
+/* Audio thread (the stream locked): `additional` bytes more of the mix, as stereo floats. Nothing playing: nothing is
+ * put (the device plays silence). */
+static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, int total) {
+    float buf[2 * TC_MIXER_BLOCK];
+    int frames = (additional + 7) / 8;
+    (void)user;
+    (void)total;
+    while (frames > 0) {
+        int n = SDL_min(frames, TC_MIXER_BLOCK);
+        if (!tc_mixer_render(&sfx.mixer, buf, n)) return;
+        if (!SDL_PutAudioStreamData(stream, buf, n * 2 * (int)sizeof(float))) return;
+        frames -= n;
+    }
+}
+
 static bool open_device(void) {
-    if (sfx.device) return true;
+    if (sfx.stream) return true;
     if (sfx.no_audio) return false;
     if (!SDL_WasInit(SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         SDL_Log("Sound effects: no audio (%s)", SDL_GetError());
         sfx.no_audio = true;
         return false;
     }
-    sfx.device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
-    if (!sfx.device) {
+    SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, MIX_RATE};
+    mixer();
+    sfx.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
+    if (!sfx.stream) {
         SDL_Log("Sound effects: %s", SDL_GetError());
         sfx.no_audio = true;
         return false;
     }
+    SDL_ResumeAudioStreamDevice(sfx.stream);
     return true;
 }
 
@@ -90,14 +102,6 @@ static void free_sound(sfx_sound *s) {
     SDL_free(s->file);
     SDL_free(s->samples);
     SDL_free(s);
-}
-
-static void free_voice(int i) {
-    sfx_voice *v = sfx.voices[i];
-    SDL_DestroyAudioStream(v->stream); /* the callback is done with it once this returns */
-    free_sound(v->owned);
-    SDL_free(v);
-    sfx.voices[i] = sfx.voices[--sfx.voice_count];
 }
 
 static void free_table(void) {
@@ -113,7 +117,7 @@ static void free_table(void) {
     sfx.folder = NULL;
 }
 
-/* A WAV as mono floats at its own rate; s->count stays 0 when it can't be read. */
+/* A WAV as mono floats at MIX_RATE (SDL's resampler, once); s->count stays 0 when it can't be read. */
 static void read_sound(sfx_sound *s, const char *path) {
     SDL_AudioSpec spec, mono;
     Uint8 *data = NULL, *out = NULL;
@@ -125,11 +129,10 @@ static void read_sound(sfx_sound *s, const char *path) {
     }
     mono.format = SDL_AUDIO_F32;
     mono.channels = 1;
-    mono.freq = spec.freq;
+    mono.freq = MIX_RATE;
     if (SDL_ConvertAudioSamples(&spec, data, (int)size, &mono, &out, &out_size) && out_size >= (int)sizeof(float)) {
         s->samples = (float *)out;
         s->count = out_size / (int)sizeof(float);
-        s->rate = spec.freq;
     } else {
         SDL_Log("Sound effects: cannot convert %s: %s", path, SDL_GetError());
         SDL_free(out);
@@ -152,38 +155,21 @@ static const sfx_sound *sound_for(const sfx_event *e) {
     return s->count ? s : NULL;
 }
 
-/* Audio thread (the stream locked): `additional` bytes more of the voice, its sound at its gains, as stereo floats. */
-static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, int total) {
-    sfx_voice *v = user;
-    float buf[512];
-    (void)total;
-    while (additional > 0 && !v->ended) {
-        int frames = SDL_min((int)(sizeof(buf) / sizeof(buf[0])) / 2, (additional + 7) / 8), n = 0;
-        float gl = sfx.muted ? 0 : v->left, gr = sfx.muted ? 0 : v->right, gb = sfx.muted || !sfx.dolby ? 0 : v->rear;
-        while (n < frames) {
-            if (v->at >= v->sound->count) {
-                if (v->loop < 0 || v->loop == SPEECH_VOICE) { v->ended = true; break; }
-                v->at = 0;
-            }
-            float x = v->sound->samples[v->at++], y = 0;
-            if (v->taps) { /* the encoder (WAVMWSVR.DLL 0x1000d823): y[n] = sum c[k] rear[n - taps + k], L + y, R - y */
-                for (int k = 0; k < v->taps; k++) y += v->coef[k] * v->history[k];
-                SDL_memmove(v->history, v->history + 1, (size_t)(v->taps - 1) * sizeof(float));
-                v->history[v->taps - 1] = x * gb;
-            }
-            buf[2 * n] = x * gl + y;
-            buf[2 * n + 1] = x * gr - y;
-            n++;
-        }
-        if (n == 0 || !SDL_PutAudioStreamData(stream, buf, n * 2 * (int)sizeof(float))) return;
-        additional -= n * 8;
-    }
-}
-
 void sfx_load(const char *audio_dir) {
     char *dir = path_join(audio_dir, "sfx");
     if (!dir) return;
-    if (sfx.folder && SDL_strcmp(dir, sfx.folder) == 0) { SDL_free(dir); return; }
+    sfx.no_audio = false; /* a device that could not be opened: tried again with each level */
+    open_device();
+    /* Once per folder, unless its table could not be read then; the sounds that could not be read are tried again. */
+    if (sfx.folder && SDL_strcmp(dir, sfx.folder) == 0 && sfx.event_count) {
+        for (int i = sfx.sound_count - 1; i >= 0; i--)
+            if (!sfx.sounds[i]->count) {
+                free_sound(sfx.sounds[i]);
+                sfx.sounds[i] = sfx.sounds[--sfx.sound_count];
+            }
+        SDL_free(dir);
+        return;
+    }
     sfx_stop_all();
     free_table();
     sfx.folder = dir;
@@ -227,71 +213,20 @@ void sfx_load(const char *audio_dir) {
     SDL_free(table);
 }
 
+/* The line being said ends, and its samples go (no voice reads them from here on). */
 static void stop_speech(void) {
-    for (int v = sfx.voice_count - 1; v >= 0; v--)
-        if (sfx.voices[v]->loop == SPEECH_VOICE) free_voice(v);
-}
-
-/* The one-shot sounds that have played out. */
-static void reap(void) {
-    for (int v = sfx.voice_count - 1; v >= 0; v--) {
-        sfx_voice *x = sfx.voices[v];
-        bool ended;
-        SDL_LockAudioStream(x->stream);
-        ended = x->ended;
-        SDL_UnlockAudioStream(x->stream);
-        if (ended && SDL_GetAudioStreamQueued(x->stream) == 0) free_voice(v);
-    }
-}
-
-/* The encoder's filter for a sound's rate (made once per rate). */
-static int dolby_filter(int rate, float *out) {
-    static struct { int rate, taps; float c[MAX_TAPS]; } made[4];
-    static int count;
-    int taps = (int)(32.0 * rate / 22050 + 1) & ~1, i;
-    if (taps < 2) taps = 2;
-    if (taps > MAX_TAPS) taps = MAX_TAPS;
-    for (i = 0; i < count && made[i].rate != rate; i++) {}
-    if (i == count) {
-        int16_t c[MAX_TAPS];
-        i = count < 4 ? count++ : 3;
-        tc_sound_dolby_filter(c, taps, (float)rate);
-        made[i].rate = rate, made[i].taps = taps;
-        for (int k = 0; k < taps; k++) made[i].c[k] = (float)c[k] / 8192; /* its sum >> 13 */
-    }
-    SDL_memcpy(out, made[i].c, (size_t)made[i].taps * sizeof(float));
-    return made[i].taps;
-}
-
-/* A voice for `s` at its gains and pitch; owned: a line's sound, the voice's to free. */
-static void start_voice(const sfx_sound *s, sfx_sound *owned, int loop, const sfx_event *e, const tc_sound_source *src,
-                        const tc_sound_mix *mix) {
-    if (sfx.voice_count >= MAX_VOICES || !open_device()) { free_sound(owned); return; }
-    sfx_voice *v = SDL_calloc(1, sizeof *v);
-    SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, s->rate};
-    if (!v) { free_sound(owned); return; }
-    v->sound = s, v->owned = owned, v->loop = loop;
-    v->left = mix->left, v->right = mix->right, v->rear = mix->rear;
-    v->volume = e->volume, v->follow = e->follow, v->source = *src;
-    v->taps = dolby_filter(s->rate, v->coef);
-    v->stream = SDL_CreateAudioStream(&spec, NULL);  /* to the device's format when bound */
-    if (v->stream && e->spread != 0) /* SND_004048e0's pitch, fixed for the voice's life */
-        SDL_SetAudioStreamFrequencyRatio(v->stream, tc_sound_pitch(e->spread, (int)SDL_rand(32768)));
-    if (!v->stream || !SDL_SetAudioStreamGetCallback(v->stream, feed, v) || !SDL_BindAudioStream(sfx.device, v->stream)) {
-        SDL_Log("Sound effects: %s", SDL_GetError());
-        SDL_DestroyAudioStream(v->stream);
-        free_sound(owned);
-        SDL_free(v);
-        return;
-    }
-    sfx.voices[sfx.voice_count++] = v;
+    lock();
+    tc_mixer_stop_speech(mixer());
+    unlock();
+    free_sound(sfx.speech);
+    sfx.speech = NULL;
 }
 
 void sfx_play(const tc_viewer *view) {
     const uint16_t *events;
     uint32_t count = tc_viewer_sounds(view, &events);
     const tc_sound_source *sources = tc_viewer_sound_sources(view);
-    if (count) reap();
+    tc_mixer *m = mixer();
     for (uint32_t i = 0; i < count; i++) {
         int k = events[i];
         const tc_sound_source *src = &sources[i];
@@ -299,45 +234,58 @@ void sfx_play(const tc_viewer *view) {
         if (k >= sfx.event_count || sfx.events[k].kind == SFX_NONE) continue;
         const sfx_event *e = &sfx.events[k];
         if (e->kind == SFX_STOP) { /* its loop, from that emitter (any, when the stop has none: a global one) */
-            for (int v = 0; e->stops >= 0 && v < sfx.voice_count; v++)
-                if (sfx.voices[v]->loop == e->stops &&
-                    (src->kind == TC_SOUND_FLAT || sfx.voices[v]->source.emitter == src->emitter)) { free_voice(v); break; }
+            lock();
+            tc_mixer_stop_loop(m, e->stops, src);
+            unlock();
             continue;
         }
-        bool playing = false;
-        for (int v = 0; e->kind == SFX_LOOP && v < sfx.voice_count; v++)
-            playing |= sfx.voices[v]->loop == k && sfx.voices[v]->source.emitter == src->emitter;
-        if (playing) continue;
+        tc_mixer_voice v = {0};
         tc_sound_mix mix;
         if (!tc_viewer_sound_mix(view, src, e->volume, sfx.dolby, &mix)) continue; /* its perso was already taken out */
         if (e->kind == SFX_VOICE) {
             stop_speech();
-            sfx_sound *line = e->file ? SDL_calloc(1, sizeof *line) : NULL;
+            sfx_sound *line = e->file && sfx.folder ? SDL_calloc(1, sizeof *line) : NULL;
             char *path = line ? path_join(sfx.folder, e->file) : NULL;
             if (path) read_sound(line, path);
             SDL_free(path);
             if (!line || !line->count) { free_sound(line); continue; }
-            start_voice(line, line, SPEECH_VOICE, e, src, &mix);
-            continue;
+            sfx.speech = line;
+            v.samples = line->samples, v.count = (uint32_t)line->count, v.speech = true;
+        } else {
+            const sfx_sound *s = sound_for(e);
+            if (!s) continue;
+            v.samples = s->samples, v.count = (uint32_t)s->count;
         }
-        const sfx_sound *s = sound_for(e);
-        if (s) start_voice(s, NULL, e->kind == SFX_LOOP ? k : -1, e, src, &mix);
+        v.loop = e->kind == SFX_LOOP ? k : -1;
+        v.left = mix.left, v.right = mix.right, v.rear = mix.rear;
+        v.volume = e->volume, v.follow = e->follow, v.source = *src;
+        v.pitch = e->spread != 0 ? tc_sound_pitch(e->spread, (int)SDL_rand(32768)) : 1; /* SND_004048e0's, for its life */
+        if (!open_device()) continue; /* no audio: nothing is rendered, so nothing would ever end */
+        lock();
+        int got = tc_mixer_start(m, &v);
+        unlock();
+        if (got == TC_MIXER_BUSY && !sfx.full_logged) { /* as the original: not played. Said once a level */
+            SDL_Log("Sound effects: all %d voices are busy, event %d not played", TC_MIXER_VOICES, k);
+            sfx.full_logged = true;
+        }
     }
 }
 
 void sfx_update(const tc_viewer *view) {
     bool all = sfx.regain;
+    tc_mixer *m = mixer();
     sfx.regain = false;
-    for (int i = sfx.voice_count - 1; i >= 0; i--) {
-        sfx_voice *v = sfx.voices[i];
+    lock(); /* a few dozen voices' arithmetic: the audio thread waits microseconds at most */
+    m->dolby = sfx.dolby;
+    for (int i = 0; i < TC_MIXER_VOICES; i++) {
+        tc_mixer_voice *v = &m->voices[i];
         tc_sound_mix mix;
-        if (v->source.kind == TC_SOUND_FLAT && !all) continue;
-        if (!tc_viewer_sound_mix(view, &v->source, v->volume, sfx.dolby, &mix)) { free_voice(i); continue; }
+        if (!v->samples || (v->source.kind == TC_SOUND_FLAT && !all)) continue;
+        if (!tc_viewer_sound_mix(view, &v->source, v->volume, sfx.dolby, &mix)) { tc_mixer_stop(m, i); continue; }
         if (!v->follow && !all) continue;
-        SDL_LockAudioStream(v->stream);
         v->left = mix.left, v->right = mix.right, v->rear = mix.rear;
-        SDL_UnlockAudioStream(v->stream);
     }
+    unlock();
 }
 
 void sfx_set_dolby(bool on) {
@@ -348,16 +296,29 @@ void sfx_set_dolby(bool on) {
 bool sfx_dolby(void) { return sfx.dolby; }
 
 void sfx_stop_all(void) {
-    while (sfx.voice_count > 0) free_voice(sfx.voice_count - 1);
+    lock();
+    tc_mixer_stop_all(mixer());
+    unlock();
+    free_sound(sfx.speech);
+    sfx.speech = NULL;
+    sfx.full_logged = false;
 }
 
 void sfx_set_muted(bool muted) {
-    sfx.muted = muted;  /* feed() reads it: what is already queued (a few ms) plays out */
+    lock();
+    mixer()->muted = muted;  /* what is already queued (a few ms) plays out */
+    unlock();
+}
+
+void sfx_set_volume(float volume) {
+    lock();
+    mixer()->gain = SDL_clamp(volume, 0.0f, 1.0f);
+    unlock();
 }
 
 void sfx_quit(void) {
     sfx_stop_all();
+    if (sfx.stream) SDL_DestroyAudioStream(sfx.stream); /* also closes its device; no more callbacks */
+    sfx.stream = NULL;
     free_table();
-    if (sfx.device) SDL_CloseAudioDevice(sfx.device);
-    sfx.device = 0;
 }

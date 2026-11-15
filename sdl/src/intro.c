@@ -1,4 +1,5 @@
 #include "intro.h"
+#include "music.h"
 #include <stdio.h>  /* pl_mpeg.h uses FILE without including it */
 #define PL_MPEG_IMPLEMENTATION
 #include <pl_mpeg.h>
@@ -91,7 +92,7 @@ intro *intro_open(gpu *g, const char *path, bool muted, char *err, size_t err_si
         plm_set_audio_enabled(m->plm, 0);  /* else the demuxer would keep buffering audio nobody reads */
         m->audio_done = true;
     } else {
-        SDL_SetAudioStreamGain(m->stream, muted ? 0.0f : 1.0f);
+        SDL_SetAudioStreamGain(m->stream, muted ? 0.0f : music_gain());
         feed_audio(m);
         SDL_ResumeAudioStreamDevice(m->stream);
     }
@@ -170,5 +171,5 @@ void intro_draw(intro *m, gpu_frame *f, SDL_GPURenderPass *pass) {
 }
 
 void intro_set_muted(intro *m, bool muted) {
-    if (m->stream) SDL_SetAudioStreamGain(m->stream, muted ? 0.0f : 1.0f);
+    if (m->stream) SDL_SetAudioStreamGain(m->stream, muted ? 0.0f : music_gain());
 }

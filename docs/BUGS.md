@@ -228,3 +228,36 @@ popcorn machine never starts; (d) the corn cob's shots never rebound from the ta
   (Proc_DisplayChrono, T30 0x5 / 0x6). T30's numbers do not index game.dsb's strings in file order: the table is to
   read. Then the core keeps HUD text slots (ClearText clears one) and both frontends draw them in the game's font.
 - skymap has the same genski persos: unprobed.
+
+## Sound effects gone silent, music playing on (2026-11-15; the user on Linux)
+
+**Fixed (Claude), headless only; awaiting a playtest.**
+- **Cause.** The SDL build's first 3D sound mixer (f823c36) gave each voice its own SDL stream and freed a finished
+  one-shot once SDL said the stream held nothing more. A resampling stream that is never flushed keeps its last few
+  frames (56 bytes here), and every sound resamples (22050 Hz files, a 48000 Hz device), so no one-shot ever gave its
+  voice back: the 65th sound of a level, and all after it, speech included, was not played. A level change freed
+  them, for 64 more. The Mac build was not affected (its own mixer).
+- **Fix.** The mixer is the core's now (`tc_mixer.h`: the 64 voices, gains, pitch steps, saturation, the Dolby encoder
+  on the summed rear), rendered into one stream; a voice ends when its last sample is rendered. soundcheck runs it
+  (a thousand one-shots in turn, the 65th at once, loops and their stops, pitch, Dolby). Also: all voices busy is
+  logged once a level; a device or an events.tsv that could not be opened is tried again at the next level.
+
+**Open:**
+- **Dolby on, a loud sound a little to one side and ahead (fixed 2026-11-15, Claude; the user's choice; headless
+  only).** The original's own fault, read at `WAVMWSVR.DLL` 0x1000d4f7 (docs/ENGINE.md "Dolby Surround"): the front
+  gains are 16-bit words for a signed `pmulhw`, and v x (pan or 128 - pan) x (128 - dolby) >> 5 passes 32767 once the
+  two factors' product is over 8322 at full volume (centred and dead ahead is 8192: just under). The word then reads
+  negative: that side plays at up to full level with its phase turned. The port did the same sum; it now holds the
+  word at 32767 (DECOMP.md "Where the port is not the exe", 13).
+- **Loops that kept a voice for nothing (fixed 2026-11-15, Claude; headless only).** (a) Ed had two emitter names: his
+  own sounds said "the main actor", another perso's script naming him said his id (and his own script naming the fix
+  Ed's alias said that), so a loop started under one name was neither found again nor stopped under the other. One
+  name now (`tc_cast_sound_emitter`). (b) A sound from no perso of the level, or from a ghost in a level with sectors,
+  has volume 0 for good: `tc_viewer_sound_mix` now says not to start it (`tc_cast_sound_lost`). A loop on a perso
+  that is merely out of earshot or behind a muted sector still runs on unheard and comes back, as the exe's.
+- **"Still silent after closing and loading the game again"**: not reproduced as a fault of its own. Headless, with Ed
+  standing still, the old build's 64 voices were gone after 115 s in cavedoc, 40 s in sud0, 25 s in Land (355 of
+  Land's 402 sounds in two minutes are out of earshot and took a voice all the same); walking adds two or three
+  footsteps a second. Each load gave 64 more, so the sounds would come back for under a minute and go again. Nothing
+  about sound is kept between runs but the Dolby option (off in the user's options.cfg).
+- **Sfx.swift** still has its own Mixer (the same design); it could take the core's.

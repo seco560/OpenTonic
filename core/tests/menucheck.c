@@ -196,12 +196,49 @@ static void menu_checks(const char *dir) {
         tc_menu_build(&m, 16.0f / 9);
         found = -1;
         for (h = 0; h < (int)m.hit_count; h++)
-            if (m.hits[h].item == 0 && m.hits[h].part < 0) found = h;
+            if (m.hits[h].item == 2 && m.hits[h].part < 0) found = h;
         if (found >= 0) {
-            float g = m.options.gamma;
+            bool was = m.options.dolby;
             tc_menu_click(&m, 0.5f * (m.hits[found].rect[0] + m.hits[found].rect[2]), 0.5f * (m.hits[found].rect[1] + m.hits[found].rect[3]));
-            check(m.options.gamma < g && tc_menu_take_command(&m) == TC_MC_OPTIONS, "a click left of a value steps it back");
+            check(m.options.dolby != was && tc_menu_take_command(&m) == TC_MC_OPTIONS, "a click on a switch's value flips it");
+            m.options.dolby = was;
         } else check(0, "an option's value can be hit");
+        /* a slider (MUSIC VOLUME, the first row): a click on its bar puts the value there, and it follows the pointer
+         * while held; a click elsewhere lets go */
+        found = -1;
+        for (h = 0; h < (int)m.hit_count; h++)
+            if (m.hits[h].item == 0 && m.hits[h].part == 2) found = h;
+        if (found >= 0) {
+            const float *r = m.hits[found].rect;
+            float y = 0.5f * (r[1] + r[3]);
+            tc_menu_click(&m, r[0] + 0.001f, y);
+            check(m.options.music_volume == 0 && tc_menu_take_command(&m) == TC_MC_OPTIONS, "a click at a slider's start: 0");
+            check(tc_menu_drag(&m, 0.5f * (r[0] + r[2]), 0.9f) && fabsf(m.options.music_volume - 0.5f) < 1e-4f,
+                  "held, it follows the pointer: the middle is 50");
+            check(tc_menu_drag(&m, 2.0f, y) && m.options.music_volume == 1, "past its end: 100");
+            check(!tc_menu_drag(&m, 2.0f, y), "no change, no command");
+            tc_menu_take_command(&m);
+            tc_menu_click(&m, 0.02f, 0.98f);
+            tc_menu_show(&m, TC_MS_OPTIONS);
+            check(!tc_menu_drag(&m, r[0], y) && m.options.music_volume == 1, "let go, it stays");
+        } else check(0, "a slider's bar can be hit");
+        /* the list scrolls: the wheel moves it and takes the selection along; the keys bring the selection into view */
+        m.selected[TC_MS_OPTIONS] = 0;
+        tc_menu_scroll(&m, 2);
+        check(m.options_first == 2 && m.selected[TC_MS_OPTIONS] == 2, "the wheel scrolls OPTIONS, the selection kept in view");
+        tc_menu_scroll(&m, 50);
+        check(m.options_first == 3, "it stops at the list's end (11 options, 8 in view)");
+        tc_menu_input_press(&m, TC_MI_UP);
+        tc_menu_input_press(&m, TC_MI_UP);
+        check(m.selected[TC_MS_OPTIONS] == 1 && m.options_first == 1, "moving up past the view scrolls it");
+        tc_menu_input_press(&m, TC_MI_UP);
+        tc_menu_input_press(&m, TC_MI_UP);
+        check(!strcmp(label(&m, TC_MS_OPTIONS, m.selected[TC_MS_OPTIONS]), "BACK") && m.options_first == 3,
+              "up from the first: BACK, the list at its end");
+        tc_menu_build(&m, 4.0f / 3);
+        found = 0;
+        for (h = 0; h < (int)m.hit_count; h++) found += m.hits[h].rect[0] < 0 || m.hits[h].rect[2] > 1;
+        check(found == 0 && m.quad_count > 0, "at 4:3 every hit box is on the screen");
         tc_menu_show(&m, TC_MS_MAIN);
     }
 
@@ -209,29 +246,48 @@ static void menu_checks(const char *dir) {
     tc_options_defaults(&o);
     tc_menu_set_options(&m, &o);
     tc_menu_show(&m, TC_MS_OPTIONS);
+    /* MUSIC VOLUME, SOUND VOLUME, DOLBY SURROUND, FIELD OF VIEW, GAMMA, LIGHTING, FOG, HUD AUTO-HIDE, LOOK SPEED,
+     * INVERT LOOK, ANIMATION SPEED, BACK */
+    check(tc_menu_item_count(&m, TC_MS_OPTIONS) == 12 && !strcmp(label(&m, TC_MS_OPTIONS, 0), "MUSIC VOLUME 100") &&
+              !strcmp(label(&m, TC_MS_OPTIONS, 3), "FIELD OF VIEW 86") && !strcmp(label(&m, TC_MS_OPTIONS, 11), "BACK"),
+          "OPTIONS: the sound first, the field of view at the game's 86, BACK last");
     m.selected[TC_MS_OPTIONS] = 0;
+    tc_menu_input_press(&m, TC_MI_LEFT);
+    tc_menu_input_press(&m, TC_MI_LEFT);
+    check(tc_menu_take_command(&m) == TC_MC_OPTIONS && fabsf(m.options.music_volume - 0.8f) < 1e-4f, "MUSIC VOLUME steps by 10");
+    tc_menu_input_press(&m, TC_MI_DOWN);
+    for (s = 0; s < 14; s++) tc_menu_input_press(&m, TC_MI_LEFT);
+    check(m.options.sound_volume == 0 && !strcmp(label(&m, TC_MS_OPTIONS, 1), "SOUND VOLUME 0"), "SOUND VOLUME stops at 0");
+    m.selected[TC_MS_OPTIONS] = 3;
+    tc_menu_input_press(&m, TC_MI_RIGHT);
+    check(m.options.fov == 91, "FIELD OF VIEW steps by 5 degrees, as , .");
+    for (s = 0; s < 10; s++) tc_menu_input_press(&m, TC_MI_RIGHT);
+    check(m.options.fov == 120, "and stops at 120");
+    m.selected[TC_MS_OPTIONS] = 4;
     tc_menu_input_press(&m, TC_MI_RIGHT); /* gamma up */
     check(tc_menu_take_command(&m) == TC_MC_OPTIONS && fabsf(m.options.gamma - 1.1f) < 1e-4f, "GAMMA steps x1.1 and says so");
-    tc_menu_input_press(&m, TC_MI_DOWN);
+    m.selected[TC_MS_OPTIONS] = 10;
     tc_menu_input_press(&m, TC_MI_LEFT);
     check(fabsf(m.options.animation_speed - 0.75f) < 1e-4f, "ANIMATION SPEED steps as [ ]");
-    tc_menu_input_press(&m, TC_MI_DOWN);
-    tc_menu_input_press(&m, TC_MI_DOWN);
+    m.selected[TC_MS_OPTIONS] = 6;
     tc_menu_input_press(&m, TC_MI_CONFIRM);
-    check(!m.options.fog && !strcmp(label(&m, TC_MS_OPTIONS, 3), "FOG OFF"), "FOG toggles (\"FOG OFF\")");
+    check(!m.options.fog && !strcmp(label(&m, TC_MS_OPTIONS, 6), "FOG OFF"), "FOG toggles (\"FOG OFF\")");
     o = m.options;
     o.dolby = true;
+    o.music_volume = 0.35f;
     o.look_sensitivity = 1.5625f;
     tc_options_write(&o, text, sizeof text);
     tc_options_parse(&back, text, strlen(text));
     check(fabsf(back.gamma - o.gamma) < 1e-3f && back.animation_speed == o.animation_speed && back.fog == o.fog &&
-              back.dolby && fabsf(back.look_sensitivity - o.look_sensitivity) < 1e-3f,
+              back.dolby && fabsf(back.look_sensitivity - o.look_sensitivity) < 1e-3f &&
+              fabsf(back.music_volume - 0.35f) < 1e-3f && back.sound_volume == 0 && back.fov == 120,
           "the options' file round trip");
     {
-        const char *bad = "gamma=9\nanimation_speed=0.6\nnonsense\nfog=0\n";
+        const char *bad = "gamma=9\nanimation_speed=0.6\nnonsense\nfog=0\nmusic_volume=7\nfov=10\n";
         tc_options_parse(&back, bad, strlen(bad));
     }
-    check(back.gamma == 2.5f && fabsf(back.animation_speed - 2.0f / 3) < 1e-4f && !back.fog && back.look_sensitivity == 1,
+    check(back.gamma == 2.5f && fabsf(back.animation_speed - 2.0f / 3) < 1e-4f && !back.fog && back.look_sensitivity == 1 &&
+              back.music_volume == 1 && back.sound_volume == 1 && back.fov == 50,
           "bad values are brought in range, unknown lines passed by");
 
     /* layout */
@@ -411,15 +467,31 @@ static void save_checks(const char *dir) {
     check(fabsf(a.gamma - 1.3f) < 1e-5f && a.animation_speed == 0.5f && !a.fog_enabled &&
               (!level.has_lighting || a.lighting == TC_VL_PORT),
           "tc_viewer_set_view sets gamma, speed, fog, lighting");
+    check(tc_viewer_fov(&a) == 86, "the field of view starts at the game's 86");
+    tc_viewer_set_fov(&a, 100);
+    check(tc_viewer_fov(&a) == 100, "tc_viewer_set_fov sets it (the menus' FIELD OF VIEW)");
+    tc_viewer_step_fov(&a, 1);
+    check(tc_viewer_fov(&a) == 105, "and , . step on from there");
+    tc_viewer_set_fov(&a, 300);
+    check(tc_viewer_fov(&a) == 120, "held in 50 - 120");
+    tc_viewer_set_fov(&a, 86);
     tc_viewer_set_view(&a, 1, 1, true, 0);
     check(tc_viewer_save_serial(&a) == 0, "no save asked for at the start");
     {   /* the game menu over the game */
         tc_vec3 ed = tc_viewer_driver(&a)->player->position, eye0, eye1;
         float zoom = a.orbit_distance, clock;
+        tc_vec3 paused_eye = a.camera.position;
+        float paused_yaw = a.camera.yaw, paused_pitch = a.camera.pitch, moved;
         tc_viewer_set_game_menu(&a, true);
         clock = a.animation_time;
-        check(a.paused && a.game_menu && a.orbit_distance >= 3 && a.orbit_distance <= 9, "the game menu holds the game, a zoom of 3-9");
-        frames(&a, 30);
+        check(a.paused && a.game_menu && a.orbit_distance == zoom, "the game menu holds the game, the zoom as it was");
+        frames(&a, 1);
+        moved = tc_v3_length(tc_v3_sub(a.camera.position, paused_eye));
+        printf("  the game menu's first frame: the eye %.4f from where the game was paused, yaw %+.5f, pitch %+.5f\n",
+               (double)moved, (double)(a.camera.yaw - paused_yaw), (double)(a.camera.pitch - paused_pitch));
+        check(moved < 0.01f && fabsf(a.camera.yaw - paused_yaw) < 0.002f && fabsf(a.camera.pitch - paused_pitch) < 0.002f,
+              "its first frame is the view the game was paused on");
+        frames(&a, 29);
         eye0 = a.camera.position;
         frames(&a, 120);
         eye1 = a.camera.position;

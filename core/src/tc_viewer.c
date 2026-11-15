@@ -268,7 +268,9 @@ bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float eve
             vol = tc_sound_volume(tc_sound_distance(off), NULL);
             pan = tc_sound_pan(off, l.right);
             rear = tc_sound_dolby(off, l.front);
-        } else
+        } else if (tc_cast_sound_lost(&v->play->cast, s))
+            vol = -1; /* never to be heard: no voice for it */
+        else
             vol = tc_cast_sound_place(&v->play->cast, s, &l, &pan, &rear);
     }
     if (vol < 0) {
@@ -368,14 +370,16 @@ void tc_viewer_set_game_menu(tc_viewer *v, bool on) {
         if (v->paused) tc_viewer_toggle_pause(v); /* out of photo mode first: its camera comes back */
         v->paused = true;
         tcv_set_inspecting(v, v->playing);
-        /* a zoom and a way to turn of its own, from where the game is (not the viewer's rng: the transitions draw it) */
+        /* The drift starts from the very view the game was paused on (the user, 2026-11-15: a zoom of its own made the
+         * first frame jump): the camera and its zoom stay, and the turn and the rise ease in from rest (tcv_look). A
+         * way to turn and to rise first of its own, from where the game is (not the viewer's rng: the transitions draw
+         * it). */
         h = (uint32_t)(v->animation_time * 1000.0f) * 2654435761u ^ v->draw_count * 40503u;
         h ^= h >> 15, h *= 2246822519u, h ^= h >> 13;
         v->game_menu = true;
         v->game_menu_time = 0;
         v->game_menu_turn = h & 1 ? 1.0f : -1.0f;
-        v->game_menu_phase = (float)((h >> 1) & 1023) / 1023.0f * 2 * TC_PI;
-        if (v->playing) v->orbit_distance = 3.0f + 6.0f * (float)((h >> 11) & 1023) / 1023.0f;
+        v->game_menu_phase = h & 2 ? 0.5f * TC_PI : -0.5f * TC_PI; /* cos(0.31 t -+ pi/2): no rise at the start */
     } else {
         v->game_menu = false;
         v->paused = false;
@@ -405,6 +409,20 @@ void tc_viewer_step_fov(tc_viewer *v, int dir) {
     /* in the original's measure, horizontal at 4:3: 86 degrees by default, 5 degree steps, 50-120 */
     float deg = roundf(tc_camera_hfov_43(v->camera.vertical_fov) * 180 / TC_PI) + (dir > 0 ? 5.0f : -5.0f);
     v->camera.vertical_fov = tc_camera_vfov_from_hfov_43(fmaxf(50, fminf(120, deg)) * TC_PI / 180);
+}
+
+/* The player's field of view: the camera's, or the one a director's shot (tc_viewer_camera.c) will give back. */
+static float *player_fov(tc_viewer *v) { return v->director ? &v->director_saved_fov : &v->camera.vertical_fov; }
+
+void tc_viewer_set_fov(tc_viewer *v, float degrees) {
+    if (!(degrees == degrees)) degrees = 86;
+    REC_DOOR(TC_RD_SET_FOV, 0, degrees);
+    *player_fov(v) = tc_camera_vfov_from_hfov_43(fmaxf(50, fminf(120, degrees)) * TC_PI / 180);
+}
+
+float tc_viewer_fov(const tc_viewer *v) {
+    float f = v->director ? v->director_saved_fov : v->camera.vertical_fov;
+    return roundf(tc_camera_hfov_43(f) * 180 / TC_PI);
 }
 
 void tc_viewer_toggle_fog(tc_viewer *v) {

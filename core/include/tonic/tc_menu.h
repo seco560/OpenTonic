@@ -26,7 +26,8 @@ extern "C" {
 #endif
 
 /* ---- Options: what the menu's OPTIONS screen sets; the frontends keep them across launches and give them to every
- * level's viewer (tc_viewer_set_view, tc_viewer_set_look, tc_viewer_set_hud_auto_hide, their own Dolby switch). */
+ * level's viewer (tc_viewer_set_view, tc_viewer_set_fov, tc_viewer_set_look, tc_viewer_set_hud_auto_hide) and to their
+ * own sound (the music's and the sound effects' volume, the Dolby switch). */
 typedef struct tc_options {
     float gamma;              /* display gamma, 0.5 - 2.5, 1 = unchanged */
     float animation_speed;    /* the viewer's playback rate (tc_viewer_step_speed's steps), 1 = the game's */
@@ -36,11 +37,14 @@ typedef struct tc_options {
     bool hud_auto_hide;       /* the HUD's elements show when they change, then slide out */
     bool invert_y;            /* look up / down reversed */
     float look_sensitivity;   /* x the look speed, 0.25 - 4 */
+    float music_volume;       /* 0 - 1, 1 = as recorded (the frontends' music player) */
+    float sound_volume;       /* 0 - 1: the sound effects and the speech (tc_mixer.gain) */
+    float fov;                /* the field of view as , . step it: degrees, horizontal at 4:3, 50 - 120 (86 the game's) */
 } tc_options;
 
 void tc_options_defaults(tc_options *o);
-/* "key=value" lines (gamma, animation_speed, lighting, fog, dolby, hud_auto_hide, invert_y, look_sensitivity): the
- * frontends' file. Unknown keys and bad values are passed by; parse starts from the defaults. */
+/* "key=value" lines (gamma, animation_speed, lighting, fog, dolby, hud_auto_hide, invert_y, look_sensitivity,
+ * music_volume, sound_volume, fov): the frontends' file. Unknown keys and bad values are passed by; parse starts from the defaults. */
 size_t tc_options_write(const tc_options *o, char *out, size_t size);
 void tc_options_parse(tc_options *o, const char *text, size_t size);
 
@@ -127,8 +131,11 @@ typedef struct tc_menu {
     tc_options options;
     tc_menu_screen erase_from;  /* the screen the erase question came from (LOAD or DELETE GAME) */
     tc_menu_screen options_from; /* OPTIONS goes back there (the main menu or the game menu) */
+    int options_first;          /* OPTIONS: the first option in view (the list scrolls; BACK stays below it) */
+    int drag_item;              /* OPTIONS: the slider the last click took hold of (tc_menu_drag moves it), -1 none */
     /* What the pointer can hit, from the last tc_menu_build: viewport rects (x0, y0, x1, y1), the choice, and a part (0
-     * the choice; -1 / +1 an option's value, left or right of its middle: a click steps it that way). */
+     * the choice; -1 / +1 an option's value, left or right of its middle: a click steps it that way; 2 a slider's bar:
+     * a click sets the value there; -3 / +3 the scroll bar above / below its thumb: the list moves a few rows). */
     struct { float rect[4]; int16_t item, part; } hits[96];
     uint32_t hit_count;
     tc_menu_command command;    /* the last one, until tc_menu_take_command */
@@ -160,6 +167,11 @@ void tc_menu_type(tc_menu *m, uint32_t codepoint);
  * TC_MI_BACK (the frontends). */
 bool tc_menu_pointer(tc_menu *m, float x, float y);
 bool tc_menu_click(tc_menu *m, float x, float y);
+/* The pointer moved with its button held: a slider the click took hold of follows it (true: its value changed, the
+ * command is TC_MC_OPTIONS). */
+bool tc_menu_drag(tc_menu *m, float x, float y);
+/* The wheel, rows > 0 down: OPTIONS' list scrolls (the selection stays in view), LOAD / DELETE GAME's selection moves. */
+void tc_menu_scroll(tc_menu *m, int rows);
 /* The game menu (or its OPTIONS) is showing: draw it over the game (its layers dim and swirl). */
 bool tc_menu_in_game(const tc_menu *m);
 /* The command the last inputs gave, and clears it. */

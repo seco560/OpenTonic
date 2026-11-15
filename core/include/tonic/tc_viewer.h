@@ -393,8 +393,8 @@ typedef struct tc_viewer {
      * carry's place and camera place; "": his start). */
     char level_name[64], arrival_place[64], arrival_camera_place[64];
 
-    /* The game menu is over the game (tc_viewer_set_game_menu): paused, the camera drifting round Ed from a zoom picked
-     * on opening, turning game_menu_turn (+-1) a way, rising and falling (game_menu_phase); through the play camera, so
+    /* The game menu is over the game (tc_viewer_set_game_menu): paused, the camera drifting round Ed from the view
+     * it was paused on, turning game_menu_turn (+-1) a way, rising and falling (game_menu_phase); through the play camera, so
      * against the level's surfaces as ever. */
     bool game_menu;
     float game_menu_time, game_menu_turn, game_menu_phase;
@@ -494,8 +494,8 @@ uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events);
 const tc_sound_source *tc_viewer_sound_sources(const tc_viewer *v);
 /* A sound's gains now, heard from the camera as the original's micro hears it, through its mixer (tc_sound_gains): its
  * event's resource volume (events.tsv, 0..1) times the 3D volume, pan and rear value of where it sounds from; dolby: the
- * Dolby Surround option (the original's sound menu; off by default). false: it is to stop (a perso's own sound, the perso
- * deactivated or removed since). The frontends call it when a sound starts, and every frame for the sounds whose event
+ * Dolby Surround option (the original's sound menu; off by default). false: it is to stop, or not to start (a perso's
+ * own sound, the perso deactivated or removed since; a sound nobody can ever hear: tc_cast_sound_lost). The frontends call it when a sound starts, and every frame for the sounds whose event
  * follows its emitter (events.tsv's follow column) while they play. */
 bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float event_volume, bool dolby, tc_sound_mix *out);
 
@@ -504,7 +504,7 @@ void tc_viewer_step_speed(tc_viewer *v, int dir);   /* [ ]: 1/4, 1/3, 1/2, 2/3, 
 /* P. Playing, the look inputs and the wheel still move the camera round Ed; resuming puts it back. */
 void tc_viewer_toggle_pause(tc_viewer *v);
 /* The game menu (Esc, Start; tc_menu.h TC_MS_GAME) opened over the game or closed: the game holds while it is open (the
- * exe's in-game menu does), the camera drifts slowly round Ed, from a zoom picked at random, against the level as the
+ * exe's in-game menu does), the camera drifts slowly round Ed, starting from the very view the game was paused on, against the level as the
  * play camera is; closing gives the game and the camera back as they were. Photo mode is tc_viewer_toggle_pause. */
 void tc_viewer_set_game_menu(tc_viewer *v, bool on);
 /* That camera, for a frontend that isn't calling tc_viewer_update (a paused playback, tc_replay_pause). */
@@ -520,6 +520,10 @@ void tc_viewer_set_view(tc_viewer *v, float gamma, float animation_speed, bool f
  * a frontend saves the game when it changes (tc_save.h). 0 on levels without a cast. */
 uint32_t tc_viewer_save_serial(const tc_viewer *v);
 void tc_viewer_step_fov(tc_viewer *v, int dir);     /* , .: 5 degree steps of the horizontal at 4:3 (86 default), 50-120 */
+/* The menus' field of view (tc_options.fov), in the same measure and range; during a cutscene's own shot it is kept
+ * for when the shot ends. tc_viewer_fov: the player's now (after , . : what the options should say). */
+void tc_viewer_set_fov(tc_viewer *v, float degrees);
+float tc_viewer_fov(const tc_viewer *v);
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
 void tc_viewer_cycle_lighting(tc_viewer *v);        /* L: the original's lighting <-> the port's earlier one */
 void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list (default) -> all -> his alone -> ... */

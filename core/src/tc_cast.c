@@ -30,6 +30,26 @@ static tc_ai_perso *cast_each(void *user, uint32_t k) {
 
 /* ---- sounds (tc_sound.h) ---- */
 
+/* The main actor under any of his ids (his own, the alias the fix Ed has): one emitter, so that a loop he started is
+ * the one a stop naming him ends, whoever's script asked. */
+int32_t tc_cast_sound_emitter(const tc_cast *c, int32_t emitter) {
+    if (emitter > 0 && (emitter == c->main_id || (c->level->cast.main_alias && emitter == c->level->cast.main_alias)))
+        return TC_SOUND_EMITTER_MAIN;
+    return emitter;
+}
+
+/* A sound nobody can ever hear: its emitter is no perso of this level (the table is made once, at the load), or one
+ * without a sector in a level that has them and never to get one (a ghost). tc_cast_sound_place gives such a sound
+ * volume 0 for good; a loop of it would hold a voice until the level changes. */
+bool tc_cast_sound_lost(const tc_cast *c, const tc_sound_source *s) {
+    int32_t k;
+    if (s->kind == TC_SOUND_FLAT || s->emitter == TC_SOUND_EMITTER_MAIN || s->emitter == TC_SOUND_EMITTER_POINT ||
+        tc_cast_sound_emitter(c, s->emitter) == TC_SOUND_EMITTER_MAIN)
+        return false;
+    if (s->emitter <= 0 || (uint32_t)s->emitter >= c->id_count || (k = c->by_id[s->emitter]) < 0) return true;
+    return (uint32_t)k >= c->count && c->sectors && c->sectors->count;
+}
+
 int tc_cast_sound_place(const tc_cast *c, const tc_sound_source *s, const tc_sound_listener *l, int *pan, int *dolby) {
     const tc_ai_perso *q = NULL;
     const tc_sound_rolloff *own = NULL;
@@ -85,6 +105,10 @@ static void report_sound(tc_cast *c, tc_cast_actor *a, tc_ai_perso *p, uint32_t 
     src.kind = p->sound_kind[k];
     src.emitter = p->sound_emitter[k] ? p->sound_emitter[k] : p->self_id;
     q = src.emitter == p->self_id ? p : cast_find(c, src.emitter);
+    if (tc_cast_sound_emitter(c, src.emitter) == TC_SOUND_EMITTER_MAIN) { /* on the main actor: his one emitter */
+        src.emitter = TC_SOUND_EMITTER_MAIN;
+        if (c->main) q = c->main;
+    }
     src.serial = q ? q->sound_serial : 0;
     if (q && q->frozen && src.kind == TC_SOUND_OWN) { /* a prop the removal guard keeps for an inactive or removed perso:
                                                          the exe's would neither animate nor sound (BUGS.md 13: cavedoc's

@@ -37,6 +37,9 @@ void menu_draw(menu_screen *s, gpu_frame *f, SDL_GPURenderPass *pass);
  * one goes back. */
 void menu_pointer(menu_screen *s, float x, float y, float w, float h);
 tc_menu_command menu_click(menu_screen *s, float x, float y, float w, float h, bool right);
+/* The pointer moved with the left button held (a slider follows it); the wheel, rows > 0 down. */
+tc_menu_command menu_drag(menu_screen *s, float x, float y, float w, float h);
+void menu_wheel(menu_screen *s, int rows);
 
 /* ---- saved games: <pref>/Saves/<NAME>.ttsv ---- */
 char *saves_folder(void);

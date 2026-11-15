@@ -13,6 +13,7 @@ typedef enum tc_rec_door {
     TC_RD_HUD,   /* the HUD is there (tc_viewer_set_hud): a sliding stage waits for Jump behind its start text */
     TC_RD_SET_VIEW, /* tc_viewer_set_view: a = fog | lighting << 1 | speed step << 4, x = gamma */
     TC_RD_GAME_MENU, /* tc_viewer_set_game_menu: a = on */
+    TC_RD_SET_FOV, /* tc_viewer_set_fov: x = degrees */
     TC_RD_COUNT
 } tc_rec_door_id;
 

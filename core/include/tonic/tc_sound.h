@@ -75,7 +75,8 @@ int tc_sound_dolby(tc_vec3 offset, tc_vec3 front);
  * v (128 - pan) (128 - dolby) >> 5 / 65536 (twice the stereo ones ahead, as much at the side, none behind) and
  * rear = v dolby 2 / 65536 goes to the mono rear signal, which tc_sound_dolby_encode puts into the two channels. (That
  * path in the exe hands the pan's lanes over the other way round, left and right swapped against the stereo path:
- * taken as a slip, not ported.) */
+ * taken as a slip, not ported. Its front gain words also pass 32767 for a loud sound off the middle and ahead, which its
+ * signed multiply reads as negative: held at 32767 here, the user's choice, DECOMP.md.) */
 typedef struct tc_sound_mix { float left, right, rear; } tc_sound_mix;
 void tc_sound_gains(int volume, int pan, int dolby, float event_volume, bool dolby_on, tc_sound_mix *out);
 

@@ -13,5 +13,8 @@ void music_play(const char *level, const char *audio_dir);
 void music_stop(void);
 void music_set_muted(bool muted);  /* the sound effects too (sfx.h) */
 bool music_muted(void);
+/* The menus' MUSIC VOLUME, 0..1 (the intro movie's sound follows it: music_gain). */
+void music_set_volume(float volume);
+float music_gain(void);  /* what a music stream plays at now: 0 muted, else the volume */
 
 #endif

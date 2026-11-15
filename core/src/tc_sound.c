@@ -90,6 +90,12 @@ int tc_sound_dolby(tc_vec3 offset, tc_vec3 front) {
     return p < 0 ? 0 : p > 127 ? 127 : p;
 }
 
+/* A Dolby front gain as the mixer's 16-bit word: the product >> 5, held at the word's largest. */
+static int front_word(int product) {
+    int w = product >> 5;
+    return w > 32767 ? 32767 : w;
+}
+
 void tc_sound_gains(int volume, int pan, int dolby, float event_volume, bool dolby_on, tc_sound_mix *out) {
     int res = (int)(event_volume * 127 + 0.5f), v;
     if (res < 0) res = 0;
@@ -104,8 +110,12 @@ void tc_sound_gains(int volume, int pan, int dolby, float event_volume, bool dol
     }
     if (dolby < 0) dolby = 0;
     if (dolby > 127) dolby = 127;
-    out->left = (float)(int16_t)((uint32_t)(v * (128 - pan) * (128 - dolby)) >> 5) / 65536;
-    out->right = (float)(int16_t)((uint32_t)(v * pan * (128 - dolby)) >> 5) / 65536;
+    /* Not the exe's (DECOMP.md "Where the port is not the exe", 13; the user's choice 2026-11-15): its front gain words
+     * pass 32767 for a loud sound off the middle and ahead (at full volume, once (128 - pan) (128 - dolby) is over 8322;
+     * centred and dead ahead is 8192) and its signed pmulhw reads them as negative, turning that side's phase. Held at
+     * 32767 here. */
+    out->left = (float)front_word(v * (128 - pan) * (128 - dolby)) / 65536;
+    out->right = (float)front_word(v * pan * (128 - dolby)) / 65536;
     out->rear = (float)(int16_t)(v * dolby * 2) / 65536;
 }
 

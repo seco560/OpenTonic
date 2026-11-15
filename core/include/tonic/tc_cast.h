@@ -148,6 +148,11 @@ typedef struct tc_cast {
  * position is its perso's now; the main actor (TC_SOUND_EMITTER_MAIN or his id) is always heard, at his own position; a
  * perso whose sector is not known is not (volume 0), as the exe's callback (0x422860) has it. */
 int tc_cast_sound_place(const tc_cast *c, const tc_sound_source *s, const tc_sound_listener *l, int *pan, int *dolby);
+/* `emitter` as the sources name it: TC_SOUND_EMITTER_MAIN for the main actor under any of his ids. */
+int32_t tc_cast_sound_emitter(const tc_cast *c, int32_t emitter);
+/* True: nobody can ever hear this sound (its emitter is no perso of the level, or a ghost in a level with sectors): not
+ * to be started, and stopped if it plays (tc_viewer_sound_mix says so). */
+bool tc_cast_sound_lost(const tc_cast *c, const tc_sound_source *s);
 
 /* main: the main actor's AI (it gets the cast's lookup; must outlive the cast). Levels without a CAST chunk give an
  * empty cast (count 0). */

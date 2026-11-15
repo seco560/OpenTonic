@@ -14,7 +14,7 @@
 #   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
 #   make hudcheck   -> the game's HUD (tc_hud.h): its data, Totalski's start text and clock, the standard HUD, the inventory
 #   make debugcheck -> the debug menu (tc_debug.h) on sud0: its moves, a power switched off, reload, a replay
-#   make soundcheck -> 3D sound (tc_sound.h): the exe's maths on hand-worked cases, sud0's SND3 data, a perso heard
+#   make soundcheck -> 3D sound (tc_sound.h): the exe's maths on hand-worked cases, sud0's SND3 data, a perso heard, the mixer (tc_mixer.h)
 #   make menucheck  -> the main menu (tc_menu.h: menu.ttmn, its screens and layout) and saved games (tc_save.h) on sud0
 #   make checkall   -> THE GATE: every check above in turn, one line each, logs in build/logs; fails if any does. Also the
 #                      Special Edition's sectors when ../files/out/se/ttlv is there. Imported levels (out/Imported) are

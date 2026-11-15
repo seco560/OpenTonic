@@ -207,6 +207,11 @@ Each item is marked in the code or in docs/NOTES.md.
    **2026-11-04:** the entity loop read (docs/ENGINE.md): the always-awake and run-first lists are followed; World and
    the pit markers may force Ed (docs/NOTES.md "Falling into pits"). **2026-11-05:** the cast's card types 6 and 7 run,
    its persos' collision moves with them, Ed rides them, FUNC 54 works (docs/ENGINE.md "Moving collision, read").
+13. **Dolby Surround's front gains are held at a 16-bit word (deliberate, user's choice 2026-11-15).** The driver's
+   Dolby voice loop (`WAVMWSVR.DLL` 0x1000d4f7) makes them v x (pan or 128 - pan) x (128 - dolby) >> 5, which passes
+   32767 for a loud sound ahead and off the middle; its signed `pmulhw` then reads the word as negative and that side
+   plays with its phase turned (a Pro Logic decoder sends it to the rear). `tc_sound_gains` holds the word at 32767:
+   no gain that fits changes, Dolby off is untouched (docs/ENGINE.md "Dolby Surround", BUGS.md 2026-11-15).
 
 ## Plan, in order (mechanics first)
 1. **The user checks in the game**: the ledge hang (jump at a ledge too high to step on), shimmy, climb; steps

@@ -144,6 +144,23 @@ final class MenuView: MTKView, MTKViewDelegate {
         if tc_menu_click(state, x, y) { takeCommand() }
     }
 
+    /// Held: a slider the click took hold of follows the pointer.
+    override func mouseDragged(with event: NSEvent) {
+        let (x, y) = viewport(event)
+        if tc_menu_drag(state, x, y) { takeCommand() }
+    }
+
+    /// The wheel: the lists (OPTIONS, LOAD / DELETE GAME) a row at a time; a trackpad's small steps add up to rows.
+    private var wheel: CGFloat = 0
+    override func scrollWheel(with event: NSEvent) {
+        wheel += event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 24 : (event.scrollingDeltaY > 0 ? 1 : event.scrollingDeltaY < 0 ? -1 : 0)
+        let rows = Int(wheel)
+        if rows != 0 {
+            wheel -= CGFloat(rows)
+            tc_menu_scroll(state, Int32(-rows))
+        }
+    }
+
     override func rightMouseDown(with event: NSEvent) { press(TC_MI_BACK) }
 
     private func press(_ input: tc_menu_input) {
@@ -374,6 +391,7 @@ final class SplashView: NSView {
 }
 
 /// The menu's options (tc_options) across launches, in UserDefaults: "gamma", "animationSpeed", "fog", "lighting" here;
+/// the field of view ("fieldOfView", as , . step it); the volumes ("musicVolume", Music; "soundVolume", Sfx),
 /// Dolby Surround ("dolbySurround", Sfx), the HUD's auto-hide ("hudAutoHide") and the look ("lookSensitivity",
 /// "invertY") as their keys already kept them. Every level's viewer gets them (apply); the keys that change them in a
 /// level keep the new value (save).
@@ -391,6 +409,9 @@ final class SplashView: NSView {
             o.hud_auto_hide = d.bool(forKey: "hudAutoHide")
             o.invert_y = d.bool(forKey: "invertY")
             o.look_sensitivity = d.object(forKey: "lookSensitivity") as? Float ?? 1
+            o.music_volume = Music.shared.volume
+            o.sound_volume = Sfx.shared.volume
+            o.fov = d.object(forKey: "fieldOfView") as? Float ?? 86
             return o
         }
         set {
@@ -403,12 +424,16 @@ final class SplashView: NSView {
             d.set(newValue.hud_auto_hide, forKey: "hudAutoHide")
             d.set(newValue.invert_y, forKey: "invertY")
             d.set(newValue.look_sensitivity, forKey: "lookSensitivity")
+            if Music.shared.volume != newValue.music_volume { Music.shared.volume = newValue.music_volume }
+            if Sfx.shared.volume != newValue.sound_volume { Sfx.shared.volume = newValue.sound_volume }
+            d.set(newValue.fov, forKey: "fieldOfView")
         }
     }
 
     static func apply(_ v: UnsafeMutablePointer<tc_viewer>) {
         let o = options
         tc_viewer_set_view(v, o.gamma, o.animation_speed, o.fog, UInt32(o.lighting))
+        if tc_viewer_fov(v) != o.fov { tc_viewer_set_fov(v, o.fov) }
     }
 
     /// After a key changed gamma, the speed, the fog or the lighting in a level.

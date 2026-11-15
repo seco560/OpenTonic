@@ -374,6 +374,7 @@ final class GameView: MTKView {
         }
         if event.keyCode == 43 || event.keyCode == 47 {  // , / .: field of view (vertical, 5° steps)
             tc_viewer_step_fov(v, event.keyCode == 47 ? 1 : -1)
+            UserDefaults.standard.set(tc_viewer_fov(v), forKey: "fieldOfView")  // the menus' FIELD OF VIEW says the same
             updateTitle()
             return
         }

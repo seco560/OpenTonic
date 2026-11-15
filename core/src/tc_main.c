@@ -126,7 +126,8 @@ static tc_sound_source main_source(const tc_ai_perso *ai, const tc_cast *cast, u
     memset(&s, 0, sizeof(s));
     s.kind = ai->sound_kind[k];
     s.emitter = TC_SOUND_EMITTER_MAIN;
-    if (ai->sound_emitter[k] && cast && ai->sound_emitter[k] != cast->main_id && ai->find) {
+    if (ai->sound_emitter[k] && cast && tc_cast_sound_emitter(cast, ai->sound_emitter[k]) != TC_SOUND_EMITTER_MAIN &&
+        ai->find) {
         s.emitter = ai->sound_emitter[k];
         q = ai->find(ai->find_user, s.emitter);
     }

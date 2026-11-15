@@ -301,6 +301,15 @@ void menu_pointer(menu_screen *s, float x, float y, float w, float h) {
     if (s->m && w > 0 && h > 0) tc_menu_pointer(s->m, x / w, y / h);
 }
 
+tc_menu_command menu_drag(menu_screen *s, float x, float y, float w, float h) {
+    if (!s->m || w <= 0 || h <= 0) return TC_MC_NONE;
+    return tc_menu_drag(s->m, x / w, y / h) ? tc_menu_take_command(s->m) : TC_MC_NONE;
+}
+
+void menu_wheel(menu_screen *s, int rows) {
+    if (s->m && rows) tc_menu_scroll(s->m, rows);
+}
+
 tc_menu_command menu_click(menu_screen *s, float x, float y, float w, float h, bool right) {
     if (!s->m || w <= 0 || h <= 0) return TC_MC_NONE;
     if (right) return press(s, TC_MI_BACK);

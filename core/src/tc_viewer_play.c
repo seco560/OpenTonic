@@ -114,9 +114,10 @@ void tcv_look(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
     if (v->game_menu && v->playing && v->play) { /* port (the user): behind the game menu, the camera drifts round Ed */
         float t = v->game_menu_time += dt;
+        float u = fminf(1, t / 1.5f), ease = u * u * (3 - 2 * u); /* from rest: the first frame is the paused view */
         v->mouse_dx = v->mouse_dy = 0;
         v->looked = true;
-        tc_cam_look(&v->cam, c, v->game_menu_turn * 0.11f * dt, 0.09f * cosf(0.31f * t + v->game_menu_phase) * dt);
+        tc_cam_look(&v->cam, c, v->game_menu_turn * 0.11f * ease * dt, 0.09f * cosf(0.31f * t + v->game_menu_phase) * dt);
         return;
     }
     float yaw_rate = fmaxf(-1, fminf(1, axis(v, TC_VA_LOOK_RIGHT, TC_VA_LOOK_LEFT) + v->look_x));

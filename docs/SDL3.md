@@ -79,7 +79,7 @@ sdl/
   src/play.c     # .ttlv file reading                                    (Core.swift's Level)
   src/input.c    # key bindings: SDL scancodes -> tc_view_action           (Input.swift)
   src/music.c    # music.tsv lookup, looping WAV streamed from disk      (Music.swift)
-  src/sfx.c      # sound effects: events.tsv, one SDL_AudioStream per voice (Sfx.swift)
+  src/sfx.c      # sound effects: events.tsv, the core's mixer (tc_mixer.h) into one SDL_AudioStream
   src/picker.c   # level select grid                                     (LevelPicker.swift)
   src/intro.c    # intro movie: pl_mpeg decode, audio-clocked frames     (IntroPlayer.swift)
   src/util.c     # path helpers

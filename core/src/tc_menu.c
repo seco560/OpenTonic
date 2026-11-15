@@ -26,6 +26,9 @@ void tc_options_defaults(tc_options *o) {
     o->lighting = 0;
     o->fog = true;
     o->look_sensitivity = 1;
+    o->music_volume = 1;
+    o->sound_volume = 1;
+    o->fov = 86;
 }
 
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ? hi : x; }
@@ -40,14 +43,21 @@ static void sane(tc_options *o) {
     if (o->lighting > 1) o->lighting = 0;
     if (!(o->look_sensitivity == o->look_sensitivity)) o->look_sensitivity = 1;
     o->look_sensitivity = clampf(o->look_sensitivity, 0.25f, 4);
+    if (!(o->music_volume == o->music_volume)) o->music_volume = 1;
+    if (!(o->sound_volume == o->sound_volume)) o->sound_volume = 1;
+    o->music_volume = clampf(o->music_volume, 0, 1);
+    o->sound_volume = clampf(o->sound_volume, 0, 1);
+    if (!(o->fov == o->fov)) o->fov = 86;
+    o->fov = clampf(o->fov, 50, 120); /* tc_viewer_step_fov's range */
 }
 
 size_t tc_options_write(const tc_options *o, char *out, size_t size) {
     int n = snprintf(out, size,
                      "gamma=%.4f\nanimation_speed=%.4f\nlighting=%u\nfog=%d\ndolby=%d\nhud_auto_hide=%d\ninvert_y=%d\n"
-                     "look_sensitivity=%.4f\n",
+                     "look_sensitivity=%.4f\nmusic_volume=%.2f\nsound_volume=%.2f\nfov=%.0f\n",
                      (double)o->gamma, (double)o->animation_speed, (unsigned)o->lighting, o->fog, o->dolby,
-                     o->hud_auto_hide, o->invert_y, (double)o->look_sensitivity);
+                     o->hud_auto_hide, o->invert_y, (double)o->look_sensitivity, (double)o->music_volume,
+                     (double)o->sound_volume, (double)o->fov);
     return n < 0 ? 0 : (size_t)n;
 }
 
@@ -74,6 +84,9 @@ void tc_options_parse(tc_options *o, const char *text, size_t size) {
         else if (!strcmp(line, "hud_auto_hide")) o->hud_auto_hide = x != 0;
         else if (!strcmp(line, "invert_y")) o->invert_y = x != 0;
         else if (!strcmp(line, "look_sensitivity")) o->look_sensitivity = (float)x;
+        else if (!strcmp(line, "music_volume")) o->music_volume = (float)x;
+        else if (!strcmp(line, "sound_volume")) o->sound_volume = (float)x;
+        else if (!strcmp(line, "fov")) o->fov = (float)x;
     }
     sane(o);
 }
@@ -253,7 +266,12 @@ enum { MAIN_START, MAIN_OPTIONS, MAIN_VIEWER, MAIN_REPLAYS, MAIN_EXIT, MAIN_COUN
 enum { START_NEW, START_LOAD, START_DELETE, START_COUNT };
 enum { GAME_RESUME, GAME_OPTIONS, GAME_PHOTO, GAME_MAIN, GAME_COUNT }; /* quitting: the main menu's EXIT GAME (the user) */
 #define LIST_ROWS 6 /* LOAD / DELETE GAME: games shown at once */
-enum { OPT_GAMMA, OPT_SPEED, OPT_LIGHTING, OPT_FOG, OPT_DOLBY, OPT_HUD, OPT_INVERT, OPT_LOOK, OPT_BACK, OPT_COUNT };
+/* OPTIONS (port): the sound, then the picture, then the look, then the viewer's speed; BACK last, always in view. */
+enum {
+    OPT_MUSIC, OPT_SOUND, OPT_DOLBY, OPT_FOV, OPT_GAMMA, OPT_LIGHTING, OPT_FOG, OPT_HUD, OPT_LOOK, OPT_INVERT, OPT_SPEED,
+    OPT_BACK, OPT_COUNT
+};
+#define OPT_ROWS 8 /* options shown at once */
 
 int tc_menu_item_count(const tc_menu *m, tc_menu_screen s) {
     switch (s) {
@@ -283,6 +301,9 @@ static void option_text(const tc_menu *m, int item, const char **name, char *val
     const tc_options *o = &m->options;
     value[0] = 0;
     switch (item) {
+    case OPT_MUSIC: *name = "MUSIC VOLUME"; snprintf(value, size, "%d", (int)(o->music_volume * 100 + 0.5f)); break;
+    case OPT_SOUND: *name = "SOUND VOLUME"; snprintf(value, size, "%d", (int)(o->sound_volume * 100 + 0.5f)); break;
+    case OPT_FOV: *name = "FIELD OF VIEW"; snprintf(value, size, "%d", (int)(o->fov + 0.5f)); break;
     case OPT_GAMMA: *name = "GAMMA"; snprintf(value, size, "%.2f", (double)o->gamma); break;
     case OPT_SPEED: *name = "ANIMATION SPEED"; snprintf(value, size, "%s", speed_text(o->animation_speed)); break;
     case OPT_LIGHTING: *name = "LIGHTING"; snprintf(value, size, "%s", o->lighting ? "PORT" : "ORIGINAL"); break;
@@ -376,6 +397,7 @@ void tc_menu_show(tc_menu *m, tc_menu_screen s) {
     if (s >= TC_MS_COUNT) s = TC_MS_MAIN;
     if (s == TC_MS_OPTIONS && m->screen != TC_MS_OPTIONS)
         m->options_from = m->screen == TC_MS_GAME ? TC_MS_GAME : TC_MS_MAIN;
+    m->drag_item = -1;
     if (s == TC_MS_GAME && m->screen != TC_MS_OPTIONS) m->selected[TC_MS_GAME] = GAME_RESUME; /* opened afresh */
     m->screen = s;
     if (s == TC_MS_NEW_GAME) m->name[0] = 0;
@@ -406,10 +428,52 @@ static bool same_name(const char *a, const char *b) {
     return *a == *b;
 }
 
+/* The options shown as sliders: where the value stands on its bar, 0..1 (gamma and the look speed by their ratio, as
+ * their steps are), or -1 for the others. */
+static float option_fraction(const tc_options *o, int item) {
+    switch (item) {
+    case OPT_MUSIC: return o->music_volume;
+    case OPT_SOUND: return o->sound_volume;
+    case OPT_FOV: return (o->fov - 50) / 70;
+    case OPT_GAMMA: return logf(o->gamma / 0.5f) / logf(5);
+    case OPT_LOOK: return logf(o->look_sensitivity / 0.25f) / logf(16);
+    default: return -1;
+    }
+}
+
+/* A slider put at `f` of its bar (the pointer's): the volumes by 5 %, the field of view by a degree, the two ratios
+ * by 0.01 (1 held a little). True: the value changed. */
+static bool set_option_fraction(tc_menu *m, int item, float f) {
+    tc_options *o = &m->options, was = *o;
+    float x;
+    f = f < 0 ? 0 : f > 1 ? 1 : f;
+    switch (item) {
+    case OPT_MUSIC: o->music_volume = roundf(f * 20) / 20; break;
+    case OPT_SOUND: o->sound_volume = roundf(f * 20) / 20; break;
+    case OPT_FOV: o->fov = roundf(50 + f * 70); break;
+    case OPT_GAMMA:
+        x = roundf(0.5f * powf(5, f) * 100) / 100;
+        o->gamma = fabsf(x - 1) < 0.04f ? 1 : x;
+        break;
+    case OPT_LOOK:
+        x = roundf(0.25f * powf(16, f) * 100) / 100;
+        o->look_sensitivity = fabsf(x - 1) < 0.05f ? 1 : x;
+        break;
+    default: return false;
+    }
+    sane(o);
+    if (!memcmp(&was, o, sizeof(was))) return false;
+    m->command = TC_MC_OPTIONS;
+    return true;
+}
+
 static void step_option(tc_menu *m, int item, int dir) {
     tc_options *o = &m->options;
     int k;
     switch (item) {
+    case OPT_MUSIC: o->music_volume = roundf(o->music_volume * 10 + (dir > 0 ? 1.0f : -1.0f)) / 10; break;
+    case OPT_SOUND: o->sound_volume = roundf(o->sound_volume * 10 + (dir > 0 ? 1.0f : -1.0f)) / 10; break;
+    case OPT_FOV: o->fov = roundf(o->fov) + (dir > 0 ? 5.0f : -5.0f); break; /* tc_viewer_step_fov's steps */
     case OPT_GAMMA: o->gamma *= dir > 0 ? 1.1f : 1 / 1.1f; break; /* tc_viewer_step_gamma's steps */
     case OPT_SPEED:
         for (k = 0; k < SPEED_COUNT && SPEEDS[k] < o->animation_speed - 0.001f; k++) {}
@@ -429,6 +493,35 @@ static void step_option(tc_menu *m, int item, int dir) {
     }
     sane(o);
     m->command = TC_MC_OPTIONS;
+}
+
+/* OPTIONS' list scrolled so that the selection shows (BACK: the list's end). */
+static void options_in_view(tc_menu *m) {
+    int sel = m->selected[TC_MS_OPTIONS], last = OPT_BACK - OPT_ROWS;
+    if (last < 0) last = 0;
+    if (sel >= OPT_BACK) m->options_first = last;
+    else if (sel < m->options_first) m->options_first = sel;
+    else if (sel >= m->options_first + OPT_ROWS) m->options_first = sel - OPT_ROWS + 1;
+    if (m->options_first > last) m->options_first = last;
+    if (m->options_first < 0) m->options_first = 0;
+}
+
+void tc_menu_scroll(tc_menu *m, int rows) {
+    int *sel = &m->selected[m->screen], n = tc_menu_item_count(m, m->screen);
+    if (m->screen == TC_MS_OPTIONS) {
+        int last = OPT_BACK - OPT_ROWS;
+        m->options_first += rows;
+        if (m->options_first > last) m->options_first = last;
+        if (m->options_first < 0) m->options_first = 0;
+        if (*sel < OPT_BACK) { /* the selection comes along when it would leave the view */
+            if (*sel < m->options_first) *sel = m->options_first;
+            if (*sel >= m->options_first + OPT_ROWS) *sel = m->options_first + OPT_ROWS - 1;
+        }
+    } else if ((m->screen == TC_MS_LOAD || m->screen == TC_MS_DELETE) && n > 0) {
+        *sel += rows;
+        if (*sel >= n) *sel = n - 1;
+        if (*sel < 0) *sel = 0;
+    }
 }
 
 void tc_menu_input_press(tc_menu *m, tc_menu_input in) {
@@ -504,8 +597,10 @@ void tc_menu_input_press(tc_menu *m, tc_menu_input in) {
         }
         break;
     case TC_MS_OPTIONS:
-        if (vertical) *sel = (*sel + (in == TC_MI_DOWN ? 1 : n - 1)) % n;
-        else if (in == TC_MI_BACK || (in == TC_MI_CONFIRM && *sel == OPT_BACK)) tc_menu_show(m, m->options_from);
+        if (vertical) {
+            *sel = (*sel + (in == TC_MI_DOWN ? 1 : n - 1)) % n;
+            options_in_view(m);
+        } else if (in == TC_MI_BACK || (in == TC_MI_CONFIRM && *sel == OPT_BACK)) tc_menu_show(m, m->options_from);
         else if (in == TC_MI_LEFT || in == TC_MI_RIGHT) step_option(m, *sel, in == TC_MI_RIGHT ? 1 : -1);
         else if (in == TC_MI_CONFIRM) step_option(m, *sel, 1);
         break;
@@ -537,6 +632,16 @@ static int hit_at(const tc_menu *m, float x, float y) {
     return -1;
 }
 
+/* A slider's hit box is its bar and BAR_PAD of its length past each end (so the ends can be reached): where x is on
+ * the bar, 0..1. */
+#define BAR_PAD 0.08f
+static float bar_fraction(const float rect[4], float x) {
+    float w = rect[2] - rect[0], f;
+    if (w <= 0) return 0;
+    f = ((x - rect[0]) / w * (1 + 2 * BAR_PAD)) - BAR_PAD;
+    return f < 0 ? 0 : f > 1 ? 1 : f;
+}
+
 bool tc_menu_pointer(tc_menu *m, float x, float y) {
     int h = hit_at(m, x, y);
     if (h < 0) return false;
@@ -548,10 +653,26 @@ bool tc_menu_click(tc_menu *m, float x, float y) {
     int h = hit_at(m, x, y);
     if (h < 0) return false;
     m->selected[m->screen] = m->hits[h].item;
-    if (m->screen == TC_MS_OPTIONS && m->hits[h].item != OPT_BACK)
-        step_option(m, m->hits[h].item, m->hits[h].part < 0 ? -1 : 1);
-    else tc_menu_input_press(m, TC_MI_CONFIRM);
+    m->drag_item = -1;
+    if (m->screen == TC_MS_OPTIONS && m->hits[h].item != OPT_BACK) {
+        int part = m->hits[h].part;
+        if (part == 3 || part == -3) tc_menu_scroll(m, part);
+        else if (part == 2) { /* a slider's bar: the value goes there, and follows the pointer while it is held */
+            m->drag_item = m->hits[h].item;
+            set_option_fraction(m, m->hits[h].item, bar_fraction(m->hits[h].rect, x));
+        } else if (part) step_option(m, m->hits[h].item, part < 0 ? -1 : 1);
+    } else tc_menu_input_press(m, TC_MI_CONFIRM);
     return true;
+}
+
+bool tc_menu_drag(tc_menu *m, float x, float y) {
+    uint32_t k;
+    (void)y; /* held: it follows sideways wherever the pointer strays */
+    if (m->screen != TC_MS_OPTIONS || m->drag_item < 0) return false;
+    for (k = 0; k < m->hit_count; k++)
+        if (m->hits[k].item == m->drag_item && m->hits[k].part == 2)
+            return set_option_fraction(m, m->drag_item, bar_fraction(m->hits[k].rect, x));
+    return false;
 }
 
 void tc_menu_type(tc_menu *m, uint32_t c) {
@@ -715,6 +836,21 @@ static void put_arrow(draw *d, bool left, float x, float y, float scale, const f
     }
 }
 static const float DIM[4] = {0.78f, 0.78f, 0.78f, 1};   /* port: a choice not selected */
+static const float TRACK[4] = {0.3f, 0.3f, 0.3f, 0.85f}; /* port: a slider's bar past its value, the scroll bar's rail */
+static const float GOLD[4] = {1.3f, 1.0f, 0.35f, 1};     /* port: a slider's bar up to its value (the title's gold) */
+static const float GOLD_DIM[4] = {0.95f, 0.72f, 0.25f, 1};
+
+/* A plain bar x0..x1, y0..y1 (font units): the atlas has no blank texel to draw with, so it is the gold from the
+ * middle of FontPC's 'I' (its stem), stretched. */
+static void put_block(draw *d, float x0, float y0, float x1, float y1, const float color[4]) {
+    const tc_hud_font *f = FONT_CHOICE < d->m->data.font_count ? &d->m->data.fonts[FONT_CHOICE] : NULL;
+    const tc_hud_glyph *g = f ? glyph_of(f, 'I') : NULL;
+    float uv[4], u, v;
+    if (!g || g->cell[0] == g->cell[2] || x1 <= x0 || y1 <= y0) return;
+    u = 0.5f * (g->uv[0] + g->uv[2]), v = 0.5f * (g->uv[1] + g->uv[3]);
+    uv[0] = uv[2] = u, uv[1] = uv[3] = v;
+    put_quad(d, x0, y0, x1, y1, uv, color);
+}
 #define SELECTED_SCALE 1.12f                            /* port: a selected choice grows a little */
 #define CURSOR_GAP 0.55f
 
@@ -881,30 +1017,54 @@ void tc_menu_build(tc_menu *m, float aspect) {
         }
         break;
     }
-    case TC_MS_OPTIONS: { /* port: a name at the left, its value at the right, smaller than a menu's choices */
+    case TC_MS_OPTIONS: { /* port: a name at the left, its value at the right, smaller than a menu's choices: OPT_ROWS
+                           * of them in view, the list scrolling under the selection, BACK below; the numbers that
+                           * run over a range (volumes, field of view, gamma, look speed) as sliders */
         const float scale = 0.62f, top = 2.0f, step = 0.58f, left = -3.6f, right = 2.9f;
+        const float bar0 = 0.95f, bar1 = 2.8f, number = 3.55f, rail = 4.45f;
+        int first, options = OPT_BACK;
         put_title(&d, text(m, "MNU_TITLEOPTIONS", "OPTIONS"));
-        for (k = 0; k < n; k++) {
+        if (m->options_first > options - OPT_ROWS) m->options_first = options - OPT_ROWS;
+        if (m->options_first < 0) m->options_first = 0;
+        first = m->options_first;
+        for (k = first; k < options && k < first + OPT_ROWS; k++) {
             const char *name;
-            float y = top - step * (float)k, s = k == sel ? scale * SELECTED_SCALE : scale;
+            float y = top - step * (float)(k - first), s = k == sel ? scale * SELECTED_SCALE : scale;
+            float f = option_fraction(&m->options, k);
             const float *c = k == sel ? WHITE : DIM;
             option_text(m, k, &name, value, sizeof(value));
-            if (k == OPT_BACK) {
-                put_choice(&d, name, 0, y - 0.25f, scale, k == sel, k);
-                continue;
-            }
             put_text(&d, FONT_CHOICE, name, left + 0.5f * text_width(m, FONT_CHOICE, name, s), y, s, c, k == sel);
             if (k == sel) put_cursor(&d, left, y, s);
+            if (f >= 0) { /* a slider: its bar, filled up to the value, a knob there, the number after it */
+                float pad = BAR_PAD * (bar1 - bar0), x = bar0 + (bar1 - bar0) * (f > 1 ? 1 : f);
+                float thick = k == sel ? 0.075f : 0.06f, knob = k == sel ? 0.2f : 0.16f;
+                put_block(&d, bar0, y - thick, bar1, y + thick, TRACK);
+                put_block(&d, bar0, y - thick, x, y + thick, k == sel ? GOLD : GOLD_DIM);
+                put_block(&d, x - 0.07f, y - knob, x + 0.07f, y + knob, c);
+                put_text(&d, FONT_CHOICE, value, number, y, s * 0.85f, c, false);
+                add_hit(&d, left - 0.4f, y - 0.29f, bar0 - pad, y + 0.29f, k, 0); /* the name: selects it */
+                add_hit(&d, bar0 - pad, y - 0.29f, bar1 + pad, y + 0.29f, k, 2);
+                continue;
+            }
             put_text(&d, FONT_CHOICE, value, right, y, s, c, false);
             add_hit(&d, left - 0.4f, y - 0.29f, right - 1.6f, y + 0.29f, k, 1); /* the name: a step on (a switch flips) */
             add_hit(&d, right - 1.6f, y - 0.29f, right, y + 0.29f, k, -1); /* left of the value's middle: back */
-            add_hit(&d, right, y - 0.29f, right + 1.6f, y + 0.29f, k, 1);
+            add_hit(&d, right, y - 0.29f, right + 1.4f, y + 0.29f, k, 1);
             if (k == sel) {
                 float half = 0.5f * text_width(m, FONT_CHOICE, value, s) + 0.45f;
                 put_arrow(&d, true, right - half, y, s, c);
                 put_arrow(&d, false, right + half, y, s, c);
             }
         }
+        if (options > OPT_ROWS) { /* the scroll bar: its thumb is the part of the list in view */
+            float y0 = top + 0.24f, y1 = top - step * (float)(OPT_ROWS - 1) - 0.24f, len = y0 - y1;
+            float t0 = y0 - len * (float)first / (float)options, t1 = y0 - len * (float)(first + OPT_ROWS) / (float)options;
+            put_block(&d, rail - 0.035f, y1, rail + 0.035f, y0, TRACK);
+            put_block(&d, rail - 0.06f, t1, rail + 0.06f, t0, GOLD_DIM);
+            if (first > 0) add_hit(&d, rail - 0.2f, t0, rail + 0.2f, y0, sel, -3);
+            if (first + OPT_ROWS < options) add_hit(&d, rail - 0.2f, y1, rail + 0.2f, t1, sel, 3);
+        }
+        put_choice(&d, "BACK", 0, top - step * (float)OPT_ROWS - 0.25f, scale, sel == OPT_BACK, OPT_BACK);
         break;
     }
     default: break;

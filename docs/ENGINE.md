@@ -575,21 +575,30 @@ card is "optimum", else `WAVMW` (MMX) or `WAVPW`). Port: `tc_sound.h` / `tc_soun
   sound is 0.246 of full scale on each side and one hard to a side 0.49 there (the headroom of 64 voices; the sum
   saturates at 16 bits). Every sound effect, speech included, is about 12 dB quieter against the music than the port
   played them before (whether the MPEG music driver scales its stream is not read). 64 voices, all busy: no new one. The
-  mixer takes the sample its pitch step lands on (no interpolation), as the port's.
+  mixer takes the sample its pitch step lands on (no interpolation), as the port's. **Port:** `tc_mixer.h` (the core's,
+  what the SDL build renders into one stream at 44100 Hz; soundcheck runs it headless) and the same in Swift
+  (`Sfx.swift`'s Mixer, which could take the core's). A voice ends when the mixer has rendered its last sample: the SDL
+  build's first cut had a stream per voice and asked SDL whether each had drained, which a resampling stream never
+  says (BUGS.md, 2026-11-15).
 - **Pitch.** `SND_004048e0`: an event's +0x0C spread s gives the voice the pitch 1 + rand() / 0x7fff x 2s - s (16.16
-  steps), fixed for its life (2 exported events; `tc_sound_pitch`). The port: the Mac mixer steps its voices at that
-  rate, the SDL build sets the stream's frequency ratio.
+  steps), fixed for its life (2 exported events; `tc_sound_pitch`). The port: the mixers step their voices at that
+  rate.
 - **Dolby Surround** (the sound menu's option, `MnuSNDmw.dll` InitDolby / ChangeDolby -> `_SND_fn_vSetDolbySample`; the
   driver's flag 0x1007b440 is 0 until then: **off by default**; port: J, the Mac app keeps it, the SDL build takes
   `TONIC_DOLBY=1`). The voice loop (0x1000d4f7) then makes the front gains v (128 - pan) (128 - dolby) >> 5 (twice the
   stereo ones ahead, as much at the side, nothing behind) and adds v dolby 2 x the sample into a mono rear signal. The
   encoder (0x1000d823, FUN_10007b90 type 5 for 32 taps at the mixer's 22050 Hz, coefficients h x 32768 / sum |h|): a
   100-7000 Hz band-pass with a Hilbert transform; y[n] = sum c[k] rear[n - 32 + k] >> 13 is added to the left and taken
-  from the right (`paddsw` / `psubsw`): a Pro Logic decoder sends it to the rear speakers. **Port:** the Mac mixer filters
-  the summed rear at 44100 Hz with the filter made for that rate (64 taps: the same span); the SDL build filters each
-  voice's rear at the voice's own rate (the filter is linear: the same sum), so per-voice 16-bit saturation is not
-  reproduced. **Not ported:** that loop hands the pan's lanes over the other way round from the stereo loop (left and
-  right swapped): taken as a slip in the original.
+  from the right (`paddsw` / `psubsw`): a Pro Logic decoder sends it to the rear speakers. **Port:** both mixers filter
+  the summed rear at 44100 Hz with the filter made for that rate (64 taps: the same span). **Not ported:** that loop hands the pan's lanes over the other way round from the stereo loop (left and
+  right swapped): taken as a slip in the original. **Read 2026-11-15** (disassembly, 0x1000d4b8 and 0x1000d5eb): the
+  driver has two Dolby voice loops. The one for voices at the mixer's own rate (0x1000d4f7, nearly every sound) is the
+  one above; its front gain words pass 32767 for a loud sound off the middle and ahead and `pmulhw` reads them as
+  negative (that side's phase turns): the port's `tc_sound_gains` holds them at 32767 instead (DECOMP.md, not the
+  exe 13). The one for resampled voices
+  (0x1000d608: the pitch spread's, the 11025 and 44100 Hz files) shifts the front gains by 6, not 5 (no overflow, half
+  the level) and makes the rear gain v (128 - dolby) 2, the wrong way round (ahead goes to the rear). Not ported: the
+  port uses the first loop's sums for every voice.
 - **Following.** Every frame `SND_sound3d_00404c40` places again the voices whose event has +0x1C set (141 of the
   exported events; the others stay where they started: 173). `events.tsv` carries it (follow) and the pitch spread.
 - **Effects, not used here:** the mixer's post-mix routines (0x1000d181 / d314 / d3e0, `_SND_fn_vSetEffectSxd`) are
@@ -862,8 +871,14 @@ menucheck`): the core keeps the screens and lays them out; the frontends draw tw
 - FontPC's '<' and '/' come out mirrored from their models: the left arrow is a flipped '>', no slashes are printed.
   Its line step (the space's) is shorter than its capitals: lines are at least a capital apart.
 - A wider screen sees more of the backgrounds across (the uv spread x aspect / (4/3)) instead of a stretched picture.
-- OPTIONS: gamma, animation speed, lighting (original / port), fog, Dolby Surround, HUD auto-hide, invert look, look
-  speed (`tc_options`), given to every level's viewer (`tc_viewer_set_view`, recorded as door TC_RD_SET_VIEW) and kept
+- OPTIONS (the list reordered and grown 2026-11-15, the user): music volume, sound volume, Dolby Surround, field of
+  view, gamma, lighting (original / port), fog, HUD auto-hide, look speed, invert look, animation speed; 8 in view,
+  the list scrolling under the selection (the wheel, a scroll bar), BACK below it. The volumes, the field of view,
+  gamma and the look speed are sliders (a click on the bar or a drag puts the value there, `tc_menu_drag`; left /
+  right step it); the bars are the gold of FontPC's 'I' stretched, the atlas having no plain texel. The field of view
+  is the , . keys' own (`tc_viewer_set_fov`, door TC_RD_SET_FOV; the keys write it back to the options); the sound
+  volume is the mixer's gain (`tc_mixer.gain`), the music volume its player's, the intro movie's too. All in
+  `tc_options`, given to every level's viewer (`tc_viewer_set_view`, recorded as door TC_RD_SET_VIEW) and kept
   across launches (Swift: UserDefaults; SDL: options.cfg in its pref path); the keys that change them in a level keep
   them too.
 - At launch: TT_pak.png three seconds (a key, a click or the pad skips), then the menu. Esc / Circle on the grid, or its

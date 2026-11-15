@@ -10,6 +10,7 @@ static struct {
     int frame_size;
     char current[512];
     bool muted;
+    float volume;                /* the menus' MUSIC VOLUME less 1: 0 = full, so the zeroed state plays as recorded */
 } music;
 
 static Uint32 le32(const Uint8 *p) { return (Uint32)p[0] | (Uint32)p[1] << 8 | (Uint32)p[2] << 16 | (Uint32)p[3] << 24; }
@@ -148,7 +149,7 @@ void music_play(const char *level, const char *audio_dir) {
     }
     SDL_strlcpy(music.current, path, sizeof music.current);
     SDL_free(path);
-    SDL_SetAudioStreamGain(music.stream, music.muted ? 0.0f : 1.0f);
+    SDL_SetAudioStreamGain(music.stream, music_gain());
     SDL_ResumeAudioStreamDevice(music.stream);
 }
 
@@ -156,7 +157,14 @@ void music_play(const char *level, const char *audio_dir) {
 void music_set_muted(bool muted) {
     music.muted = muted;
     sfx_set_muted(muted);
-    if (music.stream) SDL_SetAudioStreamGain(music.stream, muted ? 0.0f : 1.0f);
+    if (music.stream) SDL_SetAudioStreamGain(music.stream, music_gain());
 }
+
+void music_set_volume(float volume) {
+    music.volume = SDL_clamp(volume, 0.0f, 1.0f) - 1;
+    if (music.stream) SDL_SetAudioStreamGain(music.stream, music_gain());
+}
+
+float music_gain(void) { return music.muted ? 0.0f : music.volume + 1; }
 
 bool music_muted(void) { return music.muted; }

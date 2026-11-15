@@ -11,8 +11,15 @@ final class Music {
     private(set) var current: String?
     var muted = false {  // M: the sound effects follow
         didSet {
-            player?.volume = muted ? 0 : 1
+            player?.volume = muted ? 0 : volume
             Sfx.shared.muted = muted
+        }
+    }
+    /// The menus' MUSIC VOLUME, 0...1, kept across launches.
+    var volume = UserDefaults.standard.object(forKey: "musicVolume") as? Float ?? 1 {
+        didSet {
+            player?.volume = muted ? 0 : volume
+            UserDefaults.standard.set(volume, forKey: "musicVolume")
         }
     }
 
@@ -29,7 +36,7 @@ final class Music {
             return
         }
         p.numberOfLoops = -1
-        p.volume = muted ? 0 : 1
+        p.volume = muted ? 0 : volume
         p.play()
         player = p
         current = file
