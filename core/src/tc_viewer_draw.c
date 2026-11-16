@@ -457,10 +457,10 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     for (i = 0; i < v->piece_count; i++) { /* a water surface's pieces follow its height too (2026-11-16: the water is
                                              * transparent, so drawn as pieces, and stayed up while its height went down) */
         uint32_t o = v->piece_origin[i];
-        round = identity;
+        tc_mat4 lift = identity;
         if (v->mesh_surface && o < l->mesh_count && v->mesh_surface[o] >= 0)
-            round.m[14] = v->sectors->surface_z[v->mesh_surface[o]] - v->surface_z0[v->mesh_surface[o]];
-        add_mesh(v, &dl, v->piece_first + i, &round, shown, water);
+            lift.m[14] = v->sectors->surface_z[v->mesh_surface[o]] - v->surface_z0[v->mesh_surface[o]];
+        add_mesh(v, &dl, v->piece_first + i, &lift, shown, water);
     }
     TC_PROF_END(TC_PZ_DRAW_STATICS, prof);
     prof = TC_PROF_BEGIN();
