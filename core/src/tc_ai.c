@@ -1161,6 +1161,7 @@ static uint32_t change_behaviour(run *r, bool reflex, uint32_t param) {
 /* ---- evaluation ---- */
 
 static value eval(run *r, uint32_t i);
+static uint32_t procedure(run *r, uint32_t i);
 
 static value arg(run *r, uint32_t i, int k) {
     uint32_t c = child(r, i, k);
@@ -1385,9 +1386,21 @@ void tc_ai_globals_new_game(tc_ai_globals *g) {
 
 static tc_ai_hud_slot *hud_slot(tc_ai_globals *g, int32_t k) { return k >= 0 && k < TC_AI_HUD_SLOTS ? &g->hud[k] : NULL; }
 
+/* The conditions that test OP 24's perso when they are its expression (the exe's g_ai_conditions[k].flag, 0x4E63A0:
+ * AI_004927c0 -> AI_004913a0 takes DAT_004ffcf4): the contact and material tests 31-52 (InPersoContext(main actor,
+ * OnGround): Transit's flight-training platforms), 69-76, 91-103, 110; and 63 / 64, which the port keeps as game state. */
+static bool cond_on_context(uint32_t c) {
+    return (c >= 31 && c <= 52) || (c >= 69 && c <= 76) || (c >= 91 && c <= 103) || c == 110;
+}
+
 static bool condition(run *r, uint32_t i) {
     tc_ai_perso *p = r->p;
     uint32_t c = N(r, i)->param;
+    if (r->ctx != 0 && cond_on_context(c)) { /* the test on that perso, its arguments as Me's (AI_004913a0) */
+        tc_ai_perso *q = live(r->p, r->ctx);
+        if (q) p = q;
+        r->ctx = 0;
+    }
     switch (c) {
     /* COND_18Etc_00497ef0: the ZDE zones (zone numbers 1-based; the "module" variants, zones on a perso's channels, as its
      * own: port). 18-21 (A, zone, B, zone); 22 / 23 (A, zone, B, type); 24 (A, type, B, type), 25 (A, B: any), 26 (A, type,
@@ -1794,6 +1807,10 @@ static value eval(run *r, uint32_t i) {
     case TC_AI_OP: return operation(r, i);
     case TC_AI_FUNC: return function(r, i);
     case TC_AI_FIELD: return field_get(r, r->ctx, n->param);
+    case TC_AI_PROC: /* a procedure as OP 24's expression (InPersoContext(perso, procedure)): run, on that perso where
+                      * the exe's table says so (procedure). Before 2026-11-16 these never ran. */
+        (void)procedure(r, i);
+        return v;
     case TC_AI_DSGVAR: case TC_AI_DSGVAR_REF: return dsg_get(r->p, 0, n->param);
     case TC_AI_INT: return v_int((int32_t)n->param);
     case TC_AI_REAL: return v_float(bits_to_float(n->param));
@@ -1892,10 +1909,26 @@ static int32_t list_arg(run *r, uint32_t i, int k) {
     return (int32_t)N(r, c)->param;
 }
 
+/* The procedures that act on OP 24's perso when they are its expression (the exe's g_ai_procedures[k].flag, 0x4E5A48:
+ * AI_004913a0(flag, me, &target) takes DAT_004ffcf4 for them, and clears it, so their arguments read as Me): 12-16,
+ * 32-65, 120 / 121, 126-136, 145 / 146, 203-233, 245-248, 254, 291 / 292. */
+static bool proc_on_context(uint32_t c) {
+    return (c >= 12 && c <= 16) || (c >= 32 && c <= 65) || c == 120 || c == 121 || (c >= 126 && c <= 136) || c == 145 ||
+           c == 146 || (c >= 203 && c <= 233) || (c >= 245 && c <= 248) || c == 254 || c == 291 || c == 292;
+}
+
 static uint32_t procedure(run *r, uint32_t i) {
-    tc_ai_perso *p = r->p;
-    float *pr = p->motion.proposal;
     uint32_t c = N(r, i)->param;
+    tc_ai_perso *p = r->p;
+    float *pr;
+    /* InPersoContext(perso, procedure): the effect on that perso, the arguments as Me's (AI_004913a0). PlaySound3D /
+     * Other (145 / 146) read the context themselves (play_sound_from). */
+    if (r->ctx != 0 && c != 145 && c != 146 && proc_on_context(c)) {
+        tc_ai_perso *q = live(r->p, r->ctx);
+        if (q && q != r->p) p = q;
+        r->ctx = 0;
+    }
+    pr = p->motion.proposal;
     static const signed char mech[] = { /* PROC 51..65 -> mechanics mode */
         23, 12, 20, 3, 4, 1, 2, 10, 21, 6, 7, 8, 21, 19, 22};
     switch (c) {
@@ -1925,7 +1958,10 @@ static uint32_t procedure(run *r, uint32_t i) {
         place_perso(r, arg(r, i, 0), argv3(r, i, 1));
         place_perso(r, arg(r, i, 2), argv3(r, i, 3));
         return 0;
-    case 34: p->motion.stop = true; return 0; /* the speeds (+0x38.., +0x25C..), not the proposal */
+    case 34: /* the speeds (+0x38.., +0x25C..), not the proposal */
+        p->motion.stop = true;
+        if (p != r->p) p->motion.stop_by_other = true;
+        return 0;
     case 35: { /* PROC_DynamicsOnEtc_00488cd0 case 0x23: the velocity (+0x38), world axes; spin cleared */
         tc_vec3 v = argv3(r, i, 0);
         /* Port deviation (docs/DECOMP.md, user's choice): Ed's jump reflex R26 zeroes the velocity at the apex and after
@@ -2312,7 +2348,10 @@ static uint32_t procedure(run *r, uint32_t i) {
     case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */
     case 104: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->speech_stop = true; return 0; }
     case 118: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->save_serial++; return 0; } /* SaveGame: the host saves */
-    case 16: p->motion.detach = true; return 0; /* PROC_12Etc_00488340 -> GAM_00428ea0: off its carrier */
+    case 16: /* PROC_12Etc_00488340 -> GAM_00428ea0: off its carrier */
+        p->motion.detach = true;
+        if (p != r->p) p->motion.detach_by_other = true;
+        return 0;
     case 25: case 26: case 32: case 33: case 70: case 71: case 80:
     case 105: case 106: case 107: case 108:
     case 236: case 278: case 279: case 291: case 292:
@@ -2786,9 +2825,12 @@ static void step_begin(tc_ai_perso *p, float dt) {
     tc_vec3 axes[3];
     int32_t mode = p->motion.mech_mode;
     float proposal[32];
+    bool detach = p->motion.detach_by_other, stop = p->motion.stop_by_other;
     memcpy(axes, p->motion.axes, sizeof(axes));
     memcpy(proposal, p->motion.proposal, sizeof(proposal));
     memset(&p->motion, 0, sizeof(p->motion));
+    p->motion.detach = detach; /* another perso's PROC 16 / 34 on this one since its last step: its mechanics' now */
+    p->motion.stop = stop;
     p->sound_count = 0;
     p->launch_channel = -1;
     p->light_call_count = 0;

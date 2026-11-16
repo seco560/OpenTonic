@@ -301,6 +301,8 @@ typedef struct tc_ai_motion {
     tc_vec3 jump_vector;         /* JumpBallistic(vector, height) */
     float jump_height;
     bool detach;                 /* PROC 16 (GAM_00428ea0): back to the dynamic world, off whatever carries it */
+    bool detach_by_other, stop_by_other; /* PROC 16 / 34 asked by another perso (InPersoContext): kept for this one's
+                                    next step (its step_begin would drop them before its mechanics saw them) */
     bool heading_set;            /* face `heading` now: PROC_242, ChangeStateByDirection, TurnTowardOverFrames */
     float heading;
     bool teleport_set;           /* SetPositionFrom (PROC_27) on this perso: move it to `teleport` (feet) */

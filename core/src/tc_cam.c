@@ -142,7 +142,9 @@ static float clear_distance(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, 
 static void preset(const tc_cam *c, const tc_cam_target *t, float *distance, float *elevation, float *stretch) {
     float zoom = t->distance / TC_CAM_DISTANCE;
     *distance = t->distance, *elevation = TC_CAM_ELEVATION, *stretch = TC_CAM_FRONT_STRETCH;
-    if (t->shot_distance > 0 && isfinite(t->shot_distance) && isfinite(t->shot_elevation)) { /* a director's follow (shots 2, 7, 8) */
+    /* a director's follow (shots 2, 7, 8); port (the user, 2026-11-16: no zoom blocking): the close-up (5) wins over its
+     * distance and elevation, its direction kept */
+    if (t->shot_distance > 0 && isfinite(t->shot_distance) && isfinite(t->shot_elevation) && !c->closeup) {
         *distance = t->shot_distance * zoom, *elevation = t->shot_elevation, *stretch = 1;
         return;
     }
@@ -204,12 +206,12 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
         view->yaw = t->behind;
         return;
     }
-    if (c->recentering) {
-        float k = ease(dt, TC_CAM_RECENTER_TIME);
-        view->yaw = wrap(view->yaw + wrap(t->behind - view->yaw) * k);
+    if (c->recentering) { /* behind him, or onto a director's axis: the view the scripts want (port) */
+        float k = ease(dt, TC_CAM_RECENTER_TIME), to = t->shot_axis ? t->shot_yaw : t->behind;
+        view->yaw = wrap(view->yaw + wrap(to - view->yaw) * k);
         c->rise -= c->rise * k;
-        if (fabsf(wrap(view->yaw - t->behind)) < 0.005f && fabsf(c->rise) < 0.005f) {
-            view->yaw = t->behind; /* there: exactly */
+        if (fabsf(wrap(view->yaw - to)) < 0.005f && fabsf(c->rise) < 0.005f) {
+            view->yaw = to; /* there: exactly */
             c->rise = 0;
             c->recentering = false;
         }

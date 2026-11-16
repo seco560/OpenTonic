@@ -923,11 +923,17 @@ static void walk_into(const char *dir, const char *name, const uint32_t *ids, in
 }
 
 /* The camera directors (docs/CAMERA.md "The directors' shots"): on each level, Ed put at each director (TC_CAST2_DIRECTOR)
- * in turn for 2 s; the shots they pick are counted (most trigger on Ed within a radius of themselves; others on a
+ * in turn for 2.5 s (2 s until 2026-11-16: the fixed shot's glide now takes up to 1.6 s); the shots they pick are counted (most trigger on Ed within a radius of themselves; others on a
  * waypoint, not met here). The camera must stay a number all along, and turning it gives it back (a director's
  * follow drops its axis, the eye of a fixed or rail shot goes back to the follow). Returns the directors that picked a
  * shot; *visited the directors. Port (the user, 2026-11-13): turning the camera turns the shot's camera; it stays. */
-static int directors(const char *dir, const char *name, int *visited, int shots[16], int *gave_back, int *bad) {
+/* more[]: 0 reveals seen (a fixed shot looking at another perso than Ed: tc_viewer_shot.look_perso), 1 of them looking at that perso, 2 fixed
+ * shots zoomed out with the wheel, 3 of them whose eye moved back (not blocked by a surface behind it). Each director
+ * starts with a recentre: the camera handed back to the scripts (the player's hold of the last one's: scripted_shot). */
+/* more[4] eye switches animated (tc_viewer_shot.blending), more[5] eye switches cut (far or a surface between), more[6]
+ * the largest turn in one frame an animation adds to the view's own, more[7] the largest view turn in one frame of a
+ * fixed shot's glide (milliradians). */
+static int directors(const char *dir, const char *name, int *visited, int shots[16], int *gave_back, int *bad, int more[8]) {
     char path[1024];
     size_t size, ai_size = 0;
     uint8_t *data, *ai;
@@ -957,23 +963,80 @@ static int directors(const char *dir, const char *name, int *visited, int shots[
         if (!(a->entry->flags2 & TC_CAST2_DIRECTOR)) continue;
         (*visited)++;
         before = tc_viewer_camera_shot(&v);
+        tc_viewer_recenter_camera(&v);
         tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f)), 0);
-        for (f = 0; f < 120; f++) {
-            int shot;
+        for (f = 0; f < 150; f++) {
+            int shot, was_on = tc_viewer_fixed_shot(&v), was_blending = v.shot.blending;
+            float yaw_before = v.camera.yaw, live_before = v.shot.live_yaw;
+            tc_vec3 fwd_before = tc_camera_forward(&v.camera);
+            int seen_before = v.shot.seen;
+            bool gliding = f > 5 && v.shot.on && v.shot.glides && v.shot.glide_t < v.shot.glide_time; /* Ed's drawn place
+                                                                    catches up with the teleport over the first frames */
             tc_viewer_update(&v, 1.0f / 60);
+            if (f > 0 && was_on != tc_viewer_fixed_shot(&v)) {
+                if (v.shot.blending && !was_blending) more[4]++;
+                else if (!v.shot.blending) more[5]++;
+            }
+            if (f > 0 && v.shot.blending && was_blending) { /* the turn the blend adds to the live view's own */
+                int mrad = (int)(1000 * (fabsf(remainderf(v.camera.yaw - yaw_before, 2 * TC_PI)) -
+                                         fabsf(remainderf(v.shot.live_yaw - live_before, 2 * TC_PI))));
+                if (mrad > more[6]) more[6] = mrad;
+            }
+            if (gliding && v.shot.on && v.shot.seen == seen_before && !v.shot.blending) { /* a fixed shot's glide to its place */
+                tc_vec3 fwd = tc_camera_forward(&v.camera);
+                int mrad = (int)(1000 * acosf(fmaxf(-1, fminf(1, tc_v3_dot(fwd, fwd_before)))));
+                if (mrad > more[7]) more[7] = mrad;
+                if (mrad > 80 && getenv("HOLD_DEBUG"))
+                    printf("    glide %s dir %u f %d: yaw %.3f -> %.3f pitch %.3f -> %.3f t %.2f/%.2f eye (%.1f %.1f %.1f) look (%.1f %.1f %.1f) from (%.1f %.1f %.1f) perso %d\n",
+                           name, i, f, (double)yaw_before, (double)v.camera.yaw, 0.0, (double)v.camera.pitch,
+                           (double)v.shot.glide_t, (double)v.shot.glide_time, (double)v.camera.position.x, (double)v.camera.position.y,
+                           (double)v.camera.position.z, (double)v.shot.look.x, (double)v.shot.look.y, (double)v.shot.look.z,
+                           (double)v.shot.glide_from.x, (double)v.shot.glide_from.y, (double)v.shot.glide_from.z, (int)v.shot.look_perso);
+                if (mrad > 70 && getenv("HOLD_DEBUG"))
+                    printf("    harsh %s dir %u f %d: yaw %.3f -> %.3f pitch %.3f live %.3f from %.3f t %.2f/%.2f shot %d on %d\n", name, i, f,
+                           (double)yaw_before, (double)v.camera.yaw, (double)v.camera.pitch, (double)v.shot.live_yaw,
+                           (double)v.shot.blend_from.yaw, (double)v.shot.blend_t, (double)v.shot.blend_time, tc_viewer_camera_shot(&v), tc_viewer_fixed_shot(&v));
+            }
             shot = tc_viewer_camera_shot(&v);
             if (!(v.camera.position.x == v.camera.position.x) || !(v.camera.yaw == v.camera.yaw)) (*bad)++;
             if (shot != before && shot >= 0 && shot < 16 && !seen && shot != 0 && shot != 255) {
                 seen = 1;
                 shots[shot]++;
             }
-            if (seen == 1 && tc_viewer_fixed_shot(&v) && f > 60) { /* the player turns it: the shot stays, turned */
-                float yaw0 = v.camera.yaw;
+            if (seen == 1 && tc_viewer_fixed_shot(&v) && f > 60 && !(v.shot.glides && v.shot.glide_t < v.shot.glide_time)) {
+                /* the player turns it (once a glide is there): the shot stays, turned */
+                float yaw0;
                 int k;
+                if (v.shot.reveal) { /* a reveal: it looks at the perso the director named (SetCameraTarget) */
+                    int32_t id = v.shot.look_perso;
+                    tc_vec3 tp;
+                    if (id != 0 && tc_cast_position(c, id, &tp)) {
+                        more[0]++;
+                        more[1] += tc_v3_distance(v.shot.look, tp) < 0.05f;
+                        if (tc_v3_distance(v.shot.look, tp) >= 0.05f)
+                            printf("    reveal off its perso: %s perso %d, look (%.2f %.2f %.2f) target (%.2f %.2f %.2f)\n", name, (int)id,
+                                   (double)v.shot.look.x, (double)v.shot.look.y, (double)v.shot.look.z, (double)tp.x, (double)tp.y, (double)tp.z);
+                    }
+                }
+                if (shot == TC_CAM_SHOT_FIXED) { /* the wheel dollies a fixed eye (no zoom blocking) */
+                    float d0 = tc_v3_distance(v.camera.position, v.shot.look), d1;
+                    tc_viewer_wheel(&v, -2); /* out: x 1.21 */
+                    tc_viewer_update(&v, 1.0f / 60);
+                    d1 = tc_v3_distance(v.camera.position, v.shot.look);
+                    tc_viewer_wheel(&v, 2);
+                    tc_viewer_update(&v, 1.0f / 60);
+                    more[2]++;
+                    more[3] += d1 > d0 * 1.1f;
+                }
+                yaw0 = v.camera.yaw;
                 tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, true);
                 for (k = 0; k < 20; k++) tc_viewer_update(&v, 1.0f / 60);
                 tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, false);
                 *gave_back += tc_viewer_fixed_shot(&v) && fabsf(remainderf(v.camera.yaw - yaw0, 2 * TC_PI)) > 0.05f;
+                if (getenv("HOLD_DEBUG") && !(tc_viewer_fixed_shot(&v) && fabsf(remainderf(v.camera.yaw - yaw0, 2 * TC_PI)) > 0.05f))
+                    printf("    notkept %s dir %u shot %d on %d yaw %.3f -> %.3f blending %d over %d reveal %d glide %.2f/%.2f\n", name, i, shot,
+                           tc_viewer_fixed_shot(&v), (double)yaw0, (double)v.camera.yaw, v.shot.blending, v.shot.overridden, v.shot.reveal,
+                           (double)v.shot.glide_t, (double)v.shot.glide_time);
                 seen = 2;
             }
         }
@@ -1042,6 +1105,88 @@ static int ruby(const char *dir, int *shot7, float *elevation, float *distance, 
     return lift != NULL;
 }
 
+/* The player and the directors (docs/CAMERA.md "Player and directors"; the user, 2026-11-16: "don't let custom camera
+ * scripts take over if the user has already moved the camera"). On cavedoc, the first director whose shot 7 (the axis)
+ * Ed triggers standing at it: (a) left alone, the camera turns onto the axis; (b) turned just before, it stays where the
+ * player put it, the shot still on; (c) recentre gives it back: onto the axis; (d) turning it again keeps it his. */
+static int hold_viewer(const char *dir, tc_level *level, uint8_t **ai, tc_viewer *v) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data;
+    tc_viewer_desc desc;
+    int f;
+    snprintf(path, sizeof(path), "%s/cavedoc.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(level, data, size) != TC_OK) { free(data); return 0; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/cavedoc.ttai", dir);
+    *ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = level;
+    desc.ai_data = *ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "cavedoc";
+    if (!*ai || tc_viewer_init(v, &desc) != TC_OK) { free(*ai); tc_level_free(level); return 0; }
+    for (f = 0; f < 60; f++) tc_viewer_update(v, 1.0f / 60);
+    return 1;
+}
+
+static void hold_done(tc_level *level, uint8_t *ai, tc_viewer *v) {
+    tc_viewer_free(v);
+    free(ai);
+    tc_level_free(level);
+}
+
+static void hold_scenario(const char *dir) {
+    tc_level level;
+    tc_viewer v;
+    uint8_t *ai;
+    int32_t found = -1;
+    uint32_t i, n;
+    float axis = 0, held = 0, back = 0, again = 0, start = 1e6f;
+    int on_b = 0, f;
+    char what[300];
+    tc_vec3 at = tc_v3(0, 0, 0);
+    if (!hold_viewer(dir, &level, &ai, &v)) { printf("  (no cavedoc: the player's hold skipped)\n"); return; }
+    n = tc_viewer_cast(&v) ? tc_viewer_cast(&v)->count : 0;
+    for (i = 0; i < n && found < 0; i++) { /* (a) */
+        const tc_cast_actor *a = &tc_viewer_cast(&v)->actors[i];
+        if (!(a->entry->flags2 & TC_CAST2_DIRECTOR)) continue;
+        tc_viewer_recenter_camera(&v);
+        at = tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f));
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), at, 0);
+        for (f = 0; f < 150; f++) tc_viewer_update(&v, 1.0f / 60);
+        if (tc_viewer_camera_shot(&v) == TC_CAM_SHOT_AXIS && tc_viewer_fixed_shot(&v)) found = (int32_t)i, axis = v.camera.yaw;
+    }
+    hold_done(&level, ai, &v);
+    if (found < 0) { printf("  (cavedoc: no shot 7 director triggered by standing at it: the player's hold skipped)\n"); return; }
+    if (!hold_viewer(dir, &level, &ai, &v)) return;
+    tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, true); /* (b): the same way there, turning first */
+    for (f = 0; f < 30; f++) tc_viewer_update(&v, 1.0f / 60);
+    tc_viewer_set_action(&v, TC_VA_LOOK_LEFT, false);
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), at, 0);
+    for (f = 0; f < 150; f++) {
+        tc_viewer_update(&v, 1.0f / 60);
+        if (tc_viewer_camera_shot(&v) == TC_CAM_SHOT_AXIS && start > 1e5f) start = v.camera.yaw;
+        if (getenv("HOLD_DEBUG")) printf("    b %d shot %d on %d yaw %.3f over %d stretch %d since %.2f\n", f, tc_viewer_camera_shot(&v), tc_viewer_fixed_shot(&v), (double)v.camera.yaw, v.shot.overridden, v.shot.in_stretch, (double)v.shot.since_look);
+    }
+    held = v.camera.yaw;
+    on_b = tc_viewer_fixed_shot(&v);
+    tc_viewer_recenter_camera(&v); /* (c) */
+    for (f = 0; f < 90; f++) tc_viewer_update(&v, 1.0f / 60);
+    back = v.camera.yaw;
+    tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, true); /* (d) */
+    for (f = 0; f < 20; f++) tc_viewer_update(&v, 1.0f / 60);
+    tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, false);
+    for (f = 0; f < 120; f++) tc_viewer_update(&v, 1.0f / 60);
+    again = v.camera.yaw;
+    hold_done(&level, ai, &v);
+    snprintf(what, sizeof(what), "the player's hold (cavedoc, director %d's axis at yaw %.2f): turned just before, the shot "
+             "on (%d) and the camera left where it was (%.2f, 2.5 s on %.2f); recentred: %.2f; turned again: %.2f", (int)found,
+             (double)axis, on_b, (double)start, (double)held, (double)back, (double)again);
+    check(on_b && fabsf(remainderf(held - axis, 2 * TC_PI)) > 0.2f && fabsf(remainderf(held - start, 2 * TC_PI)) < 0.05f && fabsf(remainderf(back - axis, 2 * TC_PI)) < 0.05f &&
+              fabsf(remainderf(again - axis, 2 * TC_PI)) > 0.2f, what);
+}
+
 int main(int argc, char **argv) {
     field_of_view();
     synthetic();
@@ -1060,11 +1205,11 @@ int main(int argc, char **argv) {
         {
             const char *dl[] = {"sud0", "cavedoc", "carota", "cock01", "Land", "LeCanyon", "marmite", "north", "pyramide",
                                 "BigBoss", "Transit", "skymap"};
-            int visited = 0, took = 0, shots[16] = {0}, gave_back = 0, bad = 0;
+            int visited = 0, took = 0, shots[16] = {0}, gave_back = 0, bad = 0, more[8] = {0};
             char what[200];
-            printf("the camera directors (Ed put at each for 2 s):\n");
+            printf("the camera directors (Ed put at each for 2.5 s):\n");
             for (k = 0; k < sizeof(dl) / sizeof(dl[0]); k++) {
-                int v0 = visited, t = directors(argv[1], dl[k], &visited, shots, &gave_back, &bad);
+                int v0 = visited, t = directors(argv[1], dl[k], &visited, shots, &gave_back, &bad, more);
                 took += t;
                 printf("  %-9s %d of %d directors picked a shot\n", dl[k], t, visited - v0);
             }
@@ -1073,7 +1218,20 @@ int main(int argc, char **argv) {
             snprintf(what, sizeof(what), "the directors take the camera (%d of %d), the player turns their shots' camera "
                      "and the shot stays (%d), the camera always a number (%d bad frames)", took, visited, gave_back, bad);
             check(visited > 0 && took > visited / 3 && gave_back > 0 && bad == 0, what);
+            snprintf(what, sizeof(what), "the reveals look at the perso the director named (%d of %d)", more[1], more[0]);
+            check(more[0] > 0 && more[1] == more[0], what);
+            snprintf(what, sizeof(what), "the wheel dollies a fixed shot's eye back (%d of %d; the others against a surface)",
+                     more[3], more[2]);
+            check(more[2] > 0 && more[3] > 0, what);
+            snprintf(what, sizeof(what), "switches into and out of the scripts' eyes animated (%d; %d stay cuts: far apart or a "
+                     "surface between, or a turn round), the view turning at most %.3f rad in a frame while animating", more[4], more[5],
+                     (double)more[6] / 1000);
+            check(more[4] > 0 && more[6] < 70, what);
+            snprintf(what, sizeof(what), "a fixed shot's glide to its place turns the view at most %.3f rad in a frame",
+                     (double)more[7] / 1000);
+            check(more[7] < 100, what);
         }
+        hold_scenario(argv[1]);
         {
             static const uint32_t sud0_chars[] = {89, 185, 186, 187, 251}; /* the tomato, Suzy (as she stands in sud0) */
             clip_stats st;

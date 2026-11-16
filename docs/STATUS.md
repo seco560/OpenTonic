@@ -20,7 +20,7 @@ Edition's sectors).
 | Ed on foot and in the air (his own scripts and physics) | yes | the ledge hang, below |
 | Portals and level changes | yes; no Ed clone any more | the walk-in passages in sud0 play the portals' transition, and should not |
 | The follow camera | yes: "fine, faithful down to the original's quirks" | it showed the insides of characters (Suzy, the tomatoes, Grogh's henchmen). Changed 2026-11-11; the user has not said whether it helped. Headless it is better, not gone (40 -> 10 frames on the worst probe) |
-| Lifts and platforms | most work | one sometimes disappears mid-path; Ed flying goes through moving platforms (changed 2026-11-14: flight collides with persos; not seen) |
+| Lifts and platforms | most work | one sometimes disappears mid-path; Ed flying goes through moving platforms (changed 2026-11-14: flight collides with persos; not seen). 2026-11-16: the ones read fade by script (cavedoc's BEM_PFQuiSeDesagrege 0.75 s after Ed lands or when he is below them, the guide at its way's end, north's KEV_Plate_Forme_Bonheur on 28 / 30 / 5 s timers); they now detach Ed first, and the toasters set cavedoc's guide's speed (docs/ENGINE.md "InPersoContext and the procedures") |
 | Levers | most work | the lever and machine turn to face Ed; Ed should take his place at them |
 | Music, sounds of Ed, the intro, the menus | yes | some music tracks may be the wrong ones for their level (user, 2026-11-11): to check against the exe; not a priority |
 | Recordings and replays | yes: "decent" | a replay being locked and one file per run were changed after that; not known if seen |

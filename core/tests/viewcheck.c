@@ -1101,7 +1101,9 @@ static void guide_scenario(const char *dir) {
     const tc_perso_ways *pw;
     const tc_way *way;
     tc_player *p;
-    uint32_t i, k, next = 0, order_ok = 1, rode = 0, frames = 60 * 50;
+    uint32_t i, k, next = 0, order_ok = 1, rode = 0, frames = 60 * 90; /* 50 s until 2026-11-16: the toasters slow it */
+    float slow = 1e9f, fast = 0;
+    const tc_cast_actor *ga = NULL;
     float last_d = 1e9f;
     const uint16_t guide = 50; /* cavedoc's perso 50 */
     snprintf(path, sizeof(path), "%s/cavedoc.ttlv", dir);
@@ -1130,9 +1132,17 @@ static void guide_scenario(const char *dir) {
     p->velocity = tc_v3(0, 0, 0);
     p->placed++;
     printf("the guide (cavedoc ruby) from (%.1f, %.1f, %.1f):\n", ob->world.m[3], ob->world.m[7], ob->world.m[11]);
+    {
+        const tc_cast *cc = tc_viewer_cast(&v);
+        for (i = 0; cc && i < cc->count; i++) if (cc->actors[i].entry->id == guide) ga = &cc->actors[i];
+    }
     for (i = 0; i < frames; i++) {
         tc_vec3 at;
         frame(&v, 1.0f / 60);
+        if (ga && next > 0 && next < way->count) { /* its speed on the way (the scripts' SetMoveDirection) */
+            slow = fminf(slow, ga->ai->motion.proposal[10]);
+            fast = fmaxf(fast, ga->ai->motion.proposal[10]);
+        }
         rode += tc_viewer_driver(&v)->dyn.walk.carrier == guide;
         at = tc_v3(ob->world.m[3], ob->world.m[7], ob->world.m[11]);
         for (k = next; k < way->count; k++) { /* the waypoints it comes within 2.5 of, in order */
@@ -1152,6 +1162,10 @@ static void guide_scenario(const char *dir) {
     snprintf(what, sizeof(what), "it follows its way in order (to waypoint %u of %u), nearest to the last %.1f; Ed rode %u of %u frames",
              next, way->count, last_d, rode, frames);
     check(order_ok && next >= way->count - 1 && last_d < 3, what);
+    /* the toasters (JET_CaveDocToaster B1 / B4) set its speed from theirs: InPersoContext(guide, SetMoveDirection) */
+    snprintf(what, sizeof(what), "the toasters slow it while they shoot and speed it up after (speed %.1f .. %.1f)",
+             (double)slow, (double)fast);
+    check(slow <= 3.01f && fast >= 9.99f, what);
     tc_viewer_free(&v);
     tc_level_free(&level);
 }

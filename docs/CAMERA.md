@@ -691,3 +691,52 @@ camera's own behaviours read (fix camera, read from its scripts; reflex 2 picks 
   3-9 units and 0.3 rad. Not read: the camera's speed caps and smoothing in these shots (the follow's own are used),
   PROC 165 (the speed record), the directors' force on Ed (SRU_ForceToWalkToWayPoint: kept off the main actor).
 
+
+### Player and directors (2026-11-16; the user: "don't let custom camera scripts take over if the user has already moved the camera", "disallow zoom-level blocking", "if the transition between two angles is too harsh ... animate between them")
+**Read first** (the fix camera's scripts, every level's camera writers dumped): the original locked the player's camera
+keys in **every** scripted shot: camera B5 (shot 2), B6 (ski), B8 (fixed, 6), B10 (axis, 7), B20 (mirror, 8), B22 (rail,
+4) and the dying, swimming, flight and code 17 presets set dsg8 = 1 (numpad 4 / 5 / 6 then only show an icon); only B0,
+B2, B18, B25-B27 free it. And the fixed shot looks at **the camera's target perso** (B7 / B8: dsg5 =
+Function_Camera_GetTargetCamera, the cine record's +0x10 that PROC 180 SetCameraTarget sets), not always at Ed: the
+directors point it at what they show (Land's bridge SDO_BaissePont, cock01's fridge switches, north's flying guard
+KEV_ActiveGardeVolantEtCamera, the toaster cameras ...) and back at Ed after. Of the level persos' 345 SetCameraTarget
+calls, nearly all non-Ed targets come with shot 6. No level perso calls SetCameraMode (mode 6 is the SE outro's alone).
+
+**Changed** (tc_viewer_camera.c "The player and the directors", "The transition"; all port choices unless marked):
+- **The fixed shot looks at the camera's target** (faithful, B7): `shot_target` (tc_ai_globals.cam_target; Ed when none,
+  the main actor or his alias). Before, every such reveal stared at Ed.
+- **Reveals and framings.** A *reveal* is a fixed shot looking at a place (dsg91 0) or at another perso; a *framing* is
+  any shot that frames Ed (the follows 2 / 7 / 8, the rail 4, a fixed shot looking at him). Reveals always take the
+  camera (they show what a switch did); framings are hints the player can override.
+- **The player's hold, per directed stretch** (from a director's shot until none has been on for 1 s,
+  TC_VIEW_STRETCH_GAP; the directors hand over from one to the next as Ed walks): once the player turns the camera
+  during a framing, takes a fixed or rail eye back (fresh Jump / Action / Shoot, as before), or turned it less than 2 s
+  (TC_VIEW_OWN_RECENT) before a framing begins, the camera is his for the rest of the stretch: the follows keep their
+  distance and elevation but stop turning onto their axis, new framing eyes don't take it. A framing eye already on
+  stays on when turned (the 2026-11-13 orbit).
+- **Recentre gives it back** (X / middle button / L2): the hold and the release cleared, the follow recentres onto the
+  director's axis when one is on (tc_cam.c `turn`), else behind Ed as before.
+- **No zoom blocking:** the close-up (5) wins over a director follow's distance and elevation (its direction kept;
+  tc_cam.c `preset`); in a fixed or rail eye the wheel and 5 dolly the eye along its line to the look point by the
+  ratio they change the follow's distance (`shot_dolly`, not nearer than 1.5, pulled in before surfaces).
+- **The transition:** switching into or out of a fixed or rail eye (the original cuts) eases from the view shown before
+  (smoothstep on position, yaw, pitch; 0.3-1.0 s by distance and turn, the turn at most ~3.5 rad/s at its middle), when
+  the two eyes are within 25 units, look within 2 rad of the same way and no surface is between them; otherwise it
+  stays a cut (a swoop through a wall, across the level or round to face the other way reads worse). The follow's own
+  yaw runs on underneath (tc_viewer_shot.live_yaw); teleports, first person, a pause, a portal's camera settle it.
+- **The fixed shot's glide** (dsg89 1, B7's GoToPosition; the camera's mechanics' speed not read): was an exponential
+  ease of the eye's position (0.35 s, full speed at once, and a straight line that swung the view round Ed when it
+  passed near him); now a smoothstep round the look point (direction, height angle and distance eased together),
+  0.5-1.6 s at ~15 u/s, and its first frame's turn to the look point is the transition's.
+
+camcheck (new and changed; the walk / jitter / clipping numbers unchanged): each director now starts with a recentre
+(the hold of the last one's turn would otherwise keep the next framing off: the test turns, then teleports within 1 s);
+Ed stays 2.5 s per director (the glide is longer; BigBoss picks 5 shots of 10 at 2.5 s, 6 at 2 s, test timing only),
+the turn waits for a glide to arrive. "The player turns their shots' camera and the shot stays" 43 of 45 picks (the
+other two never got a turn in the window); "the reveals look at the perso the director named" 1 of 1; "the wheel
+dollies a fixed shot's eye back" 8 of 15 (the others against a surface behind); "switches animated" 2 of 12 (10 stay cuts:
+far apart, a wall between, or a turn round), the blend adding at most 0.055 rad a frame; "a glide turns the view at most
+0.046 rad a frame"; "the player's hold" (cavedoc's first axis director: left alone it turns onto the axis; turned just
+before, it stays where it was 2.5 s on; recentred it is on the axis; turned again, it stays turned).
+Not seen in the app: all of the feel; in particular whether 2 s / 1 s are the right windows, and whether the reveals'
+targets look right in each level.

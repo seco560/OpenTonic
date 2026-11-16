@@ -86,6 +86,7 @@ static void aim_camera(tc_viewer *v, tc_vec3 eye) {
     tc_vec3 d = tc_v3_sub(tc_v3_add(v->play->main.player.position, tc_v3(0, 0, 1.1f)), eye);
     float h = sqrtf(d.x * d.x + d.y * d.y);
     if (h < 1e-3f) return;
+    tcv_camera_settle(v);
     v->camera.yaw = atan2f(d.x, d.y);
     v->camera.pitch = fmaxf(-1.5f, fminf(1.5f, atan2f(d.z, h)));
 }
@@ -126,6 +127,7 @@ void tcv_arrive(tc_viewer *v, const tc_viewer_carry *c) {
             p->cast.globals.checkpoint = at;
             p->cast.globals.checkpoint_heading = c->checkpoint_heading;
         }
+        tcv_camera_settle(v);
         v->camera.yaw = c->checkpoint_heading; /* behind him (the follow camera's yaw is his heading) */
     }
     if (c->hit_points_max > 0) {

@@ -76,6 +76,13 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 7. **Dying:** in some pits Ed still hits the bottom; some pits do not work; after a respawn he is shown falling for about
    half a second; lava and deadly water do not kill him.
 8. **Lifts and platforms:** most work. Sometimes one disappears mid-path. Ed flying clips through moving platforms.
+   **(2026-11-16, Claude, headless):** the disappearing ones read so far do it by script: cavedoc's BEM_PFQuiSeDesagrege
+   ("the platform that falls apart") fade 0.75 s after Ed lands, and at once whenever his origin is below theirs (reflex
+   0); the guide BNE_PFGuide fades at its way's end; north's KEV_Plate_Forme_Bonheur fade 30 s after he stands on one at
+   its end, 28 s in its B4, and 5 s into the second one's last run (B3). What was broken: InPersoContext procedures
+   never ran (docs/ENGINE.md "InPersoContext and the procedures"): they now detach Ed before fading, and cavedoc's
+   toasters slow the guide (3 while one shoots, 10 after). If one still vanishes mid-path, a recording (F9 at the
+   moment) would say which.
    * **2026-11-14 (Claude), awaiting a playtest:** flight now collides as the exe's does, with his flight body's spheres
      against the persos too (docs/ENGINE.md "Flight: collision, the tornados, LeCanyon's wings"). Headless: he stops at
      sud0's arena block instead of gliding through it. His body in flight is bigger than the old capsule (r 1.2 at his

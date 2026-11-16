@@ -160,6 +160,7 @@ void tcv_fly(tc_viewer *v, float dt) {
 /* Into or out of a pause's camera. */
 void tcv_set_inspecting(tc_viewer *v, bool on) {
     if (on == v->inspecting) return;
+    tcv_camera_settle(v);
     v->inspecting = on;
     if (on) {
         v->inspect_camera = v->camera;
@@ -279,6 +280,7 @@ void tcv_toggle_play(tc_viewer *v) {
         tc_vec3 ground = d >= 0 ? tc_v3_sub(o, tc_v3(0, 0, d)) : o;
         tc_player_teleport(&p->main.player, tc_v3_add(ground, tc_v3(0, 0, 0.3f)), TC_PI - v->camera.yaw);
     }
+    tcv_camera_settle(v);
     v->camera.yaw = TC_PI - p->main.player.heading;  /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
     v->camera.pitch = -TC_CAM_ELEVATION;
     tc_cam_reset(&v->cam);  /* following him, placed at once */

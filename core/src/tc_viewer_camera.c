@@ -252,24 +252,36 @@ static tc_vec3 ed_drawn(const tc_viewer_play *p) {
     return p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->main.player.position;
 }
 
+/* Port (the user, 2026-11-16: no zoom blocking): the wheel's zoom and the close-up (5) changed since the eye shot
+ * started dolly its eye along the line to the look point, by the same ratio they change the follow's distance. */
+#define TC_VIEW_DOLLY_MIN 1.5f       /* the eye no nearer its look point than this by the dolly (the wheel's nearest) */
+static float shot_dolly(const tc_viewer *v) {
+    float f = v->shot.entry_orbit > 0 ? v->orbit_distance / v->shot.entry_orbit : 1;
+    if (v->cam.closeup != v->shot.entry_closeup)
+        f *= v->cam.closeup ? TC_CAM_CLOSEUP_DISTANCE / TC_CAM_DISTANCE : TC_CAM_DISTANCE / TC_CAM_CLOSEUP_DISTANCE;
+    return fmaxf(0.1f, fminf(10, f));
+}
+
 /* The eye of a fixed or rail shot looking at `at`, turned round it by the player's turn (tc_viewer.shot.look_*: yaw as
- * the follow's, rise lifts the eye); a turned eye stays this side of the level's surfaces (pulled in along the line
- * from the look point, as the follow's walls pull its eye in). */
+ * the follow's, rise lifts the eye) and dollied by the zoom (shot_dolly); a moved eye stays this side of the level's
+ * surfaces (pulled in along the line from the look point, as the follow's walls pull its eye in). */
 static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at) {
     tc_vec3 d = tc_v3_sub(at, eye);
-    float len = tc_v3_length(d);
-    if (len > 1e-4f && (v->shot.look_yaw != 0 || v->shot.look_rise != 0)) {
+    float len = tc_v3_length(d), dolly = shot_dolly(v);
+    if (len > 1e-4f && (v->shot.look_yaw != 0 || v->shot.look_rise != 0 || dolly != 1)) {
         float yaw = atan2f(d.x, d.y) + v->shot.look_yaw;
         float pitch = fmaxf(-TC_CAM_PITCH_LIMIT, fminf(TC_CAM_PITCH_LIMIT,
                                                        atan2f(d.z, sqrtf(d.x * d.x + d.y * d.y)) - v->shot.look_rise));
         tc_vec3 dir = tc_v3(sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch)), back = tc_v3_scale(dir, -1);
         tc_hit hit;
-        float reach = len;
+        float want = len * dolly, reach;
         const uint8_t *solid = v->play->world.solid;
+        if (dolly < 1) want = fmaxf(want, fminf(len, TC_VIEW_DOLLY_MIN));
+        reach = want;
         v->play->world.solid = NULL; /* every surface (as the follow's) */
-        if (tc_collision_raycast(&v->play->world, at, back, len, &hit)) reach = fmaxf(0.3f, hit.distance - TC_CAM_RADIUS);
+        if (tc_collision_raycast(&v->play->world, at, back, want, &hit)) reach = fmaxf(0.3f, hit.distance - TC_CAM_RADIUS);
         v->play->world.solid = solid;
-        eye = tc_v3_add(at, tc_v3_scale(back, reach));
+        eye = tc_v3_add(at, tc_v3_scale(back, fminf(reach, want)));
         d = tc_v3_sub(at, eye);
     }
     v->camera.position = eye;
@@ -280,12 +292,52 @@ static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at) {
     }
 }
 
+/* The camera's target perso (PROC 180 SetCameraTarget, cine +0x10: what B7 / B8 read as dsg5 =
+ * Function_Camera_GetTargetCamera), where a fixed shot looks: true when it is Ed (none set, the main actor or his
+ * alias), *out his drawn origin + the aim height; else the perso's origin (InPersoContext(dsg5, GetPosition)). The
+ * directors point it at what they show (Land's bridge, cock01's fridge, north's flying guard) and back at Ed after. */
+static bool shot_target(const tc_viewer *v, tc_vec3 *out) {
+    const tc_viewer_play *p = v->play;
+    int32_t id = p->has_cast ? p->cast.globals.cam_target : 0;
+    if (id != 0 && id != p->cast.main_id && !(v->level->cast.main_alias && id == (int32_t)v->level->cast.main_alias) &&
+        tc_cast_position(&p->cast, id, out) && isfinite(out->x) && isfinite(out->y) && isfinite(out->z))
+        return false;
+    *out = tc_v3_add(ed_drawn(p), tc_v3(0, 0, TC_CAM_AIM_HEIGHT));
+    return true;
+}
+
+/* Whether the fixed shot the scripts give (shot 6) is a reveal: it looks at a place (dsg91 0: dsg93) or at a perso
+ * other than Ed. */
+static bool fixed_reveal(const tc_viewer *v, const tc_ed_ai *e) {
+    tc_vec3 at;
+    return cam_f(e, TC_AI_CAMERA_FIXED_TARGET) != 1 || !shot_target(v, &at);
+}
+
 /* The fixed shot: the camera's shot 6 (camera reflex 2 -> B8, then B7 every tick; its dsgvars as the scripts that pick it
  * write them, TC_AI_CAMERA_FIXED_*). B8: with dsg89 1 it moves to the place dsg92 (B7's Action_Camera_GoToPosition,
  * META 30: the camera's own mechanics carry it until within 0.1), else it is put there; it looks at its target perso
- * (dsg91 1: Ed) or at the point dsg93, which with dsg95 1 it eases to (dsg2 += (dsg93 - dsg2) / dsg94 per tick). Port:
- * the move to the place is an ease (TC_VIEW_FIXED_GLIDE_TIME: the camera's mechanics' speed is not read). */
-#define TC_VIEW_FIXED_GLIDE_TIME 0.35f
+ * (dsg91 1: shot_target, Ed unless a director pointed it elsewhere) or at the point dsg93, which with dsg95 1 it eases
+ * to (dsg2 += (dsg93 - dsg2) / dsg94 per tick). Port: the move to the place (the camera's mechanics' speed not read) is
+ * a smoothstep round the look point (its direction, height angle and distance from it eased together: a straight line
+ * swung the view round Ed when it passed near him, and an exponential ease started at full speed), taking
+ * TC_VIEW_GLIDE_MIN .. MAX by the length of the move. */
+#define TC_VIEW_GLIDE_MIN 0.5f
+#define TC_VIEW_GLIDE_MAX 1.6f
+#define TC_VIEW_GLIDE_SPEED 15.0f   /* units/s of the move, before the smoothstep's shape */
+static tc_vec3 glide_eye(const tc_viewer *v, tc_vec3 place, tc_vec3 look) {
+    tc_vec3 a = tc_v3_sub(v->shot.glide_from, look), b = tc_v3_sub(place, look);
+    float u = v->shot.glide_time > 0 ? fminf(1, v->shot.glide_t / v->shot.glide_time) : 1, s = u * u * (3 - 2 * u);
+    float ra = tc_v3_length(a), rb = tc_v3_length(b), ha, hb, ya, yb, pa, pb, yaw, pitch, r;
+    if (s >= 1) return place;
+    if (ra < 0.5f || rb < 0.5f) return tc_v3_add(v->shot.glide_from, tc_v3_scale(tc_v3_sub(place, v->shot.glide_from), s));
+    ha = sqrtf(a.x * a.x + a.y * a.y), hb = sqrtf(b.x * b.x + b.y * b.y);
+    ya = atan2f(a.x, a.y), yb = atan2f(b.x, b.y), pa = atan2f(a.z, ha), pb = atan2f(b.z, hb);
+    yaw = ya + remainderf(yb - ya, 2 * TC_PI) * s;
+    pitch = pa + (pb - pa) * s;
+    r = ra + (rb - ra) * s;
+    return tc_v3_add(look, tc_v3(sinf(yaw) * cosf(pitch) * r, cosf(yaw) * cosf(pitch) * r, sinf(pitch) * r));
+}
+
 static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
     tc_vec3 place, point, target;
     bool glide, at_ed, ease;
@@ -296,19 +348,23 @@ static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
     ease = cam_f(e, TC_AI_CAMERA_FIXED_EASE) == 1;
     steps = cam_f(e, TC_AI_CAMERA_FIXED_STEPS);
     if (!cam_v(e, TC_AI_CAMERA_FIXED_POINT, &point)) point = place;
-    target = tc_v3_add(ed_drawn(v->play), tc_v3(0, 0, TC_CAM_AIM_HEIGHT));
+    v->shot.look_perso = at_ed && !shot_target(v, &target) ? v->play->cast.globals.cam_target : 0;
+    if (at_ed && !v->shot.look_perso) shot_target(v, &target);
+    v->shot.glides = glide;
     if (!v->shot.on) { /* B8: from where the camera is, or put at the place; the look starts at its point */
-        v->shot.eye = glide ? v->camera.position : place;
+        v->shot.glide_from = v->shot.eye = glide ? v->camera.position : place;
+        v->shot.glide_t = 0;
+        v->shot.glide_time = fmaxf(TC_VIEW_GLIDE_MIN, fminf(TC_VIEW_GLIDE_MAX,
+                                                            tc_v3_distance(place, v->shot.eye) / TC_VIEW_GLIDE_SPEED));
         v->shot.look = at_ed ? target : point;
     }
-    if (glide) v->shot.eye = tc_v3_add(v->shot.eye, tc_v3_scale(tc_v3_sub(place, v->shot.eye),
-                                                                  1 - expf(-dt / TC_VIEW_FIXED_GLIDE_TIME)));
-    else v->shot.eye = place;
     if (at_ed) v->shot.look = target;
     else if (ease && steps > 1) /* 1 / steps of the way per camera tick (30 a second) */
         v->shot.look = tc_v3_add(v->shot.look, tc_v3_scale(tc_v3_sub(point, v->shot.look),
                                                              1 - powf(1 - 1 / steps, dt * 30)));
     else v->shot.look = point;
+    v->shot.glide_t += dt;
+    v->shot.eye = glide ? glide_eye(v, place, v->shot.look) : place;
     look_from(v, v->shot.eye, v->shot.look);
     return true;
 }
@@ -386,19 +442,43 @@ static void director_follow(tc_viewer *v, const tc_ed_ai *e, int shot, tc_cam_ta
                                                                * turn kept on top */
 }
 
+/* The player and the directors (port; the user, 2026-11-16: "don't let custom camera scripts take over if the user has
+ * already moved the camera"; docs/CAMERA.md "Player and directors"). The original locked the player's camera keys in
+ * every one of these shots (camera B5, B8, B10, B20, B22 set dsg8 = 1); here they are hints the player can override:
+ *   - a directed stretch: from a director's shot (2, 4, 6, 7, 8) until none has been on for TC_VIEW_STRETCH_GAP (the
+ *     directors hand over from one to the next as Ed walks on: cavedoc's cliffs, cock01's fridge);
+ *   - the player holds the camera for the rest of the stretch once he turns it during one of its framings, takes a
+ *     fixed or rail eye back (a fresh Jump, Action or Shoot), or turned it less than TC_VIEW_OWN_RECENT before a
+ *     framing began. Then the framings (the follows' axis, the rail, a fixed shot looking at Ed) don't take it: the
+ *     follows keep their distance and elevation, the turning is his. The reveals (a fixed shot looking at a place or
+ *     another perso: shot_target) still take the camera: they show what a switch did;
+ *   - recentre (X, middle button, L2) gives the camera back to the scripts: onto the axis, back into the framing. */
+#define TC_VIEW_OWN_RECENT 2.0f     /* s: turned this recently when a framing begins, the camera stays his */
+#define TC_VIEW_STRETCH_GAP 1.0f    /* s without a director's shot that end the stretch (and the player's hold) */
+
 /* The scripted shots (2, 4, 6, 7, 8: the cast's directors and characters; docs/CAMERA.md "The directors' shots"). Port
  * (the user, 2026-11-13): the player turns the shot's camera (tc_viewer.shot.look_*: the eye round its look point, a
  * follow's direction), and takes it back from the shots that do not follow Ed (4, 6) with a fresh Jump, Action or
- * Shoot, until the scripts pick another shot or place. Returns whether the eye is the shot's (4, 6); a follow (2, 7,
- * 8) fills t. */
+ * Shoot, until the scripts pick another shot or place; with the player's hold above. Returns whether the eye is the
+ * shot's (4, 6); a follow (2, 7, 8) fills t. */
 static bool scripted_shot(tc_viewer *v, int shot, tc_cam_target *t, float dt, bool fresh) {
     const tc_viewer_play *p = v->play;
     const tc_ed_ai *e = p->main.has_driver ? &p->main.driver : NULL;
     bool eye = shot == TC_CAM_SHOT_FIXED || shot == TC_CAM_SHOT_RAIL;
     bool follow = shot == TC_CAM_SHOT_NEAR || shot == TC_CAM_SHOT_AXIS || shot == TC_CAM_SHOT_MIRROR;
+    bool directing = e && e->camera >= 0 && (eye || follow);
+    bool turned = v->look_yaw_frame != 0 || v->look_rise_frame != 0;
+    bool reveal;
     tc_vec3 sig = tc_v3(0, 0, 0);
     bool on = false;
-    if (e && e->camera >= 0 && (eye || follow)) { /* what the scripts gave: a new one takes the camera again */
+    /* the stretch, and whether the player holds the camera in it */
+    v->shot.since_look = turned ? 0 : v->shot.since_look + dt;
+    if (directing) {
+        v->shot.in_stretch = true;
+        v->shot.stretch_gap = 0;
+    } else if (v->shot.in_stretch && (v->shot.stretch_gap += dt) >= TC_VIEW_STRETCH_GAP)
+        v->shot.in_stretch = v->shot.overridden = false;
+    if (directing) { /* what the scripts gave: a new one takes the camera again */
         uint32_t k = shot == TC_CAM_SHOT_FIXED ? TC_AI_CAMERA_FIXED_PLACE : shot == TC_CAM_SHOT_RAIL ? 82u
                    : shot == TC_CAM_SHOT_NEAR ? 76u : 100u;
         if (!cam_v(e, k, &sig)) sig = tc_v3(cam_f(e, k), shot == TC_CAM_SHOT_NEAR ? cam_f(e, 77) : 0, 0);
@@ -410,28 +490,110 @@ static bool scripted_shot(tc_viewer *v, int shot, tc_cam_target *t, float dt, bo
         v->shot.look_yaw = v->shot.look_rise = 0;
         v->shot.on = false; /* entered afresh */
     }
-    if (v->shot.on) { /* the player turns the shot's camera (port) */
+    reveal = shot == TC_CAM_SHOT_FIXED && e && e->camera >= 0 && fixed_reveal(v, e);
+    /* a framing arriving while the player is (or was just) turning the camera: his */
+    if (directing && !v->shot.on && !v->shot.released && !reveal && v->shot.since_look < TC_VIEW_OWN_RECENT)
+        v->shot.overridden = true;
+    if (v->shot.on && turned) { /* the player turns the shot's camera (port); turning a framing makes it his */
         v->shot.look_yaw += v->look_yaw_frame;
         v->shot.look_rise = fmaxf(-1.2f, fminf(1.2f, v->shot.look_rise + v->look_rise_frame));
+        if (!(eye && v->shot.reveal)) v->shot.overridden = true;
     }
     if (v->shot.on && eye && fresh) { /* a fresh Jump, Action or Shoot takes it back from a fixed or rail eye */
         v->shot.released = true;
+        v->shot.blend_want = true;
+        if (!v->shot.reveal) v->shot.overridden = true;
         v->cam.placed = false; /* the follow, placed afresh behind Ed */
     }
-    if (e && e->camera >= 0 && !v->shot.released) {
+    /* a framing eye that is not on yet stays off while the player holds the camera (one already on stays: its turn is
+     * the 2026-11-13 orbit) */
+    if (eye && !reveal && v->shot.overridden && !v->shot.on) v->shot.released = true;
+    if (directing && !v->shot.released) {
+        if (eye && !v->shot.on) { /* the zoom it starts from (shot_dolly) */
+            v->shot.entry_orbit = v->orbit_distance;
+            v->shot.entry_closeup = v->cam.closeup;
+        }
         if (shot == TC_CAM_SHOT_FIXED) on = update_fixed(v, e, dt);
         else if (shot == TC_CAM_SHOT_RAIL) on = update_rail(v, e, dt);
         else if (follow) {
             director_follow(v, e, shot, t, dt);
             on = t->shot_distance > 0;
+            if (v->shot.overridden) t->shot_axis = false; /* his to turn */
         }
     }
-    if (!on && v->shot.on && eye) v->cam.placed = false;
+    if (!on && v->shot.on && eye) v->cam.placed = false, v->shot.blend_want = true;  /* out of the eye: the follow's */
+    /* into it: put at its place, or (a glide) turned to its look point */
+    if (on && !v->shot.on && eye) v->shot.blend_want = true; /* a glide moves from where the camera is, but turns at once */
     v->shot.on = on;
+    v->shot.reveal = on && reveal;
     return on && eye;
 }
 
 bool tc_viewer_fixed_shot(const tc_viewer *v) { return v->shot.on; }
+
+/* The transition (port; the user, 2026-11-16: "if the transition between two angles is too harsh, I believe it'd be
+ * better to animate between them"). The original cuts into and out of its fixed and rail shots (B8 puts the camera at
+ * its place; their end places the follow afresh behind Ed). Here such a switch eases from the view shown before to the
+ * new one (smoothstep, position and angles; its length grows with the distance and the turn), when the two eyes are
+ * within TC_VIEW_BLEND_FAR of each other, look within TC_VIEW_BLEND_TURN of the same way and no surface is between
+ * them: a swoop through a wall, across the level or round to face the other way reads worse than a cut, so those stay
+ * cuts. The camera's own state (the follow's yaw) runs on underneath. */
+#define TC_VIEW_BLEND_FAR 25.0f     /* units between the two eyes beyond which it cuts */
+#define TC_VIEW_BLEND_MIN 0.3f      /* s, the shortest blend ... */
+#define TC_VIEW_BLEND_MAX 1.0f      /* ... and the longest */
+#define TC_VIEW_BLEND_TURN 2.0f     /* rad (yaw + pitch) between the two views beyond which it cuts: a turn round is
+                                       a reversal, which reads better cut (and as a pan, it whips) */
+#define TC_VIEW_BLEND_RATE 3.5f     /* rad/s: the fastest the view turns at the blend's middle (smoothstep: 1.5 x the
+                                       mean) */
+
+static float wrap_pi(float a) { return remainderf(a, 2 * TC_PI); }
+
+void tcv_camera_settle(tc_viewer *v) { v->shot.blending = v->shot.blend_want = false; } /* the shown view becomes the live one */
+
+static void blend_begin(tc_viewer *v, const tc_camera *from) {
+    tc_vec3 d = tc_v3_sub(v->camera.position, from->position);
+    float dist = tc_v3_length(d), turn = fabsf(wrap_pi(v->camera.yaw - from->yaw)) + fabsf(v->camera.pitch - from->pitch);
+    tc_hit hit;
+    bool clear = true;
+    if (dist > TC_VIEW_BLEND_FAR || !(dist == dist) || turn > TC_VIEW_BLEND_TURN) return;
+    if (dist > 1e-3f) {
+        const uint8_t *solid = v->play->world.solid;
+        v->play->world.solid = NULL; /* every surface, as the camera's own tests */
+        clear = !tc_collision_raycast(&v->play->world, from->position, tc_v3_scale(d, 1 / dist), dist, &hit);
+        v->play->world.solid = solid;
+    }
+    if (!clear) return;
+    v->shot.blending = true;
+    v->shot.blend_from = *from;
+    v->shot.blend_t = 0;
+    v->shot.blend_time = fmaxf(TC_VIEW_BLEND_MIN, fminf(TC_VIEW_BLEND_MAX, fmaxf(0.25f + 0.02f * dist,
+                                                                                  1.5f * turn / TC_VIEW_BLEND_RATE)));
+}
+
+/* The view shown this frame: v->camera (live) eased from blend_from; the live yaw kept for the follow's next frame. */
+static void blend_apply(tc_viewer *v, float dt) {
+    float u, s;
+    if (!v->shot.blending) return;
+    if (tc_v3_distance(v->camera.position, v->shot.live_position) > TC_CAM_TELEPORT && v->shot.blend_t > 0) {
+        v->shot.blending = false; /* the live view jumped (a teleport, a respawn): no swoop after it */
+        return;
+    }
+    v->shot.live_yaw = v->camera.yaw;
+    v->shot.live_position = v->camera.position;
+    v->shot.blend_t += dt;
+    u = fminf(1, v->shot.blend_t / v->shot.blend_time);
+    s = u * u * (3 - 2 * u);
+    v->camera.position = tc_v3_add(v->shot.blend_from.position,
+                                   tc_v3_scale(tc_v3_sub(v->camera.position, v->shot.blend_from.position), s));
+    v->camera.yaw = wrap_pi(v->shot.blend_from.yaw + wrap_pi(v->shot.live_yaw - v->shot.blend_from.yaw) * s);
+    v->camera.pitch = v->shot.blend_from.pitch + (v->camera.pitch - v->shot.blend_from.pitch) * s;
+    v->shot.shown_yaw = v->camera.yaw;
+    if (u >= 1) {
+        v->shot.blending = false;
+        v->camera.yaw = v->shot.live_yaw;
+    }
+    if (s < 0.5f) v->cam.hide_target = false; /* still near the old eye: away from him */
+}
 
 void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
     tc_viewer_play *p = v->play;
@@ -465,7 +627,20 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         tcx_camera_obstacles(p->custom, false); /* custom gameplay's cars don't stop the camera */
         t.shot_distance = t.shot_elevation = t.shot_yaw = 0;
         t.shot_axis = false;
-        if (!update_director(v, fresh) && !scripted_shot(v, t.shot, &t, dt, fresh)) tc_cam_update(&v->cam, &v->camera, &t, dt);
+        {
+            tc_camera shown = v->camera;
+            if (v->shot.blending) /* the follow's own yaw under the shown one, with the player's turn since */
+                v->camera.yaw = wrap_pi(v->shot.live_yaw + wrap_pi(v->camera.yaw - v->shot.shown_yaw));
+            v->shot.blend_want = false;
+            if (!update_director(v, fresh) && !scripted_shot(v, t.shot, &t, dt, fresh)) tc_cam_update(&v->cam, &v->camera, &t, dt);
+            if (v->shot.blend_want) {
+                v->shot.blend_want = false;
+                v->shot.blending = false;
+                if (!v->cam.first_person) blend_begin(v, &shown); /* first person is at his head at once */
+                v->shot.live_position = v->camera.position;
+            }
+            blend_apply(v, dt);
+        }
         if (p->has_cast) { /* the current record, as the scripts' FUNC 59-66 read it: the follow's (camera B28's bands) */
             tc_ai_globals *g = &p->cast.globals;
             float d = v->cam.distance;
@@ -488,7 +663,13 @@ void tc_viewer_paused_look(tc_viewer *v, float dt) {
 
 void tc_viewer_recenter_camera(tc_viewer *v) {
     REC_DOOR(TC_RD_RECENTER, 0, 0);
-    if (v->playing) tc_cam_recenter(&v->cam);
+    if (!v->playing) return;
+    tc_cam_recenter(&v->cam);
+    if (v->shot.in_stretch) { /* port: the camera back to the scripts (scripted_shot) */
+        v->shot.overridden = v->shot.released = false;
+        v->shot.look_yaw = v->shot.look_rise = 0;
+    }
+    v->shot.since_look = 1e6f; /* his last turn no longer counts against the next framing */
 }
 
 void tc_viewer_toggle_closeup(tc_viewer *v) {
@@ -499,6 +680,7 @@ void tc_viewer_toggle_closeup(tc_viewer *v) {
 void tc_viewer_toggle_first_person(tc_viewer *v) {
     REC_DOOR(TC_RD_FIRST_PERSON, 0, 0);
     if (!v->playing || !v->play) return;
+    tcv_camera_settle(v);
     v->cam.first_person = !v->cam.first_person;
     v->camera.yaw = TC_PI - v->play->main.player.heading; /* entering: looking the way he faces; leaving: behind him */
     v->camera.pitch = v->cam.first_person ? 0 : -TC_CAM_ELEVATION;

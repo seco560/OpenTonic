@@ -188,10 +188,35 @@ typedef enum tc_viewer_phase {
 /* The scripted shot in progress (the camera's shots 2, 4, 6, 7, 8 as the cast picks them; docs/CAMERA.md "The fixed
  * shot", "The directors' shots"). Port (the user, 2026-11-13: "make it possible to move around the custom camera"): the
  * player's turn of it (look_yaw, look_rise) is kept while it lasts: the fixed and rail eyes orbit their look point by
- * it, the directors' follows add it to their direction; a new shot starts from none. */
+ * it, the directors' follows add it to their direction; a new shot starts from none.
+ * Port (the user, 2026-11-16: "don't let custom camera scripts take over if the user has already moved the camera"):
+ * the shots that frame Ed (the follows 2, 7, 8, the rail, a fixed shot looking at him) are hints the player may
+ * override; the override lasts the directed stretch (docs/CAMERA.md "Player and directors"). The reveals (a fixed shot
+ * looking at another perso or a place: the bridge coming down) still take the camera. */
 typedef struct tc_viewer_shot {
     bool on;                  /* a scripted shot is on */
     bool released;            /* the player took the camera back from it (a fresh Jump, Action or Shoot: 4, 6) */
+    bool overridden;          /* the player holds the camera for the rest of this directed stretch: the framings don't
+                                 take it (a reveal still does) */
+    bool in_stretch;          /* a director's shot (2, 4, 6, 7, 8) is or was just on (gaps under TC_VIEW_STRETCH_GAP) */
+    float stretch_gap;        /* s since the last frame of a director's shot */
+    float since_look;         /* s since the player last turned the camera (any mode) */
+    bool reveal;              /* the eye shot on looks at something other than Ed */
+    float entry_orbit;        /* the zoom (tc_viewer.orbit_distance) and close-up when the eye shot started: the wheel */
+    bool entry_closeup;       /* and 5 dolly its eye from there */
+    bool glides;              /* the fixed shot moves to its place (dsg89 1) ... */
+    tc_vec3 glide_from;       /* ... from here (the camera when it began) */
+    float glide_t, glide_time;
+    int32_t look_perso;       /* the fixed shot looks at this perso (not Ed: a reveal's), 0 none */
+    /* Port (the user, 2026-11-16: "if the transition between two angles is too harsh ... animate between them"): a
+     * switch into or out of a fixed or rail eye (the original cuts) is animated from the view shown before, when the two
+     * are near and nothing is between them (tc_viewer_camera.c "The transition"); else it stays a cut. */
+    bool blend_want;          /* this frame's update switched eye: blend if it may */
+    bool blending;
+    float blend_t, blend_time;
+    tc_camera blend_from;     /* the view shown when it began */
+    float live_yaw, shown_yaw; /* the yaw the camera's own state holds (the follow's) and the one shown last frame */
+    tc_vec3 live_position;
     int seen;                 /* the shot and its signature (its place, rail, distance or axis) last frame: a change */
     tc_vec3 sig;              /* gives the camera to the scripts again */
     tc_vec3 eye, look;        /* the fixed and rail shots' eye and look point */

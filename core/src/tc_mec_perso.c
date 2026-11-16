@@ -118,6 +118,9 @@ static void walk(const tc_mec_perso *x, const tc_ai_card *card, const tc_ai_sphe
     tc_vec3 wanted = tc_v3(0, 0, 0), jump = tc_v3(0, 0, 0);
     const tc_vec3 *impulse = NULL;
     uint32_t k;
+    /* off the carrier (PROC 16: his own scripts', or a platform's InPersoContext(main actor, DetachFromCarrier) before
+     * it fades: cavedoc's BEM_PFQuiSeDesagrege, the guide), as the cast's walkers (tc_cast_mec.c) */
+    if (m->detach) x->dyn->walk.carrier = -1;
     /* riding: first where the carrier took him (DNM_FollowCarrier_004a83d2), then his own move from there */
     tc_mec_walk_carry(&x->dyn->walk, p->world, body, &p->heading, dt, &p->position);
     if (air) tc_mec_walk_air(&x->dyn->walk);

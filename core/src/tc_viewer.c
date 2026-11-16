@@ -19,6 +19,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->look_sensitivity = 1;
     v->orbit_distance = TC_CAM_DISTANCE;
     tc_cam_reset(&v->cam);
+    v->shot.since_look = 1e6f; /* the player has not turned the camera yet */
     v->ed_clip = -1;
     v->ed_state = -1;
     tc_camera_init(&v->camera);

@@ -321,7 +321,9 @@ u8 at, u8 from}. A link (0x50) has its type at +0x38 (0 straight, 1, 2 Bezier, 3
 order so the .ttlv and the .ttai agree; dsgvars of type 8 hold the number); tc_level.h `tc_ways`; tc_ai.c (`go_to`,
 `go_over_way`, the cursor in tc_ai_perso.way_cursor). A father-relative waypoint uses its live father's position and
 heading (**port**: the exe's straight link keeps a copy of its end point; 4 such waypoints in the 21 levels).
-Check: viewcheck `guide_scenario` (cavedoc's ruby BNE_PFGuide: all 10 waypoints in order, 37 s at speed 12, Ed riding).
+Check: viewcheck `guide_scenario` (cavedoc's ruby BNE_PFGuide: all 10 waypoints in order, Ed riding; since 2026-11-16
+the toasters set its speed, "InPersoContext and the procedures" below: 12 at the start, 3 while a toaster shoots, 10
+after, the whole way in 79 s; it was 37 s at a constant 12 while their writes did nothing).
 Uses: 1143 waypoint nodes, 273 GoToWP, 59 GoOverWay (the rubies, north's boat and drakkar, the see-saw platforms, the
 guards' patrols, Suzy, the mummies, the haricot).
 
@@ -448,6 +450,43 @@ used to walk away from Ed with its back turned; it now turns and closes 6 -> 2.8
 **Next for motion:** card types 8 (pyr_dentier, patcat2; `DNM_RequestType8_004af04e` read, forces not) and 9 (the rolling
 stones, gen_pierres), PROC 12-15 (a perso parented to a perso), PROC 116 / 117 / 109 (**moved sectors** over time: read as far
 as `GAM_0042a350` / `GAM_0042a270`; these are probably what opens the story gates that `GATES_OPEN` removes at export).
+
+## InPersoContext and the procedures (2026-11-16; **read** unless marked)
+OP 24 `InPersoContext(perso, expression)` (`OP_24_004913d0`) evaluates its expression with `DAT_004ffcf4` = the perso
+(`AI_00491380`: 0 when it is Me). The primitives' tables carry a flag per entry (`g_ai_procedures` 0x4E5A48,
+`g_ai_conditions` 0x4E63A0, `g_ai_functions` 0x4E6718: {fn, u32 flag}); a flagged primitive calls `AI_004913a0(flag, me,
+&target)`, which takes `DAT_004ffcf4` for its target **and clears it**, then evaluates its arguments as Me. Read from
+the dump's tables:
+- **procedures, 92 flagged:** 12-16 (16 DetachFromCarrier), 32-65 (DynamicsOn/Off, StopMotion, every proposal and speed
+  write: SetSpeed, SetMoveDirection, ProposalVecA ...; every SetMechMode), 120 / 121 (the channels), 126-136, 145 / 146
+  (the 3D sounds), 203-233 (display, transparency, particles), 245-248 (the turns), 254, 291 / 292.
+- **conditions, 45 flagged:** 31-52 (the contact and material tests: OnGround, AgainstWall, ..., InEnvironmentWater),
+  63 / 64, 69-76, 91-103, 110.
+- **functions, 34 flagged:** 0-2, 4-20 (positions, distances, the waypoint distance), 54 StandingOnPerso, 88-92, 100-104,
+  116, 162, 163.
+
+**Port (until 2026-11-16 a gap):** a procedure as OP 24's expression never ran (`eval` returned a reference for PROC
+nodes), and conditions always tested the perso running the script. Every level has such statements (cavedoc 36 by the
+level persos, sud0 74; the fix camera's channel ones are not run by the cast). Seen broken by it: **Transit's flight
+training** (SDO_PF1-6: `If InPersoContext(main actor, OnGround)` asked whether the platform stood on the ground, so no
+face platform ever counted and the tutorial never ended: the user's softlock); **cavedoc's toasters** (JET_CaveDocToaster
+B1 / B4: `InPersoContext(BNE_PFGuide, SetMoveDirection(0, -3, 0))` slows the ride while each shoots, -10 after);
+**Ed never detached** by the platforms that fade with him on them (BEM_PFQuiSeDesagrege, the guide, north's
+KEV_Plate_Forme_Bonheur: `InPersoContext(main actor, DetachFromCarrier)`); sud0's passages' `SetTransparency` on Ed
+(he now vanishes during the move and comes back on landing, as scripted). Now (tc_ai.c `proc_on_context`,
+`cond_on_context`): a PROC node in an expression runs; the flagged procedures and conditions act on OP 24's perso,
+their arguments read as Me, the context cleared after (as `AI_004913a0`); PlaySound3D / Other keep their own handling.
+Functions already read the context one by one (the ones the scripts use); not changed. **Port:** PROC 16 / 34 asked
+by another perso are kept until that perso's next step (`tc_ai_motion.detach_by_other`, `stop_by_other`: its
+step_begin would drop them before its mechanics saw them); Ed's mechanics now honour PROC 16 (tc_mec_perso.c `walk`),
+as the cast's walkers did.
+Checks: viewcheck's guide (the toasters' speeds), portalcheck's sud0 passage (Ed hidden, then seen again), a scratch
+probe of Transit (the six platforms count; SDO_ContentVol1 reaches its B2; before: none did).
+**Open** (seen on the way, cavedoc's toasters): the toast (JET_ToastMortelle, card type 10, 22 u/s) flies at Ed with
+his lead but nothing hurts him (his hurt flow is his dsg0, set by what hits him: not traced for the toast); the port
+keeps one instance per spawnable template (the exe takes a free slot of the level's num_always pool for every launch,
+`GAM_Always_004259a0`: cavedoc 15, north 25), so a toast still in flight (up to 5 s) blocks the next toaster's; the
+first toaster's toast does not move from its launch point (blocked at once, not looked into).
 
 ## Speech (2026-11-06; all **read** unless marked)
 The exe's `GAM_LipsSync.c`. A character's line is one object carrying its voice, its mouth shapes, its text and cues.
