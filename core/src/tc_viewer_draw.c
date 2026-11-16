@@ -470,10 +470,18 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     for (i = 0; i < v->piece_count; i++) { /* a water surface's pieces follow its height too (2026-11-16: the water is
                                              * transparent, so drawn as pieces, and stayed up while its height went down) */
         uint32_t o = v->piece_origin[i];
-        tc_mat4 lift = identity;
-        if (v->mesh_surface && o < l->mesh_count && v->mesh_surface[o] >= 0)
-            lift.m[14] = v->sectors->surface_z[v->mesh_surface[o]] - v->surface_z0[v->mesh_surface[o]];
-        add_mesh(v, &dl, v->piece_first + i, &lift, shown, water);
+        tc_mat4 pm = identity;
+        if (v->mesh_surface && !v->piece_surface && v->piece_count &&
+            (v->piece_surface = (int16_t *)tc_alloc(sizeof(int16_t) * v->piece_count)) != NULL) {
+            uint32_t q;
+            for (q = 0; q < v->piece_count; q++)
+                v->piece_surface[q] = v->piece_origin[q] < l->mesh_count && v->mesh_water[v->piece_origin[q]]
+                                          ? tcv_mesh_surface(v, v->meshes[v->piece_first + q]) : -1;
+        }
+        if (v->piece_surface && v->piece_surface[i] >= 0)
+            pm.m[14] = v->sectors->surface_z[v->piece_surface[i]] - v->surface_z0[v->piece_surface[i]];
+        (void)o;
+        add_mesh(v, &dl, v->piece_first + i, &pm, shown, water);
     }
     TC_PROF_END(TC_PZ_DRAW_STATICS, prof);
     prof = TC_PROF_BEGIN();
