@@ -307,6 +307,7 @@ typedef struct tc_viewer {
     uint32_t speech_event;    /* its dialogue's next event */
     bool speech_held;
     bool talk_press;          /* a fresh Action since the last tick (TC_CAST_TALK) */
+    bool talk_held;           /* that Action talked to a speaker: kept from Ed's scripts until it is let go */
     bool scene_said;          /* a hint scene's line is over */
     bool scene_leaving;       /* its speaker was left waiting for the scene's Ed: the port covers and goes on */
     bool director;            /* the shot is on */

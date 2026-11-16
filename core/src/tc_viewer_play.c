@@ -194,6 +194,7 @@ static uint32_t ai_inputs(const tc_viewer *v) {
         if (held(v, map[i].a)) r |= 1u << map[i].bit;
     if (v->cam.first_person) r &= (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_SHOOT); /* he stands while looking */
     if (v->play && tcx_holds_action(v->play->custom)) r &= ~(1u << TC_AI_IN_ACTION); /* that press was custom gameplay's */
+    if (v->talk_held) r &= ~(1u << TC_AI_IN_ACTION); /* that press was the speaker's (step_ai) */
     return r;
 }
 
@@ -455,6 +456,11 @@ static void step_ai(tc_viewer *v, float dt) {
     v->sound_count = 0;
     if (p->has_cast) p->cast.listener = tcv_listener(v); /* last frame's camera, as the exe's micro at the frame's start */
     p->tick_time += dt;
+    /* Port: a fresh Action within reach of a waiting speaker talks to it, and only that. Ed's own scripts take the same
+     * press as the blowgun's (B86 / B87: ButtonJustPressed(action) -> B72) in the tick the speaker wakes, so they do not
+     * get it; nor while it stays held, or its first tick back would be a fresh press to them (tc_ai update_buttons). */
+    if (!held(v, TC_VA_ACTION)) v->talk_held = false;
+    else if (v->talk_press && tc_viewer_talk_prompt(v)) v->talk_held = true;
     while (p->tick_time >= TC_ED_AI_TICK) {
         tc_main_input in;
         int mode_switch;

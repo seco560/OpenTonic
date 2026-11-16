@@ -1557,9 +1557,20 @@ static void hint_scenes_scenario(const char *dir) {
         snprintf(what, sizeof(what), "%s: Ed walks within reach (%.1f along the ground, %.1f s) and the prompt shows", name,
                  (double)ground, (double)i / 60);
         check(prompt, what);
-        run(&v, 0.1f, BIT(TC_VA_ACTION));
-        snprintf(what, sizeof(what), "%s: Action starts the scene", name);
-        check(speaker->talking, what);
+        /* with the blowgun (power 8: B86 / B87 take a fresh Action to B72), held a while: the press is the speaker's */
+        ((tc_cast *)c)->globals.powers |= 8;
+        {
+            int drew = 0;
+            tc_viewer_set_action(&v, TC_VA_ACTION, true);
+            for (i = 0; i < 90 && !drew; i++) {
+                if (i == 60) tc_viewer_set_action(&v, TC_VA_ACTION, false);
+                frame(&v, 1.0f / 60);
+                drew = c->main && c->main->normal.behaviour == 72;
+            }
+            tc_viewer_release_all(&v);
+            snprintf(what, sizeof(what), "%s: Action starts the scene, and Ed keeps his blowgun away", name);
+            check(speaker->talking && !drew, what);
+        }
         for (i = 0; i < 60 * 40 && !pending; i++) {
             if (!said && tc_viewer_speech(&v)) { /* mammyon's comes some 18 s on: the mammoth walks in first */
                 said = 1;
