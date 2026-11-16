@@ -250,6 +250,19 @@ static bool reserve(tc_view_draw **p, uint32_t *cap, uint32_t need) {
 
 typedef struct draw_list { uint32_t count, blended_count; } draw_list;
 
+/* The water surface (sectors' surface_z index, as loaded) every vertex of mesh m lies on, -1 none: a static mesh may
+ * hold several water bodies of one material (Transit's: its sheep pool at -46 and another at 48.9), so only a mesh, or
+ * a piece of one (the transparent statics' cells), wholly at one height follows that surface. */
+int16_t tcv_mesh_surface(const tc_viewer *v, const tc_mesh *m) {
+    uint32_t k, q;
+    if (!m || !m->vertex_count || !v->surface_z0) return -1;
+    for (k = 0; k < v->sectors->surface_count; k++) {
+        for (q = 0; q < m->vertex_count && fabsf(m->vertices[q].position[2] - v->surface_z0[k]) < 0.3f; q++) {}
+        if (q == m->vertex_count) return (int16_t)k;
+    }
+    return -1;
+}
+
 /* A water static, or a piece of one. */
 static bool is_water(const tc_viewer *v, uint32_t mesh) {
     if (!v->mesh_water) return false;
@@ -457,10 +470,18 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     for (i = 0; i < v->piece_count; i++) { /* a water surface's pieces follow its height too (2026-11-16: the water is
                                              * transparent, so drawn as pieces, and stayed up while its height went down) */
         uint32_t o = v->piece_origin[i];
-        round = identity;
-        if (v->mesh_surface && o < l->mesh_count && v->mesh_surface[o] >= 0)
-            round.m[14] = v->sectors->surface_z[v->mesh_surface[o]] - v->surface_z0[v->mesh_surface[o]];
-        add_mesh(v, &dl, v->piece_first + i, &round, shown, water);
+        tc_mat4 pm = identity;
+        if (v->mesh_surface && !v->piece_surface && v->piece_count &&
+            (v->piece_surface = (int16_t *)tc_alloc(sizeof(int16_t) * v->piece_count)) != NULL) {
+            uint32_t q;
+            for (q = 0; q < v->piece_count; q++)
+                v->piece_surface[q] = v->piece_origin[q] < l->mesh_count && v->mesh_water[v->piece_origin[q]]
+                                          ? tcv_mesh_surface(v, v->meshes[v->piece_first + q]) : -1;
+        }
+        if (v->piece_surface && v->piece_surface[i] >= 0)
+            pm.m[14] = v->sectors->surface_z[v->piece_surface[i]] - v->surface_z0[v->piece_surface[i]];
+        (void)o;
+        add_mesh(v, &dl, v->piece_first + i, &pm, shown, water);
     }
     TC_PROF_END(TC_PZ_DRAW_STATICS, prof);
     prof = TC_PROF_BEGIN();

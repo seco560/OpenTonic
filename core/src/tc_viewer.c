@@ -139,18 +139,8 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
             (v->surface_z0 = (float *)tc_alloc(sizeof(float) * v->sectors->surface_count)) != NULL &&
             (v->mesh_surface = (int16_t *)tc_alloc(sizeof(int16_t) * l->mesh_count)) != NULL) {
             memcpy(v->surface_z0, v->sectors->surface_z, sizeof(float) * v->sectors->surface_count);
-            for (i = 0; i < l->mesh_count; i++) {
-                const tc_mesh *m = l->meshes ? &l->meshes[i] : NULL;
-                double zs = 0;
-                float best = 0.3f;
-                v->mesh_surface[i] = -1;
-                if (!v->mesh_water[i] || !m || !m->vertex_count) continue;
-                for (k = 0; k < m->vertex_count; k++) zs += m->vertices[k].position[2];
-                for (k = 0; k < v->sectors->surface_count; k++) {
-                    float d = fabsf((float)(zs / m->vertex_count) - v->surface_z0[k]);
-                    if (d < best) best = d, v->mesh_surface[i] = (int16_t)k;
-                }
-            }
+            for (i = 0; i < l->mesh_count; i++)
+                v->mesh_surface[i] = v->mesh_water[i] && l->meshes ? tcv_mesh_surface(v, &l->meshes[i]) : -1;
         }
     }
     v->ed_clip = tcv_ed_anim(l, "idle");
@@ -228,6 +218,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free((void *)v->meshes);
     tc_free(v->mesh_water);
     tc_free(v->mesh_surface);
+    tc_free(v->piece_surface);
     tc_free(v->surface_z0);
     tc_free(v->draws);
     tc_free(v->mesh_sphere);

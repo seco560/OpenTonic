@@ -373,6 +373,7 @@ typedef struct tc_viewer {
     uint8_t *mesh_water;          /* per static mesh: 1 = a water surface (TC_FLAG_WATER on its draws) */
     int16_t *mesh_surface;        /* per static mesh: the water surface it is (sectors' surface_z index), -1 none */
     float *surface_z0;            /* the surfaces' heights as loaded: a water mesh is drawn moved by now - this */
+    int16_t *piece_surface;       /* the same per transparent piece (lazily made, by its own vertices) */
     uint32_t mesh_count, perso_first, ed_first;
     tc_view_draw *draws, *blended;
     uint32_t draw_cap, blended_cap;
