@@ -78,6 +78,7 @@ static uint32_t perso_crossings(const tc_viewer *v, bool ghosts, tc_vec3 from, t
         if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
         if ((v->mesh_ghost && v->mesh_ghost[dr->mesh]) != ghosts) continue;
         if (v->play && tcx_sight_skips(v->play->custom, dr->mesh)) continue;
+        if (dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi) continue;
         m = v->meshes[dr->mesh];
         s = v->mesh_sphere + 4 * dr->mesh;
         c = model_point(&dr->model, s);
@@ -115,6 +116,7 @@ static float perso_clearance(const tc_viewer *v, tc_vec3 p, float within) {
         if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
         if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
         if (v->play && tcx_sight_skips(v->play->custom, dr->mesh)) continue;
+        if (dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi) continue;
         m = v->meshes[dr->mesh];
         s = v->mesh_sphere + 4 * dr->mesh;
         c = model_point(&dr->model, s);
@@ -263,27 +265,96 @@ static float shot_dolly(const tc_viewer *v) {
 }
 
 /* The eye of a fixed or rail shot looking at `at`, turned round it by the player's turn (tc_viewer.shot.look_*: yaw as
- * the follow's, rise lifts the eye) and dollied by the zoom (shot_dolly); a moved eye stays this side of the level's
- * surfaces (pulled in along the line from the look point, as the follow's walls pull its eye in). */
-static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at) {
-    tc_vec3 d = tc_v3_sub(at, eye);
+ * the follow's, rise lifts the eye) and dollied by the zoom (shot_dolly). Port, for a moved eye (2026-11-16, the user:
+ * turned round Agent XYZ the camera "clips through and gets stuck between Xyz and the ground"): a perso's look point is
+ * its origin, at its feet (feet: another perso of a fixed shot, Ed on the rail), so the eye orbits a pivot raised to the follow's aim height (eased in over the first 0.3 rad
+ * of turning: no jump), within the follow's elevations, and kept off the level and the drawn persos by the follow's
+ * own test (tc_cam_clearance: the camera's sphere swept, the persos' surfaces). Unturned, the scripts' framing as is. */
+#define TC_VIEW_LOOK_EASE 0.3f       /* rad of the player's turn over which the raised pivot comes in */
+
+/* Whether the eye may move from `from` to `to`: the follow's own test (tc_cam_clearance: the camera's sphere swept against
+ * the level, the drawn persos' surfaces), the perso the shot looks at left out (its drawn parts, its collision). */
+static bool eye_path_clear(tc_viewer *v, tc_vec3 from, tc_vec3 to) {
+    tc_vec3 d = tc_v3_sub(to, from);
+    float len = tc_v3_length(d), reach;
+    tc_cam_target t;
+    struct tc_obstacle *ob = NULL;
+    bool live = false;
+    const uint8_t *solid = v->play->world.solid;
+    uint32_t prso, first = v->perso_first;
+    if (len < 1e-4f) return true;
+    memset(&t, 0, sizeof(t));
+    t.world = &v->play->world;
+    t.sight = camera_sight;
+    t.sight_user = v;
+    if (v->shot.look_perso && v->play->has_cast) {
+        for (prso = 0; prso < v->level->perso_count; first += v->level->persos[prso].part_count, prso++) {
+            const tc_cast_actor *a = tc_cast_actor_of(&v->play->cast, prso);
+            if (a && a->entry->id == v->shot.look_perso) {
+                v->sight_skip_lo = first;
+                v->sight_skip_hi = first + v->level->persos[prso].part_count;
+                break;
+            }
+        }
+        if (v->play->world.obstacles && (ob = tc_obstacles_find(v->play->world.obstacles, (uint16_t)v->shot.look_perso)))
+            live = ob->live, ob->live = false;
+    }
+    v->play->world.solid = NULL; /* every surface (as the follow's) */
+    reach = tc_cam_clearance(&t, from, tc_v3_scale(d, 1 / len), len);
+    v->play->world.solid = solid;
+    if (ob) ob->live = live;
+    v->sight_skip_lo = v->sight_skip_hi = 0;
+    return reach >= len - 0.02f;
+}
+
+/* The eye of a fixed or rail shot turned by yaw and rise round its pivot, dollied: on its orbit round the pivot, at the
+ * scripts' eye's distance times the zoom's, within the follow's elevations. */
+static tc_vec3 orbit_eye(tc_vec3 eye, tc_vec3 pivot, float yaw_turn, float rise, float dolly) {
+    tc_vec3 rel = tc_v3_sub(eye, pivot);
+    float lo = TC_CAM_ELEVATION + TC_CAM_RISE_MIN, hi = TC_CAM_ELEVATION + TC_CAM_RISE_MAX, r = tc_v3_length(rel);
+    float yaw = atan2f(-rel.x, -rel.y) + yaw_turn, elevation = atan2f(rel.z, sqrtf(rel.x * rel.x + rel.y * rel.y)), want;
+    elevation = fmaxf(fminf(lo, elevation), fminf(fmaxf(hi, elevation), elevation + rise));
+    want = r * dolly;
+    if (dolly < 1) want = fmaxf(want, fminf(r, TC_VIEW_DOLLY_MIN));
+    return tc_v3_add(pivot, tc_v3_scale(tc_v3(-sinf(yaw) * cosf(elevation), -cosf(yaw) * cosf(elevation), sinf(elevation)), want));
+}
+
+/* The eye of a fixed or rail shot looking at `at`. Unturned and unzoomed: the scripts' eye as it is (a fixed eye may
+ * stand beyond a roof or a booth's wall from what it looks at; the original's never collides). Port (the player's turn
+ * and zoom, 2026-11-13 / 16; the user: turned round Agent XYZ the camera "clips through and gets stuck between Xyz and
+ * the ground"): the eye orbits a pivot (a perso's feet raised to the follow's aim height, eased in over the first 0.3
+ * rad of turning: feet = another perso of a fixed shot, Ed on the rail), within the follow's elevations; it moves from
+ * where it was only where the camera's sphere passes (eye_path_clear), else the turn stops where it last did. */
+static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at, bool feet) {
+    tc_vec3 d = tc_v3_sub(at, eye), from = v->shot.has_cur ? v->shot.cur_eye : eye;
     float len = tc_v3_length(d), dolly = shot_dolly(v);
+    if (len > 1e-4f) { /* the rise kept within what shows: no dead travel turning back */
+        float lo = TC_CAM_ELEVATION + TC_CAM_RISE_MIN, hi = TC_CAM_ELEVATION + TC_CAM_RISE_MAX;
+        float elevation = atan2f(-d.z, sqrtf(d.x * d.x + d.y * d.y));
+        v->shot.look_rise = fmaxf(fminf(lo, elevation) - elevation, fminf(fmaxf(hi, elevation) - elevation, v->shot.look_rise));
+    }
     if (len > 1e-4f && (v->shot.look_yaw != 0 || v->shot.look_rise != 0 || dolly != 1)) {
-        float yaw = atan2f(d.x, d.y) + v->shot.look_yaw;
-        float pitch = fmaxf(-TC_CAM_PITCH_LIMIT, fminf(TC_CAM_PITCH_LIMIT,
-                                                       atan2f(d.z, sqrtf(d.x * d.x + d.y * d.y)) - v->shot.look_rise));
-        tc_vec3 dir = tc_v3(sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch)), back = tc_v3_scale(dir, -1);
-        tc_hit hit;
-        float want = len * dolly, reach;
-        const uint8_t *solid = v->play->world.solid;
-        if (dolly < 1) want = fmaxf(want, fminf(len, TC_VIEW_DOLLY_MIN));
-        reach = want;
-        v->play->world.solid = NULL; /* every surface (as the follow's) */
-        if (tc_collision_raycast(&v->play->world, at, back, want, &hit)) reach = fmaxf(0.3f, hit.distance - TC_CAM_RADIUS);
-        v->play->world.solid = solid;
-        eye = tc_v3_add(at, tc_v3_scale(back, fminf(reach, want)));
+        float turned = fabsf(v->shot.look_yaw) + fabsf(v->shot.look_rise);
+        tc_vec3 pivot = tc_v3_add(at, tc_v3(0, 0, feet ? TC_CAM_AIM_HEIGHT * fminf(1, turned / TC_VIEW_LOOK_EASE) : 0));
+        tc_vec3 next = orbit_eye(eye, pivot, v->shot.look_yaw, v->shot.look_rise, dolly);
+        if (eye_path_clear(v, from, next)) {
+            v->shot.good_yaw = v->shot.look_yaw, v->shot.good_rise = v->shot.look_rise;
+        } else { /* blocked: back to the last turn that fitted (the scripts moving the eye still carry it) */
+            v->shot.look_yaw = v->shot.good_yaw, v->shot.look_rise = v->shot.good_rise;
+            if (v->shot.look_yaw == 0 && v->shot.look_rise == 0 && dolly == 1) {
+                look_from(v, eye, at, feet); /* the scripts' eye */
+                return;
+            }
+            turned = fabsf(v->shot.look_yaw) + fabsf(v->shot.look_rise);
+            pivot = tc_v3_add(at, tc_v3(0, 0, feet ? TC_CAM_AIM_HEIGHT * fminf(1, turned / TC_VIEW_LOOK_EASE) : 0));
+            next = orbit_eye(eye, pivot, v->shot.look_yaw, v->shot.look_rise, dolly);
+        }
+        eye = next;
+        at = pivot;
         d = tc_v3_sub(at, eye);
     }
+    v->shot.cur_eye = eye;
+    v->shot.has_cur = true;
     v->camera.position = eye;
     v->cam.hide_target = false; /* away from him: he is drawn */
     if (tc_v3_length(d) > 1e-4f) {
@@ -365,7 +436,7 @@ static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
     else v->shot.look = point;
     v->shot.glide_t += dt;
     v->shot.eye = glide ? glide_eye(v, place, v->shot.look) : place;
-    look_from(v, v->shot.eye, v->shot.look);
+    look_from(v, v->shot.eye, v->shot.look, v->shot.look_perso != 0);
     return true;
 }
 
@@ -389,7 +460,7 @@ static bool update_rail(tc_viewer *v, const tc_ed_ai *e, float dt) {
         k = k <= 0 ? 0 : k >= 1 ? 1 : 1 - powf(1 - k, dt * 30);
         v->shot.eye = tc_v3_add(v->shot.eye, tc_v3_scale(tc_v3_sub(point, v->shot.eye), k));
     } else v->shot.eye = point;
-    look_from(v, v->shot.eye, ed);
+    look_from(v, v->shot.eye, ed, true);
     return true;
 }
 
@@ -447,14 +518,19 @@ static void director_follow(tc_viewer *v, const tc_ed_ai *e, int shot, tc_cam_ta
  * every one of these shots (camera B5, B8, B10, B20, B22 set dsg8 = 1); here they are hints the player can override:
  *   - a directed stretch: from a director's shot (2, 4, 6, 7, 8) until none has been on for TC_VIEW_STRETCH_GAP (the
  *     directors hand over from one to the next as Ed walks on: cavedoc's cliffs, cock01's fridge);
- *   - the player holds the camera for the rest of the stretch once he turns it during one of its framings, takes a
+ *   - the player holds the camera once he turns it (TC_VIEW_TURN_MIN: not a nudge) during one of its framings, takes a
  *     fixed or rail eye back (a fresh Jump, Action or Shoot), or turned it less than TC_VIEW_OWN_RECENT before a
- *     framing began. Then the framings (the follows' axis, the rail, a fixed shot looking at Ed) don't take it: the
+ *     framing began; until the stretch ends or he leaves the camera alone for TC_VIEW_HOLD_IDLE. Then the framings (the follows' axis, the rail, a fixed shot looking at Ed) don't take it: the
  *     follows keep their distance and elevation, the turning is his. The reveals (a fixed shot looking at a place or
  *     another perso: shot_target) still take the camera: they show what a switch did;
  *   - recentre (X, middle button, L2) gives the camera back to the scripts: onto the axis, back into the framing. */
-#define TC_VIEW_OWN_RECENT 2.0f     /* s: turned this recently when a framing begins, the camera stays his */
+#define TC_VIEW_OWN_RECENT 1.5f     /* s: turned this recently when a framing begins, the camera stays his */
 #define TC_VIEW_STRETCH_GAP 1.0f    /* s without a director's shot that end the stretch (and the player's hold) */
+#define TC_VIEW_HOLD_IDLE 4.0f      /* s of the camera left alone after which the framing comes back (eased: the axis's
+                                       critically damped turn, an eye's transition) */
+#define TC_VIEW_TURN_MIN 0.08f      /* rad turned within about TC_VIEW_TURN_TIME for it to count as turning (a mouse's
+                                       nudge or a stick's drift does not take the camera) */
+#define TC_VIEW_TURN_TIME 0.3f
 
 /* The scripted shots (2, 4, 6, 7, 8: the cast's directors and characters; docs/CAMERA.md "The directors' shots"). Port
  * (the user, 2026-11-13): the player turns the shot's camera (tc_viewer.shot.look_*: the eye round its look point, a
@@ -467,12 +543,21 @@ static bool scripted_shot(tc_viewer *v, int shot, tc_cam_target *t, float dt, bo
     bool eye = shot == TC_CAM_SHOT_FIXED || shot == TC_CAM_SHOT_RAIL;
     bool follow = shot == TC_CAM_SHOT_NEAR || shot == TC_CAM_SHOT_AXIS || shot == TC_CAM_SHOT_MIRROR;
     bool directing = e && e->camera >= 0 && (eye || follow);
-    bool turned = v->look_yaw_frame != 0 || v->look_rise_frame != 0;
+    bool turned;
     bool reveal;
     tc_vec3 sig = tc_v3(0, 0, 0);
     bool on = false;
+    /* the player turning: how much he turned lately (a decaying sum), over TC_VIEW_TURN_MIN */
+    v->shot.turn_sum = v->shot.turn_sum * (dt > 0 ? expf(-dt / TC_VIEW_TURN_TIME) : 1) + fabsf(v->look_yaw_frame) +
+                       fabsf(v->look_rise_frame);
+    turned = v->shot.turn_sum > TC_VIEW_TURN_MIN && (v->look_yaw_frame != 0 || v->look_rise_frame != 0);
     /* the stretch, and whether the player holds the camera in it */
     v->shot.since_look = turned ? 0 : v->shot.since_look + dt;
+    if (v->shot.overridden && v->shot.since_look >= TC_VIEW_HOLD_IDLE) { /* left alone: the follows' axis again (an
+                                                                      * eye he dismissed stays dismissed: released) */
+        v->shot.overridden = false;
+        v->shot.look_yaw = v->shot.look_rise = 0;
+    }
     if (directing) {
         v->shot.in_stretch = true;
         v->shot.stretch_gap = 0;
@@ -488,16 +573,18 @@ static bool scripted_shot(tc_viewer *v, int shot, tc_cam_target *t, float dt, bo
         v->shot.sig = sig;
         v->shot.released = false;
         v->shot.look_yaw = v->shot.look_rise = 0;
+        v->shot.good_yaw = v->shot.good_rise = 0; /* the scripts' own framing: where a blocked turn goes back to */
+        v->shot.has_cur = false;
         v->shot.on = false; /* entered afresh */
     }
     reveal = shot == TC_CAM_SHOT_FIXED && e && e->camera >= 0 && fixed_reveal(v, e);
     /* a framing arriving while the player is (or was just) turning the camera: his */
     if (directing && !v->shot.on && !v->shot.released && !reveal && v->shot.since_look < TC_VIEW_OWN_RECENT)
         v->shot.overridden = true;
-    if (v->shot.on && turned) { /* the player turns the shot's camera (port); turning a framing makes it his */
+    if (v->shot.on) { /* the player turns the shot's camera (port); turning a framing makes it his */
         v->shot.look_yaw += v->look_yaw_frame;
         v->shot.look_rise = fmaxf(-1.2f, fminf(1.2f, v->shot.look_rise + v->look_rise_frame));
-        if (!(eye && v->shot.reveal)) v->shot.overridden = true;
+        if (turned && !(eye && v->shot.reveal)) v->shot.overridden = true;
     }
     if (v->shot.on && eye && fresh) { /* a fresh Jump, Action or Shoot takes it back from a fixed or rail eye */
         v->shot.released = true;

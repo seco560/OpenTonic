@@ -133,6 +133,25 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
                 uint16_t g = v->ranges[v->mesh_ranges[2 * i] + k].group;
                 if (g < v->sectors->group_count && (v->sectors->groups[g].flags & TC_GROUP_WATER)) v->mesh_water[i] = 1;
             }
+        /* each water mesh's surface (the one at its height as loaded): drawn where the scripts move that surface's height
+         * (tc_ai_surface_order: the level's surface_z moved in place) */
+        if (v->mesh_water && v->sectors->surface_count &&
+            (v->surface_z0 = (float *)tc_alloc(sizeof(float) * v->sectors->surface_count)) != NULL &&
+            (v->mesh_surface = (int16_t *)tc_alloc(sizeof(int16_t) * l->mesh_count)) != NULL) {
+            memcpy(v->surface_z0, v->sectors->surface_z, sizeof(float) * v->sectors->surface_count);
+            for (i = 0; i < l->mesh_count; i++) {
+                const tc_mesh *m = l->meshes ? &l->meshes[i] : NULL;
+                double zs = 0;
+                float best = 0.3f;
+                v->mesh_surface[i] = -1;
+                if (!v->mesh_water[i] || !m || !m->vertex_count) continue;
+                for (k = 0; k < m->vertex_count; k++) zs += m->vertices[k].position[2];
+                for (k = 0; k < v->sectors->surface_count; k++) {
+                    float d = fabsf((float)(zs / m->vertex_count) - v->surface_z0[k]);
+                    if (d < best) best = d, v->mesh_surface[i] = (int16_t)k;
+                }
+            }
+        }
     }
     v->ed_clip = tcv_ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
@@ -208,6 +227,8 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->carry);
     tc_free((void *)v->meshes);
     tc_free(v->mesh_water);
+    tc_free(v->mesh_surface);
+    tc_free(v->surface_z0);
     tc_free(v->draws);
     tc_free(v->mesh_sphere);
     tc_free(v->mesh_ghost);
@@ -384,7 +405,10 @@ void tc_viewer_set_game_menu(tc_viewer *v, bool on) {
     } else {
         v->game_menu = false;
         v->paused = false;
-        tcv_set_inspecting(v, false); /* the camera and its zoom as they were */
+        /* port (the user, 2026-11-16): play goes on from where the drift left the camera, not back to the paused view
+         * (the follow carries on from there; the drift's rise eases back as Ed moves). The zoom never changed. */
+        tcv_camera_settle(v);
+        v->inspecting = false;
     }
 }
 

@@ -138,14 +138,21 @@ static float clear_distance(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, 
     return clear_distance_r(t, pivot, dir, distance, TC_CAM_RADIUS, NULL);
 }
 
+float tc_cam_clearance(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, float distance) {
+    float least = 0, d = clear_distance_r(t, pivot, dir, distance, TC_CAM_RADIUS, &least);
+    return fmaxf(d, least);
+}
+
 /* The preset for Ed's situation: distance (before the front stretch), elevation, the stretch in front of him. */
 static void preset(const tc_cam *c, const tc_cam_target *t, float *distance, float *elevation, float *stretch) {
     float zoom = t->distance / TC_CAM_DISTANCE;
     *distance = t->distance, *elevation = TC_CAM_ELEVATION, *stretch = TC_CAM_FRONT_STRETCH;
-    /* a director's follow (shots 2, 7, 8); port (the user, 2026-11-16: no zoom blocking): the close-up (5) wins over its
-     * distance and elevation, its direction kept */
-    if (t->shot_distance > 0 && isfinite(t->shot_distance) && isfinite(t->shot_elevation) && !c->closeup) {
-        *distance = t->shot_distance * zoom, *elevation = t->shot_elevation, *stretch = 1;
+    /* a director's follow (shots 2, 7, 8); port (the user, 2026-11-16: no zoom blocking, but the framing must still
+     * show): the zoom and the close-up (5) scale its distance as they do the follow's, its elevation and direction kept.
+     * (A first try let the close-up replace both: the cavedoc rubies' framing then barely showed.) */
+    if (t->shot_distance > 0 && isfinite(t->shot_distance) && isfinite(t->shot_elevation)) {
+        *distance = t->shot_distance * zoom * (c->closeup ? TC_CAM_CLOSEUP_DISTANCE / TC_CAM_DISTANCE : 1);
+        *elevation = t->shot_elevation, *stretch = 1;
         return;
     }
     if (t->shot == TC_CAM_SHOT_SKI) { /* the slides: further back as he speeds up, no stretch; the close-up (5) the near one */

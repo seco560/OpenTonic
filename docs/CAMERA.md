@@ -740,3 +740,33 @@ far apart, a wall between, or a turn round), the blend adding at most 0.055 rad 
 before, it stays where it was 2.5 s on; recentred it is on the axis; turned again, it stays turned).
 Not seen in the app: all of the feel; in particular whether 2 s / 1 s are the right windows, and whether the reveals'
 targets look right in each level.
+
+**After the user's first look (2026-11-16, same day):** "the camera lock for the moving ruby platform does not fire at
+all; it might have to do with the Ed camera closeness (5)". Changed:
+- the close-up no longer replaces a director follow's framing: it **scales** its distance (x 4 / 7, as it does the
+  follow's) and keeps its elevation and direction (tc_cam.c `preset`). With 5 on, cavedoc's crumbling rubies' shot 7
+  (distance 8, 0.6 rad) is now 4.6 away at 0.6 rad; before, 4 away at 0.15 rad, the framing all but gone.
+- only a deliberate turn counts for the hold: TC_VIEW_TURN_MIN 0.08 rad within ~0.3 s (a decaying sum; a mouse's nudge
+  or a stick's drift no longer takes the camera); the "turned just before" window is 1.5 s (was 2).
+- the hold ends once the camera is left alone 4 s (TC_VIEW_HOLD_IDLE): the follow's axis comes back (critically damped).
+  An eye the player dismissed (Jump / Action / Shoot) stays dismissed until the scripts give a new shot.
+- camcheck: "the player's hold ends when he leaves the camera alone (4 s)", "with the close-up on, the director's
+  framing still fires" (cavedoc's first axis director: on its axis, 5.71 = 10 x 4 / 7 away, at its 0.6 rad).
+
+**The game menu** (the user, 2026-11-16): leaving it for the game goes on from where its drift left the camera, not
+back to the view the game was paused on (tc_viewer_set_game_menu; menucheck). Photo mode (P) still puts its camera back.
+
+**Turning a fixed or rail shot: the eye's collision (2026-11-16; the user: turned round Agent XYZ in Transit, the camera
+"clips through and gets stuck between Xyz and the ground").** Cause: a shot looking at another perso looks at its
+origin, at its feet, and the turned eye was kept off the level by one ray from that point back to the eye. Transit's
+spies stand inside invisible collision walls 0.4-2 from them (they keep Ed off them; the original's fixed camera,
+which never collides, looks through them): the ray met them at once and the eye was put 0.3 from his feet, against the
+ground. Now (tc_viewer_camera.c `look_from`, `eye_path_clear`, `orbit_eye`; port):
+- unturned and unzoomed, the eye is the scripts' as it is (no collision, as the original's);
+- turned, it orbits a pivot at the scripts' eye's distance (times the zoom's): a perso's feet raised to the follow's
+  aim height (1.35), eased in over the first 0.3 rad of turning; within the follow's elevations (-0.35 .. 1.3 rad);
+- it moves from where it was shown last frame only where the camera's sphere passes (tc_cam_clearance, the follow's own
+  test: the level swept, the drawn persos' surfaces; the perso it looks at left out), else the turn stops where it last
+  fitted (the scripts' framing at worst).
+viewcheck "turning the spy's shot orbits him": Transit's sheep spy (18), 4.5 s of turning down, up, left: never nearer
+than 11.05 to him (the scripts' 11.15), the eye above his feet; before, 0.03 from his chest.

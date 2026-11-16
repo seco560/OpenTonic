@@ -576,8 +576,18 @@ static void save_checks(const char *dir) {
         check(tc_v3_length(tc_v3_sub(eye1, eye0)) > 0.05f && tc_v3_length(tc_v3_sub(tc_viewer_driver(&a)->player->position, ed)) < 1e-4f &&
                   a.animation_time == clock,
               "behind it the camera drifts round Ed, who stays, the clock stopped");
-        tc_viewer_set_game_menu(&a, false);
-        check(!a.paused && !a.game_menu && a.orbit_distance == zoom, "closed: the game and the zoom as they were");
+        {
+            tc_vec3 drifted = a.camera.position;
+            float drift_yaw = a.camera.yaw, d;
+            tc_viewer_set_game_menu(&a, false);
+            check(!a.paused && !a.game_menu && a.orbit_distance == zoom, "closed: the game and the zoom as they were");
+            frames(&a, 1);
+            d = tc_v3_length(tc_v3_sub(a.camera.position, drifted));
+            printf("  leaving it: the eye %.4f from where the drift left it, yaw %+.5f (the paused view %.2f away)\n",
+                   (double)d, (double)(a.camera.yaw - drift_yaw), (double)tc_v3_length(tc_v3_sub(drifted, paused_eye)));
+            check(d < 0.05f && fabsf(remainderf(a.camera.yaw - drift_yaw, 2 * TC_PI)) < 0.01f,
+                  "leaving it, play goes on from where the drift left the camera (2026-11-16), not the paused view");
+        }
     }
     ca->globals.powers = 0x0123;
     ca->globals.lives = 7;

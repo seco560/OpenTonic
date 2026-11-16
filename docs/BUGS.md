@@ -82,7 +82,9 @@ its fog and lights; the story walls are open (to be handled as the game does onc
    its end, 28 s in its B4, and 5 s into the second one's last run (B3). What was broken: InPersoContext procedures
    never ran (docs/ENGINE.md "InPersoContext and the procedures"): they now detach Ed before fading, and cavedoc's
    toasters slow the guide (3 while one shoots, 10 after). If one still vanishes mid-path, a recording (F9 at the
-   moment) would say which.
+   moment) would say which. **Later that day:** the mid-path vanishing found: the draw culled a moving perso by its
+   snapshot sector (cavedoc's guide gone after 40 s, crossing into sector 90); now its live sector. And scripted fades
+   are drawn now (docs/ENGINE.md "Transparency and display").
    * **2026-11-14 (Claude), awaiting a playtest:** flight now collides as the exe's does, with his flight body's spheres
      against the persos too (docs/ENGINE.md "Flight: collision, the tornados, LeCanyon's wings"). Headless: he stops at
      sud0's arena block instead of gliding through it. His body in flight is bigger than the old capsule (r 1.2 at his

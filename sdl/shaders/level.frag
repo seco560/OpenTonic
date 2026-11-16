@@ -20,6 +20,7 @@ layout(location = 1) in vec2 vUV;
 layout(location = 2) in vec4 vColor;
 layout(location = 3) in vec3 vWorld;
 layout(location = 4) in vec2 vUV2;
+layout(location = 5) in float vAlpha;   // the draw's alpha (a perso's fade; 1 otherwise)
 
 layout(location = 0) out vec4 outColor;
 
@@ -100,6 +101,7 @@ void main() {
         if (f.coverage == 0u) a = max(a, w.a);
     }
     rgb = pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / u.gamma));
+    a *= vAlpha;             // a perso's fade (such draws come in the blended pass)
     // a custom sky (TCX_FLAG_ROUND_CAMERA, drawn round the camera far off): beyond the level's fog, not in it
     outColor = vec4((f.flags & 256u) != 0u ? rgb : fogged(rgb), a);
 #endif

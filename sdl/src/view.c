@@ -248,7 +248,7 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     /* d's index range: all of the mesh, or the shown sectors' part of a static (tc_view_draw) */
     if (m->index_count == 0 || d->index_count == 0 || d->first_index + d->index_count > m->index_count) return;
     const tc_surface *s = &tc_viewer_mesh(&v->viewer, d->mesh)->surface;
-    bool transparent = (d->flags & TC_FLAG_TRANSPARENT) != 0;
+    bool transparent = (d->flags & TC_FLAG_TRANSPARENT) != 0 || d->alpha < 1; /* a perso's fade: blended */
     SDL_GPUTexture *tex = d->texture >= 0 && v->textures ? v->textures[d->texture] : NULL;
     if (tex) {
         bind(c, transparent ? g->textured_blended : g->textured);
@@ -268,7 +268,7 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     params.scroll[1] = s->scroll[1];
     params.billboard = (d->flags & TC_FLAG_BILLBOARD) ? 1 : 0;
     params.pad = 0;
-    vec4(params.ambient, tc_v3(d->ambient[0], d->ambient[1], d->ambient[2]), 0);
+    vec4(params.ambient, tc_v3(d->ambient[0], d->ambient[1], d->ambient[2]), d->alpha);
     vec4(params.diffuse, tc_v3(d->diffuse[0], d->diffuse[1], d->diffuse[2]), 0);
     vec4(params.water, tc_v3(d->water_z, d->underwater ? 1.0f : 0.0f, (float)d->light_first), (float)d->light_extra);
     SDL_PushGPUVertexUniformData(c->cmd, 1, &params, sizeof params);

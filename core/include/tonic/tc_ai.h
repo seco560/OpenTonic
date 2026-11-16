@@ -335,6 +335,14 @@ typedef struct tc_ai_light_call { int32_t set, duration_ms; bool absolute; } tc_
 #define TC_AI_MAX_SECTOR_ORDERS 8
 enum { TC_AI_SECTOR_TO, TC_AI_SECTOR_BY, TC_AI_SECTOR_TURN };
 typedef struct tc_ai_sector_order { uint16_t sector; uint8_t kind; tc_vec3 a, b; float angle; int32_t ms; } tc_ai_sector_order;
+/* A script's order to move a water surface's height (the exe's SrfMove table, GAM_SrfMove_004294a0 / GAM_00429610, stepped
+ * each frame by GAM_00429520): PROC 137 adds `value` at once (FUN_0045d960), 138 moves it to `value` over ms
+ * (GAM_004296f0), 141 by `value` over ms (GAM_00429720); at a constant rate, none: in one frame. surface: its index in
+ * the level's surfaces (.ttlv SECT's heights; the script's type 28 node). Transit's sheep training lowers its pool,
+ * cock01's switches and ice, marmite, pyramide raise and lower theirs. */
+#define TC_AI_MAX_SURFACE_ORDERS 8
+enum { TC_AI_SURFACE_ADD, TC_AI_SURFACE_TO, TC_AI_SURFACE_BY };
+typedef struct tc_ai_surface_order { uint16_t surface; uint8_t kind; float value; int32_t ms; } tc_ai_surface_order;
 /* The HUD's text slots (docs/ENGINE.md "The HUD"): the exe's twenty records at DAT_008a36c0 (0x24 each), written by
  * PROC 149-155 and drawn each frame by GAM_00418d70. The host draws them (tc_hud.h). */
 #define TC_AI_HUD_SLOTS 20
@@ -361,6 +369,10 @@ typedef struct tc_ai_globals {
     uint16_t powers;
     tc_ai_sector_order sector_orders[TC_AI_MAX_SECTOR_ORDERS]; /* this tick's, in order: the host takes them */
     uint8_t sector_order_count;
+    tc_ai_surface_order surface_orders[TC_AI_MAX_SURFACE_ORDERS]; /* this tick's, in order: the host takes them */
+    uint8_t surface_order_count;
+    const float *surface_z;      /* host-fed: the water surfaces' heights now (FUNC 53), surface_count of them */
+    uint16_t surface_count;
     /* The save values (31 i16 at DAT_004ec6d0, GAM_004195f0 / GAM_00419620): FUNC 93 reads one, PROC 143 adds one, PROC
      * 144 sets one (story progress, the bees ...). Their starting values are the save data's: the port starts at 0. */
     int16_t values[31];
@@ -388,6 +400,10 @@ typedef struct tc_ai_globals {
     int32_t cam_target;
     float cam_focal;
     uint32_t cam_serial;
+    /* GameState63's latch (DAT_004ec748): GameAction2 (GAM_00429070) clears it as the cover starts, the cover's end
+     * (GAM_004290b0) sets it, the reveal (GAM_00429010) sets it too and nothing clears it after: true in play but while a
+     * cover runs. Port: cover_pending from any GameAction2 until a perso sees the screen covered (step_begin). */
+    bool cover_pending;
     /* PROC 210 DisplayVignetteDuring(picture, ms) (SE Proc_DisplayVignetteDuring, its 0x40f9e0: a flag, the name and
      * the time; the main loop then shows the picture and waits, the game held, 0x40fa20): the latest request, as the
      * script gave it ("Credits\\Credit06.bmp"); vignette_serial counts the requests. */

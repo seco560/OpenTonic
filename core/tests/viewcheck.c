@@ -52,7 +52,7 @@ static void frame(tc_viewer *v, float dt) {
         if (d[i].mesh >= v->ed_first && d[i].mesh < v->ed_first + v->level->ed.part_count) last_ed_draws++;
     for (i = 0; i < count && !bad; i++) {
         const tc_mesh *m = tc_viewer_mesh(v, d[i].mesh);
-        int transparent = (d[i].flags & TC_FLAG_TRANSPARENT) != 0;
+        int transparent = (d[i].flags & TC_FLAG_TRANSPARENT) != 0 || d[i].alpha < 1; /* a perso's fade: blended */
         if (!m || m->index_count == 0 || (d[i].flags & ~TC_FLAG_WATER) != m->surface.flags || transparent != (i >= opaque)) bad = 1;
         if (d[i].texture < -1 || d[i].texture >= (int32_t)v->level->texture_count) bad = 1;
         if (d[i].mesh < v->level->mesh_count && v->split && v->split[d[i].mesh]) bad = 1;
@@ -1089,6 +1089,146 @@ static void ride_scenario(const char *dir) {
 /* The cavedoc ruby (BNE_PFGuide, gro_pf01; docs/ENGINE.md "Ways and waypoints"): Ed stands on it, its reflex R0 puts
  * its way's cursor on the nearest waypoint (Func_CloserWP, Proc_InitWayWithWp) and B0 takes it along the way
  * (Action_GoOverWay: mode 0x14 towards each waypoint in turn, type 7 card) until R1 sees the last one within 2. */
+/* Transit's flight training (the user, 2026-11-16: two softlocks and a lock). (1) the face platforms SDO_PF1-6 (33-38):
+ * InPersoContext(main actor, OnGround) tested the platform itself, none counted; (2) Agent XYZ at the rings' end
+ * (SDO_EspionTrainingVol2Fin, 56), the rings not flown: his line, then Ed's B99 restart; GameState63 read "a cover
+ * just ended" and Ed waited in B99, XYZ talking again and again; (3) the sheep's pool: four hits (the spy
+ * HEG_EspionTrainingSarbaPart3, 18, counts them in its dsg0) lower its water by 20 (Proc_MoveSurfaceHeight, not modelled
+ * before) so Ed lands and the training ends (cover, then sud0). docs/ENGINE.md "InPersoContext and the procedures",
+ * "Water surfaces". */
+static tc_cast_actor *transit_actor(const tc_cast *c, int32_t id) {
+    uint32_t i;
+    for (i = 0; c && i < c->count; i++) if (c->actors[i].entry->id == id) return (tc_cast_actor *)&c->actors[i];
+    return NULL;
+}
+
+static bool transit_open(const char *dir, tc_level *level, tc_viewer *v) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_viewer_desc desc;
+    snprintf(path, sizeof(path), "%s/Transit.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(level, data, size) != TC_OK) { free(data); return false; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/Transit.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = "Transit";
+    if (!ai || tc_viewer_init(v, &desc) != TC_OK) { free(ai); tc_level_free(level); return false; }
+    free(ai);
+    run(v, 1, 0);
+    return true;
+}
+
+static void transit_scenario(const char *dir) {
+    tc_level level;
+    tc_viewer v;
+    char what[256];
+    int k, counted = 0, i;
+    tc_player *p;
+    const tc_cast *c;
+    if (!transit_open(dir, &level, &v)) { printf("  (no Transit: its training skipped)\n"); return; }
+    c = tc_viewer_cast(&v);
+    p = (tc_player *)tc_viewer_player(&v);
+    for (k = 33; k <= 38; k++) { /* (1) */
+        tc_cast_actor *a = transit_actor(c, k);
+        if (!a) continue;
+        tc_player_teleport(p, tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f)), 0);
+        run(&v, 3, 0);
+        counted += a->ai->dead || !a->ai->active;
+    }
+    snprintf(what, sizeof(what), "Transit: the face platforms count Ed landing on them (%d of 6)", counted);
+    check(counted == 6, what);
+    tc_viewer_free(&v);
+    tc_level_free(&level);
+    if (transit_open(dir, &level, &v)) { /* (2) */
+        tc_cast_actor *x;
+        float away = 0;
+        c = tc_viewer_cast(&v);
+        p = (tc_player *)tc_viewer_player(&v);
+        x = transit_actor(c, 56);
+        if (x) {
+            tc_player_teleport(p, tc_v3_add(x->ai->position, tc_v3(2.5f, 0, 0.5f)), 0);
+            for (i = 0; i < 60 * 8; i++) {
+                tc_viewer_set_action(&v, TC_VA_JUMP, i % 90 >= 45 && i % 90 < 50); /* each line passed on */
+                frame(&v, 1.0f / 60);
+                away = fmaxf(away, tc_v3_distance(p->position, x->ai->position));
+            }
+            tc_viewer_release_all(&v);
+        }
+        snprintf(what, sizeof(what), "Transit: XYZ at the rings' end, the rings not flown: his line, then Ed restarts (%.0f away)",
+                 (double)away);
+        check(x && away > 50, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    }
+    if (transit_open(dir, &level, &v)) { /* (3) */
+        tc_cast_actor *spy, *sheep;
+        float z0 = level.sectors.surface_count ? level.sectors.surface_z[0] : 0, z1;
+        bool covered = false;
+        c = tc_viewer_cast(&v);
+        p = (tc_player *)tc_viewer_player(&v);
+        spy = transit_actor(c, 18);
+        sheep = transit_actor(c, 13);
+        if (spy && sheep && level.sectors.surface_count) {
+            tc_player_teleport(p, tc_v3_add(spy->ai->position, tc_v3(2, 0, 0.5f)), 0);
+            for (i = 0; i < 60 * 5; i++) { /* its line, passed on */
+                tc_viewer_set_action(&v, TC_VA_JUMP, i % 90 >= 45 && i % 90 < 50);
+                frame(&v, 1.0f / 60);
+            }
+            tc_viewer_release_all(&v);
+            tc_player_teleport(p, tc_v3_add(spy->ai->position, tc_v3(0, 0, -20)), 0); /* down past 45: the sheep wake */
+            run(&v, 1, 0);
+            tc_ai_dsgvar_set_int(spy->ai, 0, 4); /* the four hits (the bee's hit on each: a scratch probe, 2026-11-16) */
+            run(&v, 2, 0);
+            z1 = level.sectors.surface_z[0];
+            tc_player_teleport(p, tc_v3(sheep->ai->position.x + 6, sheep->ai->position.y, z1 + 30), 0); /* over the pool */
+            for (i = 0; i < 60 * 12 && !covered; i++) {
+                frame(&v, 1.0f / 60);
+                covered = v.phase != TC_VP_PLAY;
+            }
+            snprintf(what, sizeof(what), "Transit: four sheep hit, the pool's water goes down (%.1f -> %.1f), Ed lands and the "
+                     "training ends (the cover: %d)", (double)z0, (double)z1, covered);
+            check(fabsf(z1 - (z0 - 20)) < 0.01f && covered, what);
+        } else printf("  (Transit: no sheep spy, or no water surface: an older export)\n");
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    }
+    if (transit_open(dir, &level, &v)) { /* (4) the spy's shot turned (the user: the camera "clips through and gets stuck
+                                          * between Xyz and the ground"): it orbits, never nearer than 2 to him */
+        tc_cast_actor *spy;
+        float nearest = 1e9f, lowest = 1e9f;
+        int on = 0;
+        static const tc_view_action keys[] = {TC_VA_LOOK_DOWN, TC_VA_LOOK_UP, TC_VA_LOOK_LEFT};
+        c = tc_viewer_cast(&v);
+        p = (tc_player *)tc_viewer_player(&v);
+        spy = transit_actor(c, 18);
+        if (spy) {
+            tc_player_teleport(p, tc_v3_add(spy->ai->position, tc_v3(2, 0, 0.5f)), 0);
+            for (i = 0; i < 100; i++) frame(&v, 1.0f / 60);
+            for (k = 0; k < 3; k++) {
+                tc_viewer_set_action(&v, keys[k], true);
+                for (i = 0; i < 90; i++) {
+                    frame(&v, 1.0f / 60);
+                    if (!tc_viewer_fixed_shot(&v) || v.shot.look_perso != 18) continue;
+                    on++;
+                    nearest = fminf(nearest, tc_v3_distance(v.camera.position, tc_v3_add(spy->ai->position, tc_v3(0, 0, 1.35f))));
+                    lowest = fminf(lowest, v.camera.position.z - spy->ai->position.z);
+                }
+                tc_viewer_set_action(&v, keys[k], false);
+            }
+        }
+        snprintf(what, sizeof(what), "Transit: turning the spy's shot orbits him (%d frames): never nearer than %.2f to him, the eye "
+                 "%.2f above his feet at the lowest", on, (double)nearest, (double)lowest);
+        check(on > 100 && nearest > 2 && lowest > 0, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    }
+}
+
 static void guide_scenario(const char *dir) {
     char path[1024], what[256];
     size_t size, ai_size = 0;
@@ -1776,6 +1916,7 @@ done:
     se_ski_scenario(dir);
     ride_scenario(dir);
     guide_scenario(dir);
+    transit_scenario(dir);
     shoot_scenario(dir);
     flight_scenario(dir);
     scene_scenario(dir);

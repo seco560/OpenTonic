@@ -18,7 +18,7 @@ layout(std140, set = 1, binding = 1) uniform DrawParams {
     mat4 model;            // object -> world (identity for static meshes; perso world * channel)
     vec2 scroll;           // UV per second (material scrolling)
     uint billboard;        // 1: sprite quad (TC_FLAG_BILLBOARD), expanded towards the camera
-    vec4 ambient;          // rgb: the material's ambient
+    vec4 ambient;          // rgb: the material's ambient; w: the draw's alpha (tc_view_draw.alpha)
     vec4 diffuse;          // rgb: the material's diffuse
     vec4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater);
                            // z, w: this draw's own lights, after the frame's (tc_view_draw.light_first, light_extra)
@@ -40,6 +40,7 @@ layout(location = 1) out vec2 vUV;
 layout(location = 2) out vec4 vColor;
 layout(location = 3) out vec3 vWorld;   // world position, for fog
 layout(location = 4) out vec2 vUV2;     // lightmap atlas coordinates; x < 0: none
+layout(location = 5) out float vAlpha;  // the draw's alpha (d.ambient.w = tc_view_draw.alpha: a perso's fade)
 
 // A baked set's colour; objects without that set keep set 0.
 vec4 baked(uint s) {
@@ -114,6 +115,7 @@ void main() {
     gl_Position = u.viewProjection * world;
     vWorld = world.xyz;
     vUV2 = inUV2;
+    vAlpha = d.ambient.w;
     vUV = inUV + fract(d.scroll * u.time);             // textures repeat, so wrap to keep precision
     vColor = mix(baked(u.lightSet), baked(u.lightNext), u.lightBlend);  // a change between sets: their lerp
     if (u.lighting == 0u) {  // the vertex's light itself (alpha 1); sprites unlit

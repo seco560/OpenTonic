@@ -707,6 +707,10 @@ oom:
 void tc_cast_free(tc_cast *c) {
     uint32_t i, k;
     if (!c) return;
+    if (c->surface_z0 && c->sectors && c->sectors->surface_count == c->surface_count) /* the level's water as it loaded */
+        memcpy((float *)c->sectors->surface_z, c->surface_z0, sizeof(float) * c->surface_count);
+    tc_free(c->surface_z0);
+    c->surface_z0 = NULL;
     tc_free(c->alias_saved);
     c->alias_saved = NULL;
     for (i = 0; c->actors && i < c->count; i++) {
@@ -1005,9 +1009,53 @@ static void move_sectors(tc_cast *c, float dt) {
     }
 }
 
+/* The exe's SrfMove table (GAM_00429610: the target and a constant rate per ms, the whole change in one frame without a
+ * time; GAM_00429520 each frame: on by the rate, held at the target once it passes it). The heights are the level's
+ * (tc_sectors.surface_z, written in place: its persos' water, the viewer's water planes and drawn surfaces read them). */
+static void move_surfaces(tc_cast *c, float dt, const tc_sectors *s) {
+    tc_ai_globals *g = &c->globals;
+    float ms = dt * 1000, *z = s ? (float *)s->surface_z : NULL; /* the level's, moved in place */
+    uint32_t i, k;
+    if (z && !c->surface_z0 && s->surface_count) { /* the heights it loaded with (the viewer's drawn surfaces' offset) */
+        if ((c->surface_z0 = (float *)tc_alloc(sizeof(float) * s->surface_count)) != NULL) {
+            memcpy(c->surface_z0, s->surface_z, sizeof(float) * s->surface_count);
+            c->surface_count = s->surface_count;
+        }
+    }
+    g->surface_z = s ? s->surface_z : NULL;
+    g->surface_count = s ? s->surface_count : 0;
+    for (i = 0; i < g->surface_order_count; i++) {
+        const tc_ai_surface_order *o = &g->surface_orders[i];
+        float now, target;
+        if (!z || o->surface >= s->surface_count) continue;
+        now = z[o->surface];
+        if (o->kind == TC_AI_SURFACE_ADD) { z[o->surface] = now + o->value; continue; }
+        target = o->kind == TC_AI_SURFACE_TO ? o->value : now + o->value;
+        for (k = 0; k < c->moving_surface_count && c->moving_surfaces[k].surface != o->surface; k++) {}
+        if (k == c->moving_surface_count) {
+            if (k >= TC_CAST_MAX_MOVING_SECTORS) continue;
+            c->moving_surface_count++;
+            c->moving_surfaces[k].surface = o->surface;
+        }
+        c->moving_surfaces[k].moving = true;
+        c->moving_surfaces[k].target = target;
+        c->moving_surfaces[k].rate = o->ms ? (target - now) / (float)o->ms : target - now;
+    }
+    g->surface_order_count = 0;
+    for (i = 0; z && i < c->moving_surface_count; i++) {
+        float *h, r = c->moving_surfaces[i].rate, t = c->moving_surfaces[i].target;
+        if (!c->moving_surfaces[i].moving) continue;
+        h = &z[c->moving_surfaces[i].surface];
+        *h += ms * r;
+        if (r < 0 ? *h < t : *h > t) { *h = t; c->moving_surfaces[i].moving = false; }
+        if (r == 0) c->moving_surfaces[i].moving = false;
+    }
+}
+
 void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {
     step_pass(c, false, dt, s, main_sector);
     move_sectors(c, dt);
+    move_surfaces(c, dt, s);
 }
 
 /* The exe's frame round the main character (docs/ENGINE.md "The frame"): the run-first list, then the dynamic world's
@@ -1044,6 +1092,7 @@ void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_
     TC_PROF_END(TC_PZ_CAST_REST, prof);
     if (!stepped) ops->step(self, dt); /* the last of the walk */
     move_sectors(c, dt);
+    move_surfaces(c, dt, s);
 }
 
 void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector) {

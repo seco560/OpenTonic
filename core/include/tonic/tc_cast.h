@@ -141,6 +141,12 @@ typedef struct tc_cast {
     float main_mass;             /* host-fed: his mass (his card's +4): what he weighs on what he rides (FUN_004c32f6) */
     tc_cast_moving_sector moving_sectors[TC_CAST_MAX_MOVING_SECTORS]; /* in the order the scripts first moved them */
     uint32_t moving_sector_count;
+    /* The water surfaces' heights (tc_ai_surface_order): the level's tc_sectors.surface_z are moved in place (the swim
+     * physics, the water planes and the drawn surfaces read them there); their heights at the load, and the moves. */
+    float *surface_z0;
+    uint16_t surface_count;
+    struct { uint16_t surface; bool moving; float target, rate; } moving_surfaces[TC_CAST_MAX_MOVING_SECTORS];
+    uint32_t moving_surface_count;
 } tc_cast;
 
 /* Where a started sound is heard from l (tc_sound.h): its volume 0..127, *pan and *dolby 0..127, or -1 when it is to

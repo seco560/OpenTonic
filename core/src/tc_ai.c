@@ -1513,7 +1513,12 @@ static bool condition(run *r, uint32_t i) {
         uint16_t m = (uint16_t)as_int(arg(r, i, 0));
         return (g->powers & m) == m;
     }
-    case 63: return p->screen_covered; /* GameState63 = GAM_004290a0: the cover transition has finished */
+    case 63: { /* GameState63 = GAM_004290a0 (DAT_004ec748): true but while a cover runs (tc_ai_globals.cover_pending).
+                * Until 2026-11-16 the port read "a cover has just finished": Ed forced straight into B99 (Transit's XYZ
+                * at the rings' end, its training restart) waited for good and the spy talked again and again */
+        const tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        return p->screen_covered || !g->cover_pending;
+    }
     /* FUN_004985e0: the contact's collide identifier & mask (FUN_00497890), when the report has that contact */
     case 44: return (p->contacts & TC_AI_CONTACT_GROUND) && (p->ground_material & as_int(arg(r, i, 0)));
     case 45: return (p->contacts & TC_AI_CONTACT_WALL) && (p->wall_material & as_int(arg(r, i, 0)));
@@ -1744,6 +1749,11 @@ static value function(run *r, uint32_t i) {
     case 50: { value v = v_int(-1); v.type = V_PERSO; return v; }
     case 91: return v_float(p->report_2bc);
     case 92: return v_float(p->report_2c0);
+    case 53: { /* FUNC 53 (FUNC_FindPersoEtc_0049b350 case 0x35 -> GAM_00429710): a water surface's height */
+        const tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        uint32_t k = arg_param(r, i, 0);
+        return v_float(g->surface_z && k < g->surface_count ? g->surface_z[k] : 0);
+    }
     case 51: return v_float(p->env_depth);
     case 52: return v_float(p->position.z + p->env_depth);
     case 104: return v_float(0);
@@ -1829,6 +1839,10 @@ static value eval(run *r, uint32_t i) {
 static bool kept_as_prop(tc_ai_perso *p, tc_ai_perso *q) {
     if (!p->removal_guard || q->main_actor == 0) return false;
     if (q == p && p->level_restored) return false; /* its own saved state: a pickup taken on an earlier visit */
+    /* made wholly see-through first (SetTransparency 0 in its transparent display): hidden to wait for an ActivatePerso
+     * (cavedoc's BEM_PFQuiSeDesagrege chain, faded back in one by one), not a story removal. As a prop it was an
+     * invisible platform Ed could stand on (2026-11-16, once transparency was drawn) */
+    if (!q->display_flag8 && q->transparency == 0) return false;
     if (q->near_main_ms && q->time_ms - q->near_main_ms <= TC_AI_REMOVAL_MS) return false;
     q->frozen = true;
     q->sound_serial++; /* the prop stands in for an inactive perso: its own sounds stop, as the exe's deactivation stops
@@ -2251,14 +2265,27 @@ static uint32_t procedure(run *r, uint32_t i) {
         }
         return 0;
     }
+    case 137: case 138: case 141: { /* PROC_137Etc_0048ab00: a water surface's height (tc_ai_surface_order) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        uint32_t k = arg_param(r, i, 0);
+        tc_ai_surface_order *o;
+        if (k >= 0xFFFF || g->surface_order_count >= TC_AI_MAX_SURFACE_ORDERS) return 0;
+        o = &g->surface_orders[g->surface_order_count++];
+        o->surface = (uint16_t)k;
+        o->kind = c == 137 ? TC_AI_SURFACE_ADD : c == 138 ? TC_AI_SURFACE_TO : TC_AI_SURFACE_BY;
+        o->value = argf(r, i, 1);
+        o->ms = c == 137 ? 0 : as_int(arg(r, i, 2));
+        return 0;
+    }
+    case 139: case 140: return 0; /* FUN_0045da00 / 0045da30: flags on the surface's matrix (0x800; 0x30, 0x200), no height */
     case 200: case 201: case 202: { /* PROC_200Etc_0048b080: the powers := m, &= ~m (Proc_SubPower), |= m (Proc_AddPower) */
         tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
         uint16_t m = (uint16_t)as_int(arg(r, i, 0));
         g->powers = c == 200 ? m : c == 201 ? (uint16_t)(g->powers & ~m) : (uint16_t)(g->powers | m);
         return 0;
     }
-    case 203: p->display_flag8 = false; return 0;
-    case 204: p->display_flag8 = true; return 0;
+    case 203: p->display_flag8 = false; return 0; /* Proc_TransparentDisplay: its transparency shows */
+    case 204: p->display_flag8 = true; p->transparency = 255; return 0; /* Proc_DefautDisplay (GAM_cineinfo_00426b20 255) */
     case 205: p->transparency = (uint8_t)as_int(arg(r, i, 0)); return 0;
     case 239: case 240: return change_behaviour(r, c == 240, arg_param(r, i, 0));
     case 283: /* SetLightSet(set, duration ms, absolute) = PROC_283_0048ca60 -> 0x449ad0: the host applies it */
@@ -2290,7 +2317,13 @@ static uint32_t procedure(run *r, uint32_t i) {
         return 0;
     }
     case 249: return change_state(p, arg_param(r, i, 0)) ? 0 : F_ABORT;
-    case 2: p->cover_requested = true; p->screen_covered = false; return 0; /* GameAction2: GAM_00429070 */
+    case 2: { /* GameAction2: GAM_00429070 */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        p->cover_requested = true;
+        p->screen_covered = false;
+        g->cover_pending = true;
+        return 0;
+    }
     case 242: { /* FUN_0048ba00: the perso's rotation about Z = deg * pi / 180 - pi / 2, for 0 <= deg <= 360 */
         float deg = argf(r, i, 0), h;
         if (!(deg >= 0 && deg <= 360)) return 0;
@@ -2840,6 +2873,10 @@ static void step_begin(tc_ai_perso *p, float dt) {
      * the jump animation's event (or SetMechMode7) applies it; the *_set flags say what changed this frame. */
     memcpy(p->motion.proposal, proposal, sizeof(proposal));
     p->dt = dt;
+    if (p->screen_covered) { /* the cover has finished: GameState63's latch is set again (GAM_004290b0) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        g->cover_pending = false;
+    }
 }
 
 static void think(tc_ai_perso *p) {

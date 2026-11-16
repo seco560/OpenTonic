@@ -304,7 +304,7 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     tc_view_draw *d;
     uint32_t k;
     if (!drawable(m) || count == 0) return;
-    if (m->surface.flags & TC_FLAG_TRANSPARENT) {
+    if ((m->surface.flags & TC_FLAG_TRANSPARENT) || v->draw_alpha < 1) {
         if (!reserve(&v->blended, &v->blended_cap, dl->blended_count + 1)) return;
         d = &v->blended[dl->blended_count++];
     } else {
@@ -322,6 +322,7 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     d->underwater = !isnan(water);
     d->water_z = d->underwater ? water : 0;
     d->light_first = d->light_extra = 0;
+    d->alpha = v->draw_alpha < 1 ? fmaxf(0, v->draw_alpha) : 1;
     /* its sector's characters' lights; a water surface: the frame's sector's, drawn in that sector's pass */
     lit = v->sector_lit && !v->draw_lit && is_water(v, mesh) && v->light_sector < v->sectors->count
               ? &v->sector_lit[v->light_sector] : v->draw_lit;
@@ -425,6 +426,7 @@ const uint8_t *tcv_shown_sectors(tc_viewer *v) {
 }
 
 static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *opaque_count) {
+    v->draw_alpha = 1;
     const tc_level *l = v->level;
     const tc_mat4 identity = tc_mat4_identity();
     draw_list dl = {0, 0};
@@ -441,9 +443,25 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     for (i = 0; i < l->mesh_count; i++) {
         tc_mat4 round; /* a custom sky, drawn round the camera (tcx.h) */
         if (v->split && v->split[i]) continue; /* split ones: as their pieces */
+        if (v->mesh_surface && i < l->mesh_count && v->mesh_surface[i] >= 0) { /* a water surface the scripts moved */
+            float dz = v->sectors->surface_z[v->mesh_surface[i]] - v->surface_z0[v->mesh_surface[i]];
+            if (dz != 0) {
+                round = identity;
+                round.m[14] = dz;
+                add_mesh(v, &dl, i, &round, shown, water);
+                continue;
+            }
+        }
         add_mesh(v, &dl, i, tcx_mesh_model(v->meshes[i], v->camera.position, &round) ? &round : &identity, shown, water);
     }
-    for (i = 0; i < v->piece_count; i++) add_mesh(v, &dl, v->piece_first + i, &identity, shown, water);
+    for (i = 0; i < v->piece_count; i++) { /* a water surface's pieces follow its height too (2026-11-16: the water is
+                                             * transparent, so drawn as pieces, and stayed up while its height went down) */
+        uint32_t o = v->piece_origin[i];
+        round = identity;
+        if (v->mesh_surface && o < l->mesh_count && v->mesh_surface[o] >= 0)
+            round.m[14] = v->sectors->surface_z[v->mesh_surface[o]] - v->surface_z0[v->mesh_surface[o]];
+        add_mesh(v, &dl, v->piece_first + i, &round, shown, water);
+    }
     TC_PROF_END(TC_PZ_DRAW_STATICS, prof);
     prof = TC_PROF_BEGIN();
 
@@ -455,15 +473,16 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         tc_mat34 w34;
         const tc_cast_actor *actor;
         if (p->sample_count == 0 || (v->playing && (int32_t)i == l->ed.static_perso)) continue;
-        /* drawn with its sector (the sector's character list); unknown: always. A tape says itself who is on show. */
+        /* drawn with its sector (the sector's character list); unknown: always. A tape says itself who is on show. The
+         * sector a cast actor is in now (GAM_0042c810 carries a moving perso through the portals it crosses), not its
+         * snapshot's: until 2026-11-16 cavedoc's guide vanished halfway, riding from sector 61 into 90 */
+        sec = v->sectors && v->sectors->perso_count == l->perso_count ? tcv_perso_light_sector(v, i) : TC_SECTOR_NONE;
         if (!(v->tape && v->play->has_cast && tc_cast_actor_of(&v->play->cast, i)) &&
-            perso_sectors && v->sectors->perso_sector[i] != TC_SECTOR_NONE &&
-            !(shown[v->sectors->perso_sector[i]] & TC_SHOWN_SECTOR))
+            perso_sectors && sec != TC_SECTOR_NONE && sec < v->sectors->count && !(shown[sec] & TC_SHOWN_SECTOR))
             continue;
         /* Baked samples loop; blend each channel between neighbouring samples so motion is smooth at any display
          * rate and playback speed. Visibility follows the earlier sample. */
         world = tc_mat4_from34(&p->world);
-        sec = v->sectors && v->sectors->perso_count == l->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
         if (v->sector_lit) {
             uint16_t ls = tcv_perso_light_sector(v, i);
             v->draw_lit = ls < v->sectors->count ? &v->sector_lit[ls] : NULL;
@@ -503,6 +522,10 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
                 continue;
             world = tc_mat4_from34(&w34);
             nch = an->channel_count;
+            /* its transparency while not in the default display (PROC 203 clears the SuperObject's flag 8, 204 sets it
+             * and the transparency to 255, 205 sets the transparency: their fades); wholly see-through: not drawn */
+            v->draw_alpha = actor->ai->display_flag8 ? 1 : actor->ai->transparency / 255.0f;
+            if (v->draw_alpha <= 0) { v->draw_alpha = 1; continue; }
             for (ch = 0; ch < nch; ch++) {
                 uint16_t obj = an->shown[s.s0 * nch + ch];
                 tc_mat4 m, model;
@@ -519,6 +542,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
                     if (p->parts[k].channel == c0) add_draw(v, &dl, first + k, &model, 0, p->parts[k].mesh.index_count, z);
                 }
             }
+            v->draw_alpha = 1;
             continue;
         }
         s = tc_sample_at_time(t, p->sample_rate, p->sample_count);
@@ -535,10 +559,13 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     }
 
     /* first person, or the camera pushed into him by a wall (tc_cam.hide_target): not drawn. Nor made wholly see-through
-     * by his scripts (SetTransparency 0: sud0's walk-in passages, HEG_GenTransitionFade, while they move him; the port
-     * draws no partial transparency) */
-    bool see_through = v->playing && v->play && v->play->use_ai && v->play->main.has_driver && tc_main_is_ed(&v->play->main) &&
-                       v->play->main.driver.ai.transparency == 0;
+     * by his scripts (SetTransparency 0: sud0's walk-in passages, HEG_GenTransitionFade, while they move him); partly:
+     * blended (tc_view_draw.alpha) */
+    const tc_ai_perso *ed_ai = v->playing && v->play && v->play->use_ai && v->play->main.has_driver && tc_main_is_ed(&v->play->main)
+                                   ? &v->play->main.driver.ai : NULL;
+    float ed_alpha = ed_ai && !ed_ai->display_flag8 ? ed_ai->transparency / 255.0f : 1; /* his scripts' fades too (the
+                                    hurt blink at 127; the passages' 0) */
+    bool see_through = ed_alpha <= 0;
     if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target && !see_through) {
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
@@ -548,6 +575,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
                         : v->play->use_ai && v->play->main.has_driver ? v->play->pose_draw
                                                                  : tc_player_model_matrix(&v->play->main.player);
         sec = tc_viewer_ed_sector(v);
+        v->draw_alpha = ed_alpha;
         z = water && sec != TC_SECTOR_NONE && sec < v->sectors->count ? v->sector_water[sec] : NAN;
         v->draw_lit = v->sector_lit && sec < v->sectors->count ? &v->sector_lit[sec] : NULL;
         for (ch = 0; ch < nch; ch++) {
@@ -565,6 +593,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     }
 
     v->draw_lit = NULL;
+    v->draw_alpha = 1;
     TC_PROF_END(TC_PZ_DRAW_PERSOS, prof);
     *opaque_count = dl.count;
     prof = TC_PROF_BEGIN();

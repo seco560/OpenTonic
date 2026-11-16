@@ -229,7 +229,8 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           Scripts are runs of nodes in the engine's order, each closed by an end node (type 8, depth 0).
           Resolved params: 14 button -> button index; 15 constant vector -> vector index; 20 string -> string index;
           24 perso -> 0 = this perso, k + 1 = level perso k (LevelData.persos()); 25 state -> state index;
-          32 behaviour -> normal index, or 0x10000 | reflex index. Unresolvable pointers -> 0xFFFFFFFF.
+          32 behaviour -> normal index, or 0x10000 | reflex index; 27 sector, 28 water surface (their .ttlv SECT
+          indices), 29 waypoint (WAYS). Unresolvable pointers -> 0xFFFFFFFF.
         u32 n_scripts, n_scripts x u32 first node
         u16 n_normal, u16 n_reflex, (n_normal + n_reflex) x { i32 schedule script (-1 none), u16 first script, u16 n }
         u16 initial normal behaviour, u16 initial reflex (0xFFFF none)
@@ -1459,6 +1460,10 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
                 return got
         if t == 27 and ref and not d.se:  # a sector (Proc_TranslateSector ...): its index in the .ttlv SECT
             got = d.sector_index(ref)
+            if got is not None:
+                return got
+        if t == 28 and ref and not d.se:  # a water surface (Proc_MoveSurfaceHeight ...): its index in the .ttlv SECT heights
+            got = {loc: k for k, (loc, _, _) in enumerate(d.surfaces())}.get(ref)
             if got is not None:
                 return got
         if t == 29 and not d.se:  # a waypoint: its number in the level's table (waypoints(), the .ttlv WAYS)

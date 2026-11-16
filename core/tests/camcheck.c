@@ -1142,7 +1142,8 @@ static void hold_scenario(const char *dir) {
     uint8_t *ai;
     int32_t found = -1;
     uint32_t i, n;
-    float axis = 0, held = 0, back = 0, again = 0, start = 1e6f;
+    float axis = 0, held = 0, back = 0, again = 0, start = 1e6f, idle = 0, close_yaw = 0, close_d = 0, want_d = -1, close_e = 0,
+          want_e = -1;
     int on_b = 0, f;
     char what[300];
     tc_vec3 at = tc_v3(0, 0, 0);
@@ -1179,12 +1180,34 @@ static void hold_scenario(const char *dir) {
     tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, false);
     for (f = 0; f < 120; f++) tc_viewer_update(&v, 1.0f / 60);
     again = v.camera.yaw;
+    for (f = 0; f < 60 * 5; f++) tc_viewer_update(&v, 1.0f / 60); /* (e) left alone 5 s: the framing comes back */
+    idle = v.camera.yaw;
     hold_done(&level, ai, &v);
+    if (hold_viewer(dir, &level, &ai, &v)) { /* (f) the close-up on: the framing still fires, closer, at its height */
+        const tc_ed_ai *e = tc_viewer_driver(&v);
+        v.cam.closeup = true;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), at, 0);
+        for (f = 0; f < 60 * 4; f++) tc_viewer_update(&v, 1.0f / 60);
+        close_yaw = v.camera.yaw;
+        close_d = v.cam.distance;
+        want_d = tc_ai_other_dsgvar_float(&e->ai, (uint32_t)e->camera, 102) * TC_CAM_CLOSEUP_DISTANCE / TC_CAM_DISTANCE;
+        close_e = v.cam.elevation;
+        want_e = tc_ai_other_dsgvar_float(&e->ai, (uint32_t)e->camera, 103);
+        hold_done(&level, ai, &v);
+    }
     snprintf(what, sizeof(what), "the player's hold (cavedoc, director %d's axis at yaw %.2f): turned just before, the shot "
              "on (%d) and the camera left where it was (%.2f, 2.5 s on %.2f); recentred: %.2f; turned again: %.2f", (int)found,
              (double)axis, on_b, (double)start, (double)held, (double)back, (double)again);
     check(on_b && fabsf(remainderf(held - axis, 2 * TC_PI)) > 0.2f && fabsf(remainderf(held - start, 2 * TC_PI)) < 0.05f && fabsf(remainderf(back - axis, 2 * TC_PI)) < 0.05f &&
               fabsf(remainderf(again - axis, 2 * TC_PI)) > 0.2f, what);
+    snprintf(what, sizeof(what), "the player's hold ends when he leaves the camera alone (4 s): on the axis again (%.2f)",
+             (double)idle);
+    check(fabsf(remainderf(idle - axis, 2 * TC_PI)) < 0.05f, what);
+    snprintf(what, sizeof(what), "with the close-up on, the director's framing still fires: yaw %.2f (axis %.2f), %.2f away "
+             "(its %.2f x 4 / 7), elevation %.2f (its %.2f)", (double)close_yaw, (double)axis, (double)close_d,
+             (double)want_d, (double)close_e, (double)want_e);
+    check(fabsf(remainderf(close_yaw - axis, 2 * TC_PI)) < 0.05f && fabsf(close_d - want_d) < 0.1f &&
+              fabsf(close_e - want_e) < 0.02f, what);
 }
 
 int main(int argc, char **argv) {

@@ -49,6 +49,10 @@ typedef struct tc_view_draw {
      * light_extra of them (a sector's characters' lights, tc_sector.char_lights; 0 on retail levels). Its sector's
      * ambient lights are in `ambient` already (ambient + G x diffuse is one sum). */
     uint32_t light_first, light_extra;
+    /* 1, or a perso's transparency (SetTransparency 0..255 / 255 while its display is not the default one: PROC 203 /
+     * 204 / 205, the SuperObject's +0x3C): below 1 it is drawn with the blended ones, its alpha times this (the exe's
+     * material-alpha presets, docs/DECOMP.md). Fades: cavedoc's rubies, the crumbling platforms, north's swings. */
+    float alpha;
 } tc_view_draw;
 
 /* The water plane of a sector whose first environment is already water (FUN_00451e80: z 9000, everything below it). */
@@ -200,7 +204,8 @@ typedef struct tc_viewer_shot {
                                  take it (a reveal still does) */
     bool in_stretch;          /* a director's shot (2, 4, 6, 7, 8) is or was just on (gaps under TC_VIEW_STRETCH_GAP) */
     float stretch_gap;        /* s since the last frame of a director's shot */
-    float since_look;         /* s since the player last turned the camera (any mode) */
+    float since_look;         /* s since the player last turned the camera (any mode; TC_VIEW_TURN_MIN) */
+    float turn_sum;           /* rad he turned lately (decaying: tc_viewer_camera.c TC_VIEW_TURN_TIME) */
     bool reveal;              /* the eye shot on looks at something other than Ed */
     float entry_orbit;        /* the zoom (tc_viewer.orbit_distance) and close-up when the eye shot started: the wheel */
     bool entry_closeup;       /* and 5 dolly its eye from there */
@@ -224,6 +229,9 @@ typedef struct tc_viewer_shot {
     bool mirror_state;        /* shot 8: dsg109 (1: along the mirror) */
     float mirror_since;       /* ... and how long Ed has faced the other way (s) */
     float look_yaw, look_rise;
+    float good_yaw, good_rise; /* the last turn of a fixed or rail eye that fitted (look_from: a blocked turn stops) */
+    bool has_cur;             /* the eye shown last frame (cur_eye): a turned eye moves from it */
+    tc_vec3 cur_eye;
 } tc_viewer_shot;
 
 typedef struct tc_viewer_play tc_viewer_play;  /* private: collision, Ed's controller and AI at stable addresses */
@@ -270,6 +278,7 @@ typedef struct tc_viewer {
      * lights' sum, NULL on levels without any. draw_lit: what add_draw gives the draws being added (NULL: nothing). */
     struct tc_viewer_char_lit *sector_lit;
     const struct tc_viewer_char_lit *draw_lit;
+    float draw_alpha;         /* the alpha add_draw gives its draws (tc_view_draw.alpha): 1 but for a see-through perso */
     tc_view_light char_lights[TC_VIEW_MAX_LIGHTS];
     uint32_t char_light_count;
     bool lights_started;      /* the first update sets the weights and the fog at once */
@@ -362,6 +371,8 @@ typedef struct tc_viewer {
     /* Mesh table and this frame's draw list. */
     const tc_mesh **meshes;
     uint8_t *mesh_water;          /* per static mesh: 1 = a water surface (TC_FLAG_WATER on its draws) */
+    int16_t *mesh_surface;        /* per static mesh: the water surface it is (sectors' surface_z index), -1 none */
+    float *surface_z0;            /* the surfaces' heights as loaded: a water mesh is drawn moved by now - this */
     uint32_t mesh_count, perso_first, ed_first;
     tc_view_draw *draws, *blended;
     uint32_t draw_cap, blended_cap;
@@ -369,6 +380,8 @@ typedef struct tc_viewer {
     float *mesh_sphere;           /* per mesh: centre xyz and radius of its vertex bounds (mesh space); lazily made */
     uint8_t *mesh_ghost;          /* per mesh, with mesh_sphere: 1 = a cast actor's part that Ed does not collide with (no
                                    * obstacle of its own): it can stand in him, and the camera's sight allows for that */
+    uint32_t sight_skip_lo, sight_skip_hi; /* the camera's perso tests leave out these meshes (a scripted shot's own look
+                                    perso, its pivot inside it while a turned eye is placed; lo == hi: none) */
     /* Transparent statics drawn as pieces (TC_VIEW_PIECE_SIZE cells), so they sort back to front: the pieces follow
      * Ed's parts in the mesh table, piece_origin[k] = the static mesh piece k came from, split[i] = 1 when static
      * mesh i is drawn as its pieces. mesh_centre / mesh_extent: per transparent mesh, the centre and half size of its

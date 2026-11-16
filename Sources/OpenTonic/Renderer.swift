@@ -473,7 +473,7 @@ import TonicCore
         func drawMesh(_ d: tc_view_draw) {
             // d's index range: all of the mesh, or the shown sectors' part of a static (tc_view_draw)
             guard let m = meshes[Int(d.mesh)], d.index_count > 0, Int(d.first_index) + Int(d.index_count) <= m.indexCount else { return }
-            let transparent = d.flags & TC_FLAG_TRANSPARENT != 0
+            let transparent = d.flags & TC_FLAG_TRANSPARENT != 0 || d.alpha < 1  // a perso's fade: blended
             var flags = SIMD2<UInt32>(d.flags, !transparent && msaa > 1 ? 1 : 0)  // coverage: as the textured pipeline
             if d.texture >= 0, let tex = textures[Int(d.texture)] {
                 enc.setRenderPipelineState(transparent ? blendedPipeline : texturedPipeline)
@@ -487,7 +487,7 @@ import TonicCore
                 enc.setFragmentTexture(lightmap, index: 1)
             }
             var params = DrawParams(model: float4x4(d.model), scroll: m.scroll, billboard: d.flags & TC_FLAG_BILLBOARD != 0 ? 1 : 0,
-                                    ambient: SIMD4(d.ambient.0, d.ambient.1, d.ambient.2, 0),
+                                    ambient: SIMD4(d.ambient.0, d.ambient.1, d.ambient.2, d.alpha),
                                     diffuse: SIMD4(d.diffuse.0, d.diffuse.1, d.diffuse.2, 0),
                                     water: SIMD4(d.water_z, d.underwater != 0 ? 1 : 0, Float(d.light_first), Float(d.light_extra)))
             enc.setVertexBytes(&params, length: MemoryLayout<DrawParams>.stride, index: 2)

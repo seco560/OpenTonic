@@ -488,6 +488,49 @@ keeps one instance per spawnable template (the exe takes a free slot of the leve
 `GAM_Always_004259a0`: cavedoc 15, north 25), so a toast still in flight (up to 5 s) blocks the next toaster's; the
 first toaster's toast does not move from its launch point (blocked at once, not looked into).
 
+## Transparency and display (2026-11-16; **read** unless marked)
+- PROC 205 SetTransparency(n) (`PROC_ShowEtc_0048c1c0` case 0xcd): the SuperObject's +0x3C := n held in 0..255
+  (`GAM_cineinfo_00426b20`). PROC 203 (`Proc_TransparentDisplay`; tc_ai.h's old name "Show?") clears the display flag 8
+  (SuperObject +0x2C, copied to the 3D data's +0x198 by `GAM_0041ede0`); PROC 204 (`Proc_DefautDisplay`, "Hide?") sets
+  it **and** puts the transparency back to 255. The renderer's material-alpha presets (docs/DECOMP.md: TMD / TMA,
+  SRCALPHA / INVSRCALPHA) draw an object below 1 blended. Where the +0x3C value meets the material alpha is **open**
+  (not traced in GLI); the port takes alpha = transparency / 255 while flag 8 is clear.
+- **Port (until 2026-11-16 not drawn at all):** tc_view_draw.alpha (core), DrawParams.ambient.w (Shaders.metal,
+  sdl/shaders/level.vert / .frag), drawn in the blended pass, alpha 0 not drawn; cast actors and Ed (his hurt blink at
+  127, the passages' 0). Scripts that fade: cavedoc's crumbling rubies (BEM_PFQuiSeDesagrege: hidden at the start,
+  faded in one by one as Ed lands on the one before, faded out 0.75 s after), the guide at its end, north's swings, Ed's
+  passages. The SDL shaders were edited by hand: glslangValidator is not installed here, not compiled.
+- **The removal guard** (`kept_as_prop`) no longer keeps a perso that made itself wholly transparent before
+  deactivating itself (the crumbling rubies' B3: hidden until an ActivatePerso fades them in): as a prop it was an
+  invisible platform Ed could stand on.
+- **Drawn by the sector it is in now** (tc_viewer_draw.c): cast actors are culled, lit and water-tested by their live
+  sector (`tc_sector_move` carries them through the portals they cross, GAM_0042c810), not the snapshot's. cavedoc's
+  guide vanished 40 s into its ride, crossing from sector 61 into 90 (the user's "disappears halfway through").
+
+## GameState63 and the water surfaces (2026-11-16; **read** unless marked)
+- **GameState63** (COND 63, `GAM_004290a0`) reads a latch, `DAT_004ec748`: GameAction2 (`GAM_00429070`) clears it as
+  the cover starts (sets it at once when there is no transition to run), the cover's end (`GAM_004290b0`) sets it, the
+  reveal (`GAM_00429010`) sets it too, and nothing clears it after: **true in play, false only while a cover runs.**
+  The port read it as "a cover has just finished" (false in play), so a script that forces Ed straight into his B99
+  (refill, then GameAction0: the restart) without a cover waited for good: Transit's XYZ at the rings' end
+  (SDO_EspionTrainingVol2Fin) talked to him again every tick (the user's softlock). **Port:**
+  `tc_ai_globals.cover_pending` from any GameAction2 until a perso sees the screen covered (its step_begin); COND 63 =
+  screen covered or none pending. The host's own "the screen is black" (tc_ed_ai.screen_covered) is unchanged.
+- **Water surfaces' heights** (the exe's SrfMove table: `GAM_SrfMove_004294a0`, entries of 0x14 at DAT_005212fc,
+  `GAM_00429610` sets one: target, rate per ms = (target - now) / ms, the whole change in one frame without a time;
+  `GAM_00429520` steps them each frame and holds each at its target; a surface's height is the z of its matrix at
+  +0x5C, `FUN_0045d8b0` / `0045d8d0`). Scripts (`PROC_137Etc_0048ab00`; the SE names are off by two here): **137** adds
+  at once (`FUN_0045d960`), **138** moves to a height over ms (`GAM_004296f0`), **141** Proc_MoveSurfaceHeight by an
+  amount over ms (`GAM_00429720`); 139 / 140 set flags on the matrix (0x800; 0x30, 0x200: not modelled). FUNC 53 reads
+  a height (`GAM_00429710`). Used by Transit's sheep training (its pool lowered 20 once four sheep are hit: without it
+  Ed could never land, the user's lock), cock01 (13 calls: the switches, the ice), marmite, pyramide (the sub-maps).
+  **Port:** the exporter writes a script's surface (node type 28) as its index in the .ttlv SECT heights (ai.py
+  `resolve`: a re-export); tc_ai queues `tc_ai_surface_order`s; the cast moves the level's `tc_sectors.surface_z` in
+  place each tick (`move_surfaces`: the swim physics and the viewer's water planes read them there; the heights as
+  loaded are put back when the cast is freed); the viewer draws each water mesh (matched to its surface by height at
+  the load) moved by the change. Checks: viewcheck `transit_scenario` (the face platforms, XYZ's restart, the sheep's
+  pool down 20 and the training's cover). Not checked: cock01's, marmite's, pyramide's.
+
 ## Speech (2026-11-06; all **read** unless marked)
 The exe's `GAM_LipsSync.c`. A character's line is one object carrying its voice, its mouth shapes, its text and cues.
 **Data.** Per level, encrypted as the snapshots: `.lsy` {name[255], u32 address}: a dialogue's name and the **param of the

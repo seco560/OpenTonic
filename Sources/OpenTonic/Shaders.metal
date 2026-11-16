@@ -36,7 +36,7 @@ struct DrawParams {
     float4x4 model;          // object -> world (identity for static meshes; perso world * channel)
     float2 scroll;           // UV per second (material scrolling)
     uint billboard;          // 1: sprite quad (TC_FLAG_BILLBOARD), expanded towards the camera
-    float4 ambient;          // rgb: the material's ambient
+    float4 ambient;          // rgb: the material's ambient; w: the draw's alpha (tc_view_draw.alpha: a perso's fade)
     float4 diffuse;          // rgb: the material's diffuse
     float4 water;            // x: the water plane's height, y: 1 drawn under the water effect (tc_view_draw.underwater);
                              // z, w: this draw's own lights, after the frame's (tc_view_draw.light_first, light_extra)
@@ -64,6 +64,7 @@ struct VertexOut {
     float4 color;
     float3 world;            // world position, for fog
     float2 uv2;              // lightmap atlas coordinates; x < 0: none
+    float alpha;             // the draw's alpha (DrawParams.ambient.w)
 };
 
 // A baked set's colour; objects without that set keep set 0.
@@ -153,6 +154,7 @@ vertex VertexOut level_vertex(VertexIn in [[stage_in]], constant Uniforms &u [[b
     out.position = u.viewProjection * world;
     out.world = world.xyz;
     out.uv2 = in.uv2;
+    out.alpha = d.ambient.w;
     out.uv = in.uv + fract(d.scroll * u.time);             // textures repeat, so wrap to keep precision
     out.color = mix(baked(in, u.lightSet), baked(in, u.lightNext), u.lightBlend);  // a change between sets: their lerp
     if (u.lighting == 0) {  // the vertex's light itself (alpha 1); sprites unlit
@@ -245,6 +247,7 @@ fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Unif
         if (f.y == 0u) a = max(a, w.a);
     }
     rgb = pow(saturate(rgb), float3(1.0 / u.gamma));
+    a *= in.alpha;           // a perso's fade (1 otherwise; such draws come in the blended pass)
     // a custom sky (TCX_FLAG_ROUND_CAMERA, drawn round the camera far off): beyond the level's fog, not in it
     return float4((f.x & 256u) != 0u ? rgb : fogged(rgb, in, u), a);
 }

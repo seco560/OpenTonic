@@ -230,6 +230,9 @@ void tc_cam_look(tc_cam *c, tc_camera *view, float yaw, float rise);
 void tc_cam_recenter(tc_cam *c);
 /* Moves view (yaw, pitch, position; FOV and depth range untouched) for this frame. */
 void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt);
+/* How far the camera's sphere gets from pivot along dir (unit) before the level or a drawn perso (t->world, t->sight;
+ * the follow's own test), up to distance; out of a perso the pivot is in. A scripted shot's turned eye uses it too. */
+float tc_cam_clearance(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir, float distance);
 
 #ifdef __cplusplus
 }
