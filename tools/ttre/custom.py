@@ -122,10 +122,12 @@ EDITS += [Arch('se/ttlv/sud0', 'crazy', ARCH_SKI, (-0.576, -9.360, -4.3598), -0.
           Arch('se/ttlv/CrazyTown', 'crazy', ARCH_SE, (0.0, -60.0, 0.0), math.pi, 'sud0', OWN_TEXTURES,
                ('se/ttlv/sud0.ttlv',))]
 
-# The way back from an SSX course: once the skier comes within FINISH_RADIUS of the course's end (ssx_course_end: the
-# lowest point of its AI paths, the finish's run-out), the cover at once and, behind it, sud0 in front of the course's
-# arch. A portal record in the course's .ttai, as Totalski's finish (ai.ski_portals): the skier's driver runs it.
-FINISH_RADIUS = 15.0
+# The way back from an SSX course (2026-11-16; user: a prompt instead of the instant cover, the finish's whole field,
+# walls so he can't fall off it, Alaska's dip): the course's end, its finish field, invisible walls round it and a
+# boost out of a dip before it (tools/ttre/ssx_end.py), in the course's .ttai as a CRSE chunk with the way back: sud0 in
+# front of the course's arch. Core custom gameplay (core/src/custom/tcx_course.c) shows "Press Shoot to Go Back" while
+# the skier is in the field; Shoot covers the screen and leads there. (Until 2026-11-16: a portal record of radius 15
+# round the lowest point of the AI paths, the cover at once.)
 SSX_FINISH = [(f'ttlv/SSX_{title}', course) for course, title in SSX_COURSES]
 
 # Textures the layer makes (arch_look, ssx_vignette): under out, where both install scripts sync them (the Imported
@@ -376,12 +378,6 @@ def add_portal(a, position, heading, dest, index, place_ed, place_camera):
     add_record(a, position, 4.0, rows, PERSO_BASE + index, 0, TWO_SIDED, 103, 1, caps, fire)
 
 
-def add_finish(a, position, dest, place_ed, place_camera):
-    """PORT and ZONE with a course's finish added: within FINISH_RADIUS, the cover at once; covered, the level."""
-    add_record(a, position, FINISH_RADIUS, rotation(position, 0), PERSO_BASE + 0x80, 1, 0, 0, 0,
-               [(POP_COVER, 0, 0, 0, 0, (0, 0, 0))], [('level', dest, place_ed, place_camera)])
-
-
 def add_record(a, position, radius, rows, perso, fire_kind, flags, fire_dsg, fire_value, caps, fire):
     """A portal record (tc_ai.c's PORT reader) with its ops; ('level', destination, place, camera place) is POP_LEVEL with
     the names looked up in (or added to) the chunk's name table. Its ZONE entry: none (the radius)."""
@@ -544,29 +540,6 @@ def ssx_badge(iso, course):
         return None
     raw = ssx.read_big(iso.read('DATA/TEXTURES/PS2LOAD.BIG')).get(f'ldtrack{name}.ssh')
     return ssx.read_ssh(raw)[0] if raw else None
-
-
-def ssx_course_end(iso, course):
-    """Where a run of the course ends, in TT units, or None: the lowest point of its AI paths (<course>.aip; they follow
-    the racing line, so that is the finish's run-out). Checked 2026-11-14 on all 11: ground within 0.4 under each.
-    The .aip as ssx.start_path reads it (repeated here: ssx.py's own stamp stays, so its courses aren't converted anew)."""
-    aip = ssx.member(ssx.read_big(iso.read(f'DATA/MODELS/{course.upper()}.BIG')), course, '.aip')
-    if not aip or len(aip) < 24:
-        return None
-    o = 16
-    n_paths, n_starts = struct.unpack_from('<2I', aip, o)
-    o += 8 + 4 * n_starts
-    low = None
-    for _ in range(n_paths):
-        n_pts, n_ev = struct.unpack_from('<2I', aip, o + 28)
-        p = struct.unpack_from('<3f', aip, o + 36)
-        for k in range(n_pts):
-            if low is None or p[2] < low[2]:
-                low = p
-            d = struct.unpack_from('<4f', aip, o + 72 + 16 * k)  # a leg: its unit direction and length
-            p = tuple(p[c] + d[c] * d[3] for c in range(3))
-        o += 72 + 16 * n_pts + 16 * n_ev
-    return tuple(c * ssx.SCALE for c in low) if low else None
 
 
 def arch_look(out, level, look, iso):
@@ -815,11 +788,13 @@ def run(out):
 
 
 def run_finishes(out, iso):
-    """SSX_FINISH: each course's way back, in its .ttai only, to the places in front of its arch in sud0. Needs the disc
-    (the course's end) and the arch (an edit of retail sud0 that went on)."""
+    """SSX_FINISH: each course's end (ssx_end.py: its finish field, walls, boost) and its way back to the places in front
+    of its arch in sud0, in its .ttai only (CRSE). Needs the disc (the AI paths) and the course's collision (its .ttlv,
+    whose stamp goes into the digest: a fresh conversion of the course makes it anew)."""
+    from . import ssx_end
     for level, course in SSX_FINISH:
-        ttai_path = os.path.join(out, level + '.ttai')
-        if not os.path.exists(ttai_path):
+        ttai_path, ttlv_path = os.path.join(out, level + '.ttai'), os.path.join(out, level + '.ttlv')
+        if not os.path.exists(ttai_path) or not os.path.exists(ttlv_path):
             continue
         pair = f'ssx_{course}'
         arch = next(e for e in EDITS if e.pair == pair)
@@ -828,21 +803,24 @@ def run_finishes(out, iso):
             unedited(out, level + '.ttai')
             continue
         dest = arch.level.split('/')[-1]
-        mark = digest(level, (FINISH_RADIUS, dest, pair), [], '')
+        mark = digest(level, (dest, pair), [], '', (chunks.file_stamp(ttlv_path),))
         if current(ttai_path, mark):
             print(f'custom layer: {level}: up to date')
             continue
-        end = ssx_course_end(iso, course)
+        aip = ssx.member(ssx.read_big(iso.read(f'DATA/MODELS/{course.upper()}.BIG')), course, '.aip')
+        end = ssx_end.course_end(course, chunks.read(ttlv_path, 'TTLV')['COLL'], aip, ssx.SCALE)
         if end is None:
-            print(f'custom layer: {level}: no AI paths, no course end: the way back left out')
+            print(f'custom layer: {level}: no AI paths or no ground at their end: the way back left out')
             unedited(out, level + '.ttai')
             continue
         pristine(out, level + '.ttai')
         a = chunks.read(ttai_path, 'TTAI')
-        add_finish(a, end, dest, f'{PLACE_ED}_{pair}', f'{PLACE_CAMERA}_{pair}')
+        a['CRSE'] = ssx_end.chunk(end, dest, f'{PLACE_ED}_{pair}', f'{PLACE_CAMERA}_{pair}')
         a['CUST'] = mark
         write(ttai_path, 'TTAI', a)
-        print(f'custom layer: {level}: the end at {tuple(round(x, 1) for x in end)} leads back to {dest}')
+        print(f'custom layer: {level}: the end at {tuple(round(x, 1) for x in end.end)}, a field of '
+              f'{int(end.field.mask.sum() * end.field.cell ** 2)} square units, {len(end.walls) // 2} walls'
+              f'{", a boost out of its dip" if end.boost else ""}; leads back to {dest}')
 
 
 if __name__ == '__main__':

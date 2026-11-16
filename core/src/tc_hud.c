@@ -389,6 +389,25 @@ static void put_standard(draw *d) {
     }
 }
 
+/* A text slot's quads (its window's box, its text). */
+static void put_slot(draw *d, const tc_ai_hud_slot *s, uint8_t points, uint8_t max) {
+    tc_hud *h = d->h;
+    const tc_hud_font *f = slot_font(h, s);
+    char text[256];
+    if (!f || !tc_hud_slot_text(h, s, points, max, text, sizeof(text))) return;
+    if (s->kind != TC_AI_HUD_BOSS) wrap(f, text);
+    if (s->backdrop && h->quad_count < TC_HUD_MAX_QUADS) { /* the text window's box: 5-95 % by 75-95 % of the 4:3 frame */
+        tc_hud_quad *q = &h->quads[h->quad_count++];
+        float half = 0.45f * (4.0f / 3.0f) / d->aspect;
+        q->rect[0] = 0.5f - half;
+        q->rect[2] = 0.5f + half;
+        q->rect[1] = 0.75f;
+        q->rect[3] = 0.95f;
+        memcpy(q->uv, h->data.panel_uv, sizeof(q->uv));
+    }
+    put_text(d, f, text, s->x, s->y, 0, s->x < -SLOT_ANCHOR_X ? -1.0f : s->x > SLOT_ANCHOR_X ? 1.0f : 0.0f);
+}
+
 uint32_t tc_hud_build(tc_hud *h, const tc_ai_globals *g, const uint8_t *boss_points, const uint8_t *boss_max,
                       bool standard, float aspect) {
     draw d;
@@ -397,24 +416,22 @@ uint32_t tc_hud_build(tc_hud *h, const tc_ai_globals *g, const uint8_t *boss_poi
     if (!h->loaded || aspect <= 0) return 0;
     d.h = h;
     d.aspect = aspect;
-    for (k = 0; g && k < TC_AI_HUD_SLOTS; k++) {
-        const tc_ai_hud_slot *s = &g->hud[k];
-        const tc_hud_font *f = slot_font(h, s);
-        char text[256];
-        if (!f || !tc_hud_slot_text(h, s, boss_points ? boss_points[k] : 0, boss_max ? boss_max[k] : 0, text, sizeof(text)))
-            continue;
-        if (s->kind != TC_AI_HUD_BOSS) wrap(f, text);
-        if (s->backdrop && h->quad_count < TC_HUD_MAX_QUADS) { /* the text window's box: 5-95 % by 75-95 % of the 4:3 frame */
-            tc_hud_quad *q = &h->quads[h->quad_count++];
-            float half = 0.45f * (4.0f / 3.0f) / aspect;
-            q->rect[0] = 0.5f - half;
-            q->rect[2] = 0.5f + half;
-            q->rect[1] = 0.75f;
-            q->rect[3] = 0.95f;
-            memcpy(q->uv, h->data.panel_uv, sizeof(q->uv));
-        }
-        put_text(&d, f, text, s->x, s->y, 0, s->x < -SLOT_ANCHOR_X ? -1.0f : s->x > SLOT_ANCHOR_X ? 1.0f : 0.0f);
-    }
+    for (k = 0; g && k < TC_AI_HUD_SLOTS; k++)
+        put_slot(&d, &g->hud[k], boss_points ? boss_points[k] : 0, boss_max ? boss_max[k] : 0);
     if (standard) put_standard(&d);
     return h->quad_count;
+}
+
+uint32_t tc_hud_add_slot(tc_hud *h, const tc_ai_hud_slot *s, float aspect) {
+    draw d;
+    if (!h->loaded || aspect <= 0 || !s) return h->quad_count;
+    d.h = h;
+    d.aspect = aspect;
+    put_slot(&d, s, 0, 0);
+    return h->quad_count;
+}
+
+uint8_t tc_hud_font_rank(const tc_hud *h, const char *name) {
+    const tc_hud_font *f = font_named(h, name);
+    return f ? (uint8_t)(f - h->data.fonts) : 0xFF;
 }

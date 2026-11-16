@@ -217,6 +217,56 @@ bool tc_collision_move_sector(tc_collision *col, uint16_t sector, const tc_mat34
     return true;
 }
 
+bool tc_collision_add(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count, tc_floor floor) {
+    uint32_t n = vertex_count / 3, total, i, k;
+    tc_tri *tris;
+    uint32_t *stamp, *loose;
+    uint8_t *is_loose;
+    tc_vec3 *rest;
+    if (!n) return true;
+    total = col->tri_count + n;
+    tris = (tc_tri *)tc_calloc(total, sizeof *tris);
+    stamp = (uint32_t *)tc_calloc(total, sizeof *stamp);
+    is_loose = (uint8_t *)tc_calloc(total, 1);
+    loose = (uint32_t *)tc_calloc(col->loose_count + n, sizeof *loose);
+    rest = (tc_vec3 *)tc_calloc(3 * (size_t)(col->loose_count + n), sizeof *rest);
+    if (!tris || !stamp || !is_loose || !loose || !rest) {
+        tc_free(tris), tc_free(stamp), tc_free(is_loose), tc_free(loose), tc_free(rest);
+        return false;
+    }
+    if (col->tri_count) {
+        memcpy(tris, col->tris, col->tri_count * sizeof *tris);
+        memcpy(stamp, col->stamp, col->tri_count * sizeof *stamp);
+        if (col->is_loose) memcpy(is_loose, col->is_loose, col->tri_count);
+    }
+    if (col->loose_count) {
+        memcpy(loose, col->loose, col->loose_count * sizeof *loose);
+        memcpy(rest, col->loose_rest, 3 * (size_t)col->loose_count * sizeof *rest);
+    }
+    tc_free(col->tris), tc_free(col->stamp), tc_free(col->is_loose), tc_free(col->loose), tc_free(col->loose_rest);
+    col->tris = tris, col->stamp = stamp, col->is_loose = is_loose, col->loose = loose, col->loose_rest = rest;
+    for (i = 0; i < n; i++) {
+        tc_vec3 a = vertices[3 * i], b = vertices[3 * i + 1], c = vertices[3 * i + 2];
+        tc_vec3 nrm = tc_v3_cross(tc_v3_sub(b, a), tc_v3_sub(c, a));
+        float len = tc_v3_length(nrm);
+        tc_tri *t;
+        if (!(len > 1e-8f) || !isfinite(len)) continue;
+        t = &col->tris[col->tri_count];
+        t->a = a, t->b = b, t->c = c;
+        t->normal = tc_v3_div(nrm, len);
+        t->lo = tc_v3_min(a, tc_v3_min(b, c));
+        t->hi = tc_v3_max(a, tc_v3_max(b, c));
+        t->floor = floor;
+        t->source = UINT32_MAX;
+        t->sector = 0xFFFF;
+        k = col->loose_count++;
+        col->loose[k] = col->tri_count;
+        rest[3 * k] = a, rest[3 * k + 1] = b, rest[3 * k + 2] = c;
+        col->is_loose[col->tri_count++] = 1;
+    }
+    return true;
+}
+
 typedef struct ray_ctx { tc_vec3 o, d; float max_distance, best; const tc_tri *tri; } ray_ctx;
 
 static void ray_tri(const tc_tri *t, void *user) {

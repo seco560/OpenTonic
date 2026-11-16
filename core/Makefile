@@ -48,7 +48,7 @@ all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashch
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
-$(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard include/tonic/custom/*.h) $(wildcard src/*.h) Makefile | $(BUILD)
+$(BUILD)/%.o: src/%.c $(wildcard include/tonic/*.h) $(wildcard include/tonic/custom/*.h) $(wildcard src/*.h) $(wildcard src/custom/*.h) Makefile | $(BUILD)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 

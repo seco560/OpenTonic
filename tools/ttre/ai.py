@@ -260,8 +260,9 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           n x { u16 flags, u16 collide element type (7 sphere, 5 point: radius 0 in BODY), f32 rebound, f32 grip
           (its own mechanics material: the responses multiply them with the obstacle's) } (ai.zone_parts)
   ZDES  his ZDE zones (the hits: COND 18-29, CollectNearby) and which are active per state (zde_block)
-  AUTO  (optional) u8 1, u8 0, u16 0: the driver presses Jump until the initial behaviour is left (a level without
-          the start trigger that sends the skier off: tools/ttre/ssx.py; Totalski / skymap get it by name, tc_ed_ai)
+  AUTO  (optional) u8 mode, u8 0, u16 0: the driver presses Jump until the initial behaviour is left (a level without
+          the start trigger that sends the skier off; Totalski / skymap get it by name, tc_ed_ai). Mode 1 always (the
+          Special Edition's Totalski), 2 unless the start text shows (tools/ttre/ssx.py: the custom layer shows it)
   STRT  (optional) u16 n, u16 0, n x u16 normal behaviour, padded to 4: the behaviours another perso's takeover puts
           this one in before the initial one, a tick each (start_chain: the skier's B4 before B2)
   TRIG  u16 n, u16 0, n x { f32 position[3], f32 radius, u16 behaviour, u16 guard dsgvar, u32 sleep ms }

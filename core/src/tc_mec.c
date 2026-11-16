@@ -251,6 +251,10 @@ void tc_mec_swim_model_axes(const tc_mec_swim *s, const tc_ai_card *card, tc_vec
 #define SKI_STEEP_FORCES 0.3420201433256687 /* DAT_004d30a0 (a double): cos 70 deg, the forces */
 #define SKI_STEEP_REQUEST 0.5               /* DAT_004d2f30 (a double): the request's push and edge grip */
 #define SKI_STEEP_SPEED 0.17364817766693041 /* DAT_004d3060 (a double): cos 80 deg, the speed cap */
+/* Not the exe's (tc_mec_ski.wall_ride, custom gameplay): a face steeper than 45 deg holds the board on when the board
+ * lies on it, its up axis within 45 deg of the face's normal. */
+#define WALL_RIDE_STEEP 0.7071f
+#define WALL_RIDE_ON 0.7071f
 
 static tc_vec3 rotate_about(tc_vec3 v, tc_vec3 axis, float angle) { /* Rodrigues, axis unit */
     float c = cosf(angle), s = sinf(angle);
@@ -270,8 +274,10 @@ static tc_vec3 off_steep(tc_vec3 v, tc_vec3 n, float down) {
     return v;
 }
 
-/* The steep contact the exe flattens against: the ground when there is one, else a wall / overhang / ceiling. */
-static bool steep_contact(const tc_mec_contact *c, double limit, tc_vec3 *n) {
+/* The steep contact the exe flattens against: the ground when there is one, else a wall / overhang / ceiling. None
+ * while the board rides walls (tc_mec_ski.wall_ride: custom gameplay). */
+static bool steep_contact(const tc_mec_ski *s, const tc_mec_contact *c, double limit, tc_vec3 *n) {
+    if (s->wall_ride) return false;
     if (c->ground) *n = c->ground_normal;
     else if (c->wall) *n = c->wall_normal;
     else return false;
@@ -319,7 +325,7 @@ void tc_mec_ski_request(tc_mec_ski *s, const tc_ai_card *card, int mode, const f
     side = tc_v3_scale(s->x, -tc_v3_dot(planar, s->x) * edge); /* the edges resist sideways slip */
     {
         tc_vec3 n;
-        if (steep_contact(c, SKI_STEEP_REQUEST, &n)) {
+        if (steep_contact(s, c, SKI_STEEP_REQUEST, &n)) {
             push = off_steep(push, n, 0);
             side = off_steep(side, n, 0);
         }
@@ -352,6 +358,7 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
             tc_collision_raycast(world, feet, down, tc_ai_card_f32(card, 0x44), &hit) &&
             tc_v3_dot(s->z, hit.normal) > tc_ai_card_f32(card, 0x48)) {
             float hold = tc_v3_dot(up, down);
+            if (s->wall_ride && hit.normal.z < WALL_RIDE_STEEP) hold = fmaxf(hold, 1); /* custom: on a steep face too */
             if (hold > 0.65f) f = tc_v3_add(f, tc_v3_scale(hit.normal, -tc_ai_card_f32(card, 0x30) * hold));
             s->near_ground = true;
             target = hit.normal;
@@ -365,10 +372,12 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
         if (tc_v3_dot(n, s->z) > 0.5f || tc_v3_dot(n, up) > 0.5f) target = n;
         f = tc_v3_sub(f, tc_v3_scale(n, tc_v3_dot(n, gravity)));      /* the surface carries the weight */
         f = tc_v3_add(f, tc_v3_scale(velocity, -mass * g2 / dt));   /* friction per 1/30 s: grip 1 stops dead, snow 0 none */
+        if (s->wall_ride && n.z < WALL_RIDE_STEEP && tc_v3_dot(n, s->z) > WALL_RIDE_ON) /* custom: held on the face */
+            f = tc_v3_add(f, tc_v3_scale(n, -tc_ai_card_f32(card, 0x30)));
     }
     {
         tc_vec3 n;
-        if (steep_contact(c, SKI_STEEP_FORCES, &n)) {
+        if (steep_contact(s, c, SKI_STEEP_FORCES, &n)) {
             f = off_steep(f, n, 1000);
             s->near_ground = false;
         }
@@ -388,7 +397,7 @@ tc_vec3 tc_mec_ski_velocity(tc_mec_ski *s, const tc_ai_card *card, tc_mec_env en
     if (top > 0 && speed > top) velocity = tc_v3_scale(velocity, top / speed);
     { /* FUN_004c3af0 after the cap: against a face steeper than 80 deg he cannot rise (a rising z becomes -15 u/s) */
         tc_vec3 n;
-        if (steep_contact(c, SKI_STEEP_SPEED, &n)) velocity = off_steep(velocity, n, 15);
+        if (steep_contact(s, c, SKI_STEEP_SPEED, &n)) velocity = off_steep(velocity, n, 15);
     }
     /* orientation += omega dt */
     speed = tc_v3_length(s->omega);

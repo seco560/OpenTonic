@@ -176,6 +176,8 @@ typedef struct tc_ai_mech_event { uint16_t frame, mode; uint8_t first, period; }
  * its mechanics started: the corn's kernel at its mouth, Ed's bee at his blowpipe (tools/ttre/ai.py launch_row). */
 #define TC_AI_LAUNCH_EVENT 0xF000u
 /* A level perso by instance name (lowercase): PROC_29 arrivals ("heg_positionedland"). */
+#define TC_AI_AUTO_ALWAYS 1u
+#define TC_AI_AUTO_UNLESS_TEXT 2u
 typedef struct tc_ai_place { char *name; tc_vec3 position; float heading; } tc_ai_place;
 /* One screen transition effect (fix.gpt 0x12a8): fields = effect +0x10..+0x30 (A, the mask wipe: start, end, current,
  * speed; B, the spinning logo: radius start, end, current, speed, current speed, acceleration, angle start, current
@@ -256,7 +258,10 @@ typedef struct tc_ai_model {
      * (the skier's B4, whose schedule sets him up, before B2 waits for Jump: tools/ttre/ai.py start_chain) */
     uint16_t start_chain[4];
     uint8_t start_chain_count;
-    bool auto_start;             /* .ttai AUTO: the driver presses Jump until the initial behaviour is left (tc_ed_ai) */
+    /* .ttai AUTO: the driver presses Jump until the initial behaviour is left (tc_ed_ai): TC_AI_AUTO_ALWAYS, or
+     * TC_AI_AUTO_UNLESS_TEXT, unless the start text shows (the host's HUD: the custom layer's, on the SSX courses, which
+     * have no cast to show the game's); 0 none */
+    uint8_t auto_start;
     uint16_t mode_zone_count;
     tc_ai_mode_zone *mode_zones;
     uint8_t *alt_data;

@@ -7,7 +7,9 @@
  * custom layer's chunks skipped), into build-nocustom: its checkall shows the game doesn't lean on any of it.
  *
  * So far: the cars of the imported levels (tcx_vehicle.h: a toy car Ed drives; the user, 2026-11-12); skies drawn round
- * the camera (TCX_FLAG_ROUND_CAMERA: the SSX courses'); the skier's cruise push on those courses (tcx_ski_tick). */
+ * the camera (TCX_FLAG_ROUND_CAMERA: the SSX courses'); the skier on those courses (tcx_ski_tick: a cruise push, a
+ * lighter fall, a drag at speed, riding up steep faces); their ends (.ttai CRSE, 2026-11-16: the finish field with
+ * its prompt and the way back, a boost out of a dip, invisible walls) and start text (tcx_hud_slot). */
 #ifndef TONIC_TCX_H
 #define TONIC_TCX_H
 #include <stdbool.h>
@@ -39,6 +41,8 @@ typedef struct tcx_level {
     tcx_vehicle_data *vehicles;
     float ski_cruise, ski_push;      /* .ttlv SKIA (tcx_ski_tick); 0: none */
     float ski_air_gravity;           /* SKIA's third value: off the snow his gravity times this (1: as the card has it) */
+    float ski_drag_from, ski_drag;   /* SKIA's fourth and fifth (since 2026-11-16): faster than drag_from (u/s) on the
+                                        snow, a drag of ski_drag per second on the excess; 0: none */
 } tcx_level;
 
 /* A play session's custom gameplay (opaque; tc_viewer_custom). */
@@ -53,7 +57,20 @@ typedef struct tcx_host {
     bool paused;
     bool held_back;                  /* the game holds Ed (a line, the director's shot, the pause's look round) */
     bool may_start;                  /* a new action may start (playing, not first person, no level change, Ed main) */
+    bool at_start;                   /* the skier waits at the start for the player's Jump (.ttai AUTO 2, the HUD on) */
+    bool covered;                    /* the screen is covered (the host's cover is done) */
 } tcx_host;
+
+/* What a frame asks of the host. */
+typedef struct tcx_events {
+    bool cover;                      /* cover the screen now (Shoot in a course's finish) */
+    const char *level;               /* covered: on to this level (NULL: none) ... */
+    const char *place, *camera_place; /* ... Ed and the camera at these places of it */
+} tcx_events;
+
+/* The prompt in a course's finish (tcx_prompt), and its key: Shoot, not Action, which slows the skier down (the user,
+ * 2026-11-16: a player braking to look round in the field was taken back; it was "Press Action to Go Back"). */
+#define TCX_FINISH_PROMPT "Press Shoot to Go Back"
 
 #ifndef TC_NO_CUSTOM
 
@@ -71,22 +88,38 @@ bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model);
  * over the upper half of that speed. SSX's riders propel themselves over the flats and dips their courses are built
  * with; Tonic Trouble's skier has gravity only (his slopes never level out), and sat still on them. Off the snow (no
  * contact last tick) his weight is lightened to ski_air_gravity of the card's (factor +0x34, times +0x40 clear of the
- * ground, as tc_mec_ski_velocity): SSX's gaps are built for its riders' long jumps (user, 2026-11-14). Added to the
- * board's force list, which the integrator takes with this tick. l NULL or no SKIA: nothing. */
-void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, const tc_ai_card *card);
+ * ground, as tc_mec_ski_velocity): SSX's gaps are built for its riders' long jumps (user, 2026-11-14). On the snow
+ * faster than ski_drag_from, a drag (user, 2026-11-16: "a smidge slower"). The board rides steep faces
+ * (tc_mec_ski.wall_ride: pipes, ramps' lips). In a course's boost (x, .ttai CRSE: Alaska's dip before its finish), on
+ * the snow, a push up the boost's path to its speed. Added to the board's force list, which the integrator takes with
+ * this tick. l NULL or no SKIA: nothing but the boost. */
+void tcx_ski_tick(const tcx_play *x, const tcx_level *l, tc_mec_ski *ski, tc_vec3 position, tc_vec3 velocity,
+                  uint32_t contacts, const tc_ai_card *card);
 
-/* Made with the play session (NULL: the level has nothing custom, or out of memory); every call below takes NULL. */
-tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles, uint32_t perso_first);
+/* Made with the play session (NULL: the level has nothing custom, or out of memory); every call below takes NULL.
+ * ai_data: the level's .ttai (its CRSE chunk: a course's end; NULL none). A course's invisible walls go into world
+ * (tc_collision_add). */
+tcx_play *tcx_play_create(const tc_level *level, const void *ai_data, size_t ai_size, tc_collision *world,
+                          struct tc_obstacles *obstacles, uint32_t perso_first);
 void tcx_play_free(tcx_play *x);
 /* A frame, before the main character's: the cars move (the one Ed drives by the player's keys, the others coast), their
  * collision posed where they are; Action within reach of one gets Ed in. true: he just got in: the host hands the main
  * character's slot to the car (tc_main_take(m, tcx_character(), x)), whose frames (from this one on) hop him in, drive,
- * and hop him out on Action, giving the slot back when he lands. */
-bool tcx_update(tcx_play *x, const tcx_host *h, float dt);
+ * and hop him out on Action, giving the slot back when he lands.
+ * A course's finish (CRSE): Ed in its field shows the prompt (tcx_prompt); Shoot there asks for the cover (out->cover),
+ * and once the host says the screen is covered, the level and places the way back leads to (out->level ...). */
+bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_events *out);
+/* The prompt to show this frame (TCX_FINISH_PROMPT), NULL none. */
+const char *tcx_prompt(const tcx_play *x);
+/* The start text to show this frame as a HUD text slot (the game's "Press 'Jump' to start", as Totalski's scripts show
+ * it: blinking, in a window), its font left to the host (FontLips). false: none. */
+bool tcx_hud_slot(const tcx_play *x, tc_ai_hud_slot *slot);
 /* The car Ed is in, as the main character (tc_main.h; self: the tcx_play). */
 const tc_character_ops *tcx_character(void);
 /* The Action held now was its own (getting in or out): keep it from Ed's scripts until let go. */
 bool tcx_holds_action(const tcx_play *x);
+/* The same for Shoot (a course's finish). */
+bool tcx_holds_shoot(const tcx_play *x);
 /* The cars' collision on or off while the camera moves (the cars don't block the camera). */
 void tcx_camera_obstacles(tcx_play *x, bool on);
 /* A level perso it moves itself (a car): its world matrix now, and a channel's transform (channel -> perso). */
@@ -95,6 +128,8 @@ tc_mat34 tcx_perso_channel(const tcx_play *x, uint32_t perso, uint16_t channel);
 /* A tc_viewer_mesh the camera's sight test leaves out. */
 bool tcx_sight_skips(const tcx_play *x, uint32_t mesh);
 
+/* For checks: a course's end (.ttai CRSE: where its racing line ends, in its finish field). false: none. */
+bool tcx_course_end(const tcx_play *x, tc_vec3 *end);
 /* For checks and frontends: the cars in play and Ed's ride. */
 uint32_t tcx_play_vehicle_count(const tcx_play *x);
 const tcx_vehicle *tcx_play_vehicle(const tcx_play *x, uint32_t i);
@@ -111,22 +146,27 @@ static inline bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *mod
     (void)mesh, (void)eye, (void)model;
     return false;
 }
-static inline void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts,
-                                const tc_ai_card *card) {
-    (void)l, (void)ski, (void)velocity, (void)contacts, (void)card;
+static inline void tcx_ski_tick(const tcx_play *x, const tcx_level *l, tc_mec_ski *ski, tc_vec3 position,
+                                tc_vec3 velocity, uint32_t contacts, const tc_ai_card *card) {
+    (void)x, (void)l, (void)ski, (void)position, (void)velocity, (void)contacts, (void)card;
 }
-static inline tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles,
-                                        uint32_t perso_first) {
-    (void)level, (void)world, (void)obstacles, (void)perso_first;
+static inline tcx_play *tcx_play_create(const tc_level *level, const void *ai_data, size_t ai_size, tc_collision *world,
+                                        struct tc_obstacles *obstacles, uint32_t perso_first) {
+    (void)level, (void)ai_data, (void)ai_size, (void)world, (void)obstacles, (void)perso_first;
     return NULL;
 }
 static inline void tcx_play_free(tcx_play *x) { (void)x; }
-static inline bool tcx_update(tcx_play *x, const tcx_host *h, float dt) {
+static inline bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_events *out) {
     (void)x, (void)h, (void)dt;
+    out->cover = false;
+    out->level = out->place = out->camera_place = NULL;
     return false;
 }
+static inline const char *tcx_prompt(const tcx_play *x) { (void)x; return NULL; }
+static inline bool tcx_hud_slot(const tcx_play *x, tc_ai_hud_slot *slot) { (void)x, (void)slot; return false; }
 static inline const tc_character_ops *tcx_character(void) { return NULL; }
 static inline bool tcx_holds_action(const tcx_play *x) { (void)x; return false; }
+static inline bool tcx_holds_shoot(const tcx_play *x) { (void)x; return false; }
 static inline void tcx_camera_obstacles(tcx_play *x, bool on) { (void)x, (void)on; }
 static inline bool tcx_perso_pose(const tcx_play *x, uint32_t perso, tc_mat34 *world) {
     (void)x, (void)perso, (void)world;
@@ -138,6 +178,7 @@ static inline tc_mat34 tcx_perso_channel(const tcx_play *x, uint32_t perso, uint
     return m;
 }
 static inline bool tcx_sight_skips(const tcx_play *x, uint32_t mesh) { (void)x, (void)mesh; return false; }
+static inline bool tcx_course_end(const tcx_play *x, tc_vec3 *end) { (void)x, (void)end; return false; }
 static inline uint32_t tcx_play_vehicle_count(const tcx_play *x) { (void)x; return 0; }
 static inline const tcx_vehicle *tcx_play_vehicle(const tcx_play *x, uint32_t i) { (void)x, (void)i; return NULL; }
 static inline const tcx_ride *tcx_play_ride(const tcx_play *x) { (void)x; return NULL; }

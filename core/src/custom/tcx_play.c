@@ -3,7 +3,7 @@
 #include "../tc_internal.h"
 #include <stdio.h>
 #include <string.h>
-#include "tonic/custom/tcx.h"
+#include "tcx_course.h"
 #include "tonic/tc_alloc.h"
 #include "tonic/tc_anim.h"
 #include "tonic/tc_obstacle.h"
@@ -18,9 +18,25 @@ struct tcx_play {
     uint32_t *vehicle_mesh;      /* per car: the first of its parts' tc_viewer_mesh numbers and their count */
     tcx_ride ride;
     bool action_held;            /* the Action that got him in or out: kept from his scripts until it is let go */
+    bool shoot_held;             /* the Shoot that took him out of a course's finish: the same */
+    tcx_course *course;          /* .ttai CRSE: a course's end (NULL none) */
+    bool prompting;              /* Ed is in the finish field: the prompt shows */
+    uint8_t leaving;             /* the way back: 1 the cover asked for, 2 the level asked for */
+    bool start_text;             /* the skier waits at the start: the start text shows ... */
+    bool jumped;                 /* ... until the player presses Jump there (he takes a moment to leave the start) */
+    float time;                  /* seconds, for the start text's blink */
 };
 
+/* The start text (the game's own, as Totalski's scripts show it, tools/ttre/hud.py; core/tests/hudcheck.c checks text
+ * 0x250 is "Press 'Jump' to start"): game.dsb's record 0x250, in a window, at y -2.4, blinking on and off every 0.3 s */
+#define START_TEXT 0x250u
+#define START_TEXT_Y -2.4f
+#define START_BLINK 0.3f
+/* the invisible walls' floor: slick and a soft bounce, as SSX's props' steep faces (tools/ttre/ssx.py WALL_FLOOR) */
+static const tc_floor WALL_FLOOR = {0.0f, 0.5f};
+
 #define RIDE_ACTION (1u << TC_VA_ACTION)
+#define FINISH_SHOOT (1u << TC_VA_SHOOT)
 
 static bool down(uint32_t held, tc_view_action a) { return (held >> a) & 1u; }
 
@@ -38,20 +54,29 @@ static bool riding(const tcx_play *x) { return x && x->ride.phase != TCX_RIDE_NO
 
 static const tcx_vehicle *ride_car(const tcx_play *x) { return riding(x) ? &x->vehicles[x->ride.vehicle] : NULL; }
 
-tcx_play *tcx_play_create(const tc_level *level, tc_collision *world, struct tc_obstacles *obstacles, uint32_t perso_first) {
+tcx_play *tcx_play_create(const tc_level *level, const void *ai_data, size_t ai_size, tc_collision *world,
+                          struct tc_obstacles *obstacles, uint32_t perso_first) {
     const tcx_level *data = level->custom;
+    tcx_course *course = tcx_course_read(ai_data, ai_size);
+    uint32_t cars = data ? data->vehicle_count : 0;
     tcx_play *x;
     uint32_t i, k;
-    if (!data || !data->vehicle_count) return NULL;
-    if (!(x = (tcx_play *)tc_calloc(1, sizeof(*x)))) return NULL;
+    if (!cars && !course) return NULL;
+    if (!(x = (tcx_play *)tc_calloc(1, sizeof(*x)))) { tcx_course_free(course); return NULL; }
     x->level = level;
     x->world = world;
     x->obstacles = obstacles;
     x->ride.vehicle = -1;
-    x->vehicles = (tcx_vehicle *)tc_calloc(data->vehicle_count, sizeof(*x->vehicles));
-    x->vehicle_mesh = (uint32_t *)tc_calloc(2 * data->vehicle_count, sizeof(*x->vehicle_mesh));
+    x->course = course;
+    if (course && course->wall_count && !tc_collision_add(world, course->walls, 3 * course->wall_count, WALL_FLOOR)) {
+        tcx_play_free(x);
+        return NULL;
+    }
+    if (!cars) return x;
+    x->vehicles = (tcx_vehicle *)tc_calloc(cars, sizeof(*x->vehicles));
+    x->vehicle_mesh = (uint32_t *)tc_calloc(2 * cars, sizeof(*x->vehicle_mesh));
     if (!x->vehicles || !x->vehicle_mesh) { tcx_play_free(x); return NULL; }
-    for (i = 0; i < data->vehicle_count; i++) {
+    for (i = 0; i < cars; i++) {
         const tcx_vehicle_data *d = &data->vehicles[i];
         uint32_t first = perso_first;
         tcx_vehicle_init(&x->vehicles[i], d, &level->persos[d->prso].world, world);
@@ -67,7 +92,55 @@ void tcx_play_free(tcx_play *x) {
     if (!x) return;
     tc_free(x->vehicles);
     tc_free(x->vehicle_mesh);
+    tcx_course_free(x->course);
     tc_free(x);
+}
+
+const tcx_course *tcx_play_course(const tcx_play *x) { return x ? x->course : NULL; }
+
+bool tcx_course_end(const tcx_play *x, tc_vec3 *end) {
+    if (!x || !x->course) return false;
+    *end = x->course->end;
+    return true;
+}
+
+const char *tcx_prompt(const tcx_play *x) { return x && x->prompting ? TCX_FINISH_PROMPT : NULL; }
+
+bool tcx_hud_slot(const tcx_play *x, tc_ai_hud_slot *slot) {
+    if (!x || !x->start_text || fmodf(x->time, 2 * START_BLINK) >= START_BLINK) return false;
+    memset(slot, 0, sizeof(*slot));
+    slot->kind = TC_AI_HUD_STRING;
+    slot->active = 1;
+    slot->backdrop = 1;
+    slot->font = 0xFF;
+    slot->text = START_TEXT;
+    slot->frames = -1;
+    slot->y = START_TEXT_Y;
+    return true;
+}
+
+/* A course's finish: the prompt in its field; Shoot there (press: a fresh one) covers the screen, then (covered) the way
+ * back. */
+static void finish(tcx_play *x, const tcx_host *h, bool press, tcx_events *out) {
+    const tcx_course *c = x->course;
+    x->prompting = false;
+    if (!c) return;
+    if (x->leaving == 1 && h->covered) {
+        out->level = c->level;
+        out->place = c->place[0] ? c->place : NULL;
+        out->camera_place = c->camera_place[0] ? c->camera_place : NULL;
+        x->leaving = 2;
+    }
+    if (x->leaving || x->ride.phase != TCX_RIDE_NONE || !h->may_start || h->held_back ||
+        !tcx_course_in_finish(c, h->player->position))
+        return;
+    x->prompting = !h->paused;
+    if (press) {
+        x->leaving = 1;
+        x->shoot_held = true;
+        x->prompting = false;
+        out->cover = true;
+    }
 }
 
 /* The move keys and the left stick as the car's: forward / back the throttle (back brakes, then reverses), left / right
@@ -103,18 +176,29 @@ static void car_abort(void *self, tc_player *player) {
 
 bool tcx_holds_action(const tcx_play *x) { return x && x->action_held; }
 
+bool tcx_holds_shoot(const tcx_play *x) { return x && x->shoot_held; }
+
 /* The cars move (the one Ed drives by the player's keys, the others coast), their collision posed where they are; then
  * Action within reach of one gets Ed in (the car takes the main character's slot: car_frame from now). */
-bool tcx_update(tcx_play *x, const tcx_host *h, float dt) {
+bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_events *out) {
     tcx_ride *r;
     float step;
     bool press;
     uint32_t k;
+    memset(out, 0, sizeof(*out));
     if (!x) return false;
     r = &x->ride;
     step = h->paused ? 0 : dt;
+    x->time += step;
+    if (!h->at_start) x->jumped = false;
+    else if (h->held & (1u << TC_VA_JUMP)) x->jumped = true;
+    if (h->at_start && !x->jumped && !x->start_text) x->time = 0; /* the blink starts on */
+    x->start_text = h->at_start && !x->jumped;
     if (!(h->held & RIDE_ACTION)) x->action_held = false;
+    if (!(h->held & FINISH_SHOOT)) x->shoot_held = false;
+    finish(x, h, (h->held & FINISH_SHOOT) && !x->shoot_held && !h->held_back && !h->paused, out);
     press = (h->held & RIDE_ACTION) && !x->action_held && !h->held_back && !h->paused;
+    if (out->cover) return false;
     for (k = 0; k < x->vehicle_count; k++) {
         tcx_vehicle *c = &x->vehicles[k];
         tcx_vehicle_input in = drive_input(h->held, h->move_x, h->move_y);

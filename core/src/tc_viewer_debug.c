@@ -68,7 +68,16 @@ bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
         points[k] = (uint8_t)(hp < 0 ? 0 : hp > 255 ? 255 : hp);
         max[k] = (uint8_t)(top < 0 ? 0 : top > 255 ? 255 : top);
     }
-    if (!tc_hud_build(&v->hud, g, points, max, true, aspect > 0 ? aspect : 4.0f / 3)) return false;
+    tc_hud_build(&v->hud, g, points, max, true, aspect > 0 ? aspect : 4.0f / 3);
+    { /* custom gameplay's start text (tcx.h: the SSX courses have no scripts to show the game's), in FontLips as
+       * Totalski's scripts show it */
+        tc_ai_hud_slot extra;
+        if (tcx_hud_slot(p->custom, &extra)) {
+            extra.font = tc_hud_font_rank(&v->hud, "FontLips");
+            tc_hud_add_slot(&v->hud, &extra, aspect > 0 ? aspect : 4.0f / 3);
+        }
+    }
+    if (!v->hud.quad_count) return false;
     out->rgba = v->hud.data.atlas;
     out->width = v->hud.data.atlas_width;
     out->height = v->hud.data.atlas_height;

@@ -26,6 +26,7 @@ Usage (from the repo root; tools/convert_files.sh runs `all` when it finds the d
   python3 -m tools.ttre.ssx list                 (the courses on the disc)
   python3 -m tools.ttre.ssx COURSE [COURSE...]    (e.g. aloha; or `all`)
 """
+import functools
 import glob
 import math
 import os
@@ -33,6 +34,7 @@ import struct
 import sys
 
 from . import import_gltf as ig
+from . import speech
 from .dff2gltf import png
 
 OUT = 'files/out'
@@ -80,8 +82,11 @@ NO_COLLISION = 17
 # second; 14 = 11 m/s = 40 km/h at 1 unit = 80 cm, a slow SSX pace) along the board and on the ground, he is pushed
 # with up to PUSH (u/s^2; his gravity down a 9 degree slope). Off the snow his weight is AIR_GRAVITY of the card's
 # (the retail skier falls at 10 g in the air: card +0x34 4 x +0x40 2.5), so SSX's gaps can be jumped.
-CRUISE, PUSH = 19.0, 7.0  # 19 / 7 since 2026-11-14 late (user: "just a smidge faster"; was 17 / 6, at first 14 / 6)
+CRUISE, PUSH = 18.0, 6.5  # 2026-11-16 (user: "juuust a smidge slower"); 19 / 7 from 2026-11-14 late, 17 / 6, at first 14 / 6
 AIR_GRAVITY = 0.8  # 2026-11-14 (user: "a bit less gravity ... he can't fly over some pits")
+# On the snow faster than DRAG_FROM (u/s), a drag of DRAG a second on the excess (2026-11-16, the same "smidge slower":
+# he reached the card's 70 u/s cap down every steep stretch; now ~60 down a 25 degree slope, the cap on the steepest)
+DRAG_FROM, DRAG = 50.0, 1.2
 
 
 # ---- the disc ----
@@ -679,11 +684,15 @@ def convert(iso, course, name=None):
 
     def ttai(src, dst):
         from . import se
-        se.write_ttai(src, dst, extra=[('AUTO', struct.pack('<BBH', 1, 0, 0))])  # he sets off by himself
+        # he sets off by himself, unless the start text shows (AUTO 2: with the HUD, the custom layer's start text
+        # shows and he waits for Jump, as on Totalski; core tcx_hud_slot)
+        se.write_ttai(src, dst, extra=[('AUTO', struct.pack('<BBH', 2, 0, 0))])
 
+    spch = font_chunk(DONOR)  # the game's font without lines: the core's prompts (a course's finish)
     ig.write_level(name, groups, tris, spawn, donor=DONOR, heading=heading, floors=floors, tri_floors=tri_floors,
                    ttai=ttai, textures=sum(1 for v in pngs.values() if v), failed=missing, bounds=(lo, hi), quiet=True,
-                   extra=[('SKIA', struct.pack('<3f', CRUISE, PUSH, AIR_GRAVITY))])
+                   extra=[('SKIA', struct.pack('<5f', CRUISE, PUSH, AIR_GRAVITY, DRAG_FROM, DRAG))] +
+                         ([('SPCH', spch)] if spch else []))
     problems = ([f'{missing} patches without a texture'] if missing else []) + \
                ([f'no start found ({how})'] if not gate else []) + ([f'sky: {sky}'] if 'triangles' not in sky else [])
     print(f'{name}.ttlv: ' + ('; '.join(problems) if problems else 'ok'))
@@ -900,6 +909,23 @@ def add_models(pbd, ssf, texture, to_tt, groups, tris, tri_floors, floors, floor
                 solid((q[0], q[1], q[2]), surface, out_n)
                 solid((q[0], q[2], q[3]), surface, out_n)
     return counts
+
+
+@functools.lru_cache(maxsize=None)
+def font_chunk(level, levels_dir=speech.LEVELS):
+    """An SPCH chunk with the game's font and no dialogue (tools/ttre/speech.py has the layout), so the core can draw its
+    prompts on a course in the game's font and window. FontLips sits in fix.sna: any retail level reads it. None when
+    the retail game is not there. Here, not in speech.py: the levels' converter imports that, and a change to it would
+    make every level stale."""
+    if not os.path.isdir(os.path.join(levels_dir, level)):
+        return None
+    from . import sna
+    spacing, glyphs = speech.font(sna.Level(levels_dir, level))
+    w, h, rgba = speech._texture(speech.ATLAS)
+    _, _, panel = speech._texture(speech.PANEL)
+    out = [struct.pack('<IIfHH4BI3f', 0, len(glyphs), spacing, w, h, *panel[:4], 0, 0, 0, 0), bytes(rgba)]
+    out += [struct.pack('<HH9f', g[0], 0, *g[1:]) for g in glyphs]
+    return b''.join(out)
 
 
 def main(argv):

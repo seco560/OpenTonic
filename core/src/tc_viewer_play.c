@@ -51,7 +51,8 @@ tc_viewer_play *tcv_play_create(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     if (p->has_cast) p->cast.world = &p->world;
     p->use_ai = p->main.has_driver;
-    p->custom = tcx_play_create(l, &p->world, &p->obstacles, v->perso_first);
+    p->custom = tcx_play_create(l, desc->ai_data, desc->ai_size, &p->world, &p->obstacles, v->perso_first);
+    p->main.custom = p->custom;
     return p;
 }
 
@@ -194,6 +195,7 @@ static uint32_t ai_inputs(const tc_viewer *v) {
         if (held(v, map[i].a)) r |= 1u << map[i].bit;
     if (v->cam.first_person) r &= (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_SHOOT); /* he stands while looking */
     if (v->play && tcx_holds_action(v->play->custom)) r &= ~(1u << TC_AI_IN_ACTION); /* that press was custom gameplay's */
+    if (v->play && tcx_holds_shoot(v->play->custom)) r &= ~(1u << TC_AI_IN_SHOOT);   /* ... and this one */
     if (v->talk_held) r &= ~(1u << TC_AI_IN_ACTION); /* that press was the speaker's (step_ai) */
     return r;
 }
@@ -203,6 +205,7 @@ static uint32_t ai_inputs(const tc_viewer *v) {
 static bool update_custom(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     tcx_host h;
+    tcx_events out;
     tc_character_input in;
     double prof;
     bool held;
@@ -214,8 +217,26 @@ static bool update_custom(tc_viewer *v, float dt) {
     h.paused = v->paused;
     h.held_back = v->director || v->speech_held || v->inspecting || v->phase != TC_VP_PLAY;
     h.may_start = !v->cam.first_person;
+    h.at_start = false;
+    h.covered = false;
+    if (p->main.has_driver) {
+        const tc_ed_ai *e = &p->main.driver;
+        /* waiting behind the start text the custom layer shows (.ttai AUTO 2; tc_main sets wait_start) */
+        h.at_start = p->use_ai && e->auto_start && e->wait_start && e->ai.model->auto_start == TC_AI_AUTO_UNLESS_TEXT;
+        h.covered = e->screen_covered;
+        h.may_start = h.may_start && v->phase == TC_VP_PLAY;
+    }
     /* the cars; Ed getting into one hands it the main character's slot (tc_main.h) */
-    if (tcx_update(p->custom, &h, dt)) tc_main_take(&p->main, tcx_character(), p->custom);
+    if (tcx_update(p->custom, &h, dt, &out)) tc_main_take(&p->main, tcx_character(), p->custom);
+    if (p->main.has_driver && out.cover) { /* a course's finish: its way back, as a portal's (tcv_update_portals) */
+        p->main.driver.events.cover = true;
+        p->main.driver.screen_covered = false;
+    }
+    if (p->main.has_driver && out.level) {
+        p->main.driver.events.level = out.level;
+        p->main.driver.events.place = out.place;
+        p->main.driver.events.camera_place = out.camera_place;
+    }
     held = false;
     if (!tc_main_is_ed(&p->main)) {
         in.ed = &p->main.player;

@@ -524,19 +524,23 @@ static int has_custom_portal(const char *dir, const char *name, const char *dest
     return k >= 0;
 }
 
-/* An SSX course's way back (custom.py SSX_FINISH): the skier put at the course's end; out: the level and place asked
- * for, and when (s). 0: not run. */
-static int ssx_finish(const char *dir, const char *name, char *level, char *place, float *at) {
+/* An SSX course's way back (custom.py SSX_FINISH, .ttai CRSE; core custom gameplay): the skier put at the course's end,
+ * where the finish prompt shows; nothing happens until Shoot (Action, which slows the skier down, does nothing there),
+ * which covers and leads on. out: the level and place asked for, and when after Shoot (s); *prompted: the prompt showed,
+ * and neither waiting nor Action left. 0: not run (no
+ * course end there). */
+static int ssx_finish(const char *dir, const char *name, char *level, char *place, float *at, int *prompted) {
     char path[1024];
     size_t size, ai_size = 0;
     uint8_t *data, *ai;
     tc_level lv;
     tc_viewer v;
     tc_viewer_desc desc;
-    const tc_ai_model *m;
-    int i, k;
+    tc_vec3 end;
+    int i, ok = 0;
     level[0] = place[0] = 0;
     *at = -1;
+    *prompted = 0;
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
     if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return 0; }
     free(data);
@@ -551,14 +555,31 @@ static int ssx_finish(const char *dir, const char *name, char *level, char *plac
     if (!ai || tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_level_free(&lv); return 0; }
     if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
     for (i = 0; i < 60; i++) tc_viewer_update(&v, 1.0f / 60); /* set off */
-    m = tc_viewer_driver(&v) ? tc_viewer_driver(&v)->ai.model : NULL;
-    k = m ? find_portal(m, TC_AI_POP_LEVEL, "sud0", 0) : -1;
-    if (k >= 0) {
-        tc_vec3 end = m->portals[k].position;
+    if (tcx_course_end(tc_viewer_custom(&v), &end)) {
+        tc_view_speech_panel panel;
+        tc_view_overlay over;
+        int shown = 0, left = 0;
+        ok = 1;
         tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3(end.x, end.y, end.z + 1), tc_viewer_player(&v)->heading);
+        for (i = 0; i < 60 * 3; i++) { /* three seconds in the field: the prompt, no level change */
+            tc_viewer_update(&v, 1.0f / 60);
+            shown += tcx_prompt(tc_viewer_custom(&v)) != NULL && tc_viewer_speech_panel(&v, 4.0f / 3, &panel);
+            left += tc_viewer_pending_level(&v) != NULL;
+        }
+        tc_viewer_set_action(&v, TC_VA_ACTION, true); /* Action: nothing */
+        for (i = 0; i < 60; i++) {
+            tc_viewer_update(&v, 1.0f / 60);
+            if (i == 6) tc_viewer_set_action(&v, TC_VA_ACTION, false);
+            tc_viewer_overlay(&v, &over);
+            left += tc_viewer_pending_level(&v) != NULL || over.kind != TC_VO_NONE; /* no cover either */
+        }
+        printf("  %s: the prompt in %d of 180 frames in the finish field; Action left it %d times\n", name, shown, left);
+        *prompted = shown > 0 && !left;
+        tc_viewer_set_action(&v, TC_VA_SHOOT, true);
         for (i = 0; i < 60 * 10; i++) {
             const tc_viewer_carry *c;
             tc_viewer_update(&v, 1.0f / 60);
+            if (i == 6) tc_viewer_set_action(&v, TC_VA_SHOOT, false);
             if ((c = tc_viewer_pending_level(&v)) != NULL) {
                 snprintf(level, 64, "%s", c->level);
                 snprintf(place, 64, "%s", c->place);
@@ -570,7 +591,7 @@ static int ssx_finish(const char *dir, const char *name, char *level, char *plac
     tc_viewer_free(&v);
     free(ai);
     tc_level_free(&lv);
-    return 1;
+    return ok;
 }
 
 /* Arriving in `name` at `place` (the carry a portal leaves): Ed's distance from the portal of `name` that leads to
@@ -696,6 +717,7 @@ int main(int argc, char **argv) {
         game_result g;
         char se_dir[1024], level[64], place[64];
         float at, d;
+        int prompted;
         snprintf(se_dir, sizeof(se_dir), "%s/../se/ttlv", dir);
         if (has_custom_portal(dir, "sud0", "SSX_Alaska") == 1) {
             if (in_game(dir, "sud0", TC_AI_POP_LEVEL, "SSX_Alaska", 0, &g)) {
@@ -703,10 +725,11 @@ int main(int argc, char **argv) {
                       "sud0's ice cave, in the game: the arch to SSX_Alaska (walk-in, cover, the level)");
             } else failures++;
         } else printf("  (no SSX arches in sud0: the SSX courses are not converted; skipped)\n");
-        if (has_custom_portal(dir, "SSX_Trick", "sud0") == 1 && ssx_finish(dir, "SSX_Trick", level, place, &at)) {
-            printf("  SSX_Trick: the end -> %s at %s, %.2f s\n", level, place, (double)at);
-            check(tcv_same(level, "sud0") && tcv_same(place, "custom_portal_ed_ssx_trick"),
-                  "SSX_Trick, in the game: the course's end covers and leads back to sud0, before its arch");
+        if (ssx_finish(dir, "SSX_Trick", level, place, &at, &prompted)) {
+            printf("  SSX_Trick: the end, Shoot -> %s at %s, %.2f s\n", level, place, (double)at);
+            check(prompted && tcv_same(level, "sud0") && tcv_same(place, "custom_portal_ed_ssx_trick"),
+                  "SSX_Trick, in the game: at the course's end the prompt shows, Action does nothing; Shoot covers and leads back to sud0, "
+                  "before its arch");
             d = arrive_before(dir, "sud0", place, "SSX_Trick");
             printf("  sud0: arrived %.2f from the SSX_Trick arch\n", (double)d);
             check(d > 4 && d < 7, "sud0 from SSX_Trick: Ed arrives in front of the course's arch");

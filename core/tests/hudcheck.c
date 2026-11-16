@@ -328,14 +328,41 @@ static void sud0(const char *dir) {
 
 
 /* The levels outside the retail game (tc_hud.left_only; the user, 2026-11-14): Ed's life, head and lives on the left,
- * the right side clean. An imported level (no cast: SSX_Trick, the skier) and the Special Edition's sud0, when converted. */
+ * the right side clean. An imported level (no cast: SSX_Trick, the skier) and the Special Edition's sud0, when converted.
+ * An SSX course (2026-11-16, .ttai AUTO 2): the skier waits behind the custom layer's start text, the game's "Press
+ * 'Jump' to start" blinking in its window as on Totalski; Jump takes it away and sets him off. */
 static void extension(const char *dir, const char *name, const char *what) {
     game g;
     float b[4];
     char text[200];
     bool on;
+    int shown = 0, i;
+    tc_ai_hud_slot slot;
     if (!start(&g, dir, name)) return;
-    frames(&g.v, 90);
+    for (i = 0; i < 90; i++) {
+        frames(&g.v, 1);
+        shown += tcx_hud_slot(tc_viewer_custom(&g.v), &slot);
+    }
+    if (shown) {
+        tc_vec3 at = tc_viewer_player(&g.v)->position;
+        bool still, text_ok;
+        while (!tcx_hud_slot(tc_viewer_custom(&g.v), &slot)) frames(&g.v, 1);
+        text_ok = tc_hud_slot_text(&g.v.hud, &slot, 0, 0, text, sizeof text) && strcmp(text, "Press 'Jump' to start") == 0;
+        picture(&g.v, "ssx_start_4x3", 640, 480);
+        frames(&g.v, 30);
+        still = tc_v3_distance(at, tc_viewer_player(&g.v)->position) < 0.01f;
+        tc_viewer_set_action(&g.v, TC_VA_JUMP, true);
+        frames(&g.v, 4);
+        tc_viewer_set_action(&g.v, TC_VA_JUMP, false);
+        shown = 0;
+        for (i = 0; i < 120; i++) {
+            frames(&g.v, 1);
+            shown += tcx_hud_slot(tc_viewer_custom(&g.v), &slot);
+        }
+        snprintf(text, sizeof text, "%s: the skier waits behind the start text (\"Press 'Jump' to start\"); Jump takes it "
+                 "away and sets him off (%.1f away 2 s later)", what, (double)tc_v3_distance(at, tc_viewer_player(&g.v)->position));
+        check(text_ok && still && !shown && tc_v3_distance(at, tc_viewer_player(&g.v)->position) > 5, text);
+    }
     on = bounds(&g.v, 4.0f / 3, b);
     snprintf(text, sizeof text, "%s: Ed's life and lives only, on the left (the HUD's quads %.2f..%.2f of the width)", what,
              on ? (double)b[0] : -1.0, on ? (double)b[2] : -1.0);

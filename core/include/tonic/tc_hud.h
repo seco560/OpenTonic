@@ -98,6 +98,11 @@ void tc_hud_away(tc_hud *h);
  * boss_max: per slot, a boss bar's hit points, from the host), then the standard HUD when `standard`. */
 uint32_t tc_hud_build(tc_hud *h, const tc_ai_globals *g, const uint8_t *boss_points, const uint8_t *boss_max,
                       bool standard, float aspect);
+/* One more text slot's quads after tc_hud_build's (a slot no script set: custom gameplay's start text on the SSX
+ * courses, tcx.h); returns the quad count. */
+uint32_t tc_hud_add_slot(tc_hud *h, const tc_ai_hud_slot *s, float aspect);
+/* A font's rank by name (a slot's font), 0xFF: none. */
+uint8_t tc_hud_font_rank(const tc_hud *h, const char *name);
 /* A text slot's letters as the HUD prints them (for checks): false when the slot shows nothing. */
 bool tc_hud_slot_text(const tc_hud *h, const tc_ai_hud_slot *s, uint8_t points, uint8_t max, char *out, size_t size);
 

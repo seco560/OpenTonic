@@ -117,6 +117,12 @@ typedef struct tc_mec_ski {
     tc_vec3 omega;               /* angular velocity (world, rad/s), set from scratch every frame */
     tc_vec3 force;               /* this frame's force list, summed */
     bool near_ground;            /* dynamics +0x2F0: the downward probe found ground last frame */
+    /* Not the exe's: custom gameplay (tcx_ski_tick, the SSX courses) sets it before each step. Faces of any steepness
+     * carry the board: the exe's flattening against faces steeper than 60 / 70 / 80 deg is left out, and a steep face
+     * the board lies on (its up axis within ~45 deg of the face's normal: he rode into it, up a pipe or a ramp's lip)
+     * holds him on with the card's +0x30, as the exe holds an upside-down board. Off by default (every level of the
+     * game's): tc_mec_ski_enter clears it. */
+    bool wall_ride;
 } tc_mec_ski;
 
 /* Switching to a type 2 card: upright, facing heading (as tc_player: front along (sin, -cos)). */

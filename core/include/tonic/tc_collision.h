@@ -76,6 +76,11 @@ void tc_collision_set_sectors(tc_collision *col, const uint16_t *sector, uint32_
  * grid for good. false: out of memory. */
 bool tc_collision_move_sector(tc_collision *col, uint16_t sector, const tc_mat34 *m);
 
+/* More triangles after the level's (custom gameplay's invisible walls, tcx.h): out of the grid, tested by every query
+ * as a moved sector's, without a sector (always solid) or a source (no per-triangle tables: source UINT32_MAX). A few
+ * only: each query tests them all. Pointers into tris move. false: out of memory (nothing added). */
+bool tc_collision_add(tc_collision *col, const tc_vec3 *vertices, uint32_t vertex_count, tc_floor floor);
+
 /* Calls fn once for each triangle whose bounds overlap the box lo..hi (and solid allows). Not reentrant. */
 typedef void (*tc_tri_fn)(const tc_tri *tri, void *user);
 void tc_collision_query(tc_collision *col, tc_vec3 lo, tc_vec3 hi, tc_tri_fn fn, void *user);

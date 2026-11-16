@@ -2,7 +2,7 @@
 #include "../tc_internal.h"
 #include <string.h>
 #include "../tc_reader.h"
-#include "tonic/custom/tcx.h"
+#include "tcx_course.h"
 
 /* .ttlv VEHI (tcx_vehicle.h; tools/ttre/vehicle.py). A record whose perso or wheel channels are not in PRSO is dropped. */
 static void read_vehicles(tcx_level *x, const tc_level *level, reader *r) {
@@ -52,10 +52,14 @@ tc_result tcx_level_read(tc_level *level, const char tag[4], const uint8_t *data
     bool ski = memcmp(tag, "SKIA", 4) == 0;
     if (!ski && memcmp(tag, "VEHI", 4) != 0) return TC_OK;
     if (!x && !(x = level->custom = (tcx_level *)tc_calloc(1, sizeof(*x)))) return TC_ERR_OUT_OF_MEMORY;
-    if (ski) { /* .ttlv SKIA (tools/ttre/ssx.py): f32 cruise speed, f32 push[, f32 air gravity scale (since 2026-11-14)] */
+    if (ski) { /* .ttlv SKIA (tools/ttre/ssx.py): f32 cruise speed, f32 push[, f32 air gravity scale (since 2026-11-14)
+                * [, f32 drag from, f32 drag (since 2026-11-16)]] */
         x->ski_cruise = rd_f32(r);
         x->ski_push = rd_f32(r);
         x->ski_air_gravity = r->size >= 12 ? rd_f32(r) : 1;
+        x->ski_drag_from = r->size >= 20 ? rd_f32(r) : 0;
+        x->ski_drag = r->size >= 20 ? rd_f32(r) : 0;
+        if (!(x->ski_drag_from > 0 && x->ski_drag > 0 && x->ski_drag < 100)) x->ski_drag_from = x->ski_drag = 0;
         if (!(x->ski_cruise > 0 && x->ski_cruise < 1000 && x->ski_push > 0 && x->ski_push < 1000))
             x->ski_cruise = x->ski_push = 0;
         if (!(x->ski_air_gravity > 0 && x->ski_air_gravity <= 1)) x->ski_air_gravity = 1;
@@ -82,11 +86,19 @@ bool tcx_mesh_model(const tc_mesh *mesh, tc_vec3 eye, tc_mat4 *model) {
     return true;
 }
 
-void tcx_ski_tick(const tcx_level *l, tc_mec_ski *ski, tc_vec3 velocity, uint32_t contacts, const tc_ai_card *card) {
+void tcx_ski_tick(const tcx_play *x, const tcx_level *l, tc_mec_ski *ski, tc_vec3 position, tc_vec3 velocity,
+                  uint32_t contacts, const tc_ai_card *card) {
     tc_vec3 front;
-    float along, k, mass = card ? tc_ai_card_f32(card, 4) : 0;
-    if (!l || !(l->ski_cruise > 0) || !(mass > 0)) return;
-    if (!(contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE | TC_AI_CONTACT_WALL))) {
+    float along, k, speed, mass = card ? tc_ai_card_f32(card, 4) : 0;
+    bool snow = (contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE | TC_AI_CONTACT_WALL)) != 0;
+    if (!(mass > 0)) return;
+    if (snow) tcx_course_boost(tcx_play_course(x), ski, position, velocity, mass);
+    if (!l || !(l->ski_cruise > 0)) return;
+    ski->wall_ride = true;
+    speed = tc_v3_length(velocity);
+    if (snow && l->ski_drag > 0 && speed > l->ski_drag_from) /* a drag on the excess over drag_from */
+        ski->force = tc_v3_add(ski->force, tc_v3_scale(velocity, -mass * l->ski_drag * (speed - l->ski_drag_from) / speed));
+    if (!snow) {
         /* off the snow: lift part of his weight (the card's: g x +0x34, x +0x40 when the probe finds no ground near;
          * every level's air has g 9.81); nothing to push against */
         float weight = mass * 9.81f * tc_ai_card_f32(card, 0x34) * (ski->near_ground ? 1 : tc_ai_card_f32(card, 0x40));

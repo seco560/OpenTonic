@@ -59,6 +59,7 @@ typedef struct tc_character_ops {
     void (*abort)(void *self, tc_player *ed);
 } tc_character_ops;
 
+struct tcx_play;
 typedef struct tc_main {
     const tc_level *level;
     const tc_sectors *sectors;   /* the level's (NULL: none) */
@@ -86,6 +87,8 @@ typedef struct tc_main {
     const tc_character_ops *ops;
     void *self;
     tc_character_pose rider;
+    /* Custom gameplay in play (tcx.h; NULL: none), set by the host: the skier's tick hook reads its course (a boost). */
+    const struct tcx_play *custom;
 } tc_main;
 
 /* The host's part of one tick. */

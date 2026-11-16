@@ -432,7 +432,7 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     }
 
     if (chunk_need(&cs, "AUTO", r)) { /* optional: start by pressing Jump (a level whose start trigger is not there) */
-        m->auto_start = rd_u8(r) != 0;
+        m->auto_start = rd_u8(r);
         (void)rd_u8(r), (void)rd_u16(r);
         CHUNK_END(r);
     }

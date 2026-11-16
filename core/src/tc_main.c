@@ -198,15 +198,16 @@ static void ed_step(void *self, float dt) {
     /* port: in first person Ed faces where the player looks (the original's stick mode turns him with the stick, B29),
      * so what he shoots goes where the gunsight is */
     if (in->face) m->player.heading = in->heading;
-    if (m->driver.dyn.card_type == 2 && m->level->custom) { /* custom gameplay: the skier's cruise push (tcx.h) */
+    if (m->driver.dyn.card_type == 2 && (m->level->custom || m->custom)) { /* custom gameplay: the skier's (tcx.h) */
         const tc_ai_state *ski_state = &m->driver.ai.model->states[m->driver.ai.state];
         if (ski_state->card != TC_AI_NONE16)
-            tcx_ski_tick(m->level->custom, &m->driver.dyn.ski, m->player.velocity, m->driver.dyn.contacts,
-                         &m->driver.ai.model->cards[ski_state->card]);
+            tcx_ski_tick(m->custom, m->level->custom, &m->driver.dyn.ski, m->player.position, m->player.velocity,
+                         m->driver.dyn.contacts, &m->driver.ai.model->cards[ski_state->card]);
     }
     /* the start text shows: the player presses Jump. Not where the level itself asks for the automatic start
-     * (.ttai AUTO: the Special Edition's Totalski, imported courses), which have no such text */
-    m->driver.wait_start = in->hud_waits && !m->driver.ai.model->auto_start;
+     * (.ttai AUTO 1: the Special Edition's Totalski), which has no such text; AUTO 2 (the SSX courses) has the custom
+     * layer's (tcx_start_text) */
+    m->driver.wait_start = in->hud_waits && m->driver.ai.model->auto_start != TC_AI_AUTO_ALWAYS;
     /* (Waiting there the skier sits still by his own state: 119, a card of type 6, set by the start's B4.) */
     prof = TC_PROF_BEGIN();
     tc_ed_ai_step(&m->driver, dt, in->inputs, in->stick_x, in->stick_y, in->eye);

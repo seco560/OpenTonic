@@ -275,8 +275,34 @@ whose edits all went away is restored from `.custom-base`):
   of the Pyrex's alcove, the wall by the pond); spots picked from the collision (square to the wall, 0.5 off it, 8
   apart, flat ground under and 5.5 in front). The ski arch (`ZOR_ArcheTotalSki`'s) with an orange swirl and the course's
   loading badge (PS2LOAD.BIG `ldtrack*.ssh`) on its sign. Walk-in as retail's arches; the course opens at its start.
-- **The way back from a course:** a record in its .ttai at the lowest point of its AI paths (the finish's run-out; ground
-  within 0.4 under it on all 11), radius 15: the cover at once, then sud0 in front of the course's arch.
+- **The way back from a course (2026-11-16; until then a portal record of radius 15 round the lowest point of the AI
+  paths, the cover at once):** the user: a prompt as the NPCs' instead of the instant cover, the whole field at the end
+  (Untracked's: a plateau ~350 across, by the chopper only a corner of it), no falling off it, Alaska's dip.
+  tools/ttre/ssx_end.py, run by custom.py run_finishes, writes the course's .ttai CRSE chunk (the layout in
+  core/src/custom/tcx_course.c); core custom gameplay (tcx_course.c, tcx_play.c) plays it:
+  - *The end:* the lowest point of the AI paths, but on Alaska (ssx_end.DIPS) the racing line dips 80 under its end and
+    climbs ~230 up a ramp as steep as 60 degrees before going down to it: there, the end of the chain of paths that
+    leaves the lowest point (3548, 1623, -3010).
+  - *The field:* the collision's top surface rastered round the end (2-unit cells, within 260), flooded from the end
+    over faces no steeper than 60 degrees, steps of 2.5 at most, up to 8 over the end; plus 4 round it. Ed's feet in
+    it (3 under its lowest ground to 15 over its highest): "Press Shoot to Go Back" in the speech panel (the talk
+    prompt's box and font; .ttlv SPCH, docs/ENGINE.md "SSX Tricky courses"). Shoot: the cover, then sud0 in front of
+    the course's arch, as the arches' way (the carry, the places). Shoot, not Action (user, 2026-11-16, after playing
+    it): Action slows the skier down, and a player braking to look round the field was taken back; the press is kept
+    from Ed's scripts (tcx_holds_shoot). Fields of 5 000 (Elysium Alps) to 111 000 square
+    units (Aloha Ice Jam).
+  - *The walls:* on the field's edge, where the ground beyond ends or falls more than 4 within 60 (the rims, the drops),
+    not within 20 of a path point outside the field (the way in), not round props on it (the field again within 60),
+    not where the ground keeps rising; the cell edges chained, simplified within 1.5, vertical from 4 under the ground to
+    40 over it, facing in (from outside he passes through), slick with a soft bounce (grip 0, rebound 0.5). Added to the
+    world's collision as loose triangles (tc_collision_add). 23 (Elysium Alps) to 143 (Untracked) segments.
+  - *Alaska's boost:* its dip's path from the lowest point up to the crest, 25 round it: on the snow a push of 70 u/s^2
+    along it up to 55 u/s (his gravity up the 60 degree face: 34). Headless, from 10 u/s in the dip he crests 250 over
+    it and rides down into the finish field.
+  - portalcheck: SSX_Trick's end shows the prompt and stays (Action too does nothing) until Shoot, which leads back to
+    sud0 in front of its arch. Headless (a scratch harness, 2026-11-16): launched at 65 u/s at the longest walls of Untracked, Alaska and
+    Snowdream from 15 inside, he stays on the field every time. Played by the user 2026-11-16: working, Alaska's boost
+    too.
 - **The Special Edition's sud0 -> LibertyCity2001:** the plain arch with a green swirl against the west wall of Doc's
   house, facing the middle of the map; **back:** the Special Edition's arch with its South Plain picture in the first car's parking lot,
   facing it. The pair's places put Ed in front of the other arch each way.

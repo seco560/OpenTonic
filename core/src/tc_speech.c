@@ -214,7 +214,7 @@ bool tc_speech_render_prompt(tc_speech *s, const char *text) {
     int x0, x1, y0, y1, x, y;
     uint32_t i;
     if (!d->atlas) return false;
-    if (s->prompting && s->pixels) return true;
+    if (s->prompting && s->pixels && s->prompt == text) return true;
     if (!s->pixels && !(s->pixels = (uint8_t *)tc_alloc((size_t)TC_SPEECH_PANEL_W * TC_SPEECH_PANEL_H * 4))) return false;
     memset(s->pixels, 0, (size_t)TC_SPEECH_PANEL_W * TC_SPEECH_PANEL_H * 4);
     for (i = 0; i < d->glyph_count; i++)
@@ -226,6 +226,7 @@ bool tc_speech_render_prompt(tc_speech *s, const char *text) {
         for (x = x0; x < x1; x++) memcpy(&s->pixels[((size_t)y * TC_SPEECH_PANEL_W + (size_t)x) * 4], d->panel, 4);
     draw_line(s, text, 0, -0.5f * step, step, scale); /* the line's middle on the panel's */
     s->prompting = true;
+    s->prompt = text;
     s->version++;
     return true;
 }

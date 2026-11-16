@@ -26,7 +26,8 @@ typedef struct tc_speech {
     float time;                  /* seconds into the line */
     uint32_t version;            /* counts the panel's changes */
     bool dirty;
-    bool prompting;              /* the panel holds tc_speech_render_prompt's picture */
+    bool prompting;              /* the panel holds tc_speech_render_prompt's picture ... */
+    const char *prompt;          /* ... of this text */
     uint8_t *pixels;             /* TC_SPEECH_PANEL_W x TC_SPEECH_PANEL_H x 4, made on first use */
 } tc_speech;
 
@@ -40,7 +41,8 @@ void tc_speech_end(tc_speech *s);
 void tc_speech_step(tc_speech *s, float dt, int scroll);
 /* The panel for the line now: false when there is nothing to show (no line, or a line without text). */
 bool tc_speech_render(tc_speech *s);
-/* Port: one line in a small box in the panel's middle, the rest clear (a hint scene's "talk" prompt). */
+/* Port: one line in a small box in the panel's middle, the rest clear (a hint scene's "talk" prompt, custom gameplay's
+ * finish prompt). `text` stays where it is while it shows (a literal): the picture is kept for the same pointer. */
 bool tc_speech_render_prompt(tc_speech *s, const char *text);
 
 #ifdef __cplusplus

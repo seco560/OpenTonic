@@ -1044,7 +1044,14 @@ unlicensed: read, not copied); the details are in the module's docstrings.
   drawn but not solid: SSX opens them at the race start, which there isn't.
 - **Start:** down the middle gate's path to the first place with ground just under it whose own normal slopes down
   the path (>= ~5 deg). The .ttai carries AUTO (tc_ai.h `auto_start`): the driver presses Jump until the skier leaves
-  his starting behaviour B2, so he sets off by himself (Totalski / skymap had that by level name already).
+  his starting behaviour B2, so he sets off by himself (Totalski / skymap had that by level name already). Since
+  2026-11-16 (user: "this would also enable Press Jump to Start ... to appear") AUTO 2: by himself only without the
+  HUD (headless checks); with it he waits behind the start text, which custom gameplay shows (tcx_hud_slot: the
+  courses have no cast for the game's scripts to show it): game.dsb's 0x250 "Press 'Jump' to start" in FontLips, in
+  the text window, at y -2.4, blinking 0.3 s on / 0.3 s off, as Totalski's scripts show it; gone on Jump. hudcheck.
+- **Text (2026-11-16):** the .ttlv carries an SPCH chunk with the game's font (FontLips, typo2DCnz.tga, the
+  LipSync.tga backdrop: ssx.font_chunk, the same bytes as sud0's) and no line, so the core draws its prompts on
+  the courses as on the game's levels (the speech panel; a level without lines takes the window 75-95 % by 5-95 %).
 - **Sky:** one model, the same on every course: a cylinder 14 m in radius, a panorama from 5 m under the eye to 5 m
   over it, nearer ground under that down to a floor at -10 m, open at the top. Drawn round the camera as SSX draws it:
   surface flag TCX_FLAG_ROUND_CAMERA (tcx.h; tcx_mesh_model gives the draw its matrix, tc_level_bounds leaves the mesh
@@ -1057,7 +1064,18 @@ unlicensed: read, not copied); the details are in the module's docstrings.
   tcx_ski_tick before each tick of the skier's mechanics: on the ground and slower than the cruise speed along the
   board, a push along its front, fading out over the upper half of that speed. SSX's riders propel themselves over
   the flats and dips; the skier has gravity only and sat still on them (Untracked's start is a plateau).
-  The user asked twice for "a bit faster": 17 / 6, then (2026-11-14 late) 19 / 7.
+  The user asked twice for "a bit faster": 17 / 6, then (2026-11-14 late) 19 / 7; then (2026-11-16) "juuust a smidge
+  slower": 18 / 6.5 and a drag on the snow (SKIA's fourth and fifth values, DRAG_FROM 50 u/s, DRAG 1.2 a second on the
+  excess: he hit the card's 70 u/s cap down every steep stretch; now ~60 down 25 degrees, the cap on the steepest).
+- **Riding steep faces (custom gameplay, 2026-11-16; the user: "allow him to stick to walls that are perpendicular
+  ... ramps and pipes"):** tc_mec_ski.wall_ride, set by tcx_ski_tick on a level with SKIA: the exe's flattening against
+  faces steeper than 60 / 70 / 80 degrees (no rising, no push into them: FUN_004c1686's three uses) is left out, and a
+  face steeper than 45 degrees that the board lies on (its up axis within 45 degrees of the face's normal: he rode into
+  it, curving up a pipe or a ramp's lip) holds him on with the card's +0x30 (6000 on mass 150: his weight), in contact
+  and through the probe, as the exe holds an upside-down board. Head-on into a wall (the board upright) he does not
+  stick. The game's levels keep the exe's rule (wall_ride off unless SKIA: skicheck, mechcheck).
+- **The course's end (custom layer, 2026-11-16):** docs/PORTALS.md "The way back from a course": a finish field with
+  "Press Shoot to Go Back", invisible walls round it, Alaska's boost out of its dip.
 - **Lighter in the air (custom gameplay, 2026-11-14; the user: "he can't fly over some pits that he really should"):**
   SKIA's third value, AIR_GRAVITY 0.8. The skier's card makes him fall at 10 g off the snow (+0x34 4 x +0x40 2.5; 4 g
   while the probe finds ground near); tcx_ski_tick lifts (1 - 0.8) of that while he had no contact last tick. Older
@@ -1075,7 +1093,7 @@ unlicensed: read, not copied); the details are in the module's docstrings.
   without. Alaska and Tokyo Megaplex: the autopilot leaves the racing line and he ends at rest wedged between a slope
   and a wall facing it (ground + wall contact, no speed, the collide loop not blocked: the skier's own mechanics);
   a push three times his gravity down the crease frees him in the probe, not built in. None of it played yet.
-- **Not done:** SSX music; out-of-bounds (Reset, type 0) surfaces don't respawn (falling out of the world does, 20
+- **Not done:** the wall ride and the drag are not seen in the app yet; SSX music; out-of-bounds (Reset, type 0) surfaces don't respawn (falling out of the world does, 20
   below the lowest geometry), and nothing puts a wedged or stopped skier back on the track (SSX does); the .ssf's
   effects (boost boxes, resets); animated / moving props stand still; LODs, flipbooks, UV scrolling, particles; rails
   (splines, no grinding); no tricks / boost. The 2026-11-12 fixes above (palette, model light, sky, collision rules,
