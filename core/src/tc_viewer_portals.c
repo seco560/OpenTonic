@@ -174,7 +174,7 @@ void tcv_update_portals(tc_viewer *v, float dt) {
             c->dsg_size = m->dsg.size <= TC_VIEWER_CARRY_DSG && e->ai.dsg ? m->dsg.size : 0;
             if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
             c->vertical_fov = v->camera.vertical_fov;
-            c->orbit_distance = v->orbit_distance;
+            c->orbit_distance = TC_CAM_PORTAL_DISTANCE; /* not the wheel's zoom: a fixed close start (tc_cam.h) */
             c->closeup = v->cam.closeup;
             /* without a cast: the progress it arrived with, if any (kept by tcv_arrive) */
             if (v->play->has_cast) c->has_progress = true;

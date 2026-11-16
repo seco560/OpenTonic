@@ -153,7 +153,7 @@ typedef struct tc_viewer_carry {
     uint32_t dsg_size;        /* 0: no dsgvars carried */
     uint8_t dsg[TC_VIEWER_CARRY_DSG];
     float vertical_fov;       /* the camera's field of view (, .) kept across the change, radians; 0 = the default */
-    float orbit_distance;     /* the play camera's zoom (wheel) kept across the change; 0 = the default */
+    float orbit_distance;     /* the play camera's zoom on arrival (a portal: TC_CAM_PORTAL_DISTANCE); 0 = the default */
     uint8_t closeup;          /* the play camera's close-up (5) kept across the change */
     /* The game's progress (tc_ai_globals: the exe keeps these in its save block, beyond any one level), from a level
      * with a cast into the next. Kept at the end: a recording files this struct's tail by its size, so one made before

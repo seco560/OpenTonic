@@ -370,7 +370,7 @@ static void portal_scenario(const char *dir) {
     tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(g->position, tc_v3_scale(front, 8)),
                        atan2f(-front.x, front.y));
     v.camera.yaw = TC_PI - tc_viewer_player(&v)->heading;
-    tc_viewer_step_fov(&v, 1); /* 91 degrees and a zoomed-out camera: kept across the level change (the carry) */
+    tc_viewer_step_fov(&v, 1); /* 91 degrees: kept across the level change (the carry); the zoom is not */
     tc_viewer_wheel(&v, -2);
     tc_viewer_toggle_closeup(&v); /* and the close-up (5) */
     zoom = v.orbit_distance;
@@ -413,8 +413,9 @@ static void portal_scenario(const char *dir) {
           "bar keeps sud0's field of view (91 degrees horizontal at 4:3, one step up from the original's 86)");
     {
         char what[96];
-        snprintf(what, sizeof(what), "bar keeps sud0's camera zoom (%.2f, the default %.0f)", (double)zoom, (double)TC_CAM_DISTANCE);
-        check(zoom != TC_CAM_DISTANCE && fabsf(w.orbit_distance - zoom) < 1e-4f, what);
+        snprintf(what, sizeof(what), "bar starts at the portal zoom %.1f, not sud0's wheel zoom (%.2f)",
+                 (double)TC_CAM_PORTAL_DISTANCE, (double)zoom);
+        check(zoom != TC_CAM_PORTAL_DISTANCE && fabsf(w.orbit_distance - TC_CAM_PORTAL_DISTANCE) < 1e-4f, what);
     }
     check(w.cam.closeup && w.playing, "bar keeps sud0's close-up (5)");
     tc_viewer_overlay(&w, &o);

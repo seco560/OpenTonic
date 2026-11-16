@@ -51,7 +51,8 @@ final class Level {
         var buf = [CChar](repeating: 0, count: 512)
         return (0..<Int(raw.texture_count)).map { i in
             guard tc_skin_texture_path(raw.textures[i], skin, &buf, buf.count) > 0 else { return plain[i] }
-            let url = folder.appendingPathComponent(String(cString: buf))
+            let path = String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            let url = folder.appendingPathComponent(path)
             return FileManager.default.fileExists(atPath: url.path) ? url : plain[i]
         }
     }

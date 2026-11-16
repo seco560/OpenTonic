@@ -464,10 +464,11 @@ static void ski(void) {
         tc_cam_update(&c, &view, &t, 1.0f / 60);
     }
     d = tc_v3_distance(view.position, pivot_of(t.position));
-    want = TC_CAM_SKI_DISTANCE + 50 * TC_CAM_SKI_PULLBACK;
-    snprintf(what, sizeof(what), "at 50 u/s: %.2f behind (%.1f: 7 + the pull-back), pitch %.3f (-%.2f)", (double)d,
-             (double)want, (double)view.pitch, (double)TC_CAM_SKI_ELEVATION);
-    check(fabsf(d - want) < 0.05f && fabsf(view.pitch + TC_CAM_SKI_ELEVATION) < 0.01f, what);
+    want = TC_CAM_SKI_FAR_DISTANCE + 50 * TC_CAM_SKI_PULLBACK;
+    snprintf(what, sizeof(what), "the far one at 50 u/s: %.2f behind (%.1f: %.0f + the pull-back), pitch %.3f (-%.2f)",
+             (double)d, (double)want, (double)TC_CAM_SKI_FAR_DISTANCE, (double)view.pitch,
+             (double)TC_CAM_SKI_FAR_ELEVATION);
+    check(fabsf(d - want) < 0.05f && fabsf(view.pitch + TC_CAM_SKI_FAR_ELEVATION) < 0.01f, what);
     prev = view.yaw;
     for (i = 0; i < 240; i++) { /* weaving: his way swings -+ 0.2 rad at 1.5 Hz, his facing at 30 Hz */
         float a = 0.2f * sinf(2 * TC_PI * 1.5f * (float)i / 60);
@@ -494,8 +495,9 @@ static void ski(void) {
     t.velocity = tc_v3(0, 0, 0);
     for (i = 0; i < 240; i++) tc_cam_update(&c, &view, &t, 1.0f / 60);
     d = tc_v3_distance(view.position, pivot_of(t.position));
-    snprintf(what, sizeof(what), "the close-up (5) still wins on the slides (%.2f away)", (double)d);
-    check(fabsf(d - TC_CAM_CLOSEUP_DISTANCE) < BAND, what);
+    snprintf(what, sizeof(what), "the close-up (5) on the slides: the near ski camera (%.2f away, %.0f; pitch %.3f)",
+             (double)d, (double)TC_CAM_SKI_DISTANCE, (double)view.pitch);
+    check(fabsf(d - TC_CAM_SKI_DISTANCE) < BAND && fabsf(view.pitch + TC_CAM_SKI_ELEVATION) < 0.01f, what);
 }
 
 /* ---- a walk on real levels: the camera behind a surface? ---- */

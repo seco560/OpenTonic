@@ -146,9 +146,10 @@ static void preset(const tc_cam *c, const tc_cam_target *t, float *distance, flo
         *distance = t->shot_distance * zoom, *elevation = t->shot_elevation, *stretch = 1;
         return;
     }
-    if (t->shot == TC_CAM_SHOT_SKI && !c->closeup) { /* the slides: further back as he speeds up, lower, no stretch */
-        *distance = (TC_CAM_SKI_DISTANCE + fminf(TC_CAM_SKI_PULLBACK_MAX, t->speed * TC_CAM_SKI_PULLBACK)) * zoom;
-        *elevation = TC_CAM_SKI_ELEVATION, *stretch = 1;
+    if (t->shot == TC_CAM_SHOT_SKI) { /* the slides: further back as he speeds up, no stretch; the close-up (5) the near one */
+        float base = c->closeup ? TC_CAM_SKI_DISTANCE : TC_CAM_SKI_FAR_DISTANCE;
+        *distance = (base + fminf(TC_CAM_SKI_PULLBACK_MAX, t->speed * TC_CAM_SKI_PULLBACK)) * zoom;
+        *elevation = c->closeup ? TC_CAM_SKI_ELEVATION : TC_CAM_SKI_FAR_ELEVATION, *stretch = 1;
     } else if (t->situation == TC_CAM_SIT_DYING) *distance = TC_CAM_DYING_DISTANCE * zoom, *stretch = 1;
     else if (t->situation == TC_CAM_SIT_FLIGHT)
         *distance = TC_CAM_FLIGHT_DISTANCE * zoom, *elevation = TC_CAM_FLIGHT_ELEVATION, *stretch = 1;

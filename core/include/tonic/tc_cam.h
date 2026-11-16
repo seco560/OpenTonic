@@ -66,6 +66,10 @@ tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);
 #define TC_CAM_AIM_HEIGHT 1.35f     /* pivot above Ed's origin: the record's +0x2C, camera B2's PROC 172 offset */
 #define TC_CAM_ELEVATION 0.45f      /* rad above the horizontal, looking down at the pivot: camera dsg113 (B2) */
 #define TC_CAM_DISTANCE 7.0f        /* camera dsg114 (B2); the wheel zooms it (tc_viewer.orbit_distance) */
+/* Port choice (the user, 2026-11-16): a portal's arrival starts the zoom here, close behind Ed (the wheel's nearest is
+ * 1.5), instead of carrying the last level's - a far zoom left the camera behind the portal's walls and the way back
+ * confusing. */
+#define TC_CAM_PORTAL_DISTANCE 3.0f
 #define TC_CAM_FRONT_STRETCH 1.5f   /* camera dsg58: distance x 1 behind Ed .. x this in front of him, linear in angle */
 #define TC_CAM_RADIUS 0.37f         /* the camera perso's collision sphere (its ZDM, both states; Camera.cst's dev value 0.35) */
 /* What Ed's scripts tell the camera (its dsg40; camera reflex 2 picks a preset by it). The presets read so far: */
@@ -94,8 +98,11 @@ tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);
 #define TC_CAM_SHOT_FIXED 6         /* camera B8 -> B7: a fixed place looking at the target (mode 3, PROC 183 / 192 / 194):
                                        not ported */
 /* The ski preset (the port's, 2026-11-04, after the B6 port's playtest: this camera tuned for the slides, not the
- * original's B6): */
+ * original's B6). Two of them (the user, 2026-11-16): the close-up (5) is the near one, these first numbers; without
+ * it, the far one, further back and higher for a view down the slope. */
 #define TC_CAM_SKI_DISTANCE 7.0f    /* behind him, plus the pull-back with speed (times the wheel's zoom) */
+#define TC_CAM_SKI_FAR_DISTANCE 10.0f /* the far one's: the same pull-back on top */
+#define TC_CAM_SKI_FAR_ELEVATION 0.5f /* rad, the far one's */
 #define TC_CAM_SKI_PULLBACK 0.04f   /* units further per u/s of his horizontal speed ... */
 #define TC_CAM_SKI_PULLBACK_MAX 3.0f /* ... at most (+2 at 50 u/s) */
 #define TC_CAM_SKI_ELEVATION 0.35f  /* rad (the walking follow's 0.45; B6's 0.2) */
@@ -148,7 +155,8 @@ typedef struct tc_cam {
     float rise;           /* the player's elevation change (rad, + = higher), eased back while Ed moves */
     bool recentering;     /* swinging back behind Ed (TC_CAM_RECENTER_TIME), until it gets there */
     bool closeup;         /* 5 keys: the original's close-up preset (in the normal situations; flight and dying use
-                             their own presets meanwhile, then it is back); kept through tc_cam_reset and portals */
+                             their own presets meanwhile, then it is back); on the slides the near ski preset instead
+                             of the far one; kept through tc_cam_reset and portals */
     bool first_person;    /* 0 keys: at Ed's head, the player's direction */
     bool hide_target;     /* the eye is inside Ed (pulled in by a wall): don't draw him (TC_CAM_HIDE_DISTANCE) */
     bool placed;          /* false: the next update places it afresh behind Ed (no easing in) */
