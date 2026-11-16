@@ -167,13 +167,13 @@ typedef struct tc_mec_walk {
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
     /* Riding (docs/ENGINE.md "Moving collision, read"): the exe makes the perso a child of the obstacle's SuperObject
-     * it stands on; the port keeps the carrier's id and object and where the perso is in that object's axes. */
+     * it stands on; the port keeps the carrier's id and channel and where the perso is in that channel's axes. */
     int32_t carrier;             /* the perso it rides, -1 none */
-    uint16_t carrier_object;
-    tc_vec3 carrier_local, carrier_front; /* its origin and front (local -y) in the carrier object's axes */
+    uint16_t carrier_channel;    /* its channel (tc_obstacle_part.channel), whichever object it shows */
+    tc_vec3 carrier_local, carrier_front; /* its origin and front (local -y) in the carrier channel's axes */
     tc_vec3 carried;             /* the carried move this step / dt (DNM_FollowCarrier_004a83d2's out) */
-    int32_t other;               /* contact record +0x1C4: the last perso contact (id, object), -1 none */
-    uint16_t other_object;
+    int32_t other;               /* contact record +0x1C4: the last perso contact (id, channel), -1 none */
+    uint16_t other_channel;
     bool moved;                  /* this step ran the collide-and-move (standing still does not) */
 } tc_mec_walk;
 
@@ -217,7 +217,7 @@ typedef struct tc_mec_hit {
     bool own_point;              /* a point made it (own shape 0; spheres 3) */
     const tc_tri *tri;           /* the static world's triangle, NULL for a perso */
     int32_t obstacle;            /* the perso hit (its id), -1 the static world (contact kind 1 / 2, record +0) */
-    uint16_t obstacle_object;    /* ... and the object of its that was hit (the channel SuperObject the exe records) */
+    uint16_t obstacle_channel;   /* ... and its channel that was hit (the channel SuperObject the exe records) */
     tc_floor floor;              /* the obstacle's mechanics material (record +0x30: rebound, grip; none {1, 1}) */
     uint16_t collide_id;         /* a perso primitive's collide identifier and floor sound (static triangles: the
                                     .ttai tables have them, 0 / 0xFF here) */

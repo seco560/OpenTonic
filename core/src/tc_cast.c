@@ -889,6 +889,7 @@ static void pose_obstacle(tc_cast *c, tc_cast_actor *a) {
     }
     ob->live = a->ai->active && !a->ai->dead;
     ob->sector = a->sector.sector;
+    ob->zone_mask = tc_obstacle_zone_mask(ob, a->ai->state); /* its ZDR zones of the playing state */
     tc_obstacle_pose(ob, &w, &an->transforms[(size_t)sm.s0 * an->channel_count], &an->shown[(size_t)sm.s0 * an->channel_count],
                      an->channel_count);
 }

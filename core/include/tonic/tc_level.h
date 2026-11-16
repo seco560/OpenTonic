@@ -295,8 +295,12 @@ typedef struct tc_pcol_prim {
     tc_vec3 a, b, c, n;
     float r;
 } tc_pcol_prim;
+#define TC_PCOL_ZONE 0x8000u    /* a tc_pcol_object.object from here: the perso's own ZDR zone (object & 0x7FFF), in its
+                                    axes, active by state (tc_pcol_perso.zone_masks; .ttlv PZDR) */
 typedef struct tc_pcol_object {
-    uint16_t object;             /* object-list index: drawn by the channels that show it */
+    uint16_t object;             /* object-list index: drawn by the channels that show it; or TC_PCOL_ZONE | zone */
+    bool hand;                   /* a zone whose collide material has flag 8: only the mover's flag-8 spheres (the hand
+                                    point) meet it, and only those meet it (GAM_ZdxStuff_00420700's mask) */
     uint32_t first, count;       /* its primitives in tc_pcol.prims */
     tc_vec3 centre;              /* a bounding sphere of them, object axes */
     float radius;
@@ -316,6 +320,11 @@ typedef struct tc_pcol_perso {
     uint16_t object_count, pose_count;
     tc_pcol_object *objects;
     tc_pcol_pose *pose;
+    /* Its ZDR zones' activation (PZDR; none: every zone always): bit k of zone_masks[state] = zone k active in that
+     * state (GAM_ActiveZones_004316d0); zone_initial = the snapshot state's (a perso not in the cast keeps it). */
+    uint16_t zone_state_count;
+    uint32_t zone_initial;
+    uint32_t *zone_masks;
 } tc_pcol_perso;
 typedef struct tc_pcol {
     uint8_t main_priority, main_flags; /* the player's own collide set (his sweeps: +0x35 must be set to meet persos) */

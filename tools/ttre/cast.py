@@ -64,6 +64,10 @@ MAY_FORCE_MAIN = {'sud_mecalevier', 'distrib',  # the levers; the popcorn (Crunc
                   'Tornado',  # the swirly cones (FRB_tornadodudes): while Ed is in one (COND 15) they write his dsg33 =
                   #             1 and dsg84 = their push (dsg0, (0, 0, 2) in LeCanyon, weaker towards their top); his flight
                   #             B45 -> B74 takes it as a velocity change (fly mode 21) every frame. Nothing else of his.
+                  # carota's steered platform (IVP_Plate_forme_nourrie1): Action on it forces Ed's B47 (he takes the
+                  # helm, his dsg0 = 13), B48 steers it (Left / Right: his dsg13, which its B1 turns by), Action or
+                  # Jump / Shoot gets off (B49). Kept off Ed until 2026-11-17: his own Action walked him off into the pit.
+                  'leg_PFnouri',
                   'genski'}  # the ski levels' flow: the finish (SYM_Gen_Arrivee, NBD_Arrivee_Et_Retry) writes the
 #                              skier's arrival waypoints and next / retry (dsg35 / 36 / 40) and the fix Ed's dsg148 = 3,
 #                              which start his own finish (B19: state 321, stepping off); the start (PAT_DEPARTESSAI)

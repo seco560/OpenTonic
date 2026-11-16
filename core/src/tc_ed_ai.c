@@ -480,6 +480,21 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
         tc_mec_walk_reset(&e->dyn.walk);
         e->dyn.contacts = 0;
         if (a->hit_points <= 0) a->hit_points = a->hit_points_max;
+        /* Port: the camera as a reload leaves it. The original's death reloads the level (GameAction0, engine state 9)
+         * and the camera starts afresh; here the level goes on, so the shot a death set stayed: north's fall (WNorth2's
+         * R0: a fixed shot above the spot, looking down at it) held the camera at the pit after Ed was back at his
+         * checkpoint, behind the walls between (2026-11-17, the user's "stuck behind walls"). Its variables go back
+         * to the level's, those the data saves with the player or the level kept. Whether a reload re-inits the fix
+         * persos' variables so is not read. */
+        if (e->camera >= 0 && (uint32_t)e->camera < a->model->other_count && a->other_dsg && a->other_dsg[e->camera]) {
+            const tc_ai_dsg_def *cd = &a->model->others[e->camera].dsg;
+            uint16_t k;
+            for (k = 0; cd->initial && cd->vars && k < cd->count; k++) {
+                uint32_t w = (uint32_t)tc_ai_dsg_width(cd->vars[k].type);
+                if (!cd->vars[k].save && cd->vars[k].offset + w <= cd->size)
+                    memcpy(a->other_dsg[e->camera] + cd->vars[k].offset, cd->initial + cd->vars[k].offset, w);
+            }
+        }
         a->hidden_channels = 0;
         a->transparency = 255;
         tc_ai_force_behaviour(a, a->model->initial_normal);

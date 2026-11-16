@@ -168,8 +168,18 @@ through `FUN_0043c640`, but only when the mover's own collide set byte **+0x35**
 - the other's **geometry** = each channel object (p3d +0x164 list, type 0xB) whose physical object has a ZDR collide
   object (`FUN_0047a750(3, po)`), at the channel SuperObject's world matrix (+0x24) (`FUN_0043c770`). This is what the
   exporter has baked at frame 0 so far;
-- **ZDR against ZDR**: the mover's own ZDR zones (its collide set list 3, active in its state) against the other's
-  (`FUN_0043c7d0`), when the mover has any. Ed has none;
+- **The other's own ZDR zones** (`FUN_0043c7d0`; corrected 2026-11-17, read in the unpacked dump's disassembly): this
+  was read as "the mover's ZDR zones against the other's, when the mover has any; Ed has none". But
+  `GAM_ZdxStuff_004207f0`, which builds the mover's list-3 set, returns the ZDM set it built just before (0x4208cc:
+  `mov eax, [0x8bc3ec]`, not 0x8f3060). So every mover with a body (Ed included) meets **the other perso's ZDR zones**
+  (collide set +0xC, the exe's list 3) with its ZDM spheres, at the other's own matrix (SuperObject +0x24), whenever
+  the other has a collide set that meets persos, **before and whatever the priority test**. The zones are those
+  active in the other's playing state (collide set +0x1C: per state {zone index list (+0xC), state index (+0x10)};
+  `GAM_ActiveZones_004316d0`), filtered as the mover's are (`GAM_ZdxStuff_00420700`'s mask): the hand-point pass meets
+  only zones whose collide material has flag 8, the body pass only the others; flag 0x10 never. The hit's SuperObject
+  is the perso itself. 71 retail persos have such zones (64 boxes, 10 spheres), most of them no channel ZDR at all:
+  sud0's tower slabs (the way to the north plain) and its rising slab, the dungeon's bone door, Doc's tank, the frozen
+  lake over the Pyrex pool; pyramide's sarcophagi; the targets; levers and popcorn machines;
 - hits on a perso are recorded with obstacle type 1 and the hit SuperObject (the channel); `MEC_SweepZones_0043bff0`
   turns them into contact kind 2 with the perso's dynamics.
 - The flag-8 sweep (the hand point) throws away its hit when the nearest is a perso whose collide set has
@@ -202,6 +212,12 @@ mover's twin is `MEC_004bdac7`):
 - else classified as usual; a step-up (0x40) onto a carrier adds 0x30000.
 
 **Riding is reparenting** (`DNM_IntegrateWalk_004aa6af`, the type 0 / 4 integrator; type 11 and 12 do the same):
+- The parent is the **channel** SuperObject hit (or the perso, for its ZDR zones), not the object it shows: a perso
+  whose states show different objects on one channel (carota's guided platform: 0 in state 1, 2 in state 0) keeps its
+  rider. (The port keyed the carrier by object until 2026-11-17 and dropped Ed at each state change: the platform,
+  which moves only while he stands on it, stalled.)
+- A state with **no card** runs no integrator and no card-type init (`GAM_MecFrame_0042b2b0`,
+  `GAM_MecIntegrate_0042b0e0`): the parent link stays (the port let go of the carrier there before 2026-11-17).
 - After the collide-and-move, report & 0x30000 == 0x30000 and the obstacle is not the carrier:
   `SPO_SetParent_00483430(so, obstacle)`. The perso becomes a child of the channel SuperObject it stands on.
 - At the end of the integrator, with a carrier, the local matrix is recomputed from the world one (local =
@@ -291,6 +307,13 @@ in the cast.
   - The static world's raycasts (camera, footsteps lookup, FUNC 162, tc_player) no longer see perso geometry.
     Footsteps on a perso take the ground contact's floor sound instead.
   - `MEC_004bd689`'s inverted steep flag (above) is kept as read.
+- **The persos' ZDR zones (2026-11-17):** .ttlv PCOL carries them as objects `0x8000 | zone` in the perso's axes
+  (tools/ttre/ttlv.py, `LevelData.zdr_zones`), the new chunk **PZDR** their activation mask per state;
+  `tc_obstacle_pose` adds the active ones at the perso's own matrix (`tc_obstacle.zone_mask`, set by the cast from the
+  actor's state), each its own "channel" for a rider; the sweep meets them past the priority test and by the pass's
+  flag 8 (tc_mec_walk.c `sweep_obstacle`). **Port, temporary:** story-gate persos' zones stay out while
+  `level.GATES_OPEN` (`STORY_GATE_PERSOS`: sud0's bone door before the north plain's arch, until its Super Ed opening
+  is seen to work). Checked: viewcheck `platforms_scenario`.
 - **Next:** the cast's walkers (types 0 / 4 with their ZDM sets and root motion), types 9 / 10 (the rolling rocks),
   the ZDE zones (COND 18-29), the ZDR-against-ZDR test, persos' obstacles for the camera's sight.
 

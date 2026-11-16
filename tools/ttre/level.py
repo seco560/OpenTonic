@@ -472,6 +472,11 @@ GATES_OPEN = True
 # tc_cast's moving sectors), and Suzy's first schedule drops it when Ed has power 7 (docs/ENGINE.md "Game progress").
 # The others stay out until their scripts (the tomato cannon, the mummies) are seen to open them.
 STORY_GATES = {'sud0': ('sctporte1', 'sctporte2', 'sctportedroite', 'sctportegauche')}
+# The same for persos whose own ZDR zones (LevelData.zdr_zones) close a way until a story step opens them: their zones
+# are left out while GATES_OPEN. sud0's bone door (ZOR_LaPorteEnOsDuDonjon) before the north plain's arch: Super Ed from
+# the bone popcorn machine beside it opens it (its B1: his dsg0 >= 100 and its ZDE zone 1); not seen working in the port
+# yet (2026-11-17). Level name (lowercase) -> perso instance names.
+STORY_GATE_PERSOS = {'sud0': ('ZOR_LaPorteEnOsDuDonjon',)}
 
 RADIOSITY_ONE = 128.0  # radiosity value that leaves the texture unchanged (guessed visually, see NOTES)
 
@@ -968,11 +973,15 @@ class LevelData:
         9 floats)]: kind 1 a triangle (a, b, c; wound so its normal is the scaled one's), 7 a sphere (centre, radius,
         0 ...), 8 an axis-aligned box (min, max, 0 ...). sound / collide id / (grip, rebound) as floor_sound,
         collide_id, floor_material (none: 0xFF, 0, (1, 1)). docs/ENGINE.md "Moving collision, read"."""
-        lv, un = self.lv, self.un
+        lv = self.lv
         cs = lv.ptr(po, 4) if po else None
         zdr = lv.ptr(cs, 12) if cs else None
-        if not zdr:
-            return []
+        return self.geo_prims(zdr, scale) if zdr else []
+
+    def geo_prims(self, zdr, scale=(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0)):
+        """A collide geometry (GeoCollide: a physical object's ZDR collide object, or a perso's zone) as perso_prims'
+        primitives, in its own axes with scale (3x4, the diagonal used) applied."""
+        lv, un = self.lv, self.un
         sx, sy, sz = scale[0], scale[5], scale[10]
         flip = sx * sy * sz < 0
         nv, = un('I', zdr)
@@ -1021,6 +1030,52 @@ class LevelData:
                 self.collide_skipped = getattr(self, 'collide_skipped', {})
                 self.collide_skipped[t] = self.collide_skipped.get(t, 0) + 1
         return out
+
+    def zdr_zones(self, loc):
+        """A perso's own ZDR zones (collide set +0xC, the exe's zone list 3; GAM_ZoneList_00431520) and their activation
+        by state (collide set +0x1C: {.., ptr zone index list (+0xC), u32 state index (+0x10)}; GAM_ActiveZones_004316d0
+        hands the playing state's): ([(k, prims)], [mask per state], initial mask) with bit k = zone k active, prims as
+        geo_prims (the perso's axes). The exe's sweeps meet them with the mover's ZDM spheres at the perso's own matrix
+        (FUN_0043c640 -> FUN_0043c7d0: GAM_ZdxStuff_004207f0 returns the mover's ZDM set, so this "ZDR against ZDR" pass
+        runs for Ed too), with no priority test. Zones whose collide material has flag 0x10 never take part
+        (GAM_ZdxStuff_0041fa50) and are left out. None: no zones (or the Special Edition: its collide set is not read).
+        Only the first 32 zones (the data has at most 1 or 2 per perso)."""
+        lv, un = self.lv, self.un
+        if self.se:
+            return None
+        if GATES_OPEN and self.perso_names(loc)[2] in STORY_GATE_PERSOS.get(lv.name.lower(), ()):
+            return None
+        cs = lv.ptr(loc, 0x14)
+        if not cs:
+            return None
+
+        def chain(head, limit=64):
+            e, out = (lv.ptr(head) if head else None), []
+            while e and len(out) < limit:
+                out.append(e)
+                e = lv.ptr(e)
+            return out
+        zones = []
+        for k, e in enumerate(chain(lv.ptr(cs, 0xC), 32)):
+            g = lv.ptr(e, 0xC)
+            prims = self.geo_prims(g) if g else []
+            if prims and not any(q[2] & 0x10 for q in prims):
+                zones.append((k, prims))
+        if not zones:
+            return None
+        p3d = lv.ptr(loc)
+        fam = lv.ptr(p3d, 0x14) if p3d else None
+        states = self.family_states(fam) if fam else []
+        masks = [0] * len(states)
+        for a in chain(lv.ptr(cs, 0x1C), 256):
+            st, = un('I', a, 0x10)
+            if st < len(masks):
+                for z in chain(lv.ptr(a, 0xC), 32):
+                    masks[st] |= 1 << (un('I', z, 0xC)[0] & 31)
+        cur = lv.ptr(p3d, 4) if p3d else None
+        index = {s: i for i, s in enumerate(states)}
+        initial = masks[index[cur]] if cur in index else (1 << 32) - 1
+        return zones, masks, initial
 
     def collide_set_flags(self, loc):
         """(priority, flags) of a perso for PCOL: its collide set's (perso +0x14) byte +0x34 (priority; 0 without a set)

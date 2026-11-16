@@ -244,7 +244,7 @@ static void sweep_tri(const tc_tri *tri, void *user) {
     h.own_point = x->point;
     h.tri = tri;
     h.obstacle = -1;
-    h.obstacle_object = 0;
+    h.obstacle_channel = 0;
     h.floor = tri->floor;
     h.collide_id = 0;
     h.sound = 0xFF;
@@ -257,13 +257,18 @@ static void sweep_tri(const tc_tri *tri, void *user) {
  * triangles as the static world's (FUN_00465b60 / FUN_0046ff70), spheres FUN_0046d600 / FUN_004704c0 (the centre against
  * the sphere's centre at R + r), boxes FUN_0046d8a0 / FUN_00470610 (the box grown by r). The earliest contact wins over
  * everything so far (DAT_0050e140). */
-static void sweep_obstacle(sweep_ctx *x, const tc_obstacle *ob) {
+static void sweep_obstacle(sweep_ctx *x, const tc_obstacle *ob, bool zones_only) {
     uint16_t k;
     uint32_t j;
     for (k = 0; k < ob->part_count; k++) {
         const tc_obstacle_part *q = &ob->parts[k];
         const tc_pcol_object *o = q->object;
         tc_vec3 p0, d, e = tc_v3_sub(q->centre, x->c0);
+        if (o->object & TC_PCOL_ZONE) { /* its ZDR zones (FUN_0043c7d0): those of this pass's kind (flag 8 or not) */
+            if (o->hand != ((x->flags & 8) != 0)) continue;
+        } else if (zones_only) {
+            continue;
+        }
         float r, dd = tc_v3_dot(x->d, x->d), s = dd > 0 ? tc_v3_dot(e, x->d) / dd : 0, reach = q->radius + x->r + 1e-3f;
         s = s < 0 ? 0 : s > 1 ? 1 : s;
         if (tc_v3_length_sq(tc_v3_sub(e, tc_v3_scale(x->d, s))) > reach * reach) continue; /* the port's pretest */
@@ -306,7 +311,7 @@ static void sweep_obstacle(sweep_ctx *x, const tc_obstacle *ob) {
             h.own_point = x->point;
             h.tri = NULL;
             h.obstacle = ob->id;
-            h.obstacle_object = o->object;
+            h.obstacle_channel = q->channel;
             h.floor = pr->floor;
             h.collide_id = pr->collide_id;
             h.sound = pr->sound;
@@ -317,7 +322,10 @@ static void sweep_obstacle(sweep_ctx *x, const tc_obstacle *ob) {
 }
 
 /* The obstacles this mover meets (FUN_0043c640): live, not itself, in a sector it collides with, with no collide set
- * or one that meets persos (+0x35), and of a priority (+0x34) up to its own; the mover's own +0x35 must be set. */
+ * or one that meets persos (+0x35), and of a priority (+0x34) up to its own; the mover's own +0x35 must be set. A
+ * perso's own ZDR zones are met whatever its priority (FUN_0043c7d0 runs before the priority test, with the mover's ZDM:
+ * GAM_ZdxStuff_004207f0 returns the ZDM set it built just before, so this "ZDR against ZDR" pass runs for every mover
+ * with a body, Ed included; docs/ENGINE.md "Moving collision, read"). */
 static void sweep_obstacles(tc_collision *world, sweep_ctx *x) {
     const tc_obstacles *os = world->obstacles;
     tc_vec3 lo, hi, c1 = tc_v3_add(x->c0, x->d);
@@ -331,10 +339,9 @@ static void sweep_obstacles(tc_collision *world, sweep_ctx *x) {
         if (!ob->live || ob->id == world->self || ob->id == world->ignore || !ob->part_count) continue;
         if (world->solid && ob->sector < world->solid_count && !world->solid[ob->sector]) continue;
         if ((ob->flags & TC_PCOL_HAS_SET) && !(ob->flags & TC_PCOL_MEETS_PERSOS)) continue;
-        if (ob->priority > world->self_priority) continue;
         if (ob->lo.x > hi.x || ob->lo.y > hi.y || ob->lo.z > hi.z || ob->hi.x < lo.x || ob->hi.y < lo.y || ob->hi.z < lo.z)
             continue;
-        sweep_obstacle(x, ob);
+        sweep_obstacle(x, ob, ob->priority > world->self_priority);
     }
 }
 
@@ -560,7 +567,7 @@ static uint32_t classify(collide_ctx *x, const tc_mec_hit *h) {
 
 static void keep_other(collide_ctx *x, const tc_mec_hit *h) {
     x->w->other = h->obstacle;
-    x->w->other_object = h->obstacle_object;
+    x->w->other_channel = h->obstacle_channel;
 }
 
 /* MEC_004bd689: a contact with a perso. The carrier itself: as any contact, and 0x30000 (still on it); on the carried
@@ -680,12 +687,14 @@ static void setup(collide_ctx *x, tc_mec_walk *w, const tc_ai_card *card, tc_col
 
 /* ---- Riding (DNM_IntegrateWalk_004aa6af, DNM_FollowCarrier_004a83d2, DNM_LeftCarrier_004a8388) ---- */
 
-static const tc_obstacle_part *carrier_part(const tc_collision *world, int32_t id, uint16_t object) {
+/* The carrier's channel as posed now (whichever of its objects it shows: the exe's rider is the channel SuperObject's
+ * child); NULL: the perso is gone, or the channel shows nothing with collision now. */
+static const tc_obstacle_part *carrier_part(const tc_collision *world, int32_t id, uint16_t channel) {
     const tc_obstacle *ob = tc_obstacles_find(world->obstacles, id);
     uint16_t k;
     if (!ob || !ob->live) return NULL;
     for (k = 0; k < ob->part_count; k++)
-        if (ob->parts[k].object->object == object) return &ob->parts[k];
+        if (ob->parts[k].channel == channel) return &ob->parts[k];
     return NULL;
 }
 
@@ -697,11 +706,11 @@ static void ride_local(tc_mec_walk *w, const tc_obstacle_part *q, float heading,
     w->carrier_front = tc_m34_vector(&q->inv, front_of(heading));
 }
 
-/* FUN_004c2ba0(position, 0.2): the body swept 0.2 down still meets the carrier (its same object). */
+/* FUN_004c2ba0(position, 0.2): the body swept 0.2 down still meets the carrier (its same channel). */
 static bool still_on(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float heading, tc_vec3 position) {
     tc_mec_hit h;
     if (!tc_mec_sweep(world, body, heading, position, tc_v3_sub(position, tc_v3_scale(UP, 0.2f)), &h)) return false;
-    return h.obstacle == w->carrier && h.obstacle_object == w->carrier_object;
+    return h.obstacle == w->carrier && h.obstacle_channel == w->carrier_channel;
 }
 
 /* After the integrator's collide-and-move: on a perso this frame (report 0x30000) and not on the carrier yet: ride it
@@ -712,10 +721,10 @@ static void ride(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *bo
                  tc_vec3 position, tc_vec3 *velocity) {
     const tc_obstacle_part *q;
     if ((bits & TC_MEC_ON_PERSO) == TC_MEC_ON_PERSO) {
-        if (w->other >= 0 && (w->other != w->carrier || w->other_object != w->carrier_object) &&
-            carrier_part(world, w->other, w->other_object)) {
+        if (w->other >= 0 && (w->other != w->carrier || w->other_channel != w->carrier_channel) &&
+            carrier_part(world, w->other, w->other_channel)) {
             w->carrier = w->other;
-            w->carrier_object = w->other_object;
+            w->carrier_channel = w->other_channel;
             w->carried = tc_v3(0, 0, 0);
         }
     } else if ((w->report_prev & TC_MEC_ON_PERSO) != TC_MEC_ON_PERSO && w->carrier >= 0 &&
@@ -723,7 +732,7 @@ static void ride(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *bo
         *velocity = tc_v3_add(*velocity, tc_v3_scale(w->carried, 0.666666f));
         w->carrier = -1;
     }
-    if (w->carrier >= 0 && (q = carrier_part(world, w->carrier, w->carrier_object))) ride_local(w, q, heading, position);
+    if (w->carrier >= 0 && (q = carrier_part(world, w->carrier, w->carrier_channel))) ride_local(w, q, heading, position);
 }
 
 void tc_mec_walk_carry(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_set *body, float *heading, float dt,
@@ -734,7 +743,7 @@ void tc_mec_walk_carry(tc_mec_walk *w, tc_collision *world, const tc_ai_sphere_s
     collide_ctx x;
     w->carried = tc_v3(0, 0, 0);
     if (w->carrier < 0) return;
-    if (!(q = carrier_part(world, w->carrier, w->carrier_object))) { /* gone: back to the world (no momentum) */
+    if (!(q = carrier_part(world, w->carrier, w->carrier_channel))) { /* gone: back to the world (no momentum) */
         w->carrier = -1;
         return;
     }

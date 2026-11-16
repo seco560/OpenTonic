@@ -234,8 +234,12 @@ void tc_mec_perso_step(const tc_mec_perso *x, float dt) {
     if (type != d->card_type && d->card_type == 5)
         p->velocity = tc_v3(0, 0, 0); /* leaving flight (GAM_0042ab20): stop, keep the heading */
     /* Port: riding is the walk / air integrator's (types 0 / 4; the exe's 11 and 12 ride too, not ported): any other card
-     * lets go of the carrier, so coming back does not snap him to where the carrier has gone meanwhile */
-    if (type != 0 && type != 4) d->walk.carrier = -1;
+     * lets go of the carrier, so coming back does not snap him to where the carrier has gone meanwhile. A state with no
+     * card keeps it (read: GAM_MecFrame_0042b2b0 / GAM_MecIntegrate_0042b0e0 run no integrator and no card-type init for
+     * a NULL card, so the SuperObject stays the carrier's child): Ed's hurt state 246 on carota's guided platform (hit
+     * by its electric arcs) let go of it before 2026-11-17, and the platform, which moves only while he stands on it,
+     * stopped for good. */
+    if (card && type != 0 && type != 4) d->walk.carrier = -1;
     if (type == 7) {
         /* Card type 7 (DNM_IntegrateType7_004acb49 / DNM_RequestType7_004b17d1): with the card's gravity factor 0 (all of
          * Ed's: surface swimming 5 / 18 / 19, the portal walk-in 228, the skier's finish 321) the velocity is kept and the

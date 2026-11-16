@@ -770,3 +770,16 @@ ground. Now (tc_viewer_camera.c `look_from`, `eye_path_clear`, `orbit_eye`; port
   fitted (the scripts' framing at worst).
 viewcheck "turning the spy's shot orbits him": Transit's sheep spy (18), 4.5 s of turning down, up, left: never nearer
 than 11.05 to him (the scripts' 11.15), the eye above his feet; before, 0.03 from his chest.
+
+### After a death (2026-11-17; the user: the camera "gets stuck behind walls")
+- **Read:** a fall's death shot is the level's own (north's World WNorth2, its R0 at z < -105: a fixed shot 6 above the
+  spot, looking down at it, then Ed's death); the original then reloads the level (GameAction0, engine state 9), so the
+  camera starts afresh.
+- **Port:** the level goes on after a respawn (docs/ENGINE.md "Saved variables, the skier's start, restarts"), and the
+  camera's dsg39 stayed 6: the eye sat above the pit, behind every wall between it and Ed's checkpoint. Now a respawn
+  puts the camera's variables back to the level's (those the data saves with the player or the level kept; tc_ed_ai.c).
+  Whether the exe's reload re-inits the fix persos' variables so is not read.
+- **Measured** (camcheck's clipping audit, level geometry between Ed's head and the eye): the follow camera 0 frames on
+  all walked levels; what is left are cutscene reveals while Ed walks off (north's flying guard, cock01's armour room:
+  docs/BUGS.md "Linux playtest up to Glacier Cocktail") and sud0's mummy waiting for its dialogue to be passed (a test
+  artefact: the walk presses no Jump). Check: viewcheck `platforms_scenario` (north's fall).

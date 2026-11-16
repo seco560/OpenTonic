@@ -27,6 +27,7 @@ tc_result tc_obstacles_init(tc_obstacles *o, const tc_level *l) {
         ob->priority = p->priority;
         ob->flags = p->flags;
         ob->live = (p->flags & TC_PCOL_ACTIVE) && !(p->flags & TC_PCOL_DEAD);
+        ob->zone_mask = p->zone_masks ? p->zone_initial : 0xFFFFFFFFu;
         ob->part_cap = (uint16_t)(cap < 4 ? 4 : cap > 0xFFFF ? 0xFFFF : cap);
         ob->parts = (tc_obstacle_part *)tc_calloc(ob->part_cap, sizeof(tc_obstacle_part));
         if (!ob->parts) { o->count = i; tc_obstacles_free(o); return TC_ERR_OUT_OF_MEMORY; }
@@ -66,13 +67,14 @@ static void begin(tc_obstacle *ob, const tc_mat34 *world) {
 }
 
 /* One shown object at m (object axes -> world): its inverse for the tests, its world bound. */
-static void add_part(tc_obstacle *ob, const tc_pcol_object *obj, const tc_mat34 *m) {
+static void add_part(tc_obstacle *ob, const tc_pcol_object *obj, const tc_mat34 *m, uint16_t channel) {
     tc_obstacle_part *q;
     float s2, *iv;
     int i, j;
     if (!obj || ob->part_count >= ob->part_cap) return;
     q = &ob->parts[ob->part_count++];
     q->object = obj;
+    q->channel = channel;
     q->m = *m;
     s2 = m->m[0] * m->m[0] + m->m[4] * m->m[4] + m->m[8] * m->m[8];
     if (!(s2 > 1e-20f)) s2 = 1;
@@ -87,25 +89,44 @@ static void add_part(tc_obstacle *ob, const tc_pcol_object *obj, const tc_mat34 
     ob->hi = tc_v3_max(ob->hi, tc_v3_adds(q->centre, q->radius));
 }
 
+/* Its active ZDR zones, at the perso's own matrix (FUN_0043c7d0 takes the SuperObject's +0x24); each is its own
+ * "channel" (TC_PCOL_ZONE | k) for a rider. */
+static void add_zones(tc_obstacle *ob, const tc_mat34 *world) {
+    uint16_t k;
+    for (k = 0; k < ob->data->object_count; k++) {
+        const tc_pcol_object *o = &ob->data->objects[k];
+        if ((o->object & TC_PCOL_ZONE) && o->count && (ob->zone_mask >> (o->object & 31) & 1u))
+            add_part(ob, o, world, o->object);
+    }
+}
+
+uint32_t tc_obstacle_zone_mask(const tc_obstacle *ob, uint32_t state) {
+    const tc_pcol_perso *p = ob->data;
+    if (!p->zone_masks) return 0xFFFFFFFFu;
+    return state < p->zone_state_count ? p->zone_masks[state] : 0;
+}
+
 void tc_obstacle_pose(tc_obstacle *ob, const tc_mat34 *world, const tc_mat34 *transforms, const uint16_t *shown,
                       uint32_t channel_count) {
     uint32_t ch;
     begin(ob, world);
+    add_zones(ob, world);
     for (ch = 0; ch < channel_count; ch++) {
         tc_mat34 m;
         const tc_pcol_object *obj;
         if (shown[ch] == TC_HIDDEN || !(obj = object_of(ob, shown[ch]))) continue;
         m = tc_m34_mul(world, &transforms[ch]);
-        add_part(ob, obj, &m);
+        add_part(ob, obj, &m, (uint16_t)ch);
     }
 }
 
 void tc_obstacle_pose_static(tc_obstacle *ob, const tc_mat34 *world) {
     uint16_t k;
     begin(ob, world);
+    add_zones(ob, world);
     for (k = 0; k < ob->data->pose_count; k++) {
         tc_mat34 m = tc_m34_mul(world, &ob->data->pose[k].m);
-        add_part(ob, object_of(ob, ob->data->pose[k].object), &m);
+        add_part(ob, object_of(ob, ob->data->pose[k].object), &m, k);
     }
 }
 

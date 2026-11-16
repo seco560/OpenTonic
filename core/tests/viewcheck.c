@@ -1086,6 +1086,170 @@ static void ride_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
+static bool open_level(const char *dir, const char *name, tc_level *level, tc_viewer *v) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_viewer_desc desc;
+    snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+    if (!(data = read_file(path, &size)) || tc_level_load(level, data, size) != TC_OK) { free(data); return false; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = level;
+    desc.ai_data = ai;
+    desc.ai_size = ai_size;
+    desc.level_name = name;
+    if (!ai || tc_viewer_init(v, &desc) != TC_OK) { free(ai); tc_level_free(level); return false; }
+    free(ai);
+    return true;
+}
+
+static tc_cast_actor *cast_actor(tc_viewer *v, int32_t id) {
+    const tc_cast *c = tc_viewer_cast(v);
+    uint32_t i;
+    for (i = 0; c && i < c->count; i++)
+        if (c->actors[i].entry->id == id) return &c->actors[i];
+    return NULL;
+}
+
+/* The moving platforms (the user's playtest, 2026-11-17: "the moving platforms in Vegetable HQ are completely borked",
+ * "in sud0 the moving platforms leading to north plain") and the camera after a fall. (1) carota's guided platform
+ * (IVP_plate_forme1, 6; family leg_PFguide): moves along its way only while StandingOnPerso(Ed) is itself and Ed is
+ * within 1.3 of its centre (DistanceXY). Its states show different objects on one channel; the rider's carrier is the
+ * channel (tc_obstacle_part.channel), and a cardless state (his hurt, 246) keeps it. (2) carota's steered platform
+ * (IVP_Plate_forme_nourrie1, 20): Action on it, Ed takes the helm (B47 / B48), it carries him, Left turns it.
+ * (3) sud0's tower slabs (HEG_PlateFormeTour01-03, 99-101): their only collision is a ZDR zone of their collide set
+ * (PZDR; docs/ENGINE.md "Moving collision, read"): Ed stands on one; the lever HEG_BatonLevierTour01 (102) moves slab
+ * 99 while Ed holds Right. (4) north's fall (WNorth2 R0, z < -105): the death's fixed shot is gone after the respawn. */
+static void platforms_scenario(const char *dir) {
+    tc_level level;
+    tc_viewer v;
+    char what[256];
+    int i;
+    printf("moving platforms:\n");
+    if (open_level(dir, "carota", &level, &v)) { /* (1) */
+        tc_cast_actor *pf = cast_actor(&v, 6), *sw = cast_actor(&v, 49);
+        tc_player *p = (tc_player *)tc_viewer_player(&v);
+        struct tc_obstacle *ob = p->world->obstacles ? tc_obstacles_find(p->world->obstacles, 6) : NULL;
+        int placed = -1, rode = 0, frames = 0, end = -1;
+        tc_vec3 from = tc_v3(0, 0, 0);
+        float travel = 0, low = 1e9f, high = -1e9f;
+        if (pf && sw && ob) {
+            tc_ai_dsgvar_set_int(sw->ai, 5, 1); /* its switch pressed: it comes to its start (B1), then waits (B2) */
+            for (i = 0; i < 30 * 60 && end < 0; i++) {
+                if (placed < 0 && pf->ai->normal.behaviour == 2) {
+                    p->position = tc_v3(ob->world.m[3], ob->world.m[7], ob->hi.z + 0.5f);
+                    p->velocity = tc_v3(0, 0, 0);
+                    p->placed++;
+                    placed = i;
+                    from = pf->ai->position;
+                }
+                frame(&v, 1.0f / 30);
+                if (placed >= 0) {
+                    frames++;
+                    rode += tc_viewer_driver(&v)->dyn.walk.carrier == 6;
+                    travel = fmaxf(travel, tc_v3_distance(pf->ai->position, from));
+                    low = fminf(low, pf->ai->position.z), high = fmaxf(high, pf->ai->position.z);
+                    if (pf->ai->normal.behaviour == 3) end = i;
+                }
+            }
+        }
+        snprintf(what, sizeof(what), "carota: the guided platform carries Ed to its end (%s; rode %d of %d frames, %.0f from its "
+                 "start, z %.1f .. %.1f)", end >= 0 ? "arrived" : "not there", rode, frames, (double)travel, (double)low, (double)high);
+        check(end >= 0 && rode > frames * 9 / 10 && travel > 40 && high - low > 20, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    } else printf("  (no carota: skipped)\n");
+    if (open_level(dir, "carota", &level, &v)) { /* (2) */
+        tc_cast_actor *pf = cast_actor(&v, 20);
+        tc_player *p = (tc_player *)tc_viewer_player(&v);
+        struct tc_obstacle *ob = p->world->obstacles ? tc_obstacles_find(p->world->obstacles, 20) : NULL;
+        int helm = 0, rode = 0;
+        float h0 = 0, turned = 0, moved = 0;
+        tc_vec3 at0 = tc_v3(0, 0, 0);
+        if (pf && ob) {
+            run(&v, 1, 0);
+            p->position = tc_v3(ob->world.m[3], ob->world.m[7], ob->hi.z + 0.3f);
+            p->velocity = tc_v3(0, 0, 0);
+            p->placed++;
+            run(&v, 1.5f, 0);
+            for (i = 0; i < 30 * 16; i++) {
+                tc_viewer_set_action(&v, TC_VA_ACTION, i < 3);
+                tc_viewer_set_action(&v, TC_VA_LEFT, i >= 30 * 9 && i < 30 * 12);
+                frame(&v, 1.0f / 30);
+                helm += tc_viewer_driver(&v)->ai.normal.behaviour == 48;
+                rode += tc_viewer_driver(&v)->dyn.walk.carrier == 20;
+                if (i == 30 * 3) h0 = pf->ai->heading, at0 = pf->ai->position;
+                if (i > 30 * 3) turned = fmaxf(turned, fabsf(remainderf(pf->ai->heading - h0, 2 * TC_PI))),
+                               moved = fmaxf(moved, tc_v3_distance(pf->ai->position, at0));
+            }
+            tc_viewer_release_all(&v);
+        }
+        snprintf(what, sizeof(what), "carota: Ed takes the steered platform's helm (%d frames), it carries him (%d of %d) %.1f, "
+                 "Left turns it %.2f rad", helm, rode, 30 * 16, (double)moved, (double)turned);
+        check(helm > 30 * 10 && rode > 30 * 14 && moved > 10 && turned > 1, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    }
+    if (open_level(dir, "sud0", &level, &v)) { /* (3) */
+        tc_player *p = (tc_player *)tc_viewer_player(&v);
+        struct tc_obstacle *ob = p->world->obstacles ? tc_obstacles_find(p->world->obstacles, 101) : NULL;
+        tc_cast_actor *lever = cast_actor(&v, 102), *slab = cast_actor(&v, 99);
+        float top = 0, moved = 0;
+        tc_vec3 s0;
+        run(&v, 1, 0);
+        if (ob) {
+            top = ob->world.m[11] + 0.6f;
+            p->position = tc_v3(ob->world.m[3], ob->world.m[7], ob->hi.z + 0.5f);
+            p->velocity = tc_v3(0, 0, 0);
+            p->placed++;
+            run(&v, 2, 0);
+        }
+        snprintf(what, sizeof(what), "sud0: Ed stands on a tower slab (its ZDR zone; z %.2f, its top %.2f)", (double)p->position.z,
+                 (double)top);
+        check(ob && fabsf(p->position.z - top) < 0.4f, what);
+        if (lever && slab) {
+            s0 = slab->ai->position;
+            tc_player_teleport(p, tc_v3(lever->ai->position.x, lever->ai->position.y, lever->ai->position.z + 0.5f), 0);
+            for (i = 0; i < 30 * 8; i++) {
+                tc_viewer_set_action(&v, TC_VA_ACTION, i >= 30 && i < 33);
+                tc_viewer_set_action(&v, TC_VA_LEFT, i >= 90);
+                frame(&v, 1.0f / 30);
+                moved = fmaxf(moved, tc_v3_distance(slab->ai->position, s0));
+            }
+            tc_viewer_release_all(&v);
+        }
+        snprintf(what, sizeof(what), "sud0: the tower lever moves its slab while Ed holds it (%.1f)", (double)moved);
+        check(moved > 10, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    } else printf("  (no sud0: skipped)\n");
+    if (open_level(dir, "north", &level, &v)) { /* (4) */
+        tc_player *p = (tc_player *)tc_viewer_player(&v);
+        const struct tc_ed_ai *e = tc_viewer_driver(&v);
+        tc_vec3 start;
+        uint32_t r0;
+        int shot_during = 0;
+        run(&v, 1, 0);
+        start = p->position;
+        r0 = e->restarts;
+        tc_player_teleport(p, tc_v3(start.x, start.y, -110), 0);
+        for (i = 0; i < 30 * 12 && e->restarts == r0; i++) {
+            frame(&v, 1.0f / 30);
+            shot_during |= tc_viewer_fixed_shot(&v);
+        }
+        run(&v, 3, 0);
+        snprintf(what, sizeof(what), "north: the fall's death shot (%d), then the respawn (%u) gives the camera back (fixed shot %d, "
+                 "the eye %.1f from Ed)", shot_during, e->restarts - r0, tc_viewer_fixed_shot(&v),
+                 (double)tc_v3_distance(v.camera.position, p->position));
+        check(shot_during && e->restarts > r0 && !tc_viewer_fixed_shot(&v) && tc_v3_distance(v.camera.position, p->position) < 15, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    } else printf("  (no north: skipped)\n");
+}
+
 /* The cavedoc ruby (BNE_PFGuide, gro_pf01; docs/ENGINE.md "Ways and waypoints"): Ed stands on it, its reflex R0 puts
  * its way's cursor on the nearest waypoint (Func_CloserWP, Proc_InitWayWithWp) and B0 takes it along the way
  * (Action_GoOverWay: mode 0x14 towards each waypoint in turn, type 7 card) until R1 sees the last one within 2. */
@@ -1916,6 +2080,7 @@ done:
     se_ski_scenario(dir);
     ride_scenario(dir);
     guide_scenario(dir);
+    platforms_scenario(dir);
     transit_scenario(dir);
     shoot_scenario(dir);
     flight_scenario(dir);

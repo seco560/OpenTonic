@@ -281,3 +281,43 @@ popcorn machine never starts; (d) the corn cob's shots never rebound from the ta
   footsteps a second. Each load gave 64 more, so the sounds would come back for under a minute and go again. Nothing
   about sound is kept between runs but the Dolby option (off in the user's options.cfg).
 - **Sfx.swift** still has its own Mixer (the same design); it could take the core's.
+
+## Linux playtest up to Glacier Cocktail (2026-11-17; the user on the Celeron box)
+
+The user: "a cromulent gameplay experience, most of the time"; all the way to Glacier Cocktail with very few noclips.
+Reported: (a) the camera "sometimes clips weirdly or gets stuck behind walls"; (b) Vegetable HQ's (carota) moving
+platforms "completely borked", especially going vertical ("look at scripts checking where Ed is"); (c) sud0's moving
+platforms on the way to the north plain.
+
+**Changed the same day (Claude), headless only, needs the re-export your next build does (done in place here):**
+- **(b) the guided platform** (IVP_plate_forme1): it moves only while `StandingOnPerso(Ed)` is itself and Ed is within
+  1.3 of its centre (`DistanceXY`, its R0). Its states show different collision objects on one channel (0 in state 1,
+  2 in state 0) and the port keyed Ed's carrier by object: each state change (it changes state as soon as it sees him)
+  dropped him, he slid off its centre as it went down, and it stalled for good. The carrier is the channel now, as the
+  exe's reparenting (docs/ENGINE.md "Moving collision, read"). Also: Ed's hurt state (246, no card: the electric arcs
+  on its way hit him) let go of the carrier; the exe keeps the parent through a cardless state. Probe: it carries him
+  58 units to its end, z +5.7 down to -23.3 and the climbs between.
+- **(b) the steered platform** (IVP_Plate_forme_nourrie1): its Action forces Ed's B47 / B48 (he takes the helm, Left /
+  Right turn it, Action / Jump / Shoot get off); its family was not allowed to force Ed, so Action walked him into the
+  pit. Allowed (cast.py `leg_PFnouri`).
+- **(c) sud0's tower slabs** (HEG_PlateFormeTour01-03, moved by the three levers HEG_BatonLevierTour01-03 with Super Ed:
+  holding Left / Right slides the lever's slab): the levers and slabs worked, but **the slabs had no collision**: Ed
+  fell through. Their only collision is a ZDR zone of their collide set, which the exe meets with Ed's body and the port
+  never exported (docs/ENGINE.md "Moving collision, read": a misread of the exe, corrected). All 71 such persos have it
+  now: also sud0's rising slab ZOR_LaDalle, Doc's tank, the frozen lake over the Pyrex pool (Ed walks on it until the
+  Pyrex chameleon breaks it, as in the original), pyramide's sarcophagi, the targets, levers and popcorn machines.
+  **Kept open (story gate):** the dungeon's bone door before the north plain's arch (ZOR_LaPorteEnOsDuDonjon: Super Ed
+  from the bone popcorn machine beside it opens it); it stays walk-through until that is seen working
+  (level.py `STORY_GATE_PERSOS`).
+- **(a) the camera:** measured with camcheck's clipping audit (level geometry between Ed's head and the eye). The follow
+  camera itself: 0 frames on every level walked. All of it came from **fixed shots**: (1) the fall's death shot (north's
+  World, WNorth2 R0: a shot above the fall spot looking down) **stayed after the respawn**: the original reloads the
+  level, the port respawns Ed and kept the shot, so the camera sat at the pit behind the walls (north walk: 490 frames).
+  Fixed: a respawn puts the camera's variables back to the level's. (2) **cutscene reveals** while Ed walks off: north's
+  flying guard taking off (KEV_ActiveGardeVolantEtCamera, 9 s), cock01's armour room (SLY_CamOriente_SalleGardeArmure).
+  They hold Ed in the original (ForceBehaviour B15 + R4, released after); the port refuses most persos' holds (cast.py
+  MAY_FORCE_MAIN), so Ed can walk away behind walls while the camera shows the scene. **Not changed: ask the user**
+  whether these cutscenes should hold Ed (with a time-out so none can strand him). Not found: any "weird clipping" of
+  the follow camera; an F9 mark in a recording at the moment would say which.
+- **Checks:** viewcheck `platforms_scenario` (both carota platforms, the slab and its lever, north's death camera): 4 of
+  its 5 checks fail on the code before this change. Not seen in the app: all of it.

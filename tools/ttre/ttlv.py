@@ -44,6 +44,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
   SPCH* what the characters say: dialogues, their text, the font (speech.py has the layout)
   PCOL* the persos' own collision, in their objects' axes (perso_collision has the layout); COLL no longer holds it
         (2026-11-05): the core poses it where each perso is, every tick (docs/ENGINE.md "Moving collision, read").
+  PZDR* in which states the persos' own ZDR zones (PCOL objects from ZONE_OBJECT) are active (perso_zones has the
+        layout; retail only)
   WAYS* the level's waypoints and the persos' ways (ai.ways_chunk has the layout; retail only): script nodes of type 29
         and waypoint dsgvars (in the .ttlv's CAST and in the .ttai) hold their 1-based numbers.
   CAST* the level persos whose own AI the core runs, their families' states and state animations (cast.py has the
@@ -448,6 +450,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
         skip_decals = data.player() != fix_ed
     tris, floors, sect.collision_sectors = data.collision(floors=True, skip_decals=skip_decals, sectors=True, persos=False)
     pcol = perso_collision(data, cast_locs, prso_index, skip_decals) if persos else None
+    pzdr = perso_zones(data) if pcol else None
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     table = sorted({f for f in floors if f is not None})
     index = {f: i for i, f in enumerate(table)}
@@ -528,6 +531,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('INVT', invt(data)) if cast_body and not data.se else None,
            ('CMEC', cmec) if cmec else None,
            ('PCOL', pcol) if pcol else None,
+           ('PZDR', pzdr) if pzdr else None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
            ('SPCH', spch) if spch else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
@@ -564,6 +568,25 @@ def snd3(data, sectors):
     return b''.join(out)
 
 
+ZONE_OBJECT = 0x8000  # PCOL object numbers from here are the perso's own ZDR zones (zone k = object & 0x7FFF)
+
+
+def perso_zones(data):
+    """The PZDR chunk: when each perso's own ZDR zones (PCOL objects ZONE_OBJECT | k; LevelData.zdr_zones) are active.
+      u16 n, u16 0, n x { u16 perso id (as PCOL's), u16 n_states, u32 initial (the snapshot state's mask),
+                          n_states x u32 mask (bit k: zone k active in that state; GAM_ActiveZones_004316d0) }
+    None when no perso has any (and on the Special Edition)."""
+    if data.se:
+        return None
+    rows = []
+    for k, p in enumerate(data.persos()):
+        z = data.zdr_zones(p.loc)
+        if z:
+            _, masks, initial = z
+            rows.append(struct.pack(f'<2HI{len(masks)}I', k + 1, len(masks), initial, *masks))
+    return struct.pack('<2H', len(rows), 0) + b''.join(rows) if rows else None
+
+
 def perso_collision(data, cast_locs, prso_index, skip_decals=False):
     """The PCOL chunk: every perso's own collision (docs/ENGINE.md "Moving collision, read"), in its objects' axes, for
     the core to pose where the perso is (core tc_obstacle.c). None when no perso has any. Layout:
@@ -585,11 +608,14 @@ def perso_collision(data, cast_locs, prso_index, skip_decals=False):
     for k, p in enumerate(data.persos()):
         if data.perso_names(p.loc)[1] == cast.SCENE_ED:
             continue
-        if not p.collides or not p.anim or p.loc == player or (p.loc == fix_ed and player != fix_ed):
+        if p.loc == player or (p.loc == fix_ed and player != fix_ed):
             continue
-        pose0 = {o: m for o, m in p.anim.pose(0) if o is not None}
+        zones = data.zdr_zones(p.loc)
+        if not ((p.collides and p.anim) or zones):
+            continue
+        pose0 = {o: m for o, m in p.anim.pose(0) if o is not None} if p.anim else {}
         objs = []
-        for o in sorted(p.collides):
+        for o in sorted(p.collides if p.anim else ()):
             po = p.physical.get(o)
             prims = data.perso_prims(po, p.objects[o][1]) if po else []
             if not prims:
@@ -597,6 +623,9 @@ def perso_collision(data, cast_locs, prso_index, skip_decals=False):
             if skip_decals and o in pose0 and _decal(prims, level.mat_mul(p.world, pose0[o])):
                 continue
             objs.append((o, prims))
+        # its own ZDR zones (LevelData.zdr_zones), in the perso's axes: object ZONE_OBJECT | k, no pose entry; PZDR says
+        # in which states each is active (2026-11-17: sud0's tower platforms, the dungeon's bone door ...)
+        objs += [(ZONE_OBJECT | k, prims) for k, prims in (zones[0] if zones else [])]
         if not objs:
             continue
         prio, flags = data.collide_set_flags(p.loc)

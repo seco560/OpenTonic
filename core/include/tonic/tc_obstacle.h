@@ -19,6 +19,9 @@ extern "C" {
 
 typedef struct tc_obstacle_part {
     const tc_pcol_object *object;
+    uint16_t channel;            /* the channel showing it (a static pose: its pose entry). A rider's carrier is the
+                                    channel, as the exe's (SPO_SetParent to the channel SuperObject): the object a
+                                    channel shows may change with the state (carota's guided platform: 0 / 2) */
     tc_mat34 m;                  /* object axes -> world, now */
     tc_mat34 inv;                /* world -> object axes (the rigid part's inverse, divided by the scale) */
     float scale;                 /* uniform (the length of m's first column), as FUN_00464240 takes one */
@@ -36,6 +39,8 @@ typedef struct tc_obstacle {
     tc_obstacle_part *parts;
     tc_vec3 lo, hi;              /* world bounds of the parts */
     tc_mat34 world;              /* the perso's matrix, as last posed */
+    uint32_t zone_mask;          /* its ZDR zones active now (bit k: zone k; TC_PCOL_ZONE objects), posed at `world`:
+                                    the playing state's (tc_obstacle_zone_mask), set by the poser before posing */
 } tc_obstacle;
 
 typedef struct tc_obstacles {
@@ -57,6 +62,8 @@ void tc_obstacle_pose(tc_obstacle *ob, const tc_mat34 *world, const tc_mat34 *tr
                       uint32_t channel_count);
 /* Posed by the export's frame-0 pose (tc_pcol_perso.pose), at world. */
 void tc_obstacle_pose_static(tc_obstacle *ob, const tc_mat34 *world);
+/* The perso's ZDR zones active in a state (tc_pcol_perso.zone_masks; a state past them: none; no PZDR: all). */
+uint32_t tc_obstacle_zone_mask(const tc_obstacle *ob, uint32_t state);
 
 /* The exe's shape tests, in the obstacle's axes (oracle-checked, tools/exe/oracle.py):
  * FUN_00469500: centre p0 + d t (t in 0..1) touching the fixed point c at distance R (the smaller root, >= 0: a start

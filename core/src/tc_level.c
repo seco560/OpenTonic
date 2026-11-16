@@ -150,6 +150,7 @@ void tc_level_free(tc_level *level) {
     for (i = 0; level->pcol.persos && i < level->pcol.count; i++) {
         tc_free(level->pcol.persos[i].objects);
         tc_free(level->pcol.persos[i].pose);
+        tc_free(level->pcol.persos[i].zone_masks);
     }
     tc_free(level->pcol.persos);
     tc_free(level->pcol.prims);
@@ -744,6 +745,8 @@ static void read_pcol(tc_pcol *c, reader *r) {
                 }
             }
             o->count = c->prim_count - o->first;
+            o->hand = false;
+            for (j = 0; (o->object & TC_PCOL_ZONE) && j < o->count; j++) o->hand |= (c->prims[o->first + j].collide_id & 8) != 0;
             if (o->count) {
                 o->centre = tc_v3_scale(tc_v3_add(lo, hi), 0.5f);
                 o->radius = 0.5f * tc_v3_length(tc_v3_sub(hi, lo));
@@ -754,6 +757,27 @@ static void read_pcol(tc_pcol *c, reader *r) {
             (void)rd_u16(r);
             rd_mat34(r, &p->pose[k].m);
         }
+    }
+}
+
+/* .ttlv PZDR (tools/ttre/ttlv.py perso_zones): per perso id, its ZDR zones' mask by state. */
+static void read_pzdr(tc_pcol *c, reader *r) {
+    uint16_t n = rd_u16(r), i, k, j;
+    (void)rd_u16(r);
+    for (i = 0; i < n && !r->error; i++) {
+        uint16_t id = rd_u16(r), states = rd_u16(r);
+        uint32_t initial = rd_u32(r), *masks;
+        tc_pcol_perso *p = NULL;
+        if (!have(r, (size_t)states * 4)) break;
+        for (k = 0; k < c->count && !p; k++)
+            if (c->persos[k].id == id) p = &c->persos[k];
+        if (!p || p->zone_masks || !states) { r->offset += (size_t)states * 4; continue; }
+        masks = (uint32_t *)tc_calloc(states, sizeof(uint32_t));
+        if (!masks) { r->offset += (size_t)states * 4; continue; }
+        for (j = 0; j < states; j++) masks[j] = rd_u32(r);
+        p->zone_masks = masks;
+        p->zone_state_count = states;
+        p->zone_initial = initial;
     }
 }
 
@@ -937,6 +961,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 
     if (chunk_need(&cs, "PCOL", r)) { /* optional: older files have the persos' collision in COLL */
         read_pcol(&level->pcol, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "PZDR", r)) { /* optional: the persos' ZDR zones by state (absent: always active) */
+        read_pzdr(&level->pcol, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 
