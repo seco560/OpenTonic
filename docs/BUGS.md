@@ -109,6 +109,17 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 14. **Hint scenes:** only bar is reliable. spynorth sometimes. pharmmap, pyr_fou and mammyon can be started with effort
     but skip to the level without the line. SpyCarota can leave Ed stuck: Agent XYZ is up on the ledge, out of reach
     (once it started from below).
+    * **Traced and fixed 2026-11-16 (Claude), awaiting a playtest; needs the re-export your next build does.** One cause
+      for all five: on Linux the exporter never found their dialogues. tools/ttre/speech.py looked for
+      `<level>/<level>.bls`, and the install spells them `SpyCarota/Spycarota.bls`, `pharmmap/Pharmmap.bls`,
+      `mammyon/Mammyon.bls`, `pyr_fou/Pyr_fou.bls`, `spynorth/Spynorth.bls`; only `bar/bar.bls` matched (macOS doesn't
+      mind case). Without their SPCH: no prompt (the panel needs a dialogue), no line, no arrival (Ed began at his own
+      data place: mammyon 66 off the mammoth, pharmmap 15.5 off the pharmacist, SpyCarota under XYZ's ledge), and the
+      speaker's scripts still ran on a blind Action within reach, so "sometimes" it went to the next level without the
+      line. In SpyCarota XYZ then waits in his empty B9 for the scene's Ed, and the port's way out of that waits for the
+      line that never came: the softlock. Now found in any case (sna.find_file). Checked headless on a fresh export:
+      viewcheck `hint_scenes_scenario` walks Ed from his arrival to each speaker (mammyon 5.5 s, the rest under 1 s), the
+      prompt shows, Action, the line, Jump, and the right next level, in all five.
 15. **The follow camera** (answered later the same day): fine, faithful down to the original's quirks (stuck behind walls
     in caves, centring behind Ed oddly). **It clipped into characters and showed their insides** (Suzy, the tomatoes,
     Grogh's henchmen). **Changed 2026-11-11 (Claude), not seen in the app:** the characters Ed does not collide with can

@@ -87,7 +87,7 @@ def read_lsy(path):
 def strings(gamedata=GAMEDATA):
     """{name: text bytes} of game.dsb's NewString records: u16 length-prefixed, NUL-terminated strings."""
     if not hasattr(strings, 'cache'):
-        d = bytes(sna.decrypt(open(f'{gamedata}/game.dsb', 'rb').read()))
+        d = bytes(sna.decrypt(open(sna.find_file(f'{gamedata}/game.dsb'), 'rb').read()))
         out, i = {}, 0
         while (i := d.find(b'NewString\0', i)) >= 0:
             i += 10
@@ -192,9 +192,10 @@ class Table:
     def __init__(self, lv, levels_dir=LEVELS):
         self.lv = lv
         base = f'{levels_dir}/{lv.name}/{lv.name}'
-        self.dialogues = read_bls(base + '.bls') if os.path.exists(base + '.bls') else []
+        bls, lsy = sna.find_file(base + '.bls'), sna.find_file(base + '.lsy')  # any case: SpyCarota/Spycarota.bls
+        self.dialogues = read_bls(bls) if os.path.exists(bls) else []
         index = {e['name']: k + 1 for k, e in enumerate(self.dialogues)}
-        self.refs = {a: index.get(n, 0) for a, n in read_lsy(base + '.lsy').items()} if self.dialogues else {}
+        self.refs = {a: index.get(n, 0) for a, n in read_lsy(lsy).items()} if self.dialogues else {}
 
     @property
     def arrival(self):

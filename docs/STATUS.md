@@ -41,7 +41,7 @@ Edition's sectors).
 | Shooting | aiming in first person does not tilt the blowpipe (changed 2026-11-14: from the blowpipe, with the look's pitch; in flight along the flight path; not seen). "No shot leaves while one is in the air" (what the exe does there is not read) |
 | Stick attacks | they hit, with no sound and no other feedback |
 | Sounds of the cast | many unheard. A laugh loops in cavedoc (near the popcorn puzzle). 3D placement (the original's falloff, pan, sector muting) added 2026-11-14, not heard yet |
-| Hint scenes and speech | only bar is reliable. spynorth sometimes. pharmmap, pyr_fou and mammyon skip to the level without the line. SpyCarota can leave Ed stuck |
+| Hint scenes and speech | only bar was reliable on Linux: the other five's dialogues were never exported (letter case; fixed 2026-11-16, docs/BUGS.md item 14), awaiting a playtest after the re-export |
 | The ski camera | "still odd" |
 
 ## Built, and not known if seen

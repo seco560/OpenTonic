@@ -1496,6 +1496,88 @@ static void scene_scenario(const char *dir) {
     tc_level_free(&level);
 }
 
+/* The other five hint scenes, the whole way a player takes them: their lines and arrival in the export (on Linux the
+ * exporter once missed Spycarota.bls for SpyCarota/SpyCarota.bls: no prompt, no line, and SpyCarota stuck), Ed walked
+ * from his arrival to within reach, the prompt, Action, the line, Jump, then the level the speaker hands over to. */
+static void hint_scenes_scenario(const char *dir) {
+    static const char *const scenes[][2] = {{"mammyon", "lecanyon"}, {"pharmmap", "marmite"}, {"pyr_fou", "pyramide"},
+                                            {"SpyCarota", "carota"}, {"spynorth", "north"}};
+    uint32_t n;
+    for (n = 0; n < sizeof(scenes) / sizeof(scenes[0]); n++) {
+        const char *name = scenes[n][0];
+        char path[1024], what[200];
+        size_t size, ai_size = 0;
+        uint8_t *data, *ai;
+        tc_level level;
+        tc_viewer v;
+        tc_viewer_desc desc;
+        const tc_cast *c;
+        const tc_cast_actor *speaker = NULL;
+        const tc_viewer_carry *pending = NULL;
+        tc_view_speech_panel panel;
+        float ground = 0;
+        uint32_t i;
+        int prompt, said = 0;
+        snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
+        if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); continue; }
+        free(data);
+        snprintf(what, sizeof(what), "%s: its lines and arrival are in the export (%u lines)", name, level.speech.dialogue_count);
+        check(level.speech.dialogue_count > 0 && level.speech.has_arrival, what);
+        if (!level.speech.dialogue_count) { tc_level_free(&level); continue; }
+        snprintf(path, sizeof(path), "%s/%s.ttai", dir, name);
+        ai = read_file(path, &ai_size);
+        memset(&desc, 0, sizeof(desc));
+        desc.level = &level;
+        desc.level_name = name;
+        desc.ai_data = ai;
+        desc.ai_size = ai_size;
+        desc.seed = 7;
+        if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, name); free(ai); tc_level_free(&level); continue; }
+        free(ai);
+        if (!v.playing && tc_viewer_can_play(&v)) tc_viewer_toggle_play(&v);
+        c = tc_viewer_cast(&v);
+        for (i = 0; c && i < c->count; i++)
+            if (c->actors[i].entry->flags & TC_CAST_TALK) speaker = &c->actors[i];
+        snprintf(what, sizeof(what), "%s: the speaker is in the cast", name);
+        check(speaker != NULL, what);
+        if (!speaker) { tc_viewer_free(&v); tc_level_free(&level); continue; }
+        run(&v, 2, 0);
+        for (i = 0; i < 60 * 20; i++) { /* the stick toward him, as the camera has it */
+            tc_vec3 e = ed(&v), f = tc_camera_forward(&v.camera), r = tc_camera_right(&v.camera), s = speaker->ai->position;
+            float dx = s.x - e.x, dy = s.y - e.y, fl = sqrtf(f.x * f.x + f.y * f.y), rl = sqrtf(r.x * r.x + r.y * r.y);
+            ground = sqrtf(dx * dx + dy * dy);
+            if (ground < TC_CAST_TALK_REACH - 1.5f || fl <= 0 || rl <= 0) break;
+            dx /= ground, dy /= ground;
+            tc_viewer_set_move_stick(&v, (dx * r.x + dy * r.y) / rl, (dx * f.x + dy * f.y) / fl);
+            frame(&v, 1.0f / 60);
+        }
+        tc_viewer_set_move_stick(&v, 0, 0);
+        run(&v, 1, 0);
+        prompt = tc_viewer_talk_prompt(&v) && tc_viewer_speech_panel(&v, 4.0f / 3, &panel);
+        snprintf(what, sizeof(what), "%s: Ed walks within reach (%.1f along the ground, %.1f s) and the prompt shows", name,
+                 (double)ground, (double)i / 60);
+        check(prompt, what);
+        run(&v, 0.1f, BIT(TC_VA_ACTION));
+        snprintf(what, sizeof(what), "%s: Action starts the scene", name);
+        check(speaker->talking, what);
+        for (i = 0; i < 60 * 40 && !pending; i++) {
+            if (!said && tc_viewer_speech(&v)) { /* mammyon's comes some 18 s on: the mammoth walks in first */
+                said = 1;
+                run(&v, 2, 0);
+                run(&v, 0.1f, BIT(TC_VA_JUMP));
+            }
+            frame(&v, 1.0f / 60);
+            pending = tc_viewer_pending_level(&v);
+        }
+        snprintf(what, sizeof(what), "%s: the speaker says his line", name);
+        check(said, what);
+        snprintf(what, sizeof(what), "%s: then hands over to %s (%s)", name, scenes[n][1], pending ? pending->level : "none");
+        check(pending && strcmp(pending->level, scenes[n][1]) == 0, what);
+        tc_viewer_free(&v);
+        tc_level_free(&level);
+    }
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv", *name = argc > 2 ? argv[2] : "bar";
     char path[1024], status[512];
@@ -1671,6 +1753,7 @@ done:
     shoot_scenario(dir);
     flight_scenario(dir);
     scene_scenario(dir);
+    hint_scenes_scenario(dir);
     light_scenario(dir, "Land");
     light_scenario(dir, "sud0");
     cull_scenario(dir);
