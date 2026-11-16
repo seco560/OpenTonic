@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include "util.h"
 
+static char skin_id[16]; /* view_set_skin: Ed's skin for the levels loaded from now on */
+
 /* Must match the Uniforms block in shaders/level_common.glsl (std140). */
 typedef struct gpu_uniforms {
     float view_projection[16];
@@ -158,6 +160,15 @@ bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *ca
     v->texture_count = r->texture_count;
     v->textures = SDL_calloc(SDL_max(1u, r->texture_count), sizeof *v->textures);
     for (uint32_t i = 0; v->textures && i < r->texture_count; i++) {
+        char skinned[512];
+        if (tc_skin_texture_path(r->textures[i], skin_id, skinned, sizeof skinned)) { /* the skin's, when it has it */
+            char *path = path_join(v->level.folder, skinned);
+            SDL_PathInfo info;
+            if (path && SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE)
+                v->textures[i] = gpu_upload_png(g, &up, path, true, NULL, NULL);
+            SDL_free(path);
+            if (v->textures[i]) continue;
+        }
         char *path = path_join(v->level.folder, r->textures[i]);
         v->textures[i] = gpu_upload_png(g, &up, path, true, NULL, NULL);
         if (!v->textures[i] && ++v->missing_textures <= 5) SDL_Log("texture %s: %s", path, SDL_GetError());
@@ -263,6 +274,8 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     SDL_PushGPUVertexUniformData(c->cmd, 1, &params, sizeof params);
     SDL_DrawGPUIndexedPrimitives(c->pass, d->index_count, 1, m->first_index + d->first_index, m->vertex_offset, 0);
 }
+
+void view_set_skin(const char *skin) { SDL_strlcpy(skin_id, skin ? skin : "", sizeof skin_id); }
 
 static bool occlusion_on = true;
 static uint32_t last_draws, last_triangles;

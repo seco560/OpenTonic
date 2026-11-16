@@ -2,8 +2,8 @@
 #include <tonic/tonic.h>
 #include "util.h"
 
-static const char *const section_titles[PICKER_SECTIONS] = {"Retail Edition", "Special Edition", "Cutscenes",
-                                                             "Imported"};
+/* The last: the imported levels (out/Imported/<name>), titled "Extras" (the user, 2026-11-16). */
+static const char *const section_titles[PICKER_SECTIONS] = {"Retail Edition", "Special Edition", "Cutscenes", "Extras"};
 #define SECTION_SE 1
 #define SECTION_CUTSCENES 2
 #define SECTION_IMPORTED 3

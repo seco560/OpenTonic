@@ -35,6 +35,9 @@ typedef struct view {
 bool view_load(view *v, gpu *g, const char *ttlv_path, const tc_viewer_carry *carry, tc_recorder *recorder, uint32_t seed,
                char *err, size_t err_size);
 void view_free(view *v);
+/* Ed's skin for the levels loaded from now on (tc_options.skin; "" or NULL: his own): a level's texture that the skin
+ * has (tc_skin_texture_path) is loaded from there instead. */
+void view_set_skin(const char *skin);
 
 /* Clears and draws the level into the frame (its own 3D pass). */
 void view_draw_frame(view *v, gpu_frame *f);

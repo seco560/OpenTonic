@@ -314,7 +314,7 @@ import TonicCore
         let loader = MTKTextureLoader(device: device)
         missingTextures = 0
         let mips = queue.makeCommandBuffer(), blit = mips?.makeBlitCommandEncoder()
-        textures = level.textures.map { url in
+        textures = level.textures(skin: ViewSettings.skin).map { url in  // Ed's skin (CUSTOMIZATION)
             if let t = loadBled(url, blit: blit) { return t }
             missingTextures += 1
             return nil

@@ -393,7 +393,7 @@ final class SplashView: NSView {
 /// The menu's options (tc_options) across launches, in UserDefaults: "gamma", "animationSpeed", "fog", "lighting" here;
 /// the field of view ("fieldOfView", as , . step it); the volumes ("musicVolume", Music; "soundVolume", Sfx),
 /// Dolby Surround ("dolbySurround", Sfx), the HUD's auto-hide ("hudAutoHide") and the look ("lookSensitivity",
-/// "invertY") as their keys already kept them. Every level's viewer gets them (apply); the keys that change them in a
+/// "invertY") as their keys already kept them; Ed's skin ("skin"). Every level's viewer gets them (apply); the keys that change them in a
 /// level keep the new value (save).
 @MainActor enum ViewSettings {
     static var options: tc_options {
@@ -412,6 +412,7 @@ final class SplashView: NSView {
             o.music_volume = Music.shared.volume
             o.sound_volume = Sfx.shared.volume
             o.fov = d.object(forKey: "fieldOfView") as? Float ?? 86
+            tc_options_set_skin(&o, skin)
             return o
         }
         set {
@@ -427,8 +428,13 @@ final class SplashView: NSView {
             if Music.shared.volume != newValue.music_volume { Music.shared.volume = newValue.music_volume }
             if Sfx.shared.volume != newValue.sound_volume { Sfx.shared.volume = newValue.sound_volume }
             d.set(newValue.fov, forKey: "fieldOfView")
+            var o = newValue
+            d.set(String(cString: tc_options_skin(&o)), forKey: "skin")
         }
     }
+
+    /// Ed's skin (CUSTOMIZATION; tc_options.skin): its folder under Skins, "" his own. The levels loaded from now on.
+    static var skin: String { UserDefaults.standard.string(forKey: "skin") ?? "" }
 
     static func apply(_ v: UnsafeMutablePointer<tc_viewer>) {
         let o = options

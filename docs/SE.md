@@ -598,6 +598,40 @@ crease under a 79-degree face) was thrown up to 4 units in a frame (the flight's
 the cliffs got an upright rock foot; and at a 0.55 rise he stood at the stair's second riser, though Ed's step-up is
 given as 1 (docs/NOTES.md "Step-up"; mechcheck 0.9): not looked into, the stair uses 0.4. **Not seen in the app.**
 
+**Second pass (2026-11-16, the user: a concept layout, three concept paintings, the kiosk sketch, a screenshot of the
+cut level; "harsh and dodgy" light; "go a bit crazy"):**
+- **The dusk.** The light is baked per vertex (`crazytown.Lighting`): a violet sky's light from above and a dark
+  violet from below, a dim warm sun low in the south-west wrapped round the faces (no hard step from a lit wall to the
+  next), the foot of every wall and tree darker, warm pools round lanterns (by each house's door and the tower's, lamp
+  posts round the square and along the road east), the covered alley and the tavern out of the sun and nearly out of
+  the sky. The sky dome is tinted from a dull glow at the horizon to a dark violet overhead (ordinary baked light, not
+  SKY_ALPHA: an import draws in the port's lighting, which leaves a SKY_ALPHA sky untinted). A violet haze from 22 to
+  210 (LEVL's fog: an import's own fog was already drawn in the port's lighting); custom skies
+  (TCX_FLAG_ROUND_CAMERA) are left out of the fog in both frontends' shaders, so the dome keeps its gradient.
+- **The old quarter** (`tools/ttre/crazyquarter.py`, its notes have the layout): east of the town, where the road once
+  closed for works now leads (the works set aside), the cliffs giving way round it (`Land` keeps the land under it just
+  below its lowest floor; the cliffs' rise and upright foot stop short of it). An arch in the south wall of a covered
+  alley (a stone vault, houses standing on it, lit windows); its west end a lamp-lit house front, a bench, barrels; the
+  green bottle sign hanging over it; ROCK posters and the skull on its north wall; steps up eastward; at its east end,
+  steps north under a big arch (a face on its keystone) into a square of eleven crooked houses (lit windows, doors,
+  three curly-iron balconies, the red awning rolled into a spiral, the pink CAFE sign) with a fountain (scrolling water,
+  an upturned funnel pouring), the teal mushroom kiosk (lit window, bills, a red kite, an A-frame board NEWS PRESS), a
+  striped stall, lamp posts, potted bushes. Ours: the dead end's door opens into the tavern of the "Interior?" picture
+  (a round barrel counter with an orange shield, stools, barrels, shelves of bottles, hanging lamps); an upside-down
+  house standing on its roof's point (its door upside down, its chimney pointing at the ground, a bush on its floor up
+  in the air); a stair up a house's front to a door in mid-air; a house with a face that looks at you. Textures the
+  SE's set lacks are painted by code (`tools/ttre/crazypaint.py`: flagstones, the spiral paving, posters with a
+  hand-drawn capital font, the bottle sign, kiosk iron, the swirl dome, stripes, the spiral awning, railings, lit
+  windows, the round sign, the shield, planks): no concept art is read or shipped.
+- **The CD's square** (the screenshot): the giant CD now stands on a round square paved in grey with a brown spiral.
+**Checks (headless, 2026-11-16):** a scratch driver (the core, Ed steered with the move stick) walks from the town's
+road through the arch, along the alley, up both flights and under the big arch into the square (11.5 s), down again to
+the alley's west end, into the tavern up to its counter, up the stair to the door in mid-air (z 9.0), and is stopped by
+the fountain, the stall, the upside-down house and the cliffs either side of the quarter. A first run found a 0.6 ledge
+at the arch's doorstep (the land grid dipping under it: fixed by keeping the land just under the floors, not dug
+deep, and a doorstep of flagstones). The looks were judged from a scratch software render of the .ttlv (the port's
+lighting, the haze), not in the app. **Not seen in the app.**
+
 ## Ultimate Goal
 
 The long-term goal these steps lead to (user, 2026-11-05): Open Tonic as one merged Definitive Edition, Ed moving

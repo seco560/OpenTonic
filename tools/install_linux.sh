@@ -87,8 +87,10 @@ if [ -d "$OUT/Textures" ]; then $SYNC "$OUT/Textures/" "$D/Textures/"; else rm -
 [ -e "$OUT/Vignette/TT_pak.png" ] && cp "$OUT/Vignette/TT_pak.png" "$D/Vignette/"
 # The original demo tapes (tools/ttre/demos.py): Replays' demo button.
 if [ -d "$OUT/demos" ]; then $SYNC "$OUT/demos/" "$D/demos/"; else rm -rf "$D/demos"; fi
-# Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Imported".
+# Imported models (tools/ttre/import_gltf.py): their textures, and the folder that files them under "Extras".
 if [ -d "$OUT/Imported" ]; then $SYNC "$OUT/Imported/" "$D/Imported/"; else rm -rf "$D/Imported"; fi
+# Ed's skins (tools/ttre/skins.py): beside Textures, as a skinned texture's path has them (../Skins/<skin>/...).
+if [ -d "$OUT/Skins" ]; then $SYNC "$OUT/Skins/" "$D/Skins/"; else rm -rf "$D/Skins"; fi
 # The custom layer's cars (tools/ttre/vehicle.py): their textures (the .ttlv files name them as ../Vehicles/<car>/...).
 if [ -d "$OUT/Vehicles" ]; then $SYNC --exclude '*.glb' --exclude '*.stamp' "$OUT/Vehicles/" "$D/Vehicles/"; else rm -rf "$D/Vehicles"; fi
 # The Special Edition (tools/ttre/se.py): its levels, textures and loading screens, as files/out/se lays them out.

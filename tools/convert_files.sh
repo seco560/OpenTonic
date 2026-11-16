@@ -252,7 +252,12 @@ if [ "$RETAIL" = 1 ]; then
   if outdated hud "$OUT/ttlv/hud.tthd" hud; then
     if python3 -m tools.ttre.hud "$OUT"; then record hud; else echo "HUD: failed (skipped)" >&2; fi
   else echo "== HUD: current (skip)"; fi
-  # ---- 5e. the main menu: its fonts, the game's menu texts, the space backgrounds (docs/ENGINE.md "The menus") ----
+  # ---- 5f. Ed's skins (port, the main menu's CUSTOMIZATION; tools/ttre/skins.py): his textures recoloured by code ----
+  if outdated skins "$OUT/Skins" skins; then
+    if python3 -m tools.ttre.skins "$OUT"; then record skins; else echo "skins: failed (skipped)" >&2; fi
+  else echo "== skins: current (skip)"; fi
+  # ---- 5e. the main menu: its fonts, the game's menu texts, the space backgrounds, Ed in each skin turning (docs/ENGINE.md
+  # "The menus"; the previews are drawn from bar's Ed and the converted textures) ----
   if outdated menu "$OUT/ttlv/menu.ttmn" menu; then
     if python3 -m tools.ttre.menu "$OUT"; then record menu; else echo "menu: failed (skipped)" >&2; fi
   else echo "== menu: current (skip)"; fi

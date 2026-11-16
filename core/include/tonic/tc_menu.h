@@ -7,7 +7,8 @@
  * (NEW GAME, LOAD GAME, ENTER THE GAME NAME, CHOOSE YOUR GAME, the erase question, YES, NO ...).
  * The exe's main menu has START GAME (its own menu: NEW GAME, LOAD GAME), OPTIONS, TONIC ON-LINE, SHOW CREDITS, QUIT.
  * Port (the user, 2026-11-15): START GAME (NEW GAME: a name, then the intro; LOAD GAME; DELETE GAME, ours), OPTIONS (the
- * viewer's display settings), TONIC VIEWER (the levels grid), REPLAYS (the recordings), EXIT GAME; no credits yet. Ours too: Ed's head (the '§'
+ * viewer's display settings), EXTRAS (2026-11-16: CUSTOMIZATION, Ed's skin; TONIC VIEWER, the levels grid; REPLAYS,
+ * the recordings), EXIT GAME; no credits yet. Ours too: Ed's head (the '§'
  * glyph of FontPC, which the exe uses as MNU_CURSOR, the name field's cursor) beside the selected choice, whose letters
  * are a little larger (the exe's text effects at fix.gpt +0x220 are only partly read). The two EdMenu persos the exe
  * animates in the bottom corners are not drawn yet.
@@ -40,13 +41,25 @@ typedef struct tc_options {
     float music_volume;       /* 0 - 1, 1 = as recorded (the frontends' music player) */
     float sound_volume;       /* 0 - 1: the sound effects and the speech (tc_mixer.gain) */
     float fov;                /* the field of view as , . step it: degrees, horizontal at 4:3, 50 - 120 (86 the game's) */
+    char skin[16];            /* Ed's skin (CUSTOMIZATION; tools/ttre/skins.py): its folder under Skins, "" = his own */
 } tc_options;
 
 void tc_options_defaults(tc_options *o);
 /* "key=value" lines (gamma, animation_speed, lighting, fog, dolby, hud_auto_hide, invert_y, look_sensitivity,
- * music_volume, sound_volume, fov): the frontends' file. Unknown keys and bad values are passed by; parse starts from the defaults. */
+ * music_volume, sound_volume, fov, skin): the frontends' file. Unknown keys and bad values are passed by; parse starts
+ * from the defaults. */
 size_t tc_options_write(const tc_options *o, char *out, size_t size);
 void tc_options_parse(tc_options *o, const char *text, size_t size);
+/* The skin's folder name (tc_options.skin; for frontends whose language imports fixed arrays badly), and setting it
+ * (letters, digits, '_' and '-' only, else ""). */
+const char *tc_options_skin(const tc_options *o);
+void tc_options_set_skin(tc_options *o, const char *skin);
+/* Ed's skins (port): a skin is a folder of textures beside Textures, laid out as Textures is (tools/ttre/skins.py:
+ * Skins/<skin>/ed2/hed_front.png ...). A level's texture path ".../Textures/<rest>" (relative to its folder, as the
+ * .ttlv has it) becomes ".../Skins/<skin>/<rest>" in out: the frontend loads that file instead when there is one (a
+ * skin carries only the textures it changes). Returns its length; 0 (out "") with no skin, a path without a "Textures/"
+ * folder, or no room. */
+size_t tc_skin_texture_path(const char *path, const char *skin, char *out, size_t size);
 
 /* ---- The menu's data (menu.ttmn). */
 typedef struct tc_menu_image { char name[48]; uint16_t width, height; uint8_t *rgba; } tc_menu_image;
@@ -57,6 +70,10 @@ typedef struct tc_menu_bg {
     float w[16];
 } tc_menu_bg;
 typedef struct tc_menu_named_text { char name[40]; uint8_t font; char *text; } tc_menu_named_text;
+/* A skin CUSTOMIZATION offers (menu.ttmn's SKIN, from tools/ttre/skins.py): its folder ("" Ed's own), its name, and
+ * Ed turning in it: `turns` pictures in the atlas (uv u0, v0, u1, v1), anticlockwise from his front. */
+#define TC_MENU_SKIN_TURNS 16
+typedef struct tc_menu_skin { char id[16]; char name[24]; float uv[TC_MENU_SKIN_TURNS][4]; } tc_menu_skin;
 
 typedef struct tc_menu_data {
     uint16_t atlas_width, atlas_height;
@@ -69,6 +86,10 @@ typedef struct tc_menu_data {
     tc_menu_image *images;
     tc_menu_bg *bgs;
     uint8_t effects[4][36];   /* fix.gpt +0x220 as read */
+    uint16_t skin_count;      /* 0: a menu.ttmn made before the skins (CUSTOMIZATION offers Ed's own only) */
+    uint8_t skin_turns;
+    float skin_aspect;        /* a skin picture's width / height */
+    tc_menu_skin *skins;
 } tc_menu_data;
 
 /* ---- What a frontend draws, back to front: the layers (a picture over the whole viewport, uv per corner: corners 0
@@ -89,6 +110,8 @@ typedef enum tc_menu_screen {
     TC_MS_MAIN, TC_MS_START, TC_MS_NEW_GAME, TC_MS_NEW_ERASE, TC_MS_LOAD, TC_MS_DELETE, TC_MS_DELETE_ERASE,
     TC_MS_OPTIONS,
     TC_MS_GAME,               /* the game menu over a level (Esc, Start): the exe's "InGame" (GAME MENU) */
+    TC_MS_CUSTOMIZE,          /* port: CUSTOMIZATION, Ed's skin (the user, 2026-11-16) */
+    TC_MS_EXTRAS,             /* port: EXTRAS (CUSTOMIZATION, TONIC VIEWER, REPLAYS; the user, 2026-11-16) */
     TC_MS_COUNT
 } tc_menu_screen;
 
@@ -108,7 +131,8 @@ typedef enum tc_menu_command {
     TC_MC_TONIC_VIEWER,       /* the levels grid */
     TC_MC_REPLAYS,            /* the recordings and the original demos (the Replays screen) */
     TC_MC_EXIT,
-    TC_MC_OPTIONS,            /* tc_menu.options changed: keep them, give them to the level on show */
+    TC_MC_OPTIONS,            /* tc_menu.options changed: keep them, give them to the level on show (the skin: to the
+                               * next level loaded) */
     TC_MC_RESUME,             /* the game menu: back to the game (RESUME GAME, Esc) */
     TC_MC_PHOTO_MODE,         /* the game menu: the game holds, the camera free round Ed (tc_viewer_toggle_pause) */
     TC_MC_MAIN_MENU           /* the game menu: save and leave the level for the main menu */

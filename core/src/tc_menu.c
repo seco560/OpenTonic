@@ -54,10 +54,10 @@ static void sane(tc_options *o) {
 size_t tc_options_write(const tc_options *o, char *out, size_t size) {
     int n = snprintf(out, size,
                      "gamma=%.4f\nanimation_speed=%.4f\nlighting=%u\nfog=%d\ndolby=%d\nhud_auto_hide=%d\ninvert_y=%d\n"
-                     "look_sensitivity=%.4f\nmusic_volume=%.2f\nsound_volume=%.2f\nfov=%.0f\n",
+                     "look_sensitivity=%.4f\nmusic_volume=%.2f\nsound_volume=%.2f\nfov=%.0f\nskin=%s\n",
                      (double)o->gamma, (double)o->animation_speed, (unsigned)o->lighting, o->fog, o->dolby,
                      o->hud_auto_hide, o->invert_y, (double)o->look_sensitivity, (double)o->music_volume,
-                     (double)o->sound_volume, (double)o->fov);
+                     (double)o->sound_volume, (double)o->fov, o->skin);
     return n < 0 ? 0 : (size_t)n;
 }
 
@@ -74,6 +74,10 @@ void tc_options_parse(tc_options *o, const char *text, size_t size) {
         line[n] = 0;
         if (!(eq = strchr(line, '='))) continue;
         *eq = 0;
+        if (!strcmp(line, "skin")) { /* a name, not a number */
+            tc_options_set_skin(o, eq + 1);
+            continue;
+        }
         x = strtod(eq + 1, &end);
         if (end == eq + 1) continue;
         if (!strcmp(line, "gamma")) o->gamma = (float)x;
@@ -91,6 +95,37 @@ void tc_options_parse(tc_options *o, const char *text, size_t size) {
     sane(o);
 }
 
+const char *tc_options_skin(const tc_options *o) { return o->skin; }
+
+void tc_options_set_skin(tc_options *o, const char *skin) {
+    size_t k, n = skin ? strlen(skin) : 0;
+    memset(o->skin, 0, sizeof(o->skin));
+    while (n && (skin[n - 1] == '\r' || skin[n - 1] == ' ')) n--; /* a file edited elsewhere */
+    if (n >= sizeof(o->skin)) return;
+    for (k = 0; k < n; k++) {
+        char c = skin[k];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return;
+    }
+    memcpy(o->skin, skin, n);
+}
+
+size_t tc_skin_texture_path(const char *path, const char *skin, char *out, size_t size) {
+    static const char FOLDER[] = "Textures/", SKINS[] = "Skins/";
+    const char *at = NULL, *p;
+    size_t head, need;
+    if (!size) return 0;
+    out[0] = 0;
+    if (!path || !skin || !skin[0]) return 0;
+    for (p = path; (p = strstr(p, FOLDER)) != NULL; p++) /* the last: ".../Textures/<rest>" */
+        if (p == path || p[-1] == '/') at = p;
+    if (!at) return 0;
+    head = (size_t)(at - path);
+    need = head + strlen(SKINS) + strlen(skin) + 1 + strlen(at + strlen(FOLDER));
+    if (need + 1 > size) return 0;
+    snprintf(out, size, "%.*s%s%s/%s", (int)head, path, SKINS, skin, at + strlen(FOLDER));
+    return need;
+}
+
 /* ---- data ---- */
 
 static void data_free(tc_menu_data *d) {
@@ -102,6 +137,7 @@ static void data_free(tc_menu_data *d) {
     tc_free(d->texts);
     tc_free(d->images);
     tc_free(d->bgs);
+    tc_free(d->skins);
     tc_free(d->atlas);
     memset(d, 0, sizeof(*d));
 }
@@ -231,6 +267,26 @@ tc_result tc_menu_load(tc_menu *m, const void *bytes, size_t size) {
     }
     if ((res = chunk_end(&r)) != TC_OK) goto fail;
     if (d.font_count < 2) { res = TC_ERR_STALE; goto fail; }
+    /* Ed's skins (tools/ttre/skins.py through menu.py): optional, a file without them offers Ed's own only. SKIN: u16 n,
+     * u8 turns, f32 aspect, n x { u8 length, id; u8 length, name; turns x f32 uv[4] }. */
+    if (chunk_need(&c, "SKIN", &r)) {
+        uint16_t n = rd_u16(&r);
+        uint8_t turns = rd_u8(&r);
+        float aspect = rd_f32(&r);
+        tc_menu_skin *skins = turns && turns <= TC_MENU_SKIN_TURNS
+                                  ? (tc_menu_skin *)rd_array(&r, n, sizeof(*skins), 2 + 16 * turns) : NULL;
+        for (i = 0; skins && i < n; i++) {
+            rd_name(&r, skins[i].id, sizeof(skins[i].id));
+            rd_name(&r, skins[i].name, sizeof(skins[i].name));
+            for (k = 0; k < (uint32_t)turns * 4; k++) skins[i].uv[k / 4][k % 4] = rd_f32(&r);
+        }
+        if (skins && chunk_end(&r) == TC_OK && n && aspect > 0) {
+            d.skins = skins;
+            d.skin_count = n;
+            d.skin_turns = turns;
+            d.skin_aspect = aspect;
+        } else tc_free(skins); /* another layout: as if there were none */
+    }
     /* port: FontPC's space steps less than its capitals stand (the menus' two-line question overlapped): a line is at
      * least as tall as the font's tallest capital */
     for (i = 0; i < d.font_count; i++) {
@@ -262,7 +318,9 @@ static const char *text(const tc_menu *m, const char *name, const char *fallback
 
 /* ---- the screens' contents ---- */
 
-enum { MAIN_START, MAIN_OPTIONS, MAIN_VIEWER, MAIN_REPLAYS, MAIN_EXIT, MAIN_COUNT };
+enum { MAIN_START, MAIN_OPTIONS, MAIN_EXTRAS, MAIN_EXIT, MAIN_COUNT };
+enum { EXTRAS_CUSTOMIZE, EXTRAS_VIEWER, EXTRAS_REPLAYS, EXTRAS_COUNT }; /* port (the user, 2026-11-16) */
+enum { CUSTOM_SKIN, CUSTOM_BACK, CUSTOM_COUNT }; /* port: CUSTOMIZATION (the user, 2026-11-16) */
 enum { START_NEW, START_LOAD, START_DELETE, START_COUNT };
 enum { GAME_RESUME, GAME_OPTIONS, GAME_PHOTO, GAME_MAIN, GAME_COUNT }; /* quitting: the main menu's EXIT GAME (the user) */
 #define LIST_ROWS 6 /* LOAD / DELETE GAME: games shown at once */
@@ -282,6 +340,8 @@ int tc_menu_item_count(const tc_menu *m, tc_menu_screen s) {
     case TC_MS_LOAD: case TC_MS_DELETE: return m->game_count;
     case TC_MS_OPTIONS: return OPT_COUNT;
     case TC_MS_GAME: return GAME_COUNT;
+    case TC_MS_CUSTOMIZE: return CUSTOM_COUNT;
+    case TC_MS_EXTRAS: return EXTRAS_COUNT;
     default: return 0;
     }
 }
@@ -316,6 +376,27 @@ static void option_text(const tc_menu *m, int item, const char **name, char *val
     }
 }
 
+/* CUSTOMIZATION: the skin chosen, as an index into the menu's list (Ed's own, the first, when it is not there). */
+static int skin_index(const tc_menu *m) {
+    int k;
+    for (k = 0; k < m->data.skin_count; k++)
+        if (!strcmp(m->data.skins[k].id, m->options.skin)) return k;
+    return 0;
+}
+
+static const char *skin_name(const tc_menu *m, int k) {
+    return k < m->data.skin_count && m->data.skins[k].name[0] ? m->data.skins[k].name : "ED";
+}
+
+/* The next (dir > 0) or the previous skin, round the list: TC_MC_OPTIONS (the frontends keep it). */
+static void step_skin(tc_menu *m, int dir) {
+    int n = m->data.skin_count, k;
+    if (n < 2) return;
+    k = (skin_index(m) + (dir > 0 ? 1 : n - 1)) % n;
+    tc_options_set_skin(&m->options, m->data.skins[k].id);
+    m->command = TC_MC_OPTIONS;
+}
+
 const char *tc_menu_label(const tc_menu *m, tc_menu_screen s, int item, char *buf, size_t size) {
     const char *name = "";
     char value[32];
@@ -324,9 +405,14 @@ const char *tc_menu_label(const tc_menu *m, tc_menu_screen s, int item, char *bu
     if (item < 0 || item >= tc_menu_item_count(m, s)) return buf;
     switch (s) {
     case TC_MS_MAIN: {
-        static const char *fallback[] = {"START GAME", "OPTIONS", "TONIC VIEWER", "REPLAYS", "EXIT GAME"};
-        static const char *names[] = {"MNU_STARTGAME", "MNU_OPTIONS", NULL, NULL, NULL};
+        static const char *fallback[] = {"START GAME", "OPTIONS", "EXTRAS", "EXIT GAME"};
+        static const char *names[] = {"MNU_STARTGAME", "MNU_OPTIONS", NULL, NULL};
         snprintf(buf, size, "%s", names[item] ? text(m, names[item], fallback[item]) : fallback[item]);
+        break;
+    }
+    case TC_MS_EXTRAS: {
+        static const char *names[] = {"CUSTOMIZATION", "TONIC VIEWER", "REPLAYS"};
+        snprintf(buf, size, "%s", names[item]);
         break;
     }
     case TC_MS_START: {
@@ -349,6 +435,10 @@ const char *tc_menu_label(const tc_menu *m, tc_menu_screen s, int item, char *bu
     case TC_MS_OPTIONS:
         option_text(m, item, &name, value, sizeof(value));
         snprintf(buf, size, value[0] ? "%s %s" : "%s", name, value);
+        break;
+    case TC_MS_CUSTOMIZE:
+        if (item == CUSTOM_SKIN) snprintf(buf, size, "SKIN %s", skin_name(m, skin_index(m)));
+        else snprintf(buf, size, "BACK");
         break;
     default: break;
     }
@@ -535,11 +625,21 @@ void tc_menu_input_press(tc_menu *m, tc_menu_input in) {
             switch (*sel) {
             case MAIN_START: tc_menu_show(m, TC_MS_START); break;
             case MAIN_OPTIONS: tc_menu_show(m, TC_MS_OPTIONS); break;
-            case MAIN_VIEWER: m->command = TC_MC_TONIC_VIEWER; break;
-            case MAIN_REPLAYS: m->command = TC_MC_REPLAYS; break;
+            case MAIN_EXTRAS: tc_menu_show(m, TC_MS_EXTRAS); break;
             default: m->command = TC_MC_EXIT; break;
             }
         } else if (in == TC_MI_BACK) *sel = MAIN_EXIT;
+        break;
+    case TC_MS_EXTRAS:
+        if (vertical) *sel = (*sel + (in == TC_MI_DOWN ? 1 : n - 1)) % n;
+        else if (in == TC_MI_BACK) tc_menu_show(m, TC_MS_MAIN);
+        else if (in == TC_MI_CONFIRM) {
+            switch (*sel) {
+            case EXTRAS_CUSTOMIZE: tc_menu_show(m, TC_MS_CUSTOMIZE); break;
+            case EXTRAS_VIEWER: m->command = TC_MC_TONIC_VIEWER; break;
+            default: m->command = TC_MC_REPLAYS; break;
+            }
+        }
         break;
     case TC_MS_START:
         if (vertical) *sel = (*sel + (in == TC_MI_DOWN ? 1 : n - 1)) % n;
@@ -604,6 +704,12 @@ void tc_menu_input_press(tc_menu *m, tc_menu_input in) {
         else if (in == TC_MI_LEFT || in == TC_MI_RIGHT) step_option(m, *sel, in == TC_MI_RIGHT ? 1 : -1);
         else if (in == TC_MI_CONFIRM) step_option(m, *sel, 1);
         break;
+    case TC_MS_CUSTOMIZE:
+        if (vertical) *sel = (*sel + (in == TC_MI_DOWN ? 1 : n - 1)) % n;
+        else if (in == TC_MI_BACK || (in == TC_MI_CONFIRM && *sel == CUSTOM_BACK)) tc_menu_show(m, TC_MS_EXTRAS);
+        else if (in == TC_MI_LEFT || in == TC_MI_RIGHT) step_skin(m, in == TC_MI_RIGHT ? 1 : -1);
+        else if (in == TC_MI_CONFIRM) step_skin(m, 1);
+        break;
     case TC_MS_GAME:
         if (vertical) *sel = (*sel + (in == TC_MI_DOWN ? 1 : n - 1)) % n;
         else if (in == TC_MI_BACK) m->command = TC_MC_RESUME;
@@ -661,7 +767,8 @@ bool tc_menu_click(tc_menu *m, float x, float y) {
             m->drag_item = m->hits[h].item;
             set_option_fraction(m, m->hits[h].item, bar_fraction(m->hits[h].rect, x));
         } else if (part) step_option(m, m->hits[h].item, part < 0 ? -1 : 1);
-    } else tc_menu_input_press(m, TC_MI_CONFIRM);
+    } else if (m->screen == TC_MS_CUSTOMIZE && m->hits[h].part) step_skin(m, m->hits[h].part);
+    else tc_menu_input_press(m, TC_MI_CONFIRM);
     return true;
 }
 
@@ -952,6 +1059,46 @@ void tc_menu_build(tc_menu *m, float aspect) {
         put_text(&d, FONT_TITLE, "Open Tonic", 0, 2.75f, 1.3f, WHITE, false);
         for (k = 0; k < n; k++)
             put_choice(&d, tc_menu_label(m, TC_MS_MAIN, k, buf, sizeof(buf)), 0, 1.0f - 0.8f * (float)k, 1, k == sel, k);
+        break;
+    }
+    case TC_MS_EXTRAS: /* port: as START GAME's (its choices a step of 1 from 0.5) */
+        put_title(&d, "EXTRAS");
+        for (k = 0; k < n; k++)
+            put_choice(&d, tc_menu_label(m, TC_MS_EXTRAS, k, buf, sizeof(buf)), 0, 0.5f - 1.0f * (float)k, 1, k == sel, k);
+        break;
+    case TC_MS_CUSTOMIZE: { /* port: Ed turning in the skin chosen, its name between arrows under him, BACK */
+        const float scale = 0.85f, name_y = -1.75f, high = 3.6f, mid = 0.5f;
+        int skin = skin_index(m);
+        const char *name = skin_name(m, skin);
+        float s = sel == CUSTOM_SKIN ? scale * SELECTED_SCALE : scale, half, w;
+        put_text(&d, FONT_TITLE, "CUSTOMIZATION", 0, 3.0f, fit(m, FONT_TITLE, "CUSTOMIZATION", 1, 8.6f), WHITE, false);
+        if (skin < m->data.skin_count && m->data.skin_turns) { /* he turns (anticlockwise), each picture fading
+                                                                * into the next */
+            const tc_menu_skin *sk = &m->data.skins[skin];
+            int turns = m->data.skin_turns;
+            float a = m->time * 0.11f * (float)turns, f = a - floorf(a);
+            int k0 = (int)floorf(a) % turns, k1 = (k0 + 1) % turns;
+            float fade[4] = {1, 1, 1, 1};
+            w = high * m->data.skin_aspect;
+            put_quad(&d, -0.5f * w, mid - 0.5f * high, 0.5f * w, mid + 0.5f * high, sk->uv[k0], WHITE);
+            fade[3] = f;
+            put_quad(&d, -0.5f * w, mid - 0.5f * high, 0.5f * w, mid + 0.5f * high, sk->uv[k1], fade);
+            add_hit(&d, -0.5f * w, mid - 0.5f * high, 0.5f * w, mid + 0.5f * high, CUSTOM_SKIN, 1);
+        } else put_text(&d, FONT_CHOICE, "NO SKINS^RE-RUN THE CONVERSION", 0, mid, 0.55f, DIM, false);
+        s = fit(m, FONT_CHOICE, name, s, 5.0f);
+        half = 0.5f * text_width(m, FONT_CHOICE, name, s) + 0.55f;
+        put_text(&d, FONT_CHOICE, name, 0, name_y, s, sel == CUSTOM_SKIN ? WHITE : DIM, sel == CUSTOM_SKIN);
+        if (m->data.skin_count > 1) {
+            const float *c = sel == CUSTOM_SKIN ? WHITE : DIM;
+            put_arrow(&d, true, -half, name_y, s, c);
+            put_arrow(&d, false, half, name_y, s, c);
+            add_hit(&d, -half - 0.6f, name_y - 0.35f, 0, name_y + 0.35f, CUSTOM_SKIN, -1);
+            add_hit(&d, 0, name_y - 0.35f, half + 0.6f, name_y + 0.35f, CUSTOM_SKIN, 1);
+            snprintf(buf, sizeof(buf), "%d OF %d", skin + 1, m->data.skin_count);
+            put_text(&d, FONT_CHOICE, buf, 0, name_y - 0.58f, 0.42f, DIM, false);
+        }
+        if (sel == CUSTOM_SKIN) put_cursor(&d, -half - 0.35f, name_y, s);
+        put_choice(&d, "BACK", 0, -2.95f, 0.72f, sel == CUSTOM_BACK, CUSTOM_BACK);
         break;
     }
     case TC_MS_GAME: /* InGame: its title at 3, its choices a step of 1 from 0.5 (read); PHOTO MODE makes four */

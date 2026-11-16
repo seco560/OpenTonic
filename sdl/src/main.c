@@ -865,6 +865,7 @@ static void menu_command(app *a, tc_menu_command c) {
         a->hud_auto_hide = a->options.hud_auto_hide;
         a->invert_y = a->options.invert_y;
         a->look_sensitivity = a->options.look_sensitivity;
+        view_set_skin(a->options.skin); /* CUSTOMIZATION: the levels loaded from now on */
         options_store(&a->options);
         if (a->view) { /* the game menu's: the level on show at once */
             tc_viewer *v = &a->view->viewer;
@@ -1838,6 +1839,7 @@ int main(int argc, char **argv) {
         if (e && e[0] == '0') view_set_occlusion(false);
     }
     options_load(&a.options);  /* the menu's options (options.cfg); TONIC_LOOK / TONIC_INVERT / TONIC_DOLBY still win */
+    view_set_skin(a.options.skin);  /* Ed's skin (CUSTOMIZATION) */
     a.hud_auto_hide = a.options.hud_auto_hide;
     sfx_set_dolby(a.options.dolby);
     sfx_set_volume(a.options.sound_volume);

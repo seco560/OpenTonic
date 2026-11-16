@@ -244,7 +244,9 @@ fragment float4 level_fragment_textured(VertexOut in [[stage_in]], constant Unif
         rgb += w.rgb;
         if (f.y == 0u) a = max(a, w.a);
     }
-    return float4(fogged(pow(saturate(rgb), float3(1.0 / u.gamma)), in, u), a);
+    rgb = pow(saturate(rgb), float3(1.0 / u.gamma));
+    // a custom sky (TCX_FLAG_ROUND_CAMERA, drawn round the camera far off): beyond the level's fog, not in it
+    return float4((f.x & 256u) != 0u ? rgb : fogged(rgb, in, u), a);
 }
 
 fragment float4 level_fragment_flat(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],

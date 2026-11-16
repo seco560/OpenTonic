@@ -3,7 +3,7 @@
  * available (matched case-insensitively). Port of LevelPicker.swift, drawn with the 2D quad pipeline: click a tile, or
  * move with the arrow keys and press Enter. All sizes in pixels.
  * Four sections, four panes in a ring, one showing at a time: "Retail Edition", "Special Edition" (the 1998 disc's levels,
- * tools/ttre/se.py), "Cutscenes" (the retail game's cutscene-only levels, tc_level_is_cutscene) and "Imported" (models
+ * tools/ttre/se.py), "Cutscenes" (the retail game's cutscene-only levels, tc_level_is_cutscene) and "Extras" (models
  * brought in with tools/ttre/import_gltf.py: they have a folder out/Imported/<name>, and a question mark when they have no
  * picture). Each fills the window's height, scrolls inside itself and slides left and right with the arrows at its top. */
 #ifndef TV_PICKER_H

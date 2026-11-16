@@ -99,6 +99,8 @@ void main() {
         rgb += w.rgb;
         if (f.coverage == 0u) a = max(a, w.a);
     }
-    outColor = vec4(fogged(pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / u.gamma))), a);
+    rgb = pow(clamp(rgb, 0.0, 1.0), vec3(1.0 / u.gamma));
+    // a custom sky (TCX_FLAG_ROUND_CAMERA, drawn round the camera far off): beyond the level's fog, not in it
+    outColor = vec4((f.flags & 256u) != 0u ? rgb : fogged(rgb), a);
 #endif
 }

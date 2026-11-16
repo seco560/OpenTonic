@@ -44,6 +44,17 @@ final class Level {
     var textures: [URL] {
         (0..<Int(raw.texture_count)).map { folder.appendingPathComponent(String(cString: raw.textures[$0]!)) }
     }
+    /// The same, a skin's own copy instead where it has one (tc_skin_texture_path: Skins/<skin>/... beside Textures).
+    func textures(skin: String) -> [URL] {
+        let plain = textures
+        guard !skin.isEmpty else { return plain }
+        var buf = [CChar](repeating: 0, count: 512)
+        return (0..<Int(raw.texture_count)).map { i in
+            guard tc_skin_texture_path(raw.textures[i], skin, &buf, buf.count) > 0 else { return plain[i] }
+            let url = folder.appendingPathComponent(String(cString: buf))
+            return FileManager.default.fileExists(atPath: url.path) ? url : plain[i]
+        }
+    }
 }
 
 /// The core's viewer (tc_viewer.h): cameras, play mode (Ed's AI from the .ttai next to the .ttlv, or the simple

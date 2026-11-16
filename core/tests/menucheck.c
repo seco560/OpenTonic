@@ -1,7 +1,9 @@
 /* The main menu and saved games headless (tc_menu.h, tc_save.h; docs/ENGINE.md "The menus", "Saved games"):
  *   - menu.ttmn loads: the two fonts, the two pictures, their layers; game.dsb's texts are found by name;
  *   - the screens' choices and moves: START GAME -> NEW GAME (a name typed, an existing one asks to erase), LOAD GAME,
- *     DELETE GAME (asks first), OPTIONS (values step and say so), TONIC VIEWER, EXIT GAME;
+ *     DELETE GAME (asks first), OPTIONS (values step and say so), EXTRAS: CUSTOMIZATION (Ed's skins: they step, they
+ *     are kept in the options, a level's texture path goes to the skin's folder, the skin's files are there), TONIC
+ *     VIEWER, REPLAYS; EXIT GAME;
  *   - every screen's letters stay on the screen, at 4:3 and at 16:9; the backgrounds turn over time;
  *   - the options' file round trip, and tc_viewer_set_view;
  *   - a game saved on sud0 (progress, a checkpoint, Ed's life, the level-saved table) comes back as it was in a new
@@ -56,6 +58,60 @@ static bool on_screen(const tc_menu *m) {
     return true;
 }
 
+/* CUSTOMIZATION, from its screen: the skins menu.ttmn lists, stepping through them, the texture paths, the files. */
+static void skin_checks(tc_menu *m, const char *dir) {
+    char buf[256], path[600];
+    int k, n = m->data.skin_count;
+    FILE *f;
+    check(n >= 2 && !m->data.skins[0].id[0] && !strcmp(m->data.skins[0].name, "ED") && m->data.skin_turns >= 1 &&
+              m->data.skin_aspect > 0.3f && m->data.skin_aspect < 1.5f,
+          "menu.ttmn's skins: Ed's own first, then others, each turning");
+    for (k = 1; k < n; k++) printf("        skin %d: %s (%s)\n", k, m->data.skins[k].name, m->data.skins[k].id);
+    check(!strcmp(label(m, TC_MS_CUSTOMIZE, 0), "SKIN ED") && !strcmp(label(m, TC_MS_CUSTOMIZE, 1), "BACK"),
+          "CUSTOMIZATION: SKIN ED, BACK");
+    tc_menu_input_press(m, TC_MI_RIGHT);
+    check(tc_menu_take_command(m) == TC_MC_OPTIONS && n > 1 && !strcmp(m->options.skin, m->data.skins[1].id),
+          "right: the next skin, kept with the options (TC_MC_OPTIONS)");
+    tc_menu_input_press(m, TC_MI_LEFT);
+    tc_menu_input_press(m, TC_MI_LEFT);
+    check(n > 1 && !strcmp(m->options.skin, m->data.skins[n - 1].id), "left past Ed's own: round to the last");
+    tc_menu_input_press(m, TC_MI_RIGHT);
+    tc_menu_take_command(m);
+    check(!m->options.skin[0], "and back to Ed's own");
+    tc_menu_build(m, 16.0f / 9);
+    {
+        uint32_t h;
+        int arrow = -1;
+        for (h = 0; h < m->hit_count; h++)
+            if (m->hits[h].item == 0 && m->hits[h].part == -1) arrow = (int)h;
+        if (arrow >= 0)
+            tc_menu_click(m, 0.5f * (m->hits[arrow].rect[0] + m->hits[arrow].rect[2]),
+                          0.5f * (m->hits[arrow].rect[1] + m->hits[arrow].rect[3]));
+        check(arrow >= 0 && n > 1 && !strcmp(m->options.skin, m->data.skins[n - 1].id) &&
+                  tc_menu_take_command(m) == TC_MC_OPTIONS,
+              "a click on the left arrow: the previous skin");
+    }
+    check(tc_skin_texture_path("../Textures/ed2/hed_front.png", "visor", buf, sizeof buf) &&
+              !strcmp(buf, "../Skins/visor/ed2/hed_front.png"),
+          "a retail level's texture: ../Textures/ed2/x -> ../Skins/visor/ed2/x");
+    check(tc_skin_texture_path("../../Textures/accessoir/Noed_pap_jc_mic_anu.png", "visor", buf, sizeof buf) &&
+              !strcmp(buf, "../../Skins/visor/accessoir/Noed_pap_jc_mic_anu.png"),
+          "a Special Edition level's (two folders up)");
+    check(!tc_skin_texture_path("../Textures/ed2/hed_front.png", "", buf, sizeof buf) && !buf[0] &&
+              !tc_skin_texture_path("../Imported/Crazy/x.png", "visor", buf, sizeof buf) &&
+              !tc_skin_texture_path("../MyTextures/x.png", "visor", buf, sizeof buf) &&
+              !tc_skin_texture_path("../Textures/ed2/hed_front.png", "visor", buf, 12),
+          "none without a skin, outside Textures, or without room");
+    for (k = 1; k < n; k++) {
+        snprintf(path, sizeof path, "%s/../Skins/%s/ed2/hed_crps_part2.png", dir, m->data.skins[k].id);
+        f = fopen(path, "rb");
+        if (!f) break;
+        fclose(f);
+    }
+    check(n > 1 && k == n, "each skin's body texture is in Skins (tools/ttre/skins.py)");
+    tc_options_set_skin(&m->options, "");
+}
+
 static void menu_checks(const char *dir) {
     char path[512];
     size_t size;
@@ -80,9 +136,12 @@ static void menu_checks(const char *dir) {
               strstr(m.data.images[1].name, "TTSPACE_STARS"),
           "its backgrounds: TTSPACE_BKGRND, TTSPACE_STARS");
     check(!strcmp(label(&m, TC_MS_MAIN, 0), "START GAME") && !strcmp(label(&m, TC_MS_MAIN, 1), "OPTIONS") &&
-              !strcmp(label(&m, TC_MS_MAIN, 2), "TONIC VIEWER") && !strcmp(label(&m, TC_MS_MAIN, 3), "REPLAYS") &&
-              !strcmp(label(&m, TC_MS_MAIN, 4), "EXIT GAME"),
-          "the main menu: START GAME, OPTIONS, TONIC VIEWER, REPLAYS, EXIT GAME");
+              !strcmp(label(&m, TC_MS_MAIN, 2), "EXTRAS") && !strcmp(label(&m, TC_MS_MAIN, 3), "EXIT GAME") &&
+              tc_menu_item_count(&m, TC_MS_MAIN) == 4,
+          "the main menu: START GAME, OPTIONS, EXTRAS, EXIT GAME");
+    check(!strcmp(label(&m, TC_MS_EXTRAS, 0), "CUSTOMIZATION") && !strcmp(label(&m, TC_MS_EXTRAS, 1), "TONIC VIEWER") &&
+              !strcmp(label(&m, TC_MS_EXTRAS, 2), "REPLAYS") && tc_menu_item_count(&m, TC_MS_EXTRAS) == 3,
+          "EXTRAS: CUSTOMIZATION, TONIC VIEWER, REPLAYS");
     check(!strcmp(label(&m, TC_MS_START, 0), "NEW GAME") && !strcmp(label(&m, TC_MS_START, 1), "LOAD GAME") &&
               !strcmp(label(&m, TC_MS_START, 2), "DELETE GAME"),
           "START GAME: NEW GAME, LOAD GAME (game.dsb's), DELETE GAME");
@@ -98,10 +157,20 @@ static void menu_checks(const char *dir) {
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
+    check(m.screen == TC_MS_EXTRAS && tc_menu_take_command(&m) == TC_MC_NONE, "EXTRAS opens its menu");
+    tc_menu_input_press(&m, TC_MI_CONFIRM);
+    check(m.screen == TC_MS_CUSTOMIZE && tc_menu_take_command(&m) == TC_MC_NONE, "CUSTOMIZATION opens its screen");
+    skin_checks(&m, dir);
+    tc_menu_input_press(&m, TC_MI_BACK);
+    check(m.screen == TC_MS_EXTRAS && m.selected[TC_MS_EXTRAS] == 0, "back from it: EXTRAS, CUSTOMIZATION selected");
+    tc_menu_input_press(&m, TC_MI_DOWN);
+    tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_TONIC_VIEWER, "TONIC VIEWER asks for the levels grid");
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_REPLAYS, "REPLAYS asks for the recordings");
+    tc_menu_input_press(&m, TC_MI_BACK);
+    check(m.screen == TC_MS_MAIN && m.selected[TC_MS_MAIN] == 2, "back from EXTRAS: the main menu, EXTRAS selected");
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_EXIT, "EXIT GAME asks to quit");
@@ -178,19 +247,19 @@ static void menu_checks(const char *dir) {
     check(m.layer_count == 3 && m.layers[0].image == TC_MENU_IMAGE_DIM && m.layers[1].image == TC_MENU_IMAGE_SWIRL,
           "over the game: a dim and the swirls, not the space pictures");
 
-    /* the pointer */
-    tc_menu_show(&m, TC_MS_MAIN);
+    /* the pointer (on EXTRAS: TONIC VIEWER is its second choice) */
+    tc_menu_show(&m, TC_MS_EXTRAS);
     tc_menu_build(&m, 16.0f / 9);
     {
         int h, found = -1;
         for (h = 0; h < (int)m.hit_count; h++)
-            if (m.hits[h].item == 2) found = h;
+            if (m.hits[h].item == 1) found = h;
         if (found >= 0) {
             float x = 0.5f * (m.hits[found].rect[0] + m.hits[found].rect[2]), y = 0.5f * (m.hits[found].rect[1] + m.hits[found].rect[3]);
-            check(tc_menu_pointer(&m, x, y) && m.selected[TC_MS_MAIN] == 2, "the pointer over TONIC VIEWER selects it");
-            check(!tc_menu_pointer(&m, 0.02f, 0.98f) && m.selected[TC_MS_MAIN] == 2, "off every choice it changes nothing");
+            check(tc_menu_pointer(&m, x, y) && m.selected[TC_MS_EXTRAS] == 1, "the pointer over TONIC VIEWER selects it");
+            check(!tc_menu_pointer(&m, 0.02f, 0.98f) && m.selected[TC_MS_EXTRAS] == 1, "off every choice it changes nothing");
             check(tc_menu_click(&m, x, y) && tc_menu_take_command(&m) == TC_MC_TONIC_VIEWER, "a click takes it");
-        } else check(0, "the main menu's choices can be hit");
+        } else check(0, "EXTRAS' choices can be hit");
         tc_menu_show(&m, TC_MS_OPTIONS);
         m.selected[TC_MS_OPTIONS] = 0;
         tc_menu_build(&m, 16.0f / 9);
@@ -276,19 +345,26 @@ static void menu_checks(const char *dir) {
     o.dolby = true;
     o.music_volume = 0.35f;
     o.look_sensitivity = 1.5625f;
+    tc_options_set_skin(&o, "ninja");
     tc_options_write(&o, text, sizeof text);
     tc_options_parse(&back, text, strlen(text));
     check(fabsf(back.gamma - o.gamma) < 1e-3f && back.animation_speed == o.animation_speed && back.fog == o.fog &&
               back.dolby && fabsf(back.look_sensitivity - o.look_sensitivity) < 1e-3f &&
-              fabsf(back.music_volume - 0.35f) < 1e-3f && back.sound_volume == 0 && back.fov == 120,
-          "the options' file round trip");
+              fabsf(back.music_volume - 0.35f) < 1e-3f && back.sound_volume == 0 && back.fov == 120 &&
+              !strcmp(back.skin, "ninja"),
+          "the options' file round trip (the skin too)");
     {
-        const char *bad = "gamma=9\nanimation_speed=0.6\nnonsense\nfog=0\nmusic_volume=7\nfov=10\n";
+        const char *bad = "gamma=9\nanimation_speed=0.6\nnonsense\nfog=0\nmusic_volume=7\nfov=10\nskin=../x\n";
         tc_options_parse(&back, bad, strlen(bad));
     }
     check(back.gamma == 2.5f && fabsf(back.animation_speed - 2.0f / 3) < 1e-4f && !back.fog && back.look_sensitivity == 1 &&
-              back.music_volume == 1 && back.sound_volume == 1 && back.fov == 50,
-          "bad values are brought in range, unknown lines passed by");
+              back.music_volume == 1 && back.sound_volume == 1 && back.fov == 50 && !back.skin[0],
+          "bad values are brought in range (a skin that is no folder name: Ed's own), unknown lines passed by");
+    {
+        const char *crlf = "skin=visor\r\n";
+        tc_options_parse(&back, crlf, strlen(crlf));
+        check(!strcmp(back.skin, "visor"), "a skin line ending in CR LF");
+    }
 
     /* layout */
     ok = 1;
@@ -319,7 +395,8 @@ static void menu_checks(const char *dir) {
         check(m.layer_count == 2 && before[0] != after[0] && before[1] != after[1], "both backgrounds turn over time");
     }
     if (g_prefix) {
-        static const char *names[] = {"main", "start", "new", "new_erase", "load", "delete", "delete_erase", "options", "game"};
+        static const char *names[] = {"main", "start", "new", "new_erase", "load", "delete", "delete_erase", "options", "game",
+                                      "customize", "extras"};
         static const char *levels[] = {"sud0", "Totalski", "cock01", "carota", "LeCanyon", "north", "marmite", "Land", "bar"};
         tc_menu_game many[9];
         memset(many, 0, sizeof many);
@@ -336,6 +413,7 @@ static void menu_checks(const char *dir) {
             if (s == TC_MS_NEW_GAME || s == TC_MS_NEW_ERASE) snprintf(m.name, sizeof m.name, "AGENT ED");
             m.erase_from = TC_MS_LOAD;
             if (s != TC_MS_LOAD) m.selected[s] = s == TC_MS_OPTIONS ? 2 : 0;
+            if (s == TC_MS_CUSTOMIZE) tc_options_set_skin(&m.options, "aviator");
             m.time = 0.3f;
             tc_menu_build(&m, 16.0f / 9);
             snprintf(out, sizeof out, "%s%s.ppm", g_prefix, names[s]);

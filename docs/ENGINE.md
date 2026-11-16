@@ -863,8 +863,9 @@ the unselected one's); which property each drives is not read. **Not done:** the
 and video menus, the in-game menu ("InGame": RESUME GAME, OPTIONS, MAIN MENU).
 **Port** (tools/ttre/menu.py -> files/out/ttlv/menu.ttmn; core tc_menu.c; Swift MenuScreen.swift; SDL menu.c; `make
 menucheck`): the core keeps the screens and lays them out; the frontends draw two layers and tinted quads.
-- Our organisation (the user): START GAME (NEW GAME, LOAD GAME, DELETE GAME), OPTIONS, TONIC VIEWER (the levels grid),
-  EXIT GAME; the title "Open Tonic" in TitleEd, a size up. LOAD and DELETE GAME are lists (the user), with each game's
+- Our organisation (the user): START GAME (NEW GAME, LOAD GAME, DELETE GAME), OPTIONS, EXTRAS (2026-11-16, the user:
+  CUSTOMIZATION, TONIC VIEWER the levels grid, REPLAYS; laid out as START GAME), EXIT GAME; the title "Open Tonic" in TitleEd, a size up.
+  LOAD and DELETE GAME are lists (the user), with each game's
   level by the inventory's names (MNU_INV_*NAME). Ed's head turns beside the selected choice (ours: the exe has no
   selection marker) and at the end of the name (the exe's, a 3D model there: here the atlas picture narrowed to fake
   the turn). A selected choice is 1.12x larger, its letters bob; the others are dimmed (not the exe's effects).
@@ -891,12 +892,27 @@ menucheck`): the core keeps the screens and lays them out; the frontends draw tw
   0.11 rad/s one way or the other, rising and falling, a zoom of 3-9 picked from a hash of the clock, not the viewer's
   rng), everything back as it was on closing. The SDL build bakes the swirls' translucency into the picture (its overlay
   pipeline has no blend factor; no shader change).
-- REPLAYS (the recordings, the original demos) is the main menu's, below TONIC VIEWER (the user; the levels grid's button
-  is gone); its Back is the main menu. Cmd-L / Ctrl+L are Tonic Viewer's alone: a level of the grid back to the grid,
+- REPLAYS (the recordings, the original demos) is in EXTRAS, below TONIC VIEWER (the user; the levels grid's button
+  is gone); its Back is the main menu (the frontends open the menu afresh). Cmd-L / Ctrl+L are Tonic Viewer's alone: a level of the grid back to the grid,
   the grid to the main menu; nothing in a game, on the menus or in a playback.
 - **The pointer** (the user: clickable everywhere): each screen's choices, list rows and option rows are hit-tested from
   the last layout (`tc_menu_pointer` / `tc_menu_click`): over one selects it, a click takes it, an option's value steps
   back left of its middle and on right of it (its name: on); a right click is Back.
+- **CUSTOMIZATION** (the user, 2026-11-16; the first of EXTRAS, its Back returns there): Ed's skin. Its screen shows Ed turning
+  in the skin chosen (eight pictures, each fading into the next), its name between arrows (left / right, a click on
+  an arrow or on Ed steps it; "N OF 7" under it), BACK. Six skins besides his own (VISOR, DAPPER, FENCER, MECHANIC,
+  AVIATOR, NINJA), after a small picture of six Ed looks the user gave, made by `tools/ttre/skins.py` from Ed's own
+  textures by code (nothing of the picture is read: the install needs only the game): each texel recoloured by its kind
+  (his lilac, his cyan and blue clothes, white, the bow tie's warm colours), keeping its shading, and visors, masks,
+  goggles, a leather cap, a necktie, a zip painted in the textures' uv (where those fall on Ed: the module's notes).
+  The bow tie has no alpha to hide it, so the looks without one wear a collar or a scarf of their colours (port).
+  Files: `Skins/<skin>/<path under Textures>` beside Textures (step 5f of tools/convert_files.sh; the install scripts
+  bundle Skins); the previews are drawn by the same module from bar's Ed (software, 2x supersampled) and packed into
+  menu.ttmn's atlas with an optional SKIN chunk (a menu.ttmn without it offers Ed's own only). The skin is an option
+  (`tc_options.skin`, "skin=" in the options file, Swift's UserDefaults "skin"); a frontend loading a level asks
+  `tc_skin_texture_path` (".../Textures/x" -> ".../Skins/<skin>/x") and takes that file when there is one, so a skin
+  changes only the textures it has, in every level and edition, cutscene Eds included. Taken by the next level loaded
+  (it is on the main menu only). Recordings and replays are unaffected (the draw list keeps its texture indices).
 - **The keys the menus took over are gone** (the user): - = gamma, [ ] speed, G fog, J Dolby, ; ' Y look, the pad's
   D-pad right (the HUD); L (lighting), H (the HUD's auto-hide) and P (photo mode) stay as well, kept in the options
   (the user, the same day). Esc no longer just frees the mouse (the game menu does). docs/controls.png re-rendered
@@ -1010,7 +1026,7 @@ LibertyCity2001 is a GTA III car mod (files/sources/Vehicles/manana: the Mazda M
 
 The user's wish: ride SSX Tricky's courses (PS2, 2001) as the retail skier. `tools/ttre/ssx.py` reads their own disc
 image (an .iso under files/sources) and writes each course as an imported level, SSX_<Course>.ttlv + .ttai, its textures
-in files/out/Imported/SSX_<Course>/ (the pickers file it under "Imported"; the checks pass it by). tools/convert_files.sh
+in files/out/Imported/SSX_<Course>/ (the pickers file it under "Extras"; the checks pass it by). tools/convert_files.sh
 step 6b runs it after the levels (it needs Totalski: the skier is borrowed from there). About two minutes for all 11.
 Format notes come from the SSX modding community (GlitcherOG's SSX-Library, SsxMapper's map extractor, both GPL or
 unlicensed: read, not copied); the details are in the module's docstrings.

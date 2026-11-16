@@ -6,8 +6,8 @@ import TonicCore
 /// its loading-screen image from out/Vignette/Level/<Name>.png (the Special Edition's: out/se/Vignette/Level) when
 /// available (matched case-insensitively).
 /// Four sections, four panes in a ring, one showing at a time: "Retail Edition", "Special Edition" (the 1998 disc's
-/// levels, tools/ttre/se.py), "Cutscenes" (the retail game's cutscene-only levels, `tc_level_is_cutscene`) and "Imported"
-/// (models brought in with tools/ttre/import_gltf.py: they have a folder out/Imported/<name>, and a question mark as
+/// levels, tools/ttre/se.py), "Cutscenes" (the retail game's cutscene-only levels, `tc_level_is_cutscene`) and "Extras"
+/// (the user's name for them, 2026-11-16: models brought in with tools/ttre/import_gltf.py: they have a folder out/Imported/<name>, and a question mark as
 /// their picture). Each scrolls inside itself; the arrows at their top slide left and right, in that order and round
 /// again. The page itself only scrolls in a window too short for a row.
 final class LevelPicker: NSView {
@@ -15,9 +15,9 @@ final class LevelPicker: NSView {
     /// A pane: its page (heading, rule and scroll view, sliding as one) in the viewport.
     private struct Pane { let section: Int; let page: NSView; let scroll: NSScrollView; let grid: NSView }
 
-    private static let titles = ["Retail Edition", "Special Edition", "Cutscenes", "Imported"]
+    private static let titles = ["Retail Edition", "Special Edition", "Cutscenes", "Extras"]
     private static let specialEdition = 1, cutscenes = 2, imported = 3
-    private static let paneSections = 4  // all the sections are panes, Imported the last
+    private static let paneSections = 4  // all the sections are panes, Extras (the imports) the last
     private let entries: [Entry]
     private let onPick: (URL) -> Void
     /// The big buttons at the top: "Play Intro Video" (the movie then starts the ski slope, as the original), "Random Stage"

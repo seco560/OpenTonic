@@ -29,12 +29,15 @@ menu.ttmn (container: chunks.py), chunks:
   LAYR  u16 n, n x { u8 image (IMGS index), u8 flags (+0x22), u8 +0x20, u8 +0x21, f32 rect[4] (+0xC), f32 +0x1C,
         f32 wobble[16] (+0x24 ... +0x60) }: the main menu's backgrounds, back to front
   EFCT  u16 n (4), n x 36 bytes: the texts' effects, as fix.gpt has them
+  SKIN  (port, optional) u16 n, u8 turns, f32 aspect (a picture's width / height), n x { u8 length, id (its folder
+        under Skins, "" Ed's own), u8 length, name, turns x f32 uv[4] (u0, v0 top, u1, v1, as the glyphs') }: Ed's
+        skins for CUSTOMIZATION, each turning (tools/ttre/skins.py previews, packed into the atlas)
 """
 import os
 import struct
 import sys
 
-from . import chunks, hud, level, sna, speech
+from . import chunks, hud, level, skins, sna, speech
 
 LEVELS = hud.LEVELS
 GAMEDATA = hud.GAMEDATA
@@ -82,7 +85,7 @@ def _font_glyphs(lv, data, rec, textures, atlas):
     return spacing, line_step, glyphs
 
 
-def build(levels_dir=LEVELS, gamedata=GAMEDATA, log=print):
+def build(levels_dir=LEVELS, gamedata=GAMEDATA, log=print, texture_dir=None):
     names = sorted((n for n in os.listdir(levels_dir) if os.path.isdir(os.path.join(levels_dir, n))), key=str.lower)
     lv = sna.Level(levels_dir, names[0])
     data = level.LevelData(lv)
@@ -98,6 +101,10 @@ def build(levels_dir=LEVELS, gamedata=GAMEDATA, log=print):
         spacing, line_step, glyphs = _font_glyphs(lv, data, records[name], textures, atlas)
         fonts.append((name, spacing, line_step, glyphs))
         log(f'   font {name}: {sum(1 for x in glyphs if x[4])} of {len(glyphs)} glyphs drawn')
+    # Ed's skins turning (CUSTOMIZATION): from the converted textures and bar's Ed
+    looks = skins.previews(texture_dir, levels_dir, log) if texture_dir else []
+    skin_cells = [(skin, title, [atlas.add(skins.PREVIEW_W, skins.PREVIEW_H, bytes(px)) for px in turns])
+                  for skin, title, turns in looks]
     height, pixels = atlas.pack()
 
     font = struct.pack('<H', len(fonts))
@@ -160,6 +167,13 @@ def build(levels_dir=LEVELS, gamedata=GAMEDATA, log=print):
     log(f'   atlas {atlas.width} x {height}, {len(atlas.cells)} cells; {len(images)} pictures, {len(layers)} layers')
     out = [('ATLS', struct.pack('<HH', atlas.width, height) + bytes(pixels)), ('FONT', font), ('NTXT', ntxt),
            ('IMGS', imgs), ('LAYR', layr), ('EFCT', efct)]
+    if skin_cells:
+        body = struct.pack('<HBf', len(skin_cells), skins.PREVIEW_TURNS, skins.PREVIEW_W / skins.PREVIEW_H)
+        for skin, title, cells in skin_cells:
+            sb, tb = skin.encode('latin-1'), title.encode('latin-1')
+            body += struct.pack('<B', len(sb)) + sb + struct.pack('<B', len(tb)) + tb
+            body += b''.join(struct.pack('<4f', *atlas.uv(c, height)) for c in cells)
+        out.append(('SKIN', body))
     return out, (atlas.width, height, pixels)
 
 
@@ -169,7 +183,7 @@ def main(out, preview=None):
         return
     print('== Menu: fonts, texts and backgrounds')
     chunks.KIND = 'menu'
-    body, (w, h, px) = build()
+    body, (w, h, px) = build(texture_dir=os.path.join(out, 'Textures'))
     chunks.write(os.path.join(out, 'ttlv', 'menu.ttmn'), 'TTMN', body)
     if preview:
         from . import gf
