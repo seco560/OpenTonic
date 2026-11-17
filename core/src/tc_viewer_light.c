@@ -132,10 +132,14 @@ void tcv_measure_sky(tc_viewer *v) {
 /* Ed's sector's lights and its fog at the camera (FUN_00451d80 pushes the lights of the sector the frame is drawn from;
  * FUN_00451e80 sets the fog of its env at the camera, FUN_00451c40), faded over TC_VIEW_LIGHT_FADE where the original
  * switches at once (the user's choice, 2026-10-30). */
-/* The camera's sector (TC_VIEW_LIGHT_FADE's note): from Ed's head to the camera through the portals of his. */
+/* The camera's sector (TC_VIEW_LIGHT_FADE's note): from Ed's head to the camera through the portals of his. A reveal
+ * (a scripted shot looking at another perso or a place) may cut the eye far from Ed, where that walk stops short
+ * (carota's guided platform: the eye 41 away, still "in" Ed's sector 29): the exe's camera is a perso, placed after such
+ * a jump by the floor below it (FUN_00451240, tc_sectors_find), so the reveal's is found that way (2026-11-17). */
 static uint16_t camera_sector(const tc_viewer *v) {
-    uint16_t s = tc_viewer_ed_sector(v);
+    uint16_t s = tc_viewer_ed_sector(v), r;
     if (s == TC_SECTOR_NONE || !v->play) return s;
+    if (v->shot.on && v->shot.reveal && (r = tc_sectors_find(v->sectors, v->camera.position)) != TC_SECTOR_NONE) return r;
     return tc_sectors_cross(v->sectors, s, tc_v3_add(v->play->main.player.position, tc_v3(0, 0, 1.1f)), v->camera.position);
 }
 

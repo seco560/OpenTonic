@@ -39,6 +39,31 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     as before (51 frames with the character between his head and the eye). Making Ed collide with characters that have
     no collision of their own would be a port choice (by the exe's rules as read he walks into them): not done, ask the user.
 
+* Vegetable HQ Button Softlock (the user, 2026-11-17, recording 2026-11-17_174144_metal.ttrec; a regression): pressing
+  the button that brings the guided platform holds Ed for good, and the shot shows the platform's sector without drawing it.
+  * **Fixed 2026-11-17 (Claude), awaiting a playtest; the levels are re-exported.** The button's camera perso
+    JFR_Activecam_platform1 holds Ed, and the *platform* (IVP_plate_forme1) releases him when it arrives. That morning's
+    "who may force Ed" rule let the hold in but dropped the platform's lone release. A lone release is allowed now
+    (docs/ENGINE.md "Who may force Ed"). The recording replayed headless: Ed is released about 8 s after the press, when the platform
+    arrives. The void: the shot's eye is 41 units from Ed, in sector 21, which isn't on Ed's sector's list. During a
+    reveal the frame now also draws the camera's sector, found by the floor below the eye (docs/CAMERA.md "A reveal's
+    sector"). Not looked into: the user's hunch that the exe has sector-loading procedures the port ignores, and the
+    camera "getting stuck in the sector" outside reveals.
+
+* Jittery Chase Cams on Persos (the user, 2026-11-17): carota's green bean, cavedoc's boulder from the robot suitcase
+  (before the toaster room) and Doc's giddy run once freed.
+  * **Fixed 2026-11-17 (Claude), awaiting a playtest.** Those shots aimed at the perso's last game tick (30 Hz) while
+    it is drawn between ticks (120 fps): it shook on screen. They aim at its drawn place now (docs/CAMERA.md "Shots on a
+    moving perso shook"). Measured on the bean in the user's recording; cavedoc's two take the same path but no
+    recording of them was there to measure.
+
+* Shot Camera Zoom Clips, Turning Sticks (the user, 2026-11-17): zooming put the camera through walls, turning it got it
+  stuck; wanted: never clip, slide along walls, zoom in as needed and back out after.
+  * **Fixed 2026-11-17 (Claude), awaiting a playtest.** It was the scripted shots' turn and zoom (look_from), not the
+    follow camera (no follow frame of the recording had a wall between Ed's head and the eye). They now work as the
+    follow does (docs/CAMERA.md "Turning and zooming a shot against walls"). Left: a shot whose own framing stands
+    beyond a wall keeps the eye 2 out of the perso until the turn finds room, so its wall can still show.
+
 ## Bigger Areas of Improvement
 
 These might not necessarily be called bugs, but rather more overarching issues with certain parts of the game. Also not including obvious ones, like implementing actual game mechanics, story progression, item collection etc. There's a lot to go still.

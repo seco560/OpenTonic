@@ -6,9 +6,9 @@
  * whole screen, the corners' uv turning and zooming each frame (MNU_0044df60); the texts are game.dsb's MNU_ strings
  * (NEW GAME, LOAD GAME, ENTER THE GAME NAME, CHOOSE YOUR GAME, the erase question, YES, NO ...).
  * The exe's main menu has START GAME (its own menu: NEW GAME, LOAD GAME), OPTIONS, TONIC ON-LINE, SHOW CREDITS, QUIT.
- * Port (the user, 2026-11-15): START GAME (NEW GAME: a name, then the intro; LOAD GAME; DELETE GAME, ours), OPTIONS (the
- * viewer's display settings), EXTRAS (2026-11-16: CUSTOMIZATION, Ed's skin; TONIC VIEWER, the levels grid; REPLAYS,
- * the recordings), EXIT GAME; no credits yet. Ours too: Ed's head (the '§'
+ * Port (the user, 2026-11-15): START GAME (NEW GAME: a name, then the intro; LOAD GAME; DELETE GAME, ours), EXTRAS
+ * (2026-11-16: CUSTOMIZATION, Ed's skin; TONIC VIEWER, the levels grid; REPLAYS, the recordings; above OPTIONS since
+ * 11-17), OPTIONS (the viewer's display settings), EXIT GAME; no credits yet. Ours too: Ed's head (the '§'
  * glyph of FontPC, which the exe uses as MNU_CURSOR, the name field's cursor) beside the selected choice, whose letters
  * are a little larger (the exe's text effects at fix.gpt +0x220 are only partly read). The two EdMenu persos the exe
  * animates in the bottom corners are not drawn yet.

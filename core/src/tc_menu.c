@@ -318,7 +318,7 @@ static const char *text(const tc_menu *m, const char *name, const char *fallback
 
 /* ---- the screens' contents ---- */
 
-enum { MAIN_START, MAIN_OPTIONS, MAIN_EXTRAS, MAIN_EXIT, MAIN_COUNT };
+enum { MAIN_START, MAIN_EXTRAS, MAIN_OPTIONS, MAIN_EXIT, MAIN_COUNT }; /* EXTRAS above OPTIONS (the user, 2026-11-17) */
 enum { EXTRAS_CUSTOMIZE, EXTRAS_VIEWER, EXTRAS_REPLAYS, EXTRAS_COUNT }; /* port (the user, 2026-11-16) */
 enum { CUSTOM_SKIN, CUSTOM_BACK, CUSTOM_COUNT }; /* port: CUSTOMIZATION (the user, 2026-11-16) */
 enum { START_NEW, START_LOAD, START_DELETE, START_COUNT };
@@ -405,8 +405,8 @@ const char *tc_menu_label(const tc_menu *m, tc_menu_screen s, int item, char *bu
     if (item < 0 || item >= tc_menu_item_count(m, s)) return buf;
     switch (s) {
     case TC_MS_MAIN: {
-        static const char *fallback[] = {"START GAME", "OPTIONS", "EXTRAS", "EXIT GAME"};
-        static const char *names[] = {"MNU_STARTGAME", "MNU_OPTIONS", NULL, NULL};
+        static const char *fallback[] = {"START GAME", "EXTRAS", "OPTIONS", "EXIT GAME"};
+        static const char *names[] = {"MNU_STARTGAME", NULL, "MNU_OPTIONS", NULL};
         snprintf(buf, size, "%s", names[item] ? text(m, names[item], fallback[item]) : fallback[item]);
         break;
     }

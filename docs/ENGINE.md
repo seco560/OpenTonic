@@ -447,6 +447,16 @@ floating mercury heals. Nearly all of it is Ed's own scripts and the level's; th
   40 s, after the level's opening shot) left none held at the end; the long holds it met were the probe's own (Ed
   teleported out of a level's opening shot, whose perso then slept). castcheck's pit markers are now told by their force
   into B60, and its lever visits wait for a level's opening shot to end.
+  **A release alone is allowed too (2026-11-17).** The rule first wanted a release B103 only beside a hold, and that
+  softlocked carota's first vegetable HQ puzzle: the button's camera perso JFR_Activecam_platform1 (hold B15 + R4, its
+  own B103 in another branch: allowed) holds Ed while the guided platform IVP_plate_forme1 rides its way, and the
+  *platform's* arrival forces his B103. The platform was kept off Ed, so its release was dropped (forces_blocked) and
+  Ed stayed in his state 102 for good (found by replaying the user's recording: Ed forced_by 51 at f11866, the platform
+  in B2 from f12882). B103 hands Ed back by his mode whatever he was doing, so a lone release cannot strand him. Also
+  let in by it (retail sweep): BigBoss's HEG_Bloc, Land's SDO_TourGrogLand, pyramide's mummies (Gun_MomieCR x4) and
+  Gun_NoeudNoeil; their holds' persos (FRB_EmpireStateBuilding, HEG_ActiveEdCombatFinal, SDO_GenCamAllerPont,
+  SDO_GenMontreTour, Gun_Actor3) are lone holds and stay off, so those releases meet a free Ed (B103 then resets his
+  behaviour by his mode: not seen in play yet).
 - **ChangeStateByDirection (META 12)** (`META_ChangeStateByDirection_0049f310`, continuation `0x49f420`): the point at
   the offset in the perso's axes; in front of Ed (its y in his axes <= 0) he walks there in the forward state, behind him
   in the backward one, by the go-to core (`FUN_0049f580`, mode 0x14: turned at his card's rate; backwards `0x49f6c0`
@@ -1056,8 +1066,8 @@ the unselected one's); which property each drives is not read. **Not done:** the
 and video menus, the in-game menu ("InGame": RESUME GAME, OPTIONS, MAIN MENU).
 **Port** (tools/ttre/menu.py -> files/out/ttlv/menu.ttmn; core tc_menu.c; Swift MenuScreen.swift; SDL menu.c; `make
 menucheck`): the core keeps the screens and lays them out; the frontends draw two layers and tinted quads.
-- Our organisation (the user): START GAME (NEW GAME, LOAD GAME, DELETE GAME), OPTIONS, EXTRAS (2026-11-16, the user:
-  CUSTOMIZATION, TONIC VIEWER the levels grid, REPLAYS; laid out as START GAME), EXIT GAME; the title "Open Tonic" in TitleEd, a size up.
+- Our organisation (the user): START GAME (NEW GAME, LOAD GAME, DELETE GAME), EXTRAS (2026-11-16, the user:
+  CUSTOMIZATION, TONIC VIEWER the levels grid, REPLAYS; laid out as START GAME; above OPTIONS since 11-17), OPTIONS, EXIT GAME; the title "Open Tonic" in TitleEd, a size up.
   LOAD and DELETE GAME are lists (the user), with each game's
   level by the inventory's names (MNU_INV_*NAME). Ed's head turns beside the selected choice (ours: the exe has no
   selection marker) and at the end of the name (the exe's, a 3D model there: here the atlas picture narrowed to fake

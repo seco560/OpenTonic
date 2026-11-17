@@ -235,7 +235,9 @@ typedef struct tc_viewer_shot {
     bool mirror_state;        /* shot 8: dsg109 (1: along the mirror) */
     float mirror_since;       /* ... and how long Ed has faced the other way (s) */
     float look_yaw, look_rise;
-    float good_yaw, good_rise; /* the last turn of a fixed or rail eye that fitted (look_from: a blocked turn stops) */
+    float good_yaw, good_rise; /* the last turn of a fixed or rail eye that left it TC_VIEW_SLIDE_NEAR of room */
+    bool good_fits;           /* ... there was one this shot */
+    float pull;               /* what walls take off a turned or zoomed fixed or rail eye's distance (look_from) */
     bool has_cur;             /* the eye shown last frame (cur_eye): a turned eye moves from it */
     tc_vec3 cur_eye;
 } tc_viewer_shot;
@@ -603,6 +605,9 @@ void tc_viewer_toggle_play(tc_viewer *v);
 void tc_viewer_toggle_ai(tc_viewer *v);
 /* The director's shot (tc_viewer.director) is on: the camera is the level's, Ed waits. */
 bool tc_viewer_directed(const tc_viewer *v);
+/* Where this frame is drawn between the game's last two ticks (0 the one before, 1 the last; tc_cast_pose's t, the
+ * shots' aim at a perso: tc_cast_drawn_position); 1 outside play. */
+float tc_viewer_tick_fraction(const tc_viewer *v);
 /* The fixed shot (tc_viewer.fixed) is on: the camera is at the place the level's scripts gave it. */
 bool tc_viewer_fixed_shot(const tc_viewer *v);
 bool tc_viewer_can_play(const tc_viewer *v);   /* the level has a play session (Tab works) */

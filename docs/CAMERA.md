@@ -708,6 +708,33 @@ calls, nearly all non-Ed targets come with shot 6. No level perso calls SetCamer
 - **Reveals and framings.** A *reveal* is a fixed shot looking at a place (dsg91 0) or at another perso; a *framing* is
   any shot that frames Ed (the follows 2 / 7 / 8, the rail 4, a fixed shot looking at him). Reveals always take the
   camera (they show what a switch did); framings are hints the player can override.
+- **Turning and zooming a shot against walls (2026-11-17, the user: "zooming causes the camera to clip through walls,
+  but simply moving it gets it stuck"; wanted: zooming never clips, moving slides along walls, in as far as needed and
+  back out after).** look_from used to test the eye's move from where it was: a blocked turn went back to the last one
+  that fitted (stuck), and a blocked zoom was kept through the wall. Now it works as the follow does: the turn and the
+  zoom are always taken, the eye stands on their line from the look point at full aim height (a perso's feet are on the
+  ground) no further than the camera's sphere gets, pulled in at once and easing back out over TC_CAM_RELEASE_TIME.
+  Never nearer than TC_VIEW_SLIDE_NEAR (2) by a turn: there (the ground under a low turn, a wall at the perso's side) the
+  turn first slides up (the least rise that clears), else stops at the last turn that left the room; when even the
+  scripts' own framing has none (an eye designed beyond a wall, as the original's may be) the turn goes on with the eye
+  kept 2 out until it finds room, so that case can still show a wall's back face. The follow camera already behaved as
+  wanted: on the user's recording no follow frame had a wall between Ed's head and the eye. Turned or zoomed shot frames
+  with one: 92 -> 0 (f0-12880). viewcheck's Transit spy orbit now measures from him as drawn and accepts 2 exactly.
+- **Shots on a moving perso shook (2026-11-17, the user: carota's green bean, cavedoc's rolling stone and Doc).** The
+  persos are drawn between their last two ticks (tc_cast_pose), but the director's shot (mode 6) and a fixed shot
+  looking at a perso aimed at its last tick's place (tc_cast_position): at 120 fps the aim jumped every 4th frame while
+  the perso glided, a 30 Hz sawtooth on screen. Both now aim at its drawn place (tc_cast_drawn_position, the draw's
+  tick fraction), as the shots on Ed always did (ed_drawn). Measured on the user's recording (the bean, f3812-5496:
+  the bean's drawn place against the view axis, frame to frame): on-screen jerk 0.0046 -> 0.0019 rad per frame, and
+  0 where the player is not turning the camera (what is left is the player's own turn and the glides). The cavedoc
+  shots are fixed shots looking at actors (EbK_RoulePierre, FRB_DocCave), the same path: not measured, no recording.
+- **A reveal's sector (2026-11-17).** The port draws from Ed's sector and finds the camera's (lights, fog) by walking
+  the portals from Ed's head to the eye. A reveal can cut the eye far away (carota's guided platform: 41 units, from
+  sector 29 to 21), where that walk stops short and Ed's list hasn't the far sectors: the platform was shown as a void.
+  During a reveal the camera's sector is now the floor below the eye (tc_sectors_find, as the exe places its camera
+  perso after a jump) and the frame draws its list as well as Ed's (tc_viewer_light.c camera_sector,
+  tc_viewer_draw.c tcv_shown_sectors). Framings and the follow are unchanged. Not done: the exe's camera perso tracked
+  through the portals every frame (the port's camera has no sector of its own).
 - **The player's hold, per directed stretch** (from a director's shot until none has been on for 1 s,
   TC_VIEW_STRETCH_GAP; the directors hand over from one to the next as Ed walks): once the player turns the camera
   during a framing, takes a fixed or rail eye back (fresh Jump / Action / Shoot, as before), or turned it less than 2 s

@@ -209,6 +209,10 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o);
 /* Where perso `id` is now (an actor, a ghost, the main actor), or where the level data places it (a ghost or an
  * actor's CAST record: the camera's snapshot position); false when the cast does not know it. */
 bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out);
+/* ... as drawn: an actor between its last two ticks (t: 0 the tick before, 1 the last; tc_cast_pose's), anything else as
+ * tc_cast_position. What the camera looks at (a shot on another perso): its last tick's place stepped at 30 Hz under a
+ * 120 Hz frame, and the moving perso shook on screen (the green bean, cavedoc's boulder and Doc; 2026-11-17). */
+bool tc_cast_drawn_position(const tc_cast *c, int32_t id, float t, tc_vec3 *out);
 /* Perso `id`'s hit points and their maximum (a boss's life bar: tc_hud.h); false when the cast does not run it. */
 bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *max);
 /* The dsgvars of the fix perso at that place on the fix's list (2: the cheat-code reader, whose dsg26 counts towards the

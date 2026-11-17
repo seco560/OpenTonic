@@ -104,7 +104,8 @@ MAY_NOT_FORCE_MAIN = {'JET_SwAimant',
 # platforms and columns, marmite's pistons), B34 (pushed aside, then back to B0: the stones), B78 (his states 285 / 284,
 # then B0: what the armoured guards and north's KEV_MechantEdJeVaisTeManger do to him when they catch him; 2026-11-17). Without it his own Action
 # took his blowgun out at a signpost or a button, the explainers' text did not hold him and those enemies never hurt him.
-# A hold without its release, or the talk reflex R21 (the spies, Suzy: they held Ed for good when allowed) stays off;
+# A release B103 alone may (2026-11-17: carota's guided platform releases the hold of its camera perso). A hold without
+# its release, or the talk reflex R21 (the spies, Suzy: they held Ed for good when allowed) stays off;
 # so does B33 (he takes the main character back from another perso). Indices into the fix Ed's model (NewEd), the same on
 # every retail level he plays.
 SAFE_MAIN_FORCES = {'B15', 'B103', 'R4', 'B41', 'B51', 'B80', 'B1', 'B101', 'B34', 'B78'}
@@ -405,9 +406,12 @@ def _forces_on(a, main_loc):
 
 def forces_main_safely(a, main_loc, main_names):
     """Whether every force of this perso on the main actor is in SAFE_MAIN_FORCES (main_names: his model's {behaviour
-    location: 'B15' / 'R4' ...}), with the hold B15 only beside its release B103 (and the release only beside a hold)."""
+    location: 'B15' / 'R4' ...}), with the hold B15 only beside its release B103. A release alone is safe (2026-11-17):
+    B103 hands Ed back whatever he was doing, and some holds are released by another perso (carota's JFR_Activecam_platform1
+    holds Ed while the guided platform IVP_plate_forme1 rides its way, and the platform's arrival releases him: kept off
+    Ed, the platform's release was dropped and Ed stayed held for good)."""
     got = {main_names.get(ref, '?') for ref in _forces_on(a, main_loc)}
-    return bool(got) and got <= SAFE_MAIN_FORCES and ('B15' in got) == ('B103' in got)
+    return bool(got) and got <= SAFE_MAIN_FORCES and ('B15' not in got or 'B103' in got)
 
 
 def widen_prompt_buttons(a, main_ai):

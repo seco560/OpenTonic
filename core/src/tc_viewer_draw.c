@@ -419,22 +419,31 @@ static bool water_planes(tc_viewer *v) {
     return any;
 }
 
-/* What this frame draws of each sector (v->sector_shown), or NULL for everything: Ed's sector whole and its list (each
- * listed sector's characters and surfaces, its geometry when its link says so: FUN_00451d80 / 004521b0; the exe draws
- * from its camera's sector, the port from Ed's), or his sector alone. Everything while his sector is not known. */
-const uint8_t *tcv_shown_sectors(tc_viewer *v) {
+static void show_sector(tc_viewer *v, uint16_t from) {
     const tc_sectors *s = v->sectors;
-    uint16_t from, k;
-    if (!s || v->sector_mode == TC_VS_ALL) return NULL;
-    from = tc_viewer_ed_sector(v);
-    if (from >= s->count) return NULL;
-    memset(v->sector_shown, 0, s->count);
+    uint16_t k;
     v->sector_shown[from] = TC_SHOWN_SECTOR | TC_SHOWN_GEOMETRY;
     for (k = 0; v->sector_mode == TC_VS_SECTOR && k < s->sectors[from].visible_count; k++) {
         const tc_sector_link *link = &s->sectors[from].visible[k];
         if (link->sector < s->count)
             v->sector_shown[link->sector] |= TC_SHOWN_SECTOR | (link->draw > 0 ? TC_SHOWN_GEOMETRY : 0);
     }
+}
+
+/* What this frame draws of each sector (v->sector_shown), or NULL for everything: Ed's sector whole and its list (each
+ * listed sector's characters and surfaces, its geometry when its link says so: FUN_00451d80 / 004521b0; the exe draws
+ * from its camera's sector, the port from Ed's), or his sector alone. Everything while his sector is not known.
+ * During a reveal (a scripted shot looking away from Ed) the camera's sector and its list too (2026-11-17: carota's
+ * guided platform was shown as a void, its sectors 21 / 19 not on Ed's sector 29's list). */
+const uint8_t *tcv_shown_sectors(tc_viewer *v) {
+    const tc_sectors *s = v->sectors;
+    uint16_t from;
+    if (!s || v->sector_mode == TC_VS_ALL) return NULL;
+    from = tc_viewer_ed_sector(v);
+    if (from >= s->count) return NULL;
+    memset(v->sector_shown, 0, s->count);
+    show_sector(v, from);
+    if (v->shot.on && v->shot.reveal && v->light_sector < s->count && v->light_sector != from) show_sector(v, v->light_sector);
     return v->sector_shown;
 }
 

@@ -1379,7 +1379,11 @@ static void transit_scenario(const char *dir) {
                     frame(&v, 1.0f / 60);
                     if (!tc_viewer_fixed_shot(&v) || v.shot.look_perso != 18) continue;
                     on++;
-                    nearest = fminf(nearest, tc_v3_distance(v.camera.position, tc_v3_add(spy->ai->position, tc_v3(0, 0, 1.35f))));
+                    { /* from him as drawn (between his last two ticks), where the camera looks since 2026-11-17 */
+                        tc_vec3 at;
+                        if (!tc_cast_drawn_position(c, 18, tc_viewer_tick_fraction(&v), &at)) at = spy->ai->position;
+                        nearest = fminf(nearest, tc_v3_distance(v.camera.position, tc_v3_add(at, tc_v3(0, 0, 1.35f))));
+                    }
                     lowest = fminf(lowest, v.camera.position.z - spy->ai->position.z);
                 }
                 tc_viewer_set_action(&v, keys[k], false);
@@ -1387,7 +1391,7 @@ static void transit_scenario(const char *dir) {
         }
         snprintf(what, sizeof(what), "Transit: turning the spy's shot orbits him (%d frames): never nearer than %.2f to him, the eye "
                  "%.2f above his feet at the lowest", on, (double)nearest, (double)lowest);
-        check(on > 100 && nearest > 2 && lowest > 0, what);
+        check(on > 100 && nearest >= 2 - 0.01f && lowest > 0, what); /* 2: tc_viewer_camera.c TC_VIEW_SLIDE_NEAR, kept exactly */
         tc_viewer_free(&v);
         tc_level_free(&level);
     }

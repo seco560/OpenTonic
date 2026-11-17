@@ -208,7 +208,7 @@ static bool update_director(tc_viewer *v, bool fresh) {
         v->director_released = false;
     }
     want = g->cam_mode == 6 && g->cam_target != 0 && !v->director_released &&
-           tc_cast_position(&p->cast, g->cam_target, &target);
+           tc_cast_drawn_position(&p->cast, g->cam_target, p->tick_time / TC_ED_AI_TICK, &target);
     if (want && v->director && fresh) {
         want = false;
         v->director_released = true;
@@ -235,6 +235,10 @@ static bool update_director(tc_viewer *v, bool fresh) {
 }
 
 bool tc_viewer_directed(const tc_viewer *v) { return v->director; }
+
+float tc_viewer_tick_fraction(const tc_viewer *v) {
+    return v->play ? fminf(1, fmaxf(0, v->play->tick_time / TC_ED_AI_TICK)) : 1;
+}
 
 /* The camera's dsgvar k as Ed's copy holds it (the cast's directors and characters write it there), 0 / false none. A
  * value that is not a number (what a primitive the port does not model returns: cavedoc's ruby lifts once took their
@@ -272,17 +276,17 @@ static float shot_dolly(const tc_viewer *v) {
  * own test (tc_cam_clearance: the camera's sphere swept, the persos' surfaces). Unturned, the scripts' framing as is. */
 #define TC_VIEW_LOOK_EASE 0.3f       /* rad of the player's turn over which the raised pivot comes in */
 
-/* Whether the eye may move from `from` to `to`: the follow's own test (tc_cam_clearance: the camera's sphere swept against
- * the level, the drawn persos' surfaces), the perso the shot looks at left out (its drawn parts, its collision). */
-static bool eye_path_clear(tc_viewer *v, tc_vec3 from, tc_vec3 to) {
-    tc_vec3 d = tc_v3_sub(to, from);
-    float len = tc_v3_length(d), reach;
+/* How far the camera's sphere gets from `from` along dir (unit), up to len: the follow's own test (tc_cam_clearance: the
+ * sphere swept against the level, the drawn persos' surfaces), the perso the shot looks at left out (its drawn parts,
+ * its collision). */
+static float shot_clearance(tc_viewer *v, tc_vec3 from, tc_vec3 dir, float len) {
+    float reach;
     tc_cam_target t;
     struct tc_obstacle *ob = NULL;
     bool live = false;
     const uint8_t *solid = v->play->world.solid;
     uint32_t prso, first = v->perso_first;
-    if (len < 1e-4f) return true;
+    if (len < 1e-4f) return len;
     memset(&t, 0, sizeof(t));
     t.world = &v->play->world;
     t.sight = camera_sight;
@@ -300,11 +304,11 @@ static bool eye_path_clear(tc_viewer *v, tc_vec3 from, tc_vec3 to) {
             live = ob->live, ob->live = false;
     }
     v->play->world.solid = NULL; /* every surface (as the follow's) */
-    reach = tc_cam_clearance(&t, from, tc_v3_scale(d, 1 / len), len);
+    reach = tc_cam_clearance(&t, from, dir, len);
     v->play->world.solid = solid;
     if (ob) ob->live = live;
     v->sight_skip_lo = v->sight_skip_hi = 0;
-    return reach >= len - 0.02f;
+    return reach;
 }
 
 /* The eye of a fixed or rail shot turned by yaw and rise round its pivot, dollied: on its orbit round the pivot, at the
@@ -323,10 +327,32 @@ static tc_vec3 orbit_eye(tc_vec3 eye, tc_vec3 pivot, float yaw_turn, float rise,
  * stand beyond a roof or a booth's wall from what it looks at; the original's never collides). Port (the player's turn
  * and zoom, 2026-11-13 / 16; the user: turned round Agent XYZ the camera "clips through and gets stuck between Xyz and
  * the ground"): the eye orbits a pivot (a perso's feet raised to the follow's aim height, eased in over the first 0.3
- * rad of turning: feet = another perso of a fixed shot, Ed on the rail), within the follow's elevations; it moves from
- * where it was only where the camera's sphere passes (eye_path_clear), else the turn stops where it last did. */
-static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at, bool feet) {
-    tc_vec3 d = tc_v3_sub(at, eye), from = v->shot.has_cur ? v->shot.cur_eye : eye;
+ * rad of turning: feet = another perso of a fixed shot, Ed on the rail), within the follow's elevations. Walls as the
+ * follow's (2026-11-17, the user: "zooming causes the camera to clip through walls, but simply moving it gets it stuck";
+ * wanted: zooming never clips, turning slides along the walls, in as far as it must and back out after): the turn and
+ * the zoom are always taken, and the eye stands on their line from the pivot no further than the camera's sphere gets
+ * (shot_clearance): pulled in at once, easing back out over TC_CAM_RELEASE_TIME; pulled nearer than TC_VIEW_SLIDE_NEAR
+ * (the ground under a low turn, a wall at the pivot's side: it put the eye in Agent XYZ's head) the turn slides up
+ * instead (the least rise that clears), and where that does not clear either, the turn stops at the last one that left
+ * the room. (Before, a blocked turn went back to
+ * the last one that fitted, and a blocked zoom was kept through the wall.) Where the pivot itself has no room (a perso
+ * pressed into a wall), the scripts' eye. */
+#define TC_VIEW_SLIDE_NEAR 2.0f       /* the eye no nearer its pivot than this by a turn (else it slides up, or stops) */
+#define TC_VIEW_SLIDE_STEP 0.05f      /* rad, the slide's steps up (at most 12: 0.6 rad) */
+
+/* The turned eye's line for this yaw and rise, from `safe` (the pivot at its full aim height: the eased-in pivot starts
+ * at a perso's feet, on the ground) to the orbit's eye round `pivot`: its direction, the distance wanted, the room. */
+static float turned_line(tc_viewer *v, tc_vec3 eye, tc_vec3 pivot, tc_vec3 safe, float yaw, float rise, float dolly,
+                         tc_vec3 *dir, float *room) {
+    tc_vec3 n = tc_v3_sub(orbit_eye(eye, pivot, yaw, rise, dolly), safe);
+    float want = tc_v3_length(n);
+    *dir = want > 1e-4f ? tc_v3_scale(n, 1 / want) : tc_v3(0, 0, 1);
+    *room = want > 1e-4f ? shot_clearance(v, pivot, *dir, want) : 0;
+    return want;
+}
+
+static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at, bool feet, float dt) {
+    tc_vec3 d = tc_v3_sub(at, eye);
     float len = tc_v3_length(d), dolly = shot_dolly(v);
     if (len > 1e-4f) { /* the rise kept within what shows: no dead travel turning back */
         float lo = TC_CAM_ELEVATION + TC_CAM_RISE_MIN, hi = TC_CAM_ELEVATION + TC_CAM_RISE_MAX;
@@ -334,25 +360,44 @@ static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at, bool feet) {
         v->shot.look_rise = fmaxf(fminf(lo, elevation) - elevation, fminf(fmaxf(hi, elevation) - elevation, v->shot.look_rise));
     }
     if (len > 1e-4f && (v->shot.look_yaw != 0 || v->shot.look_rise != 0 || dolly != 1)) {
-        float turned = fabsf(v->shot.look_yaw) + fabsf(v->shot.look_rise);
-        tc_vec3 pivot = tc_v3_add(at, tc_v3(0, 0, feet ? TC_CAM_AIM_HEIGHT * fminf(1, turned / TC_VIEW_LOOK_EASE) : 0));
-        tc_vec3 next = orbit_eye(eye, pivot, v->shot.look_yaw, v->shot.look_rise, dolly);
-        if (eye_path_clear(v, from, next)) {
-            v->shot.good_yaw = v->shot.look_yaw, v->shot.good_rise = v->shot.look_rise;
-        } else { /* blocked: back to the last turn that fitted (the scripts moving the eye still carry it) */
-            v->shot.look_yaw = v->shot.good_yaw, v->shot.look_rise = v->shot.good_rise;
-            if (v->shot.look_yaw == 0 && v->shot.look_rise == 0 && dolly == 1) {
-                look_from(v, eye, at, feet); /* the scripts' eye */
-                return;
+        float turned = fabsf(v->shot.look_yaw) + fabsf(v->shot.look_rise), want, room, pull;
+        tc_vec3 pivot = tc_v3_add(at, tc_v3(0, 0, feet ? TC_CAM_AIM_HEIGHT * fminf(1, turned / TC_VIEW_LOOK_EASE) : 0)), dir;
+        tc_vec3 safe = tc_v3_add(at, tc_v3(0, 0, feet ? TC_CAM_AIM_HEIGHT : 0));
+        bool fits;
+        want = turned_line(v, eye, pivot, safe, v->shot.look_yaw, v->shot.look_rise, dolly, &dir, &room);
+        fits = room >= fminf(want, TC_VIEW_SLIDE_NEAR);
+        if (!fits) { /* the ground under a low turn, a wall at the pivot's side: up along it ... */
+            float rise = v->shot.look_rise, r2, w2;
+            tc_vec3 d2;
+            int k;
+            for (k = 1; k <= 12 && !fits; k++) {
+                rise += TC_VIEW_SLIDE_STEP;
+                w2 = turned_line(v, eye, pivot, safe, v->shot.look_yaw, rise, dolly, &d2, &r2);
+                if (r2 >= fminf(w2, TC_VIEW_SLIDE_NEAR)) v->shot.look_rise = rise, want = w2, dir = d2, room = r2, fits = true;
+                else if (asinf(fmaxf(-1, fminf(1, d2.z))) >= TC_CAM_ELEVATION + TC_CAM_RISE_MAX - 1e-3f) break;
             }
-            turned = fabsf(v->shot.look_yaw) + fabsf(v->shot.look_rise);
-            pivot = tc_v3_add(at, tc_v3(0, 0, feet ? TC_CAM_AIM_HEIGHT * fminf(1, turned / TC_VIEW_LOOK_EASE) : 0));
-            next = orbit_eye(eye, pivot, v->shot.look_yaw, v->shot.look_rise, dolly);
         }
-        eye = next;
-        at = pivot;
-        d = tc_v3_sub(at, eye);
-    }
+        if (!fits && v->shot.good_fits &&
+            (v->shot.good_yaw != v->shot.look_yaw || v->shot.good_rise != v->shot.look_rise)) {
+            /* ... else the turn stops at the last that left room (into it the eye would sit in the perso's head) */
+            v->shot.look_yaw = v->shot.good_yaw, v->shot.look_rise = v->shot.good_rise;
+            want = turned_line(v, eye, pivot, safe, v->shot.look_yaw, v->shot.look_rise, dolly, &dir, &room);
+            room = fmaxf(room, fminf(want, TC_VIEW_SLIDE_NEAR)); /* it had the room a moment ago (the perso moves) */
+        } else if (!fits) /* none left room yet (the scripts' own eye stands beyond a wall, as the original's may): the
+                           * turn goes on, the eye kept TC_VIEW_SLIDE_NEAR out, until it finds room */
+            room = fmaxf(room, fminf(want, TC_VIEW_SLIDE_NEAR));
+        if (fits) v->shot.good_yaw = v->shot.look_yaw, v->shot.good_rise = v->shot.look_rise, v->shot.good_fits = true;
+        if (want > 1e-4f && (v->shot.look_yaw != 0 || v->shot.look_rise != 0 || dolly != 1)) {
+            pull = want - fminf(room, want);
+            if (!v->shot.has_cur || pull > v->shot.pull) v->shot.pull = pull;      /* blocked: in at once */
+            else v->shot.pull += (pull - v->shot.pull) * (dt > 0 ? 1 - expf(-dt / TC_CAM_RELEASE_TIME) : 0); /* out, gently */
+            /* never more than leaves the room it was given (an older pull easing out under a turn that changed) */
+            v->shot.pull = fminf(fmaxf(v->shot.pull, 0), want - fminf(room, fminf(want, TC_VIEW_SLIDE_NEAR)));
+            eye = tc_v3_add(safe, tc_v3_scale(dir, want - v->shot.pull));
+            at = pivot;
+            d = tc_v3_sub(at, eye);
+        } else v->shot.pull = 0; /* back to the scripts' own framing */
+    } else v->shot.pull = 0;
     v->shot.cur_eye = eye;
     v->shot.has_cur = true;
     v->camera.position = eye;
@@ -371,7 +416,8 @@ static bool shot_target(const tc_viewer *v, tc_vec3 *out) {
     const tc_viewer_play *p = v->play;
     int32_t id = p->has_cast ? p->cast.globals.cam_target : 0;
     if (id != 0 && id != p->cast.main_id && !(v->level->cast.main_alias && id == (int32_t)v->level->cast.main_alias) &&
-        tc_cast_position(&p->cast, id, out) && isfinite(out->x) && isfinite(out->y) && isfinite(out->z))
+        tc_cast_drawn_position(&p->cast, id, p->tick_time / TC_ED_AI_TICK, out) && isfinite(out->x) && isfinite(out->y) &&
+        isfinite(out->z))
         return false;
     *out = tc_v3_add(ed_drawn(p), tc_v3(0, 0, TC_CAM_AIM_HEIGHT));
     return true;
@@ -436,7 +482,7 @@ static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
     else v->shot.look = point;
     v->shot.glide_t += dt;
     v->shot.eye = glide ? glide_eye(v, place, v->shot.look) : place;
-    look_from(v, v->shot.eye, v->shot.look, v->shot.look_perso != 0);
+    look_from(v, v->shot.eye, v->shot.look, v->shot.look_perso != 0, dt);
     return true;
 }
 
@@ -460,7 +506,7 @@ static bool update_rail(tc_viewer *v, const tc_ed_ai *e, float dt) {
         k = k <= 0 ? 0 : k >= 1 ? 1 : 1 - powf(1 - k, dt * 30);
         v->shot.eye = tc_v3_add(v->shot.eye, tc_v3_scale(tc_v3_sub(point, v->shot.eye), k));
     } else v->shot.eye = point;
-    look_from(v, v->shot.eye, ed, true);
+    look_from(v, v->shot.eye, ed, true, dt);
     return true;
 }
 
@@ -573,7 +619,8 @@ static bool scripted_shot(tc_viewer *v, int shot, tc_cam_target *t, float dt, bo
         v->shot.sig = sig;
         v->shot.released = false;
         v->shot.look_yaw = v->shot.look_rise = 0;
-        v->shot.good_yaw = v->shot.good_rise = 0; /* the scripts' own framing: where a blocked turn goes back to */
+        v->shot.good_yaw = v->shot.good_rise = v->shot.pull = 0;
+        v->shot.good_fits = false;
         v->shot.has_cur = false;
         v->shot.on = false; /* entered afresh */
     }

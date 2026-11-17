@@ -1,7 +1,7 @@
 /* The main menu and saved games headless (tc_menu.h, tc_save.h; docs/ENGINE.md "The menus", "Saved games"):
  *   - menu.ttmn loads: the two fonts, the two pictures, their layers; game.dsb's texts are found by name;
  *   - the screens' choices and moves: START GAME -> NEW GAME (a name typed, an existing one asks to erase), LOAD GAME,
- *     DELETE GAME (asks first), OPTIONS (values step and say so), EXTRAS: CUSTOMIZATION (Ed's skins: they step, they
+ *     DELETE GAME (asks first), OPTIONS (values step and say so), EXTRAS (above OPTIONS in the menu): CUSTOMIZATION (Ed's skins: they step, they
  *     are kept in the options, a level's texture path goes to the skin's folder, the skin's files are there), TONIC
  *     VIEWER, REPLAYS; EXIT GAME;
  *   - every screen's letters stay on the screen, at 4:3 and at 16:9; the backgrounds turn over time;
@@ -135,10 +135,10 @@ static void menu_checks(const char *dir) {
     check(m.data.image_count == 2 && m.data.bg_count == 2 && strstr(m.data.images[0].name, "TTSPACE_BKGRND") &&
               strstr(m.data.images[1].name, "TTSPACE_STARS"),
           "its backgrounds: TTSPACE_BKGRND, TTSPACE_STARS");
-    check(!strcmp(label(&m, TC_MS_MAIN, 0), "START GAME") && !strcmp(label(&m, TC_MS_MAIN, 1), "OPTIONS") &&
-              !strcmp(label(&m, TC_MS_MAIN, 2), "EXTRAS") && !strcmp(label(&m, TC_MS_MAIN, 3), "EXIT GAME") &&
+    check(!strcmp(label(&m, TC_MS_MAIN, 0), "START GAME") && !strcmp(label(&m, TC_MS_MAIN, 1), "EXTRAS") &&
+              !strcmp(label(&m, TC_MS_MAIN, 2), "OPTIONS") && !strcmp(label(&m, TC_MS_MAIN, 3), "EXIT GAME") &&
               tc_menu_item_count(&m, TC_MS_MAIN) == 4,
-          "the main menu: START GAME, OPTIONS, EXTRAS, EXIT GAME");
+          "the main menu: START GAME, EXTRAS, OPTIONS, EXIT GAME");
     check(!strcmp(label(&m, TC_MS_EXTRAS, 0), "CUSTOMIZATION") && !strcmp(label(&m, TC_MS_EXTRAS, 1), "TONIC VIEWER") &&
               !strcmp(label(&m, TC_MS_EXTRAS, 2), "REPLAYS") && tc_menu_item_count(&m, TC_MS_EXTRAS) == 3,
           "EXTRAS: CUSTOMIZATION, TONIC VIEWER, REPLAYS");
@@ -155,7 +155,6 @@ static void menu_checks(const char *dir) {
 
     /* moves */
     tc_menu_input_press(&m, TC_MI_DOWN);
-    tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(m.screen == TC_MS_EXTRAS && tc_menu_take_command(&m) == TC_MC_NONE, "EXTRAS opens its menu");
     tc_menu_input_press(&m, TC_MI_CONFIRM);
@@ -170,7 +169,8 @@ static void menu_checks(const char *dir) {
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_REPLAYS, "REPLAYS asks for the recordings");
     tc_menu_input_press(&m, TC_MI_BACK);
-    check(m.screen == TC_MS_MAIN && m.selected[TC_MS_MAIN] == 2, "back from EXTRAS: the main menu, EXTRAS selected");
+    check(m.screen == TC_MS_MAIN && m.selected[TC_MS_MAIN] == 1, "back from EXTRAS: the main menu, EXTRAS selected");
+    tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_DOWN);
     tc_menu_input_press(&m, TC_MI_CONFIRM);
     check(tc_menu_take_command(&m) == TC_MC_EXIT, "EXIT GAME asks to quit");

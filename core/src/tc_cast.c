@@ -1145,6 +1145,17 @@ bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
     return true;
 }
 
+bool tc_cast_drawn_position(const tc_cast *c, int32_t id, float t, tc_vec3 *out) {
+    const tc_cast_actor *a;
+    if (!c || !c->by_id || id <= 0 || (uint32_t)id >= c->id_count || id == c->main_id || c->by_id[id] < 0 ||
+        (uint32_t)c->by_id[id] >= c->count || (c->level->cast.main_alias && id == c->level->cast.main_alias))
+        return tc_cast_position(c, id, out);
+    a = &c->actors[c->by_id[id]];
+    t = fminf(1, fmaxf(0, t));
+    *out = tc_v3_add(a->position_prev, tc_v3_scale(tc_v3_sub(a->ai->position, a->position_prev), t));
+    return true;
+}
+
 bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
     uint32_t i;
     for (i = 0; c && i < c->level->cast.ghost_count; i++)
