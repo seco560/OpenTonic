@@ -409,6 +409,94 @@ ProposalVecA := V (`AI_00488070`). Ed's projectile is `LOL_Actor1` (gen_abeille,
   every 0.67 s holding Shoot, the bee bursts at the wall 8 ahead. Not checked: the stick's hits (a probe at a guard: the
   guard struck first and knocked Ed back, B102), the bees' damage to other enemies, how the bee looks.
 
+## Ed's damage and life (2026-11-17; **read** unless marked)
+The user's request: enemies hurt Ed, the thermometer works (a life point more every 10 thermometers), he dies at 0, the
+floating mercury heals. Nearly all of it is Ed's own scripts and the level's; the port had three gaps.
+- **How Ed is hurt.** Passive: his R0 collects, every frame, the persos whose ZDE zones of a damage type meet his body
+  zone 6 (`CollectNearby(dsg92..96, 6, mask)`: 0x10 hit, 0x4 deadly, 0x20 knocked down, 0x40 thrown, 0x80 burnt) and reads
+  touched materials (0x10 deadly, 0x100 thrown, 0x400 lava). Every dsg51 ms (the blink after a hit, dsg47) a hit sets
+  dsg0 (5 / 21 / 23 / 26) and forces his hurt behaviour B1, which takes a point (`SubHitPoints(Me, 1)`) and plays the
+  matching fall (state 302, 246, 292 ...); at 0 his R0 sends him to B14, his death (B73 cover, B99: `TakeLife` while
+  lives are left, else `ChangeLevel('death')`: the port's restart, docs/NOTES.md "Dying and respawning"). Some enemies
+  hurt him by forcing B1 themselves (the mines, carrots, tomatoes), B101 (knocked back) or B34. A fall that took over
+  255 (Report234) sets his points 0. The enemies' zones and Ed's lists already worked (a scratch probe: sud0's boxing
+  mushroom filled dsg92 and put Ed in B1); what did not: **PROC 70 / 71 were no-ops** (`AI_00489790` ->
+  `FUN_004cecb0`: points -= n, 0 when n is as many or more; `AI_004896d0` -> `GAM_00423ac0`: := n, kept for a re-init by
+  `SAI_00481120(+0x14, 0x31)`; port: the keeping is not modelled). Ported (tc_ai.c). Ed's stick hits on enemies and their
+  sounds already worked (probe: the boxer 3 -> 2 -> 1, event 1024 on each hit).
+- **His starting points.** The fix Ed's std game holds 5, 5 and the ceiling 17 (+0x14 / +0x15 / +0x16); the port started
+  him at its own 4 / 4 / 255. A new game fills them from the data (`GAM_StdGame_004237e0` case 1 only with
+  `DAT_008c1767`, set on the new-game path `GAM_Objinit_00419c70`); a level change keeps them (the fix persos outlive the
+  level). Export: .ttai STDG (ai.py); core `tc_ai_model.std_*`. The HUD's 17 graduations are that ceiling.
+- **The thermometers' reward** is `HEG_Inventaire` (genplainesud, always awake), not World: when the sum of every level's
+  thermometer save value (8, 10 ... 28; a level's thermometers, gen_icon_argen, add to its World's slot + 1, the
+  antidotes, Bonus, to its slot) equals the cheat-code reader's dsg26 (a fix perso, starting at 10), it gives
+  `AddHitPointsMax(Ed, 1)` (PROC 75: the max + 1, filled), dsg26 += 10, text 0x230 and Ed's cheer B41. World's own
+  "dsg1 >= dsg0" reward (B5 / B1) is never reached in retail (no script writes its dsg1). Port gaps fixed: the reader's
+  dsg26 restarted at 10 on every level (the cast's ghost of it) and the sum then passed it for good: the CAST ghost
+  record now names its place on the fix's list (`fix_role`), and the host carries role 2's dsgvars from level to level
+  (`tc_viewer_carry.fix_dsg`, `tcv_carry_fix`) and into a saved game (.ttsv FIXD; its dsg26 is player-saved in the exe).
+  Ed's points and maximum go through a portal too now (they were reset to the level's).
+- **The mercury** (gen_icon3) gives `AddHitPoints(Ed, 1)` when he is hurt: it worked, but nothing ever hurt him.
+- **Who may force Ed (port, cast.py).** The allow-list stays, plus a rule read from each perso's scripts: every force on
+  Ed is one that hands him back (`SAFE_MAIN_FORCES`: the hold B15 + R4 with its release B103, the cheer B41, the button
+  B51 / B80, the damage B1 / B101 / B34). It lets in the signposts, the text explainers, the typo spies, the buttons,
+  the puzzles' pieces, the damaging enemies and the levels' opening shots (Land's entrance camera, north's flying
+  guards, cock01's guard, pyramide's projector), and keeps out the talk reflex R21 (the spies, Suzy) and holds without
+  a release. A sweep (scratch probe: every allowed perso of 11 levels, Ed beside it, Action, then Jump every 2 s for
+  40 s, after the level's opening shot) left none held at the end; the long holds it met were the probe's own (Ed
+  teleported out of a level's opening shot, whose perso then slept). castcheck's pit markers are now told by their force
+  into B60, and its lever visits wait for a level's opening shot to end.
+- **ChangeStateByDirection (META 12)** (`META_ChangeStateByDirection_0049f310`, continuation `0x49f420`): the point at
+  the offset in the perso's axes; in front of Ed (its y in his axes <= 0) he walks there in the forward state, behind him
+  in the backward one, by the go-to core (`FUN_0049f580`, mode 0x14: turned at his card's rate; backwards `0x49f6c0`
+  swaps the points and turns the speed round: he faces away and steps back), there within 0.1, at most 5 s, then put on
+  the point (`AI_00491f80`). The speed is the playing state's root motion (`root_speed`). The port's own version only
+  knew the portals' frames, so at a lever, a machine or a button (B11, B34, B35, B47, B51, B76) Ed never walked into
+  place and the following `TurnTowardPoint` (mode 5: at once, as read) swung him round on the spot.
+- **Text prompts (port, the user):** the two thermometer explainers (model HEG_ExpliqueBonusThermo) wait for Jump alone;
+  every other prompt of the game takes Jump, Action or Shoot, so theirs is rewritten so at export (cast.py
+  `PROMPT_ANY_BUTTON`). A signpost reads only with Ed within 1 of its trigger (`MainActorWithin(1)`, read: r^2 against
+  the squared distance of the origins, `GAM_0042a680`); further away his Action takes his blowgun out, as the exe's.
+- **The removal guard** now also lets SetPositionFrom (PROC 27) wake a perso it froze for a DeactivatePerso, as PROC 5
+  does: sud0's tomato HEG_TomLut hides its thermometer and drops it where it dies; it stood frozen in view (BUGS.md
+  "Pickups").
+- **Second round, same day (the user: "Ed does take damage in some situations but not from all enemies").** A sweep
+  (scratch probe: every cast perso of 11 levels with a ZDE zone of a type Ed collects, Ed 2 in front of it for 8 s)
+  found the hit -> damage step sound everywhere (every hit that reached his lists cost a point); the misses were the
+  enemies never getting there. Fixed:
+  - **PROC 241** (`PROC_241_0048b960`: ChangeBehaviour, as PROC 239, when the main actor is nearer than the root of its
+    first argument; DAT_008bc744): unknown before, so sud0's tree mushrooms (HEG_ChampiArbre) chased Ed and never
+    punched (B5's `PROC_241(49, B1)`).
+  - **Mode 12 by a request alone** (tc_cast_mec.c `ground_wanted`): the proposal's direction and speed keep their
+    values (dynamics +0x314); a walker that asks for mode 12 every frame (SetMechMode12) moves by them, not only in the
+    frame of a SetMoveDirection. carota's spinning carrots (FRB_toupie_fosse, FRB_zappa_fosse: SetMoveDirection once,
+    SetMechMode12 each frame, speed 8) stood still; now they bounce round their box (about 70 in 8 s) and hurt Ed.
+    cavedoc's corn (BUGS.md "The corn does not move") calls its slide the same way: not re-probed.
+  - **Operators .X:= .Y:= .Z:= (OP 21-23), ModelCast (25), Array (26)**: names from the SE exe's tables
+    (tools/exe/se_ai_map.tsv); unknown before (the component assignments did nothing: Ed's own splash height uses .Z:=).
+    An array dsgvar (type 17: u32 element type, u32 count, the elements) now exports its persos as ids (ai.py
+    `perso_dsg_block`): cock01's skating fridges force their platforms through one.
+  - **PROC 67 SetHitPointsToInit** (`GAM_00423c00`: SAI restores +0x14): as the perso started, or PROC 71's kept value
+    (`tc_ai_perso.hit_points_init`); pyramide's false teeth, cock01's guards.
+  - **B78 in SAFE_MAIN_FORCES**: what the armoured guards and north's KEV_MechantEdJeVaisTeManger do to Ed when they
+    catch him (states 285 / 284, then B0). That let sud0's mushroom boss in too, whose first hint holds Ed until a spy
+    has talked, and the spy talks only with Ed within 5 (spies stay off): castcheck found Ed held for good, so
+    HEG_BossMush is kept off by name (cast.py MAY_NOT_FORCE_MAIN), as before.
+  Seen and left: barriers (Barrierre: a 0.4-thick slab; Ed is hurt crossing it, not beside it), Tesla coils and the
+  gas vents (contact only: they hurt at 0.8), the flies and many guards switched off until a trigger or their hive
+  releases them (the probe's teleport skips that), Land's cook guard (its attack states 105 / 107 / 152 arm no attack
+  zone in the data and its scripts name no thrown object: open). Not ported, found on the way: COND 41
+  Cond_CollideWithEdge (Ed's slide off a slope near an edge), the camera's own primitives (the fix camera is not in the
+  cast), the perso lights (PROC 126-128).
+- **Checks:** castcheck's damage section (sud0: 5 of 5 at the start, the boxer's punches, the mercury, the 10th
+  thermometer and the saved game, the explainer held and dismissed, the death and the life lost).
+- **Open:** the boxing mushrooms' punch lunges at 20-33 u/s (their state 7's root motion), and off a slope it leaves
+  the ground and slides on in the air (the walker's air step keeps the velocity, as `DNM_WalkForces_004c41c5` does):
+  they can fly 40 away; whether the exe's lunge stays grounded there is not known. sud0's HEG_TomLut has no card in its
+  fall state, so its `OnGround` may never hold (its drop is checked only by forcing the contact). The game over screen
+  (the 'death' level) is still the port's restart. Seen only headless.
+
 ## Perso motion (2026-11-06; all **read** unless marked)
 What moves a perso, top down. A script does not move anything itself: it fills the **proposal** and queues **requests**,
 and the state's card type turns those into motion.

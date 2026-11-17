@@ -219,10 +219,21 @@ static void float_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, con
 /* The ground walkers' wanted motion this frame (DNM_RequestWalk_004ae392, types 0 and 12; type 12's card fields sit 4
  * bytes lower): mode 12's move direction x speed in its axes, mode 0x14's in the world's (turning it), else the
  * animation's own motion (FUN_0042a8d0 pushes it as mode 12). */
+/* Whether the AI asked for this mechanics mode this frame (its request queue, FUN_0047a370). */
+static bool requested(const tc_ai_motion *m, int mode) {
+    uint8_t k;
+    for (k = 0; k < m->mode_count; k++)
+        if (m->modes[k] == mode) return true;
+    return false;
+}
+
 static tc_vec3 ground_wanted(tc_ai_perso *p, const tc_ai_card *card, float dt) {
     const tc_ai_motion *m = &p->motion;
     const tc_ai_state *st = &p->model->states[p->state];
-    if (m->direction_set && m->mech_mode == 12) {
+    /* mode 12 moves by the proposal's direction [7..9] and speed [10], which keep their values (dynamics +0x314): set
+     * this frame (SetMoveDirection) or earlier, when a script asks for the mode again (SetMechMode12 every frame:
+     * carota's spinning carrots, cavedoc's corn). Before 2026-11-17 only the frame of SetMoveDirection moved them. */
+    if ((m->direction_set || requested(m, 12)) && m->mech_mode == 12) {
         float speed = clamp_magnitude(m->proposal[10], 0, tc_ai_card_f32(card, card->type == 12 ? 0x10 : 0x14));
         return tc_v3_scale(local_to_global(p->heading, tc_v3(m->proposal[7], m->proposal[8], m->proposal[9])), speed);
     }

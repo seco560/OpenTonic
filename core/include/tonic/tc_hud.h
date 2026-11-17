@@ -76,6 +76,7 @@ typedef struct tc_hud {
      * asked for (the exe's DAT_008bd07b: 1 life and lives, 4 the spade, 8 the bees, 0x10 the tings, 0x20 Doc's
      * object), since when, and how far out each has slid (2: gone) */
     int32_t shown_hp, shown_lives, shown_bees, shown_tings, shown_spade;
+    int32_t shown_hp_max;        /* port: a new life point (the thermometers' reward) shows the gauge as a hit does */
     uint32_t doc_serial;
     uint8_t asked;
     float since_ms;

@@ -58,7 +58,7 @@ Being wary is reasonable. A fair amount of SE support rests on stopgaps, and som
 3. **Floors:** SE snow remapped to retail values, a grip clamp elsewhere, `firm_floors` while walking on snow.
 4. **Sectors:** "no SE sector is virtual" plus "every SE sector collides with every solid one", because the SE's lookup and collide rules aren't read. Measured to work, but skicheck went over its limit (2.4 %).
 5. **The cast gates:** the SE cast runs per-level (`SE_CAST_LEVELS`) or per-family (`SE_ITEM_FAMILIES`). Retail has MAY_FORCE_MAIN / MAY_NOT_FORCE_MAIN / freeze-story-removals / removal guard. These are allow-lists, which FINDINGS.md already calls stopgaps. Every new list says "the port can't finish what this starts".
-6. **Silent and partial bits:** no SE sound tables, the inventory not modelled, Ed's damage (PROC 70/71) still no-ops on purpose, engine lists unread for SE.
+6. **Silent and partial bits:** no SE sound tables, the inventory not modelled, Ed's damage (PROC 70/71: ported 2026-11-17, docs/ENGINE.md "Ed's damage and life"), engine lists unread for SE.
 
 **Where the risk concentrates:** the ids, the allow-lists and the donor Ed are coupled. Each SE feature added now needs another exception in one of them. That's the pattern that bit us with the cast's first playtest.
 

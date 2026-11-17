@@ -130,12 +130,33 @@ void tcv_arrive(tc_viewer *v, const tc_viewer_carry *c) {
         tcv_camera_settle(v);
         v->camera.yaw = c->checkpoint_heading; /* behind him (the follow camera's yaw is his heading) */
     }
+    if (c->fix_dsg_size && p->has_cast) { /* the fix persos' dsgvars as the last level left them */
+        uint32_t size;
+        uint8_t *dsg = tc_cast_fix_dsg(&p->cast, 2, &size);
+        if (dsg && size == c->fix_dsg_size) memcpy(dsg, c->fix_dsg, size);
+    }
     if (c->hit_points_max > 0) {
         tc_ai_perso *a = &p->main.driver.ai;
         a->hit_points_max = c->hit_points_max;
         a->hit_points = c->hit_points > 0 && c->hit_points <= c->hit_points_max ? c->hit_points : c->hit_points_max;
     }
     tcv_start_transition(v, true);
+}
+
+/* Into a carry: the fix persos' dsgvars (the cheat-code reader's, role 2) as this level's cast holds them; else what
+ * this level arrived with. */
+void tcv_carry_fix(const tc_viewer *v, tc_viewer_carry *c) {
+    uint32_t size = 0;
+    uint8_t *dsg = v->play && v->play->has_cast ? tc_cast_fix_dsg(&v->play->cast, 2, &size) : NULL;
+    if (dsg && size <= TC_VIEWER_CARRY_FIX_DSG) {
+        c->fix_dsg_size = size;
+        memcpy(c->fix_dsg, dsg, size);
+    } else if (v->carry && v->carry->fix_dsg_size) {
+        if (v->carry != c) {
+            c->fix_dsg_size = v->carry->fix_dsg_size;
+            memcpy(c->fix_dsg, v->carry->fix_dsg, c->fix_dsg_size);
+        }
+    } else c->fix_dsg_size = 0;
 }
 
 /* After Ed's step: his portal events drive the phases (docs/PORTALS.md). */
@@ -188,7 +209,11 @@ void tcv_update_portals(tc_viewer *v, float dt) {
                 memcpy(c->values, g->values, sizeof c->values);
             }
             c->has_checkpoint = 0; /* a saved game's arrival only (tc_save.h) */
-            c->hit_points = c->hit_points_max = 0;
+            /* Ed's hit points and their maximum go on (his std game is the fix's: the exe fills them only at a new game,
+             * GAM_StdGame_004237e0 with DAT_008c1767), and so do the fix persos' dsgvars (tcv_carry_fix) */
+            c->hit_points = e->ai.hit_points;
+            c->hit_points_max = e->ai.hit_points_max;
+            tcv_carry_fix(v, c);
             v->carry = c;
             v->phase = TC_VP_LOADING;
             v->loading_time = 0;

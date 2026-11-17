@@ -89,6 +89,7 @@ typedef struct tc_cast_ghost_perso {
     int32_t main_other;          /* the main actor keeps a copy of it (the camera, the fix game perso): index into his
                                     model's others, whose memory and fed position this ghost shares; -1 its own;
                                     TC_CAST_GHOST_OWN_MEMORY: its own memory, his model's layout (tc_cast_detach_main) */
+    uint16_t fix_role;           /* the level's ghost record's (tc_cast_ghost.fix_role): 0 a level perso */
 } tc_cast_ghost_perso;
 #define TC_CAST_GHOST_OWN_MEMORY (-2)
 
@@ -210,6 +211,10 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o);
 bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out);
 /* Perso `id`'s hit points and their maximum (a boss's life bar: tc_hud.h); false when the cast does not run it. */
 bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *max);
+/* The dsgvars of the fix perso at that place on the fix's list (2: the cheat-code reader, whose dsg26 counts towards the
+ * thermometers' next reward) as the cast holds them, and their size; NULL when the level names none. The exe keeps the
+ * fix persos for the whole game: the host carries them from level to level (tc_viewer_carry.fix_dsg) and saves them. */
+uint8_t *tc_cast_fix_dsg(tc_cast *c, uint16_t role, uint32_t *size);
 bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out);
 /* The matrix of a sector the scripts have moved (the identity: where the export has it), NULL for one they have not.
  * The static world's triangles follow it (c->world); the host draws the sector's geometry with it. */

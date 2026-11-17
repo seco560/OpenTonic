@@ -122,6 +122,7 @@ uint8_t *tc_save_make(tc_viewer *v, const char *name, uint64_t time, size_t *siz
         }
         s.carry.hit_points = e->ai.hit_points;
         s.carry.hit_points_max = e->ai.hit_points_max;
+        tcv_carry_fix(v, &s.carry); /* the cheat-code reader's dsgvars (the thermometers' next reward) */
         s.carry.vertical_fov = v->camera.vertical_fov;
         s.carry.orbit_distance = v->orbit_distance;
         s.carry.closeup = v->cam.closeup;
@@ -174,6 +175,13 @@ uint8_t *tc_save_make(tc_viewer *v, const char *name, uint64_t time, size_t *siz
         put(&o, lv.bytes, sizeof(lv.bytes));
     }
     chunk_finish(&o, c);
+
+    if (s.carry.fix_dsg_size) { /* optional (2026-11-17): the cheat-code reader's dsgvars (tc_viewer_carry.fix_dsg) */
+        c = chunk_begin(&o, "FIXD");
+        put_u32(&o, s.carry.fix_dsg_size);
+        put(&o, s.carry.fix_dsg, s.carry.fix_dsg_size);
+        chunk_finish(&o, c);
+    }
 
     if (o.failed) {
         tc_free(o.data);
@@ -267,7 +275,18 @@ tc_result tc_save_read(const void *data, size_t size, tc_save_game *out) {
         }
         if (!r.error && lv.size && !tc_cast_level_saves_put(&lv)) r.error = TC_ERR_OUT_OF_MEMORY;
     }
-    return chunk_end(&r);
+    if ((res = chunk_end(&r)) != TC_OK) return res;
+
+    k->fix_dsg_size = 0;
+    if (chunk_need(&c, "FIXD", &r)) { /* optional: saves from before 2026-11-17 have none */
+        uint32_t n2 = rd_u32(&r);
+        if (n2 > TC_VIEWER_CARRY_FIX_DSG || !have(&r, n2)) return TC_ERR_STALE;
+        memcpy(k->fix_dsg, r.data + r.offset, n2);
+        r.offset += n2;
+        k->fix_dsg_size = n2;
+        return chunk_end(&r);
+    }
+    return TC_OK;
 }
 
 void tc_save_start_new_game(tc_viewer_carry *out, const char *level) {

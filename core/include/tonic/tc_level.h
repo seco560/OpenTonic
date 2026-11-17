@@ -244,7 +244,9 @@ typedef struct tc_cast_data {
     tc_ai_inv_entry *inv;
     tc_cast_entry main_zones;    /* the main actor's ZDD zones (zones, zone_count only: in his moving axes) */
     uint16_t ghost_count;        /* the persos the cast's scripts name that do not run: their dsgvars, shared */
-    struct tc_cast_ghost { uint16_t id; tc_vec3 position; uint32_t size; uint8_t *dsg; } *ghosts;
+    /* fix_role: its place on the fix's perso list (1 the camera, 2 the cheat-code reader, whose dsg26 is the thermometers'
+     * next reward: HEG_Inventaire), 0 a level perso. The fix persos outlive a level in the exe (tc_viewer_carry.fix_dsg) */
+    struct tc_cast_ghost { uint16_t id, fix_role; tc_vec3 position; uint32_t size; uint8_t *dsg; } *ghosts;
     uint16_t card_count;         /* .ttlv CMEC: the families' states' ID cards (the cast's mechanics, tc_cast_mec.c) */
     tc_ai_card *cards;
 } tc_cast_data;

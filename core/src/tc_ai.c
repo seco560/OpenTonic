@@ -431,6 +431,15 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
         CHUNK_END(r);
     }
 
+    if (chunk_need(&cs, "STDG", r)) { /* optional: his std game's hit points (older files: the port's) */
+        m->std_hit_points = rd_u8(r);
+        m->std_hit_points_max = rd_u8(r);
+        m->std_hit_points_ceiling = rd_u8(r);
+        (void)rd_u8(r);
+        m->has_std = m->std_hit_points_max > 0;
+        CHUNK_END(r);
+    }
+
     if (chunk_need(&cs, "AUTO", r)) { /* optional: start by pressing Jump (a level whose start trigger is not there) */
         m->auto_start = rd_u8(r);
         (void)rd_u8(r), (void)rd_u16(r);
@@ -694,6 +703,28 @@ static void wr_le(uint8_t *b, uint32_t v, int n) {
 }
 static int dsg_width(uint8_t type) { return type <= 2 ? 1 : type <= 4 ? 2 : type == 12 ? 12 : 4; }
 int tc_ai_dsg_width(uint8_t type) { return dsg_width(type); }
+
+/* Element k of array dsgvar i (type 17: u32 element type, u32 count, count x u32; Operator_Array, OP 26): a perso
+ * (element type 10) as an id, as dsg_get's type 10; a float (7); else the word. Out of range: no perso / 0. */
+static value dsg_array_get(const tc_ai_perso *p, int32_t perso, uint32_t i, int32_t k) {
+    const tc_ai_dsg_def *def;
+    uint8_t *mem = dsg_mem(p, perso, &def);
+    const uint8_t *b;
+    uint32_t etype, count, at;
+    value v;
+    if (!mem || i >= def->count || def->vars[i].offset + 8 > def->size) return v_int(0);
+    b = mem + def->vars[i].offset;
+    etype = rd_le(b, 4), count = rd_le(b + 4, 4), at = def->vars[i].offset + 8 + 4u * (uint32_t)k;
+    if (k < 0 || (uint32_t)k >= count || at + 4 > def->size) { v = v_int(0); if (etype == 10) v.type = V_PERSO, v.i = -1; return v; }
+    if (etype == 7) return v_float(bits_to_float(rd_le(mem + at, 4)));
+    v = v_int((int32_t)rd_le(mem + at, 4));
+    if (etype == 10) {
+        v.type = V_PERSO;
+        if (v.i == 0) v.i = -1;
+        else if (p->self_id && v.i == p->self_id) v.i = 0;
+    }
+    return v;
+}
 
 static value dsg_get(const tc_ai_perso *p, int32_t perso, uint32_t i) {
     const tc_ai_dsg_def *def;
@@ -1786,6 +1817,26 @@ static value operation(run *r, uint32_t i) {
     case 18: return v_vec(tc_v3_scale(argv3(r, i, 0), argf(r, i, 1)));
     case 19: { float d = argf(r, i, 1); return v_vec(d != 0 ? tc_v3_div(argv3(r, i, 0), d) : tc_v3(0, 0, 0)); }
     case 20: return v_vec(tc_v3_scale(argv3(r, i, 0), -1));
+    case 21: case 22: case 23: { /* .X:= .Y:= .Z:= (vector, value): one component of an assignable vector (Ed's R0
+                                  * puts his splash at the water's height with .Z:=); before 2026-11-17 unknown: nothing */
+        uint32_t c = child(r, i, 0);
+        lval l;
+        value v = arg(r, i, 1);
+        if (c == TC_AI_NONE) return v_int(0);
+        l = lvalue(r, c);
+        l.component = (int)op - 21;
+        if (l.kind) lval_set(r, l, v);
+        return v;
+    }
+    case 25: return arg(r, i, 1); /* Operator_ModelCast(model, perso): the perso, typed for the Dot after it */
+    case 26: { /* Operator_Array(array dsgvar, index): its element (dsg_array_get) */
+        uint32_t c = child(r, i, 0);
+        lval l;
+        if (c == TC_AI_NONE) return v_int(0);
+        l = lvalue(r, c);
+        if (l.kind != 1) { unknown(r, i); return v_int(0); }
+        return dsg_array_get(r->p, l.perso, l.index, as_int(arg(r, i, 1)));
+    }
     case 24: { /* OP_24_004913d0: evaluate the second child as that perso's (AI_00491380: none when it is Me) */
         value who = arg(r, i, 0), v;
         uint32_t c = child(r, i, 1);
@@ -1876,7 +1927,13 @@ static void place_perso(run *r, value who, tc_vec3 at) {
     if (p->keep_off_main && q->main_actor == 0 && !q->read_only_for_cast) { p->forces_blocked++; return; }
     q->place_requested = true;
     q->place_at = at;
-    if (q->main_actor != 0 && !q->dead) q->active = true; /* GAM_Objinit_004199f0 (PROC 5's), whatever its dynamics */
+    if (q->main_actor != 0 && !q->dead) { /* GAM_Objinit_004199f0 (PROC 5's), whatever its dynamics */
+        q->active = true;
+        /* ... and as PROC 5, it ends the removal guard's stand-in for "inactive": sud0's tomato HEG_TomLut hides its
+         * thermometer (DeactivatePerso) and drops it where it dies (Proc_ActivateObjectOnPosition = PROC 27): it stood
+         * frozen in plain view and could never be taken (BUGS.md "Pickups") */
+        if (q->frozen_inactive) q->frozen = q->frozen_inactive = false;
+    }
 }
 
 static void set_mech_mode(tc_ai_perso *p, int mode) {
@@ -2088,6 +2145,23 @@ static uint32_t procedure(run *r, uint32_t i) {
         else q->hit_points = q->hit_points + n <= q->hit_points_max ? q->hit_points + n : q->hit_points_max;
         return 0;
     }
+    case 70: case 71: { /* PROC_SetCounter66Etc_00489590 0x46 / 0x47: SubHitPoints (AI_00489790 -> FUN_004cecb0: hit
+        * points -= n, 0 when n is as many or more) and SetHitPointsKept (AI_004896d0 -> GAM_00423ac0: := n, and
+        * SAI_00481120(+0x14, 0x31) keeps it as the value a re-init restores: port, the hit points are not re-initialised
+        * apart from it). Ed's damage: his R0 and his hurt behaviours (B1, B16, B17 ...) take his own points; n a byte */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        int32_t n = as_int(arg(r, i, 1)) & 0xFF;
+        if (!q) return 0;
+        if (c == 70) q->hit_points = q->hit_points > n ? q->hit_points - n : 0;
+        else q->hit_points = q->hit_points_init = n;
+        return 0;
+    }
+    case 67: { /* SetHitPointsToInit (0x489590 case 0x43 -> GAM_00423c00: SAI_004812d0 restores +0x14): its points as it
+                * started, or as PROC 71 last kept them (pyramide's false teeth, cock01's guards) */
+        tc_ai_perso *q = target(r, arg(r, i, 0));
+        if (q) q->hit_points = q->hit_points_init;
+        return 0;
+    }
     case 72: case 73: case 74: case 75: case 76: { /* PROC_72Etc_004897f0: the max hit points (std game +0x15): 72 := n
         * (FUN_004ced30), 73 := its start value (GAM_00423c20), 74 := the ceiling +0x16 (FUN_004ced50), 75 += n up to
         * the ceiling then the hit points := the max (AI_00489910), 76 -= n not below 0, the hit points clamped to it
@@ -2288,6 +2362,13 @@ static uint32_t procedure(run *r, uint32_t i) {
     case 204: p->display_flag8 = true; p->transparency = 255; return 0; /* Proc_DefautDisplay (GAM_cineinfo_00426b20 255) */
     case 205: p->transparency = (uint8_t)as_int(arg(r, i, 0)); return 0;
     case 239: case 240: return change_behaviour(r, c == 240, arg_param(r, i, 0));
+    case 241: { /* PROC_241_0048b960(r2, behaviour): ChangeBehaviour (the same 0x48b7d0 as PROC 239) when the main actor
+                 * is nearer than r2 squared (DAT_008bc744, as MainActorWithin): sud0's tree mushrooms (HEG_ChampiArbre)
+                 * chase Ed in B5 and punch with it (49: within 7). Before 2026-11-17 unknown, so they never punched */
+        float r2 = argf(r, i, 0);
+        if (p->main_distance2 < r2) return change_behaviour(r, false, arg_param(r, i, 1));
+        return 0;
+    }
     case 283: /* SetLightSet(set, duration ms, absolute) = PROC_283_0048ca60 -> 0x449ad0: the host applies it */
         if (p->light_call_count < TC_AI_MAX_LIGHT_CALLS) {
             tc_ai_light_call *l = &p->light_calls[p->light_call_count++];
@@ -2385,7 +2466,7 @@ static uint32_t procedure(run *r, uint32_t i) {
         p->motion.detach = true;
         if (p != r->p) p->motion.detach_by_other = true;
         return 0;
-    case 25: case 26: case 32: case 33: case 70: case 71: case 80:
+    case 25: case 26: case 32: case 33: case 80:
     case 105: case 106: case 107: case 108:
     case 236: case 278: case 279: case 291: case 292:
         return 0; /* world, sound, text, camera and channel effects: no-ops for now */
@@ -2396,6 +2477,15 @@ static uint32_t procedure(run *r, uint32_t i) {
 /* FUN_0049f580 (by FUN_0049f4e0): towards a point, there within `radius` (FUN_0049f530). This frame's mode 12 requests
  * go (FUN_0047a4a0); unless there, the unit direction goes into the proposal [7..9] and mode 0x14 is asked for (the
  * speed [10] stays the script's: SetSpeed, SetMoveDirection). Returns F_META_DONE there, else F_STOP. */
+/* GAM_0042a8d0's speed: the playing state's root motion this frame, units per second (0: none). */
+static float root_speed(const tc_ai_perso *p) {
+    const tc_ai_state *st = &p->model->states[p->state];
+    tc_vec3 row;
+    if (!p->model->root || !st->root_count) return 0;
+    row = p->model->root[st->root_first + (p->state_frame > 0 ? (uint32_t)p->state_frame % st->root_count : 0)];
+    return tc_v3_length(row) * (float)p->frame_rate;
+}
+
 static uint32_t go_along(tc_ai_perso *p, tc_vec3 d, bool there) {
     float l = tc_v3_length(d);
     uint8_t k, n = 0;
@@ -2465,7 +2555,24 @@ static uint32_t meta_action(run *r, uint32_t i) {
             slot->a = change_state(p, s);
             break;
         }
-        case 12: slot->a = 0; slot->b = 0; break; /* ChangeStateByDirection: a = walking, b = frames */
+        case 12: { /* META_ChangeStateByDirection_0049f310(perso, offset, forward state, backward state): the point at
+                    * the offset in the perso's axes, fixed now in world axes; in front of this perso (its y there <= 0:
+                    * a perso faces its -y) it walks there in the forward state (a = 2), behind it backwards in the
+                    * other (a = 1); 0: the state was refused (the continuation ends at once). b = the start time. */
+            value who = arg(r, i, 0);
+            tc_vec3 off = argv3(r, i, 1), t;
+            float ly;
+            slot->a = 0;
+            slot->b = (int32_t)p->time_ms;
+            /* a portal's frame, or a live perso's (the levers, the machines: before 2026-11-17 only the portals were
+             * looked up, so Ed never walked to a lever and a later TurnTowardPoint swung him round at once) */
+            if (who.type != V_PERSO || !perso_point(p, who.i, off, &t)) break;
+            slot->v[1] = t.x, slot->v[2] = t.y, slot->v[3] = t.z;
+            ly = -sinf(p->heading) * (t.x - p->position.x) + cosf(p->heading) * (t.y - p->position.y);
+            if (ly <= 0) slot->a = change_state(p, arg_param(r, i, 2)) ? 2 : 0;
+            else slot->a = change_state(p, arg_param(r, i, 3)) ? 1 : 0;
+            break;
+        }
         case 0: { /* IncrementalTurn2(degrees, ms) (META_0_0049ee00): a = ms, b = elapsed, the rate in rad/s */
             float deg = argf(r, i, 0), ms;
             slot->a = as_int(arg(r, i, 1));
@@ -2579,24 +2686,22 @@ static uint32_t meta_action(run *r, uint32_t i) {
         queue_mech_request(p, 15);
         return F_STOP;
     }
-    case 12: { /* ChangeStateByDirection(perso, offset, forward state, backward state): walk to the point at offset in
-                * the perso's axes (B68: 4.5 in front of an arch) in the forward state, facing it. Not decoded: always
-                * forwards, done within 0.4 or after 10 s. */
-        value who = arg(r, i, 0);
-        tc_vec3 pos, off = argv3(r, i, 1), target, d;
-        const float *m3;
-        if (who.type != V_PERSO || !perso_frame(p, who.i, &pos, &m3)) break;
-        target = tc_v3_add(pos, tc_v3(m3[0] * off.x + m3[1] * off.y + m3[2] * off.z,
-                                      m3[3] * off.x + m3[4] * off.y + m3[5] * off.z, 0));
-        d = tc_v3_sub(target, p->position);
-        if (d.x * d.x + d.y * d.y < 0.4f * 0.4f || ++slot->b > 600) {
-            p->motion.stop = true;
-            break;
-        }
-        p->motion.heading_set = true;
-        p->motion.heading = heading_to(p, target);
-        if (!slot->a) slot->a = change_state(p, arg_param(r, i, 2));
-        return F_STOP;
+    case 12: { /* META_ChangeStateByDirectionCont_0049f420: the point at this perso's height; forwards the go-to core
+                * towards it (FUN_0049f4e0), backwards away from it with the speed turned round (0x49f6c0: it faces away
+                * and steps back into place), there within 0.1 (FUN_0049f530); at most 5 s (AI_00492370); done, it is
+                * put on the point (AI_00491f80). The speed is the playing state's root motion (GAM_0042a8d0, which
+                * feeds the cast's actors before their AI: root_to_proposal; here for the main actor too). */
+        tc_vec3 t = tc_v3(slot->v[1], slot->v[2], p->position.z), away = tc_v3_sub(p->position, t);
+        uint32_t res;
+        float speed = root_speed(p);
+        if (slot->a == 0) break;
+        if (speed > 0) p->motion.proposal[10] = slot->a == 1 ? -speed : speed;
+        res = slot->a == 2 ? go_to(p, t, 0.1f) : go_along(p, away, tc_v3_length(away) <= 0.1f);
+        if (p->time_ms - (uint32_t)slot->b > 5000) res = F_META_DONE;
+        if (res == F_STOP) return F_STOP;
+        p->motion.teleport_set = true;
+        p->motion.teleport = t;
+        break;
     }
     case 21: { /* FUN_0049fc50: towards the waypoint, there within its radius */
         const tc_waypoint *wp = waypoint(p, slot->a);
@@ -2796,9 +2901,9 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     p->time_ms = 60000;
     p->rng = 0x1234567u;
     p->own_globals.powers = TC_AI_POWERS_ALL;
-    p->hit_points = 4;
-    p->hit_points_max = p->hit_points_max_init = 4;
-    p->hit_points_ceiling = 255;
+    p->hit_points = p->hit_points_init = m->has_std ? m->std_hit_points : 4; /* STDG: as the level holds them; else the port's */
+    p->hit_points_max = p->hit_points_max_init = m->has_std ? m->std_hit_points_max : 4;
+    p->hit_points_ceiling = m->has_std && m->std_hit_points_ceiling ? m->std_hit_points_ceiling : 255;
     p->active = true;
     p->run_mechanics = p->run_animation = 1;
     p->radius2 = -1;

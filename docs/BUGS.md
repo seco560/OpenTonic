@@ -69,9 +69,13 @@ its fog and lights; the story walls are open (to be handled as the game does onc
 3. **Ledge hang:** rough: Ed hangs at odd angles, or clips instead of grabbing. Later.
 4. **Decals:** Agent XYZ's poster still flickers in one small corner.
 5. **Pickups:** some thermometers do not work (sud0, by the portal to the SE's sud0, where the tomato enemy is). The
-   antidotes (the swirly ones) play the wrong sound.
+   antidotes (the swirly ones) play the wrong sound. **(2026-11-17, Claude, headless):** that thermometer is the tomato
+   HEG_TomLut's reward: it hides it and drops it where it dies (PROC 27); the removal guard kept it frozen in view.
+   Fixed (docs/ENGINE.md "Ed's damage and life"); whether the tomato reaches the ground in play is not checked.
 6. **Levers and machines:** most levers work. **The lever and machine persos turn to face Ed, instead of Ed taking his
-   place at them.** Missing: the platforms on sud0's way to the north plain, pushing the boulders there, cavedoc's
+   place at them.** **(2026-11-17, Claude, headless):** no lever, machine, button or grille turns itself in its scripts:
+   Ed's walk into place (ChangeStateByDirection, META 12) only knew the arches, so he stood still and then swung round
+   at once (TurnTowardPoint), the camera with him. Ported as read; Ed now walks (or steps back) into place first. Missing: the platforms on sud0's way to the north plain, pushing the boulders there, cavedoc's
    popcorn machine (its puzzle).
 7. **Dying:** in some pits Ed still hits the bottom; some pits do not work; after a respawn he is shown falling for about
    half a second; lava and deadly water do not kill him.
@@ -222,7 +226,10 @@ popcorn machine never starts; (d) the corn cob's shots never rebound from the ta
   feared when the list was made. Still kept off: the cage lift (ascens), Doc's end door (doc_porte), Doc (docfou), the
   mines (glac_mine), the popcorn cutscene (FRB_PopCine), MAD_GenEdContent, the inventory and thermometer explainers
   (genplainesud). Each needs its own look; castcheck finds pit markers and levers by the same flag, so it must learn
-  another way before the list grows much.
+  another way before the list grows much. **2026-11-17:** a rule read from the scripts lets in every perso whose forces
+  on Ed all hand him back (cast.py SAFE_MAIN_FORCES; docs/ENGINE.md "Ed's damage and life"): the explainers, the
+  signposts, the buttons, the mines, MAD_GenEdContent, the cage lift and the popcorn cutscene among them; the spies and
+  Suzy (their talk reflex R21) stay off. castcheck now tells the pit markers by their force into B60.
 
 ## Totalski (2026-11-11, late; the user: start text, the finish animations; begin with no powers)
 

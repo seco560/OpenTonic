@@ -534,7 +534,7 @@ The SE's own collectibles now run their scripts on every SE level: the cast ther
   +0x16 the max's ceiling): 72 max := n, 73 := its start, 74 := the ceiling, **75 max += n up to the ceiling, then the
   hit points := the max**, 76 max -= n, the hit points clamped. Retail's Worlds and HEG_Inventaire use 72 / 75 for the
   same collect-N reward, so it works on retail now too. The ceiling isn't exported: no cap (255). PROC 70
-  (SubHitPoints, Ed's own scripts 255 uses) and 71 stay no-ops: that is Ed's damage, a subsystem of its own.
+  (SubHitPoints, Ed's own scripts 255 uses) and 71: ported 2026-11-17 (docs/ENGINE.md "Ed's damage and life").
 - **A mapping error fixed:** SE `Proc_SetHitPointsMax` is retail 72, not 71 (their wrappers trace alike, the calls
   being skipped); `tools/exe/se_names.py` READ_PAIRS keeps the corrected pair (confidence `read`). Other pairs of
   wrappers that differ only in the function they call could hide the same kind of error.

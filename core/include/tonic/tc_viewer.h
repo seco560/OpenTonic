@@ -150,6 +150,7 @@ typedef struct tc_view_speech_panel {
 /* A level change through a portal: what the next level's viewer needs (tc_viewer_desc.carry). Ed lives in the fix,
  * so his dsgvars survive (B63's arrival branch reads them: dsg134 = 2 -> heading dsg136, the step-out). */
 #define TC_VIEWER_CARRY_DSG 4096
+#define TC_VIEWER_CARRY_FIX_DSG 1024
 typedef struct tc_viewer_carry {
     char level[64];           /* the level to load, lowercase (match the .ttlv case-insensitively) */
     char place[64];           /* PROC_29: Ed arrives at the level perso of this instance name; "" = his start */
@@ -170,7 +171,12 @@ typedef struct tc_viewer_carry {
      * is the level's checkpoint again), with his life as it was; hit_points_max 0: as the level starts him. */
     uint8_t has_checkpoint;
     float checkpoint[3], checkpoint_heading;
-    int32_t hit_points, hit_points_max;
+    int32_t hit_points, hit_points_max; /* since 2026-11-17 a portal's carry has them too: Ed's std game lives in the fix */
+    /* The cheat-code reader's dsgvars (a fix perso: tc_cast_fix_dsg role 2; its dsg26 is the thermometers' next reward,
+     * HEG_Inventaire), from a level with a cast into the next and into a saved game; fix_dsg_size 0: as the level has
+     * them. Kept at the end (a recording's older carry reads as 0). */
+    uint32_t fix_dsg_size;
+    uint8_t fix_dsg[TC_VIEWER_CARRY_FIX_DSG];
 } tc_viewer_carry;
 
 typedef struct tc_recorder tc_recorder; /* tc_rec.h */

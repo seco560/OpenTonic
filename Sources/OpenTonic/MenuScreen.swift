@@ -260,6 +260,7 @@ final class MenuView: MTKView, MTKViewDelegate {
 /// Triangle / Y erases (a letter, a game), Start confirms.
 struct MenuPad {
     private var pressed: [ObjectIdentifier: Bool] = [:]
+    private var presses = PadPressReader()  // Start: its own handler's presses (Gamepad.swift PadPresses)
     private var held: tc_menu_input?
     private var wait: Float = 0
 
@@ -279,7 +280,8 @@ struct MenuPad {
             wait -= dt
             if wait <= 0 { wait = 0.12; out.append(dir) }
         }
-        if changed(pad.buttonA) == true || changed(pad.buttonMenu) == true { out.append(TC_MI_CONFIRM) }
+        let cross = changed(pad.buttonA) == true, start = presses.pressed(pad.buttonMenu)
+        if cross || start { out.append(TC_MI_CONFIRM) }
         if changed(pad.buttonB) == true { out.append(TC_MI_BACK) }
         if changed(pad.buttonY) == true { out.append(TC_MI_ERASE) }
         return out

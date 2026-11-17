@@ -99,6 +99,7 @@ void tcv_look(tc_viewer *v, float dt);
 int16_t tcv_mesh_surface(const tc_viewer *v, const tc_mesh *m); /* tc_viewer_draw.c: the water surface a mesh lies on */
 /* Ends a camera transition in progress: the view as shown becomes the camera's own (before setting it outright). */
 void tcv_camera_settle(tc_viewer *v);
+void tcv_carry_fix(const tc_viewer *v, tc_viewer_carry *c); /* tc_viewer_portals.c */
 /* Sounds (tc_sound.h): the camera's micro now; a started sound with where it sounds from (NULL: flat). */
 tc_sound_listener tcv_listener(const tc_viewer *v);
 void tcv_push_sound(tc_viewer *v, uint16_t event, const tc_sound_source *s);

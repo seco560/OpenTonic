@@ -266,6 +266,8 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           Special Edition's Totalski), 2 unless the start text shows (tools/ttre/ssx.py: the custom layer shows it)
   STRT  (optional) u16 n, u16 0, n x u16 normal behaviour, padded to 4: the behaviours another perso's takeover puts
           this one in before the initial one, a tick each (start_chain: the skier's B4 before B2)
+  STDG  (optional) u8 hit points, u8 their maximum, u8 the maximum's ceiling, u8 0: his std game (+0x14 / +0x15 /
+          +0x16) as the level holds it (the fix Ed: 5, 5, 17), what a new game starts him with (GAM_StdGame_004237e0)
   TRIG  u16 n, u16 0, n x { f32 position[3], f32 radius, u16 behaviour, u16 guard dsgvar, u32 sleep ms }
           (ai.proximity_triggers)
   PORT  portals (docs/PORTALS.md): u16 n, u16 0, n x { f32 position[3], f32 radius, f32 rows[9] (its 3x3, row-major
@@ -1371,6 +1373,16 @@ def perso_dsg_block(d, perso, ids=None):
                 ptr = d.lv.ptr(src, off)
                 so = d.lv.ptr(ptr, 4) if ptr else None
                 struct.pack_into('<I', buf, off, ids.get(ptr) or ids.get(so) or 0)
+            elif typ == 17 and ids is not None and off + 8 <= size:
+                # an array (Operator_Array, OP 26): u32 element type, u32 count, count x u32; its persos (element type
+                # 10) as ids too (cock01's skating fridges force the platforms of theirs)
+                etype, count = struct.unpack_from('<2I', buf, off)
+                for k in range(count if etype == 10 and count < 64 else 0):
+                    if off + 8 + 4 * k + 4 > size:
+                        break
+                    ptr = d.lv.ptr(src, off + 8 + 4 * k)
+                    so = d.lv.ptr(ptr, 4) if ptr else None
+                    struct.pack_into('<I', buf, off + 8 + 4 * k, ids.get(ptr) or ids.get(so) or 0)
         buf = bytes(buf)
     out = struct.pack('<HHI', len(dsg), 0, len(buf))
     saves = dsg_save_flags(d, perso) if dsg and not d.se else []
@@ -1727,6 +1739,10 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
         out += struct.pack('<HH', len(chain), 0) + b''.join(struct.pack('<H', b) for b in chain)
         out += b'\0' * (-len(out) % 4)
         cut('STRT')
+    sg = lv.ptr(ai.perso, 4) if not d.se else None
+    if sg:  # optional: his std game's hit points (+0x14), their maximum (+0x15) and its ceiling (+0x16)
+        out += struct.pack('<4B', *d.un('3B', sg, 0x14), 0)
+        cut('STDG')
     chunks.write(path, 'TTAI', parts)
     with open(os.path.splitext(path)[0] + '_ai.txt', 'w', encoding='utf-8') as f:
         f.write('\n'.join(listing) + '\n')

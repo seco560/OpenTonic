@@ -22,7 +22,7 @@ static const float LIFE_STEPS[17] = {-0.12f, -0.05f, 0.02f, 0.09f, 0.17f, 0.25f,
 
 void tc_hud_init(tc_hud *h) {
     memset(h, 0, sizeof(*h));
-    h->shown_hp = h->shown_lives = h->shown_tings = h->shown_spade = -2; /* the first tick shows them (the exe's start) */
+    h->shown_hp = h->shown_hp_max = h->shown_lives = h->shown_tings = h->shown_spade = -2; /* the first tick shows them (the exe's start) */
     h->out_life = h->out_lives = h->out_spade = h->out_tings = h->out_doc = h->out_bees = GONE; /* GAM_0041bf90 */
 }
 
@@ -301,8 +301,9 @@ void tc_hud_tick(tc_hud *h, tc_ai_globals *g, const tc_hud_values *now) {
         else if (s->frames > 0) s->frames--;
     }
     h->now = *now;
-    if (now->hit_points != h->shown_hp || now->lives != h->shown_lives) {
+    if (now->hit_points != h->shown_hp || now->hit_points_max != h->shown_hp_max || now->lives != h->shown_lives) {
         h->shown_hp = now->hit_points;
+        h->shown_hp_max = now->hit_points_max;
         h->shown_lives = now->lives;
         h->asked |= 1;
         h->since_ms = 0;

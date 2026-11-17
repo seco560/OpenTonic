@@ -20,7 +20,8 @@ CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes; 
   u16 main_alias (the fix Ed's id where another perso is the player: the skier; he stands for the main actor; 0 none),
   u16 n_main_zones, u16 world (the World keyword's perso id, 0 none),
   n_main_zones x a zone as below (the main actor's ZDD zones, in his axes: they move with him)
-  u16 n_ghosts, u16 0, n_ghosts x { u16 perso id, u16 0, f32 position[3], u32 size, size bytes = its dsgvars as a .ttai
+  u16 n_ghosts, u16 0, n_ghosts x { u16 perso id, u16 fix role (its place on the fix's perso list: 1 the camera, 2 the
+      cheat-code reader; 0 a level perso), f32 position[3], u32 size, size bytes = its dsgvars as a .ttai
       writes them (ai.perso_dsg_block) }: the persos the scripts name that do not run (one shared copy each)
   n_families x {
     u16 n_states, u16 n_anims
@@ -90,7 +91,27 @@ MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn',
                          'YAS_EnleveAilePasSM', 'SDO_ActiveLesAiles'}
 # ... but not these instances: marmite's magnet switch keeps Ed holding it (his dsg3 = 1: Jump and Shoot steer the
 # magnet; leaning it to let go with Action does not take in the port yet, castcheck 2026-11-02): he would be stuck.
-MAY_NOT_FORCE_MAIN = {'JET_SwAimant'}
+MAY_NOT_FORCE_MAIN = {'JET_SwAimant',
+                      # sud0's mushroom boss (its forces pass SAFE_MAIN_FORCES since B78 did, 2026-11-17): its first hint
+                      # (B23 -> B31) holds Ed until the spy SDO_EspionMagicMush has talked, and the spy talks only with
+                      # Ed within 5 (and spies may not force him): castcheck found him held for good beside the boss
+                      'HEG_BossMush'}
+# ... and, since 2026-11-17, any retail perso whose every force on the fix Ed (PROC 237 / 238 naming him or the main
+# actor) is one of his behaviours that hand him back by themselves (forces_main_safely): the hold B15 + R4 together with
+# its release B103 (the signposts, the typo explainers, the HUD's thermometer explainers, the puzzles' pieces ...), B41
+# (the extra life point's cheer: HEG_Inventaire, World), B51 / B80 (pushing a button: gen_bouton; the head scratch),
+# and his damage: B1 (hurt: the mines, carrots and tomatoes that hit him force it), B101 (knocked back: pyramide's
+# platforms and columns, marmite's pistons), B34 (pushed aside, then back to B0: the stones), B78 (his states 285 / 284,
+# then B0: what the armoured guards and north's KEV_MechantEdJeVaisTeManger do to him when they catch him; 2026-11-17). Without it his own Action
+# took his blowgun out at a signpost or a button, the explainers' text did not hold him and those enemies never hurt him.
+# A hold without its release, or the talk reflex R21 (the spies, Suzy: they held Ed for good when allowed) stays off;
+# so does B33 (he takes the main character back from another perso). Indices into the fix Ed's model (NewEd), the same on
+# every retail level he plays.
+SAFE_MAIN_FORCES = {'B15', 'B103', 'R4', 'B41', 'B51', 'B80', 'B1', 'B101', 'B34', 'B78'}
+# Port choice (user, 2026-11-17): the two thermometer explainers wait for Jump alone; every other text prompt of the
+# game (the signposts, marmite's and cock01's typo spies) takes Jump, Action or Shoot. Their ButtonJustPressed(jump)
+# becomes the same Or of the three at export (widen_prompt_buttons).
+PROMPT_ANY_BUTTON = {'HEG_ExpliqueBonusThermo'}  # the model of sud0's YAS_ExpliqueBonusThermo, cavedoc's DAM_ExpliqueThermoRamasse
 # The save points (DFM_Save: within their radius they show the "saved" text, PROC 118, and take themselves out): port
 # choice, Ed comes back where he stood when the last one fired, after dying (core tc_ed_ai; flag 2).
 SAVE_POINTS = {'DFM_Save'}
@@ -369,6 +390,62 @@ def freeze_story_removals(a):
     return count
 
 
+def _forces_on(a, main_loc):
+    """{behaviour location} the perso's ForceBehaviour / ForceReflex (PROC 237 / 238) hand the main actor: those naming
+    him by the MainActor keyword (KW 5) or by his perso node (his location)."""
+    out = set()
+    for n in a.nodes():
+        c = n.children
+        if n.type == 4 and n.param in (237, 238) and len(c) == 2 and c[1].type == 32 and c[1].ref is not None:
+            who = c[0]
+            if (who.type == 0 and who.param == 5) or (who.type == 24 and who.ref == main_loc):
+                out.add(c[1].ref)
+    return out
+
+
+def forces_main_safely(a, main_loc, main_names):
+    """Whether every force of this perso on the main actor is in SAFE_MAIN_FORCES (main_names: his model's {behaviour
+    location: 'B15' / 'R4' ...}), with the hold B15 only beside its release B103 (and the release only beside a hold)."""
+    got = {main_names.get(ref, '?') for ref in _forces_on(a, main_loc)}
+    return bool(got) and got <= SAFE_MAIN_FORCES and ('B15' in got) == ('B103' in got)
+
+
+def widen_prompt_buttons(a, main_ai):
+    """PROMPT_ANY_BUTTON: each ButtonJustPressed (COND 10) of the main actor's jump button becomes Or(Or(jump, action),
+    shoot), as the other prompts' scripts are written. Returns how many were rewritten."""
+    refs = {}
+    for n in main_ai.nodes():
+        if n.type == 14 and n.ref is not None:
+            name = ai.label(main_ai, n, {})
+            for k in ('jump', 'action', 'shoot'):  # the lowest definition of each: the ones the signposts name
+                if name == f'btn({k})' and (k not in refs or n.ref[1] < refs[k].ref[1]):
+                    refs[k] = n
+    if len(refs) < 3:
+        return 0
+    count = 0
+
+    def pressed(k, depth):
+        b = refs[k]
+        return ai.Node(1, 10, depth, None, [ai.Node(14, b.param, depth + 1, b.ref, [], b.loc)])
+
+    def walk(ns):
+        nonlocal count
+        for i, n in enumerate(ns):
+            c = n.children
+            if n.type == 1 and n.param == 10 and len(c) == 1 and c[0].type == 14 and c[0].ref is not None \
+                    and c[0].ref[1] == refs['jump'].ref[1]:
+                d = n.depth
+                ns[i] = ai.Node(1, 1, d, None, [ai.Node(1, 1, d + 1, None, [pressed('jump', d + 2), pressed('action', d + 2)]),
+                                                pressed('shoot', d + 1)])
+                count += 1
+            else:
+                walk(c)
+    for b in a.behaviours:
+        for sc in b.scripts + ([b.schedule] if b.schedule else []):
+            walk(sc)
+    return count
+
+
 def named_zones(cast):
     """{perso location: {k}}: the ZDD zones the cast's scripts test by naming their perso (COND_13(perso, k, ...)), its
     own scripts included: Totalski's start gate PAT_DEPARTESSAI names itself, not Me, and without its zone the race's
@@ -462,7 +539,11 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     # .gpt is not read) the level's World family perso
     world_loc = d.engine_lists()[2]
     world_id = idx_of.get(world_loc) or next((idx_of[p.loc] for p in persos if d.perso_names(p.loc)[0] == 'World'), 0)
-    main_buttons = ai.button_order(ai.AI(d, player)) if player else {}
+    main_ai = ai.AI(d, player) if player else None
+    main_buttons = ai.button_order(main_ai) if main_ai else {}
+    # forces_main_safely / PROMPT_ANY_BUTTON: on the retail levels the fix Ed plays (his behaviours' names are his model's)
+    fix_ed_plays = not d.se and player is not None and bool(d.perso_in_fix) and player == d.perso_in_fix[0][0]
+    main_names = {ref: name for ref, name in main_ai.beh_names.items()} if fix_ed_plays else {}
     zones_named = named_zones(cast)
     families, fam_blocks, entries, listing = {}, [], [], []
     cards, fam_cards = {}, []  # CMEC: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
@@ -488,6 +569,9 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
             fam_walk.append(walk_block(d, loc, a.states, keys))
             fam_zde.append(ai.zde_block(d, loc, len(a.states)))
         frozen = freeze_story_removals(a)
+        names = d.perso_names(loc)
+        if fix_ed_plays and names[1] in PROMPT_ANY_BUTTON:
+            widen_prompt_buttons(a, main_ai)
         for n in a.nodes():  # the level's own sounds (sfx.level_snd): resolved here, by the node's address
             if n.type == 34 and n.loc and not d.se:
                 n.event = sound_at(sounds, n.loc, n.param)
@@ -506,6 +590,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
         if pid in portal_ids(d) or pid in level_changer_ids(d):
             flags |= 1  # a portal or a level changer: it moves the player (portal_ids, level_changer_ids)
+        if fix_ed_plays and names[2] not in MAY_NOT_FORCE_MAIN and forces_main_safely(a, player, main_names):
+            flags |= 1  # its forces on Ed all hand him back by themselves (SAFE_MAIN_FORCES)
         if names[1] in SCENE_SPEAKERS:
             flags |= TALK
         if d.se:  # SE_CAST_LEVELS: a scene; elsewhere the items, and the save points as retail's DFM_Save
@@ -558,12 +644,14 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
                 named.add(idx_of[n.ref])
     ghosts = sorted(named - running)
     loc_of = {v: k for k, v in idx_of.items() if k in by_loc}
+    fix_locs = [] if d.se else [x[0] for x in d.perso_in_fix]
     gblock = struct.pack('<HH', len(ghosts), 0)
     for gid in ghosts:
         loc = loc_of[gid]
         dsg, _ = ai.perso_dsg_block(d, loc, idx_of)
         w = by_loc[loc].world
-        gblock += struct.pack('<HH3fI', gid, 0, w[3], w[7], w[11], len(dsg)) + dsg
+        role = fix_locs.index(loc) if loc in fix_locs[1:] else 0  # its place on the fix's list (core: fix_role)
+        gblock += struct.pack('<HH3fI', gid, role, w[3], w[7], w[11], len(dsg)) + dsg
     head = struct.pack('<4H', main, len(fam_blocks), len(entries), alias) + zblock + gblock
     own = []  # CMEC: each entry's own sweep body (its collide set: a single sphere, +0x36 / +0x30) and +0x34 / +0x35
     for loc, _, _ in cast:

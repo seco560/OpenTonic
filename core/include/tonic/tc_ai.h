@@ -258,6 +258,10 @@ typedef struct tc_ai_model {
      * (the skier's B4, whose schedule sets him up, before B2 waits for Jump: tools/ttre/ai.py start_chain) */
     uint16_t start_chain[4];
     uint8_t start_chain_count;
+    /* .ttai STDG: his std game's hit points, maximum and the maximum's ceiling as the level holds them (the fix Ed: 5, 5,
+     * 17); has_std 0 (older files): the port's 4, 4, 255 */
+    uint8_t std_hit_points, std_hit_points_max, std_hit_points_ceiling;
+    bool has_std;
     /* .ttai AUTO: the driver presses Jump until the initial behaviour is left (tc_ed_ai): TC_AI_AUTO_ALWAYS, or
      * TC_AI_AUTO_UNLESS_TEXT, unless the start text shows (the host's HUD: the custom layer's, on the SSX courses, which
      * have no cast to show the game's); 0 none */
@@ -568,6 +572,7 @@ struct tc_ai_perso {
     float radius2;
     int32_t hit_points_max;      /* FUNC 37, std game +0x15 (Ed: the port's 4) */
     int32_t hit_points_max_init; /* the max it started with (PROC 73) */
+    int32_t hit_points_init;     /* the points a re-init restores (PROC 67): as it started, or PROC 71's */
     int32_t hit_points_ceiling;  /* std game +0x16, the max's ceiling (PROC 74 / 75); not exported: 255 (no cap) */
     int32_t forced_by;           /* diagnostics: the id of the perso whose PROC 237 / 238 last set this one's behaviour */
     const tc_cast_entry *zones_of; /* host-fed (the cast): its ZDD zones for COND 13 (NULL: not modelled) */

@@ -292,7 +292,7 @@ static void read_cast(tc_cast_data *c, reader *r) {
         struct tc_cast_ghost *g = &c->ghosts[i];
         uint32_t size;
         g->id = rd_u16(r);
-        (void)rd_u16(r);
+        g->fix_role = rd_u16(r); /* 0 in files from before 2026-11-17 */
         g->position.x = rd_f32(r), g->position.y = rd_f32(r), g->position.z = rd_f32(r);
         size = rd_u32(r);
         if (!have(r, size)) { r->error = TC_ERR_TRUNCATED; break; }

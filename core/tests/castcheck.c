@@ -84,6 +84,18 @@ static bool forces_others(const tc_ai_model *m) {
     return false;
 }
 
+/* Whether its scripts force the main actor's falling death (ForceBehaviour(.., B60): the holes of nothingness, World's
+ * fall height): the pit markers, among the many invisible persos allowed to force him since 2026-11-17 (the signposts'
+ * and explainers' triggers hold him for their text). */
+static bool forces_fall(const tc_ai_model *m) {
+    uint32_t n;
+    for (n = 0; n + 2 < m->node_count; n++)
+        if (m->nodes[n].type == TC_AI_PROC && m->nodes[n].param == 237 && m->nodes[n + 2].type == TC_AI_BEHAVIOUR &&
+            m->nodes[n + 2].param == 60)
+            return true;
+    return false;
+}
+
 static void save_draws(tc_viewer *v) {
     uint32_t count, opaque;
     const tc_view_draw *d = tc_viewer_draws(v, &count, &opaque);
@@ -372,6 +384,9 @@ static void level(const char *dir, const char *name) {
         c = tc_viewer_cast(&v);
         a = &c->actors[i];
         run(&v, 1, 0);
+        /* a level's opening scene holds Ed first (Land's entrance camera, cock01's guard, pyramide's projector: allowed
+         * since 2026-11-17): let it end (frame() takes the lines away), or a visit lands in it */
+        for (k = 0; k < 60 && (c->main->normal.behaviour == 15 || c->main->normal.behaviour == 102); k++) run(&v, 0.5f, 0);
         for (side = 0; side < 4 && !taken_over; side++) {
             float h = side * TC_PI / 2;
             tc_player_teleport((tc_player *)tc_viewer_player(&v),
@@ -477,7 +492,7 @@ static void level(const char *dir, const char *name) {
         if (i == 0) second_fall = 0;
         if (a) {
             if (!(a->entry->flags & TC_CAST_MAY_FORCE_MAIN) || (a->entry->flags & TC_CAST_ALWAYS_AWAKE) ||
-                a->entry->prso != 0xFFFF || !a->ai->active || cast_portal(&v, a->entry->id))
+                a->entry->prso != 0xFFFF || !a->ai->active || cast_portal(&v, a->entry->id) || !forces_fall(&a->model))
                 continue;
             at = tc_v3_add(a->ai->position, tc_v3(0, 0, 0.5f));
         } else if (strcmp(name, "north") == 0 && lv.edition == 0) { /* retail north (the SE's is another map) */
@@ -678,6 +693,150 @@ static void taken_stays_taken(const char *dir) {
     tc_viewer_free(&v); free(ai); tc_level_free(&lv);
 }
 
+
+/* Ed's damage and life (2026-11-17; docs/ENGINE.md "Ed's damage and life"), on sud0: his hit points as the data starts
+ * them (5 of 5, STDG), a boxing mushroom's punch takes one (his R0's hit list, B1, SubHitPoints), the floating mercury
+ * gives one back, the 10th thermometer gives a life point more (HEG_Inventaire, the cheat-code reader's dsg26 + 10,
+ * carried into a saved game), the explainer's text holds him until a button, and none at 0: his death, a life less. */
+static tc_cast_actor *actor_id(tc_cast *c, int id) {
+    uint32_t j;
+    for (j = 0; j < c->count; j++) if (c->actors[j].entry->id == id) return &c->actors[j];
+    return NULL;
+}
+
+static float fix_dsg26(tc_cast *c) {
+    uint32_t j;
+    for (j = 0; j < c->ghost_count; j++)
+        if (c->ghosts[j].fix_role == 2) return tc_ai_dsgvar_float(&c->ghosts[j].ai, 26);
+    return -1;
+}
+
+static void damage(const char *dir) {
+    char path[1024];
+    size_t size, ai_size = 0;
+    uint8_t *data, *ai;
+    tc_level lv;
+    tc_viewer v;
+    tc_viewer_desc desc;
+    tc_cast *c;
+    tc_cast_actor *a;
+    int i, hp0, max0;
+    snprintf(path, sizeof(path), "%s/sud0.ttlv", dir);
+    if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return; }
+    free(data);
+    snprintf(path, sizeof(path), "%s/sud0.ttai", dir);
+    ai = read_file(path, &ai_size);
+    memset(&desc, 0, sizeof(desc));
+    desc.level = &lv, desc.ai_data = ai, desc.ai_size = ai_size, desc.level_name = "sud0";
+#define FRESH() do { if (tc_viewer_init(&v, &desc) != TC_OK) { check(0, "the viewer starts"); goto done; } \
+                     c = (tc_cast *)tc_viewer_cast(&v); run(&v, 1, 0); } while (0)
+    FRESH();
+    hp0 = c->main->hit_points, max0 = c->main->hit_points_max;
+    if (!c->main->model->has_std) { printf("  info  this export has no STDG (made before 2026-11-17: reinstall)\n"); tc_viewer_free(&v); goto done; }
+    printf("sud0's Ed starts with %d of %d hit points (the data's std game)\n", hp0, max0);
+    check(hp0 == 5 && max0 == 5, "Ed starts with his data's hit points (5 of 5)");
+    /* the boxing mushroom HEG_Champi-Boxeur2 (perso 7): Ed 2.5 in front of it, still */
+    a = actor_id(c, 7);
+    if (a) {
+        float h = a->ai->heading;
+        int hits = 0, last = hp0;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(a->ai->position, tc_v3(-sinf(h) * 2.5f, cosf(h) * 2.5f, 0.5f)), h + TC_PI);
+        for (i = 0; i < 60 * 4; i++) {
+            frame(&v);
+            if (c->main->hit_points < last) hits++;
+            last = c->main->hit_points;
+        }
+        printf("  the boxer punched Ed %d times in 4 s: %d of %d left, behaviour %d\n", hits, c->main->hit_points, max0, c->main->normal.behaviour);
+        check(hits >= 1 && c->main->hit_points == hp0 - hits, "a boxer's punch costs Ed a hit point each");
+    }
+    tc_viewer_free(&v);
+    FRESH(); /* a tree mushroom (HEG_ChampiArbre02, perso 71): it chases Ed and punches by PROC 241 (within 7) */
+    a = actor_id(c, 71);
+    if (a) {
+        float h;
+        int t;
+        for (t = 0; t < 60 * 15; t++) frame(&v);
+        h = a->ai->heading;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(a->ai->position, tc_v3(sinf(h) * 2, -cosf(h) * 2, 0.3f)), h + TC_PI);
+        for (t = 0; t < 60 * 8; t++) frame(&v);
+        printf("  the tree mushroom: Ed %d of %d after 8 s in front of it\n", c->main->hit_points, c->main->hit_points_max);
+        check(c->main->hit_points < c->main->hit_points_max, "a tree mushroom's punch (PROC 241) hurts Ed");
+    }
+    tc_viewer_free(&v);
+    FRESH(); /* the mercury (gen_icon3 HEG_CoeurSousSol01, perso 133) */
+    a = actor_id(c, 133);
+    if (a) {
+        c->main->hit_points = 3;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), a->ai->position, 0);
+        run(&v, 2, 0);
+        printf("  the mercury: 3 -> %d of %d\n", c->main->hit_points, c->main->hit_points_max);
+        check(c->main->hit_points == 4 && !a->ai->active, "the floating mercury gives a hit point and goes");
+    }
+    tc_viewer_free(&v);
+    FRESH(); /* the 10th thermometer (gen_icon_argen HEG_PiqueArgentSousSol, perso 134): save value 10 is sud0's */
+    a = actor_id(c, 134);
+    if (a) {
+        float before = fix_dsg26(c);
+        uint8_t *saved;
+        size_t saved_size = 0;
+        tc_save_game g;
+        c->globals.values[10] = 9;
+        tc_player_teleport((tc_player *)tc_viewer_player(&v), a->ai->position, 0);
+        run(&v, 2, 0);
+        printf("  the 10th thermometer: value %d, Ed %d of %d, the next reward at %g (was %g)\n", c->globals.values[10],
+               c->main->hit_points, c->main->hit_points_max, (double)fix_dsg26(c), (double)before);
+        check(c->globals.values[10] == 10 && c->main->hit_points_max == max0 + 1 && c->main->hit_points == max0 + 1 &&
+              fix_dsg26(c) == before + 10, "every 10th thermometer gives a life point more, filled");
+        saved = tc_save_make(&v, "castcheck", 0, &saved_size);
+        check(saved && tc_save_read(saved, saved_size, &g) == TC_OK && g.carry.hit_points_max == max0 + 1 &&
+              g.carry.fix_dsg_size > 0, "a saved game keeps the life points and the thermometers' next reward");
+        tc_free(saved);
+    }
+    tc_viewer_free(&v);
+    FRESH(); /* the explainer (YAS_ExpliqueBonusThermo, perso 277), the first antidote taken: its text holds Ed; Action pages
+              * on, Shoot ends it (its own script waits for Jump alone: cast.py PROMPT_ANY_BUTTON) */
+    a = actor_id(c, 277);
+    c->globals.values[9] = 1;
+    {
+        if (a) {
+            tc_vec3 at;
+            int held;
+            for (i = 0; i < 60 * 6 && c->main->normal.behaviour != 102; i++) frame(&v);
+            held = c->main->normal.behaviour == 102 && c->main->forced_by == 277;
+            at = c->main->position;
+            run(&v, 1, 1u << TC_VA_FORWARD);
+            printf("  the explainer: Ed %s by it, moved %.2f walking 1 s; text %d\n", held ? "held" : "not held",
+                   (double)tc_v3_length(tc_v3_sub(c->main->position, at)), c->globals.hud[4].active);
+            check(held && tc_v3_length(tc_v3_sub(c->main->position, at)) < 0.05f && c->globals.hud[4].active,
+                  "the thermometers' explainer holds Ed while its text shows");
+            run(&v, 0.1f, 1u << TC_VA_ACTION);
+            run(&v, 1.5f, 0);
+            run(&v, 0.1f, 1u << TC_VA_SHOOT);
+            run(&v, 1.5f, 0);
+            printf("  ... after Action, then Shoot: Ed's behaviour %d, text %d\n", c->main->normal.behaviour, c->globals.hud[4].active);
+            check(c->main->normal.behaviour != 102 && !c->globals.hud[4].active, "Action pages on, Shoot dismisses it (as Jump)");
+        }
+    }
+    tc_viewer_free(&v);
+    FRESH(); /* none left: his hurt behaviour's SubHitPoints takes the last one */
+    {
+        int lives = c->globals.lives, died = 0;
+        c->main->hit_points = 1;
+        tc_ai_dsgvar_set_int(c->main, 0, 5);
+        tc_ai_force_behaviour(c->main, 1);
+        for (i = 0; i < 60 * 12; i++) { frame(&v); died |= c->main->normal.behaviour == 14; }
+        printf("  hurt at 1 hit point: his death %s, back with %d of %d, lives %d -> %d\n", died ? "yes" : "no",
+               c->main->hit_points, c->main->hit_points_max, lives, c->globals.lives);
+        check(died && c->main->hit_points == c->main->hit_points_max && c->globals.lives == lives - 1,
+              "with no hit points left Ed dies, loses a life and comes back filled");
+    }
+    tc_viewer_free(&v);
+#undef FRESH
+done:
+    free(ai);
+    tc_level_free(&lv);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "../files/out/ttlv";
     static const char *defaults[] = {"sud0", "north", "Land"};
@@ -688,6 +847,7 @@ int main(int argc, char **argv) {
         for (i = 0; i < 3; i++) level(dir, defaults[i]);
     if (argc <= 2) river_wall(dir);
     if (argc <= 2) taken_stays_taken(dir);
+    if (argc <= 2) damage(dir);
     printf(failures ? "FAIL (%d)\n" : "ok\n", failures);
     return failures ? 1 : 0;
 }

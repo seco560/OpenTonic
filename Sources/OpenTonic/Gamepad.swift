@@ -1,5 +1,46 @@
+import Foundation
 import GameController
 import TonicCore
+
+/// Start (buttonMenu) and Select (buttonOptions) on macOS: the GameController framework reports their press briefly,
+/// and the system may take them for its own gestures, so a poll of isPressed once a frame can miss them (the user,
+/// 2026-11-17: Start did not open the game menu on macOS; the SDL build on Linux was fine). Their presses are counted
+/// from the buttons' own handler instead, the system gestures turned off; each reader keeps the count it last saw.
+final class PadPresses: @unchecked Sendable {
+    static let shared = PadPresses()
+    private let lock = NSLock()
+    private var counts: [ObjectIdentifier: Int] = [:]
+    private var hooked = Set<ObjectIdentifier>()
+
+    /// How many times the button went down since the app first asked (its handler is set up on that first ask).
+    func count(_ button: GCControllerButtonInput) -> Int {
+        let id = ObjectIdentifier(button)
+        lock.lock()
+        let fresh = hooked.insert(id).inserted
+        let n = counts[id, default: 0]
+        lock.unlock()
+        if fresh {
+            button.preferredSystemGestureState = .disabled
+            button.pressedChangedHandler = { @Sendable [unowned self] _, _, pressed in
+                guard pressed else { return }
+                self.lock.lock()
+                self.counts[id, default: 0] += 1
+                self.lock.unlock()
+            }
+        }
+        return n
+    }
+}
+
+/// A reader of PadPresses: whether the button went down since this reader last asked.
+struct PadPressReader {
+    private var seen: [ObjectIdentifier: Int] = [:]
+    mutating func pressed(_ button: GCControllerButtonInput) -> Bool {
+        let id = ObjectIdentifier(button), n = PadPresses.shared.count(button)
+        defer { seen[id] = n }
+        return n > seen[id, default: n]
+    }
+}
 
 /// Gamepads through the GameController framework, as the SDL build's (sdl/src/main.c, input.c): the controller last
 /// used drives the viewer. The sticks go to the core as they are (tc_viewer_set_move_stick / _look_stick; the dead
@@ -13,6 +54,7 @@ import TonicCore
     enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, closeup, press, mark, pausePlayback }
 
     private var pressed: [ObjectIdentifier: Bool] = [:]
+    private var presses = PadPressReader()
     private var fast = false, recenter = false
 
     /// Applies the current controller to the viewer; returns the commands pressed since the last call. watching: a
@@ -46,8 +88,8 @@ import TonicCore
             }
         }
         var commands: [Command] = cross ? [.pausePlayback] : []
-        if changed(pad.buttonMenu) == true { commands.append(.levelSelect) }
-        if let select = pad.buttonOptions, changed(select) == true { commands.append(.controls) }
+        if presses.pressed(pad.buttonMenu) { commands.append(.levelSelect) }
+        if let select = pad.buttonOptions, presses.pressed(select) { commands.append(.controls) }
         if let r3 = pad.rightThumbstickButton, changed(r3) == true { commands.append(.togglePlay) }
         if let l3 = pad.leftThumbstickButton, changed(l3) == true { commands.append(.firstPerson) }  // L3: first person (0)
         let touchpad = (pad as? GCDualSenseGamepad)?.touchpadButton ?? (pad as? GCDualShockGamepad)?.touchpadButton

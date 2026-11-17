@@ -456,7 +456,7 @@ static tc_result start_actor(tc_cast *c, tc_cast_actor *a) {
     p->run_mechanics = e->mechanics;
     p->run_animation = e->animation;
     p->radius2 = e->radius2;
-    p->hit_points = e->hit_points;
+    p->hit_points = p->hit_points_init = e->hit_points;
     p->hit_points_max = p->hit_points_max_init = e->hit_points_max;
     p->position = tc_v3(e->world.m[3], e->world.m[7], e->world.m[11]);
     p->heading = a->heading0;
@@ -688,6 +688,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
             gp->ai.position = main->other_positions[gp->main_other];
             gp->ai.read_only_for_cast = o->role == 1; /* the camera */
         }
+        gp->fix_role = g->fix_role;
         gp->ai.self_id = g->id;
         gp->ai.main_actor = c->main_id;
         gp->ai.world_id = d->world;
@@ -800,7 +801,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
     uint32_t k;
     {
         tc_ai_perso *p = a->ai;
-        bool think, animate, was_active;
+        bool think, animate, was_active, holding;
         float d2;
         a->state_prev = p->state;
         a->frame_prev = p->state_frame;
@@ -820,7 +821,13 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         }
         if (c->main) p->screen_covered = c->main->screen_covered; /* GameState63: the engine's */
         if (!p->model || !p->active) { a->awake = false; return; }
-        a->awake = (a->entry->flags & TC_CAST_ALWAYS_AWAKE) || !s || main_sector == TC_SECTOR_NONE ||
+        /* port (2026-11-17, the user's north lock): the perso that holds the main actor (he is in the fix Ed's hold B15
+         * or its wait B102, by its force) stays awake and thinking until it lets him go. north's lift
+         * (KEV_Plate_Forme_Joyeuse) holds Ed while its camera shot looks into another sector; asleep there, it never
+         * reached its release (B103 after 6.5 s) and Ed stood still for good */
+        holding = c->main && c->main != p && c->main->forced_by == (int32_t)a->entry->id &&
+                  (c->main->normal.behaviour == 15 || c->main->normal.behaviour == 102);
+        a->awake = holding || (a->entry->flags & TC_CAST_ALWAYS_AWAKE) || !s || main_sector == TC_SECTOR_NONE ||
                    a->sector.sector == TC_SECTOR_NONE || tc_sectors_active(s, main_sector, a->sector.sector);
         if (!a->awake) return;
         c->awake++;
@@ -829,7 +836,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         p->time_ms = c->main ? c->main->time_ms : p->time_ms + (uint32_t)(dt * 1000 + 0.5f);
         if (d2 <= TC_CAST_NEAR * TC_CAST_NEAR) p->near_main_ms = p->time_ms ? p->time_ms : 1;
         p->world = c->world; /* FUNC 162's probe: the static world */
-        think = (p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
+        think = (holding || p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
         if ((a->entry->flags & TC_CAST_TALK) && !a->talking) { /* port: its scene waits for him */
             float dx = p->position.x - main_pos.x, dy = p->position.y - main_pos.y;
             a->talking = c->talk_press && dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH;
@@ -1110,6 +1117,17 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o) {
         if (a->obstacle && !(a->obstacle->flags & TC_PCOL_CAST)) a->obstacle = NULL; /* posed once, by the export */
         pose_obstacle(c, a);
     }
+}
+
+uint8_t *tc_cast_fix_dsg(tc_cast *c, uint16_t role, uint32_t *size) {
+    uint32_t i;
+    for (i = 0; role && i < c->ghost_count; i++)
+        if (c->ghosts[i].fix_role == role && c->ghosts[i].ai.dsg && c->ghosts[i].model.dsg.size) {
+            *size = c->ghosts[i].model.dsg.size;
+            return c->ghosts[i].ai.dsg;
+        }
+    *size = 0;
+    return NULL;
 }
 
 bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *max) {
