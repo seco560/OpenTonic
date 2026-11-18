@@ -80,6 +80,31 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     follow does (docs/CAMERA.md "Turning and zooming a shot against walls"). Left: a shot whose own framing stands
     beyond a wall keeps the eye 2 out of the perso until the turn finds room, so its wall can still show.
 
+* Tomatoes and Beans Do Nothing (the user, 2026-11-18): "some persos have their own scripts that aren't running ...
+  the tomatoes and beans, Ed currently can't interact with them".
+  * **Fixed 2026-11-18 (Claude), headless only; the levels are re-exported.** Three causes (docs/ENGINE.md "The
+    chameleons", "Collide sets are each perso's"): (1) some tomatoes are the chameleon disguise: `Proc_SetMainActor`
+    (PROC 4) was not handled and the generators / chameleons were kept off Ed: now the player plays the tomato (sud0's
+    marsh: Action at the generator), and seven other chameleons on five levels use the same path (unseen); (2) the
+    tomato family's bodies and hit zones were exported from a perso that has none: no tomato could be hit, hurt Ed or
+    meet a wall (the corridor's cannon tomatoes rolled on for ever); now each perso's own; (3) carota's talking beans
+    (Gun_HarryCover, JFR_Harry_le_malin) were kept off Ed (their R0): allowed. Not seen: Harry Cover's whole scene (the
+    bean drops off its ledge towards Ed's start room, as before, and its scene waits for Ed back up above it).
+
+* Interactive Cutscenes End at the Line; the Mammoth's Talk Zone up on its Ledge (the user, 2026-11-18).
+  * **Fixed 2026-11-18 (Claude), headless; re-exported.** The talk place is also where the scene's Ed stands (Ed's
+    arrival); after the line the speakers' scripts play at their own pace and send Ed off to the scene's exit waypoint
+    before the cover (docs/ENGINE.md "Walkable scenes"). viewcheck walks all six.
+
+* Camera Stuck in Walls after Moving it during Portal Transitions and Interactive Cutscenes (the user, 2026-11-18).
+  * **Not done (Claude, 2026-11-18).** Seen in the code only: while a level loads the look input turns the view without
+    the follow's update; nothing found that explains "stuck in the wall" without a recording. A recording with an F9
+    mark at the moment would let it be replayed.
+
+* Ed's Missing Vocals (the user, 2026-11-18: "he's supposed to be more lively when he's attacking enemies").
+  * **Fixed 2026-11-18 (Claude); needs the install (the sound step re-runs).** His cries, cheers and Super Ed's shout
+    were random picks the exporter did not read (docs/ENGINE.md "Random sound picks"). Not heard here.
+
 ## Bigger Areas of Improvement
 
 These might not necessarily be called bugs, but rather more overarching issues with certain parts of the game. Also not including obvious ones, like implementing actual game mechanics, story progression, item collection etc. There's a lot to go still.

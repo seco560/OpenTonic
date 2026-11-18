@@ -1,7 +1,8 @@
 # How Open Tonic fits together
 
 A one-page map, written 2026-11-11 for the reader who wants the whole picture before the details. Every part has its own
-longer document; they are named as they come up. What works and what does not is in docs/STATUS.md.
+longer document; they are named as they come up. What works and what does not is in docs/STATUS.md. How a frame runs,
+where the code is tangled and a plan to untangle it: docs/ARCHITECTURE.md (2026-11-18).
 
 ## Three layers
 

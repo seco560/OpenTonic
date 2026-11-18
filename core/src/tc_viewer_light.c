@@ -140,7 +140,7 @@ static uint16_t camera_sector(const tc_viewer *v) {
     uint16_t s = tc_viewer_ed_sector(v), r;
     if (s == TC_SECTOR_NONE || !v->play) return s;
     if (v->shot.on && v->shot.reveal && (r = tc_sectors_find(v->sectors, v->camera.position)) != TC_SECTOR_NONE) return r;
-    return tc_sectors_cross(v->sectors, s, tc_v3_add(v->play->main.player.position, tc_v3(0, 0, 1.1f)), v->camera.position);
+    return tc_sectors_cross(v->sectors, s, tc_v3_add(tcv_main_position(v->play), tc_v3(0, 0, 1.1f)), v->camera.position);
 }
 
 void tcv_view_light(tc_view_light *o, const tc_light *L, float w) {

@@ -145,6 +145,8 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     }
     v->ed_clip = tcv_ed_anim(l, "idle");
     v->rng = desc->seed ? desc->seed : 0x7417u;
+    v->sound_rng = v->rng ^ 0x50D5u;
+    v->scene_exit = -1;
     tc_speech_init(&v->speech, &l->speech);
     tc_hud_init(&v->hud);
     {
@@ -310,7 +312,10 @@ static void update_sectors(tc_viewer *v) {
 }
 
 uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
+    const tc_cast_actor *a;
     if (!v->sectors || !v->play) return TC_SECTOR_NONE;
+    if (v->play->has_cast && (a = tc_cast_character(&v->play->cast)) != NULL && a->sector.sector != TC_SECTOR_NONE)
+        return a->sector.sector; /* a chameleon holds the player: its sector is drawn, lit, heard */
     return v->play->main.has_driver ? v->play->main.driver.sector.sector : v->ed_sector.sector;
 }
 
@@ -345,10 +350,27 @@ static void update_frame(tc_viewer *v, float dt) {
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
 
+/* The events that play one of their clips at random (.ttlv SPIK: Ed's cries and cheers, the swamp's animals): the
+ * clip this time, or nothing (the exe's sound module picks as it plays the event; its own random numbers are not read:
+ * the viewer's own stream, seeded with the level, so a replay hears the same). */
+static void pick_sounds(tc_viewer *v) {
+    uint32_t i, n = 0;
+    if (!v->level->pick_count) return;
+    for (i = 0; i < v->sound_count; i++) {
+        int32_t e = tc_level_pick_sound(v->level, v->sounds[i], &v->sound_rng);
+        if (e < 0) continue;
+        v->sounds[n] = (uint16_t)e;
+        v->sound_sources[n] = v->sound_sources[i];
+        n++;
+    }
+    v->sound_count = n;
+}
+
 void tc_viewer_update(tc_viewer *v, float dt) {
     double prof = TC_PROF_BEGIN();
     if (v->rec) tc_rec_frame_in(v->rec, v, dt);
     update_frame(v, dt);
+    pick_sounds(v);
     if (v->rec) tc_rec_frame_out(v->rec, v, dt);
     TC_PROF_END(TC_PZ_UPDATE, prof);
 }

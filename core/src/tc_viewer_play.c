@@ -469,6 +469,30 @@ static void hud_tick(tc_viewer *v) {
     if (tcv_hud_covered(v)) tc_hud_away(&v->hud); /* they slide in again once the screen opens */
 }
 
+/* Port: a hint scene's way out (.ttlv SCNX; docs/ENGINE.md "Walkable scenes"). The speaker sends its scene's own Ed off
+ * to a waypoint after the line (his GoToWaypoint walk, state 9); the real Ed plays the scene, so he walks there by his
+ * own scripts, steered as a stick held towards it (relative to the camera as his scripts read it: from the eye to him),
+ * the player's input held. Arrived (within TC_VIEW_SCENE_EXIT_NEAR), he stands; the speaker's cover and level change
+ * follow as its scripts time them. */
+#define TC_VIEW_SCENE_EXIT_NEAR 0.8f
+#define TC_VIEW_SCENE_EXIT_STICK 0.6f /* a walk, not a run */
+static void scene_walk(tc_viewer *v, tc_main_input *in) {
+    const tc_viewer_play *p = v->play;
+    tc_vec3 ed = p->main.player.position, to = v->level->speech.exits[v->scene_exit].point, f;
+    float dx = to.x - ed.x, dy = to.y - ed.y, d = sqrtf(dx * dx + dy * dy), fl;
+    in->inputs = 0;
+    in->face = false;
+    in->stick_x = in->stick_y = 0;
+    if (d < TC_VIEW_SCENE_EXIT_NEAR) { v->scene_exit = -1; return; }
+    f = tc_v3(ed.x - in->eye.x, ed.y - in->eye.y, 0);
+    fl = sqrtf(f.x * f.x + f.y * f.y);
+    if (fl < 0.5f) f = tc_v3(sinf(v->camera.yaw), cosf(v->camera.yaw), 0), fl = 1; /* the eye above him: its facing */
+    f.x /= fl, f.y /= fl;
+    dx /= d, dy /= d;
+    in->stick_y = TC_VIEW_SCENE_EXIT_STICK * (dx * f.x + dy * f.y);  /* forward: away from the eye */
+    in->stick_x = TC_VIEW_SCENE_EXIT_STICK * (dx * f.y - dy * f.x);  /* right of forward (fy, -fx) */
+}
+
 static void step_ai(tc_viewer *v, float dt) {
     tc_viewer_play *p = v->play;
     tc_main *m = &p->main;
@@ -498,6 +522,7 @@ static void step_ai(tc_viewer *v, float dt) {
         in.eye = v->camera.position;
         in.face = v->cam.first_person && !v->director;
         in.heading = TC_PI - v->camera.yaw;
+        if (v->scene_exit >= 0) scene_walk(v, &in); /* a hint scene's way out: he walks off by himself */
         in.aim_pitch = in.face ? v->camera.pitch : 0; /* first person: shots go where the gunsight is, up and down too */
         in.talk_press = v->talk_press;
         in.hud_waits = v->hud_waits;

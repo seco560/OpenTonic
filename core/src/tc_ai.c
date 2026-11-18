@@ -677,6 +677,15 @@ static tc_ai_perso *live(const tc_ai_perso *p, int32_t id) {
     return q && q->model ? q : NULL;
 }
 
+/* MainActor (KW 5): the main character as PROC 4 last set it (tc_ai_globals.main_character), else the level's main
+ * actor; 0 = this perso is it. */
+static int32_t main_character(const tc_ai_perso *p) {
+    const tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+    int32_t mc = g->main_character;
+    if (mc == 0) return p->main_actor;
+    return mc == p->self_id ? 0 : mc;
+}
+
 static uint8_t *dsg_mem(const tc_ai_perso *p, int32_t perso, const tc_ai_dsg_def **def) {
     int o;
     tc_ai_perso *q;
@@ -1318,19 +1327,27 @@ static value arith(int op, value a, value b) {
     }
 }
 
-/* A perso without buttons of its own (the cast) reads the main actor's: its button nodes index his (cast.py). */
-static int32_t button_counter(run *r, uint32_t param) {
-    const tc_ai_perso *src = r->p;
+/* A perso without buttons of its own (the cast) reads the main actor's: its button nodes index his (cast.py). The exe's
+ * input entries are global (the input module updates them each frame, whoever reads them): a chameleon in control reads
+ * the stick and buttons the player presses, with Ed asleep (tc_ed_ai keeps his counters going). */
+static const tc_ai_perso *button_owner(const tc_ai_perso *src) {
     if (!src->model->button_count && src->main_actor) {
         const tc_ai_perso *q = live(src, src->main_actor);
         if (q) src = q;
     }
+    return src;
+}
+
+static int32_t button_counter(run *r, uint32_t param) {
+    const tc_ai_perso *src = button_owner(r->p);
     return param < src->model->button_count ? src->button_counter[param] : -2;
 }
 
 static float button_analog(const tc_ai_perso *p, uint32_t b) {
     const tc_ai_button *bt;
-    float x = 100 * p->stick_x, y = -100 * p->stick_y; /* DirectInput axes: y negative = up */
+    float x, y;
+    p = button_owner(p);
+    x = 100 * p->stick_x, y = -100 * p->stick_y; /* DirectInput axes: y negative = up */
     if (b >= p->model->button_count) return 0;
     bt = &p->model->buttons[b];
     switch (bt->analog) {
@@ -1857,7 +1874,7 @@ static value eval(run *r, uint32_t i) {
     switch (n->type) {
     case TC_AI_KEYWORD:
         if (n->param == 4) { v.type = V_PERSO; v.i = 0; } /* Me */
-        else if (n->param == 5) { v.type = V_PERSO; v.i = r->p->main_actor; } /* the main actor (the player) */
+        else if (n->param == 5) { v.type = V_PERSO; v.i = main_character(r->p); } /* the main character (the player) */
         else if (n->param == 6 && r->p->world_id) { /* World: the world perso (the engine's 0x8c1744) */
             v.type = V_PERSO;
             v.i = r->p->world_id == r->p->self_id ? 0 : r->p->world_id;
@@ -1927,7 +1944,8 @@ static void place_perso(run *r, value who, tc_vec3 at) {
     if (p->keep_off_main && q->main_actor == 0 && !q->read_only_for_cast) { p->forces_blocked++; return; }
     q->place_requested = true;
     q->place_at = at;
-    if (q->main_actor != 0 && !q->dead) { /* GAM_Objinit_004199f0 (PROC 5's), whatever its dynamics */
+    if (!q->dead) { /* GAM_Objinit_004199f0 (PROC 5's), whatever its dynamics; Ed too: the chameleons put him back where
+                     * they stand when the player leaves them (his own B57 deactivated him) */
         q->active = true;
         /* ... and as PROC 5, it ends the removal guard's stand-in for "inactive": sud0's tomato HEG_TomLut hides its
          * thermometer (DeactivatePerso) and drops it where it dies (Proc_ActivateObjectOnPosition = PROC 27): it stood
@@ -2004,6 +2022,18 @@ static uint32_t procedure(run *r, uint32_t i) {
         23, 12, 20, 3, 4, 1, 2, 10, 21, 6, 7, 8, 21, 19, 22};
     switch (c) {
     case 9: p->g_flags = (uint8_t)as_int(arg(r, i, 0)); p->g_armed = 1; return 0;
+    case 4: { /* Proc_SetMainActor(perso) (SE name; the main-character list DAT_008c1720 := the perso): the chameleons hand
+               * the player to themselves and Ed takes him back (his B33). Port: not from a perso kept off the main actor
+               * (cast.py MAY_FORCE_MAIN): it would take the player away for good */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        value who = arg(r, i, 0);
+        tc_ai_perso *q = who.type != V_PERSO ? NULL : who.i == 0 ? p : live(p, who.i);
+        if (!q) return 0;
+        if (p->keep_off_main) { p->forces_blocked++; return 0; }
+        g->main_character = q->main_actor == 0 ? 0 : q->self_id;
+        g->main_character_serial++;
+        return 0;
+    }
     case 10: { /* GAM_0041ec90: frame rate = state rate * percent / 100, as a byte */
         uint32_t rate = p->model->state_count ? (uint32_t)p->model->states[p->state].speed * (uint32_t)as_int(arg(r, i, 0)) / 100 : 0;
         p->frame_rate = (uint8_t)rate;
@@ -2999,6 +3029,12 @@ void tc_ai_step(tc_ai_perso *p, float dt) {
     p->time_ms += (uint32_t)(dt * 1000 + 0.5f);
     think(p);
     advance_state(p, dt);
+}
+
+void tc_ai_step_asleep(tc_ai_perso *p, float dt) {
+    step_begin(p, dt);
+    p->time_ms += (uint32_t)(dt * 1000 + 0.5f);
+    update_buttons(p);
 }
 
 void tc_ai_step_parts(tc_ai_perso *p, float dt, bool think_now, bool animate) {

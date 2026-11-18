@@ -207,10 +207,15 @@ typedef struct tc_cast_entry {
     uint32_t tables_size;        /* TC_CAST_TABLES: the strings and constant vectors they index (tc_ai_model_load_tables) */
     uint8_t *tables;
     /* .ttlv CMEC: its own sweep body for its mechanics (its collide set's single sphere at the origin, +0x36: radius
-     * +0x30 / 2; 0 none) and the set's priority (+0x34) and +0x35 (it meets persos) */
+     * +0x30 / 2, in every state; 0 a point; -1 none: its family's ZDM bodies) and the set's priority (+0x34) and +0x35
+     * (it meets persos) */
     float own_radius;
     uint8_t own_priority, own_meets;
     uint16_t family_type;        /* CMEC: its family's index (std game +0; what T22 nodes hold), 0xFFFF unknown */
+    /* CMEC: its own ZDE zones where they are not its family's (collide sets are each perso's: sud0's tomato family's
+     * first perso has none, the cannons, kamikazes, baseballs and TomLut a body zone and a hit zone) */
+    bool has_zde;
+    tc_zde_set zde;
 } tc_cast_entry;
 #define TC_CAST_MAY_FORCE_MAIN 1u /* its PROC 237 / 238 may set the main actor's behaviours (tools/ttre/cast.py) */
 #define TC_CAST_SAVE_POINT 2u     /* a save point: when it takes itself out, the main actor's checkpoint is where he is */
@@ -280,6 +285,10 @@ typedef struct tc_speech_data {
     uint8_t panel[4];            /* the window's backdrop */
     bool has_arrival;            /* a hint scene (docs/ENGINE.md "Walkable scenes"): Ed starts where its own Ed stands */
     tc_vec3 arrival;
+    /* .ttlv SCNX: its way out. When its speaker enters `behaviour` after the line, Ed walks to `point` (where the scene's
+     * own Ed is sent: tools/ttre/speech.py Table.exits) */
+    uint16_t exit_count;
+    struct tc_scene_exit { uint16_t behaviour; tc_vec3 point; } *exits;
     uint8_t *atlas;              /* rgba, rows top first */
 } tc_speech_data;
 
@@ -368,6 +377,16 @@ typedef struct tc_level_rolloff {
     tc_sound_rolloff rolloff;
 } tc_level_rolloff;
 
+/* A sound event that plays one of its clips at random (.ttlv SPIK; the banks' type-10 resources, tools/ttre/sfx.py
+ * random_events): Ed's cries and cheers, the swamp's frogs and birds. Weights out of 65536; `silence`: none plays. */
+typedef struct tc_level_pick_clip { uint16_t event; uint32_t weight; } tc_level_pick_clip;
+typedef struct tc_level_pick {
+    uint16_t event;
+    uint16_t clip_count;
+    uint32_t silence;
+    tc_level_pick_clip *clips;
+} tc_level_pick;
+
 typedef struct tc_ways {
     uint16_t waypoint_count;
     tc_waypoint *waypoints;      /* number k is waypoints[k - 1] */
@@ -408,6 +427,8 @@ typedef struct tc_level {
     tc_ways ways;
     uint32_t sound_rolloff_count; /* .ttlv SND3 (absent: none): the persos with a sound rolloff of their own */
     tc_level_rolloff *sound_rolloffs;
+    uint32_t pick_count;         /* .ttlv SPIK (absent: none; those events play nothing) */
+    tc_level_pick *picks;
     tc_speech_data speech;       /* .ttlv SPCH (optional) */                /* .ttlv WAYS (none: no waypoints; the way primitives then do nothing) */
     uint32_t edition;            /* .ttlv EDIT: 0 retail, 1 the Special Edition (tools/ttre/se.py; docs/SE.md) */
     struct tcx_level *custom;    /* custom gameplay's data, not the game's (core/include/tonic/custom/tcx.h: the custom
@@ -424,6 +445,9 @@ typedef struct tc_level {
 tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size);
 void tc_level_free(tc_level *level);
 
+/* A sound event as it plays: itself, or (.ttlv SPIK) one of its clips picked by *rng (an LCG it advances), or -1 for
+ * nothing (the pick's silence). */
+int32_t tc_level_pick_sound(const tc_level *level, uint16_t event, uint32_t *rng);
 /* The sound rolloff of the perso with that id (.ttlv SND3), or NULL: the default one (tc_sound.h). */
 const tc_sound_rolloff *tc_level_sound_rolloff(const tc_level *level, int32_t perso);
 

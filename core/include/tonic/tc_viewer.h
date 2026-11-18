@@ -321,6 +321,7 @@ typedef struct tc_viewer {
     tc_transition transition;
     float loading_time;       /* seconds into the loading screen */
     uint32_t rng;
+    uint32_t sound_rng;       /* the random sound picks' (.ttlv SPIK), apart from the transitions' */
     const char **effects;     /* distinct effect texture paths (relative to the level folder) */
     uint32_t effect_count;
     int32_t crosshair_effect; /* the gunsight's index among the effects (TC_VIEWER_CROSSHAIR_TEXTURE), -1 none */
@@ -352,6 +353,8 @@ typedef struct tc_viewer {
     bool talk_held;           /* that Action talked to a speaker: kept from Ed's scripts until it is let go */
     bool scene_said;          /* a hint scene's line is over */
     bool scene_leaving;       /* its speaker was left waiting for the scene's Ed: the port covers and goes on */
+    int scene_exit;           /* the way out Ed walks now (tc_speech_data.exits), -1 none */
+    uint32_t scene_exits_done; /* bit k: exits[k] started */
     bool director;            /* the shot is on */
     bool director_released;   /* the player ended it (until the next camera write) */
     tc_vec3 director_eye;
@@ -575,7 +578,8 @@ float tc_viewer_fov(const tc_viewer *v);
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
 void tc_viewer_cycle_lighting(tc_viewer *v);        /* L: the original's lighting <-> the port's earlier one */
 void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list (default) -> all -> his alone -> ... */
-/* Ed's sector (TC_SECTOR_NONE: none); tc_sectors_name for its name. */
+/* Ed's sector, or the main character's while a cast perso holds the player (a chameleon, tc_cast_character)
+ * (TC_SECTOR_NONE: none); tc_sectors_name for its name. */
 uint16_t tc_viewer_ed_sector(const tc_viewer *v);
 /* Wheel notches (positive = up): orbit zoom while playing, fly speed in free-fly; x1.1 per notch. */
 void tc_viewer_wheel(tc_viewer *v, float notches);

@@ -40,6 +40,8 @@ STEP_SOUND = 256  # the core's events for the material steps (TC_AI_STEP_SOUND +
 
 LEVEL_SOUND = 1024  # the core's events for the levels' own banks: LEVEL_SOUND + rank of the event (level_events)
 LEVELS = 'files/sources/GAMEDATA/WORLD/LEVELS'
+RANDOM_SOUND = 16384  # the core's events for the random pick's clips: RANDOM_SOUND + rank (random_events)
+RANDOM = 10  # resource type: a weighted random pick (read 2026-11-18 from the banks; random_events)
 
 
 def bank_paths():
@@ -127,6 +129,93 @@ def read_bank(path):
     return events, resources
 
 
+def pick_entries(path, res_index):
+    """A type-10 resource (RANDOM) of a bank: (silence weight, [(resource key, weight)]). Read from the banks
+    (2026-11-18): its record's +0x0C is the size of its entries (12 bytes each: u32 resource key = bank << 16 | resource
+    index, u32 weight out of 65536, u32 0), +0x10 their offset in the table that follows the resource records, +0x18
+    their count, +0x1C the weight of playing nothing. Bnk_0's event 55 picks one of Ed's four cries (ed06b, vEd_he,
+    vEd_aie, ed19: his hurts), 64 one of four cheers (vEdyoupi, vEd_joy, ed20, ed15a), 72 Super Ed's shout (vSu_att) one
+    time in two, 28 a rumble (edrot101) one time in five; the levels' banks 3 and 70 have three more. Until then the
+    exporter took these for raw waveforms and the events played nothing."""
+    d = open(path, 'rb').read()
+    _, _, _, res_off, n_res = struct.unpack_from('<5I', d, 0)
+    o = res_off + 0x5c * res_index
+    _, typ, _, size, off, _, count, silence = struct.unpack_from('<8I', d, o)
+    if typ != RANDOM:
+        return None
+    table = res_off + 0x5c * n_res
+    out = []
+    for k in range(min(count, size // 12)):
+        key, weight, _ = struct.unpack_from('<3I', d, table + off + 12 * k)
+        out.append((key, weight))
+    return silence, out
+
+
+def random_events():
+    """Every play event whose resource is a random pick (pick_entries): Bnk_0's (the global events, by index) and the
+    levels' banks' (level_events) that some level's .snd names. [(event index, volume of the pick 0..1, silence weight,
+    [(clip event index, weight, (bank, resource index))])], the clips numbered RANDOM_SOUND + rank in this order. The
+    core makes the choice (the .ttlv SPIK chunk: ttlv.py; core tc_viewer.c pick_sounds), the frontends play the clip's
+    events.tsv row."""
+    if hasattr(random_events, 'cache'):
+        return random_events.cache
+    import glob
+    from . import sna
+    rows, rank = [], 0
+    bank0 = f'{SOUND}/Bnk_0.bnm'
+    events, _ = read_bank(bank0)
+    d0 = open(bank0, 'rb').read()
+    res_off0 = struct.unpack_from('<I', d0, 12)[0]
+    for k, (eid, kind, target) in enumerate(events):
+        if kind != 1 or eid == FOOTSTEPS:
+            continue
+        got = pick_entries(bank0, target & 0xFFFF)
+        if not got:
+            continue
+        vol = struct.unpack_from('<I', d0, res_off0 + 0x5c * (target & 0xFFFF) + 0x14)[0] / 127
+        silence, entries = got
+        clips = []
+        for key, weight in entries:
+            clips.append((RANDOM_SOUND + rank, weight, (key >> 16, key & 0xFFFF)))
+            rank += 1
+        rows.append((k, vol, silence, clips))
+    named = set()
+    for f in glob.glob(f'{LEVELS}/*/*.snd'):
+        b = sna.decrypt(open(f, 'rb').read())
+        named |= set(struct.unpack_from(f'<{len(b) // 4}I', b)[0::2])
+    table, paths = level_events(), bank_paths()
+    for key in sorted(k for k in named if k in table):
+        index, bank, k, kind, target = table[key]
+        rbank = target >> 16
+        if kind != 1 or rbank not in paths:
+            continue
+        got = pick_entries(paths[rbank], target & 0xFFFF)
+        if not got:
+            continue
+        d = open(paths[rbank], 'rb').read()
+        res_off = struct.unpack_from('<I', d, 12)[0]
+        vol = struct.unpack_from('<I', d, res_off + 0x5c * (target & 0xFFFF) + 0x14)[0] / 127
+        silence, entries = got
+        clips = []
+        for ckey, weight in entries:
+            clips.append((RANDOM_SOUND + rank, weight, (ckey >> 16, ckey & 0xFFFF)))
+            rank += 1
+        rows.append((index, vol, silence, clips))
+    random_events.cache = rows
+    return rows
+
+
+def picks_chunk():
+    """The .ttlv SPIK chunk (ttlv.py): u16 n, u16 0, n x { u16 event, u16 n_clips, u32 silence weight, n_clips x
+    { u16 clip event, u16 0, u32 weight } } (random_events)."""
+    rows = random_events()
+    out = [struct.pack('<2H', len(rows), 0)]
+    for event, _, silence, clips in rows:
+        out.append(struct.pack('<2HI', event, len(clips), silence))
+        out += [struct.pack('<2HI', c, 0, w) for c, w, _ in clips]
+    return b''.join(out)
+
+
 def event_extras(path):
     """[(follow, pitch spread)] per event of a bank (the event record's +0x1C and +0x0C / 65536; module docstring)."""
     d = open(path, 'rb').read()
@@ -166,6 +255,7 @@ def main(out_dir='files/out/audio/sfx'):
     extras = event_extras(bank)
     by_index = {v[0]: (rid, v) for rid, v in resources.items()}
     streams = stream_index(bank)
+    bank0, streams0 = bank, streams  # kept: the level loop below reuses both names
     os.makedirs(out_dir, exist_ok=True)
     rows, extracted = [], {}
     loops = {target for _, kind, target in events if kind == 2}
@@ -246,6 +336,32 @@ def main(out_dir='files/out/audio/sfx'):
         rows.append((index, 'loop' if key in loops_all else 'play', file, vol / 127, '', *extras_of[bank][k]))
         level_rows += 1
     print(f'levels\' own sounds: {level_rows} events')
+    # The random picks' clips (random_events): the core picks one and reports its event
+    picks = 0
+    for event, vol, _, clips in random_events():
+        for clip, _, (rbank, ri) in clips:
+            file, cvol = '', 127
+            if rbank == 0:
+                rid, res = by_index.get(ri, (None, None))
+                streams, src, prefix = streams0, bank0, ''
+            else:
+                got = resource((rbank << 16) | ri)
+                res = got[1] if got else None
+                streams = loaded[rbank][1] if got else {}
+                src = paths.get(rbank)
+                prefix = f'{rbank}_'
+            if res and res[1] == 1 and res[0] in streams:
+                cvol = res[2]
+                file = prefix + os.path.splitext(res[3].lower())[0] + '.wav'
+                if file not in extracted:
+                    subprocess.run(['vgmstream-cli', '-s', str(streams[res[0]]), '-o', os.path.join(out_dir, file), src],
+                                   check=True, capture_output=True)
+                    extracted[file] = True
+            parent = next((r for r in rows if r[0] == event), None)
+            follow, spread = (parent[5], parent[6]) if parent else (1, 0.0)
+            rows.append((clip, 'play', file, vol * cvol / 127, '', follow, spread))
+            picks += 1
+    print(f'random picks: {len(random_events())} events, {picks} clips')
     # The voices (speech.py): event VOICE_SOUND + rank; the frontends decode one when it is said, and stop it when the
     # line is dismissed (the core's TC_AI_VOICE_STOP).
     from . import speech

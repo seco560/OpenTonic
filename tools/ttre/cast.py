@@ -108,7 +108,16 @@ MAY_NOT_FORCE_MAIN = {'JET_SwAimant',
 # its release, or the talk reflex R21 (the spies, Suzy: they held Ed for good when allowed) stays off;
 # so does B33 (he takes the main character back from another perso). Indices into the fix Ed's model (NewEd), the same on
 # every retail level he plays.
-SAFE_MAIN_FORCES = {'B15', 'B103', 'R4', 'B41', 'B51', 'B80', 'B1', 'B101', 'B34', 'B78'}
+# Since 2026-11-18 (docs/ENGINE.md "The chameleons"): B31 and B33, the chameleon's hand-over and hand-back. A generator
+# (HEG_GenCameleonPyrex's model: the marsh tomato's, the Pyrex jar's, the mummy's, cavedoc's mine, Land's rock, marmite's
+# crate and Grogh, pyramide's scarab and column) forces B31 on Action: without power 512 his B31 hands him back at once
+# (R0, B0), with it B57 plays his change (state 253), puts the chameleon where he stands and deactivates him; the
+# generator then makes the chameleon the main character (Proc_SetMainActor). The chameleon (its own pad-reading scripts)
+# puts him back where it stands and forces B33 (+ R4): Proc_SetMainActor(Me), the chameleon deactivated, B58 (state 254)
+# -> B0. And R0, his own play reflex: carota's talking beans (Gun_HarryCover, JFR_Harry_le_malin) give it back after
+# their hold. Before, all of these were kept off Ed: the chameleons never took the player, the beans' scenes never held
+# him.
+SAFE_MAIN_FORCES = {'B15', 'B103', 'R4', 'B41', 'B51', 'B80', 'B1', 'B101', 'B34', 'B78', 'B31', 'B33', 'R0'}
 # Port choice (user, 2026-11-17): the two thermometer explainers wait for Jump alone; every other text prompt of the
 # game (the signposts, marmite's and cock01's typo spies) takes Jump, Action or Shoot. Their ButtonJustPressed(jump)
 # becomes the same Or of the three at export (widen_prompt_buttons).
@@ -553,8 +562,22 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     cards, fam_cards = {}, []  # CMEC: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
     fam_walk = []  # CMEC's walker tail: each family's root motion and ZDM bodies (walk_block)
     fam_zde = []  # CMEC's ZDE tail: each family's ZDE zones (ai.zde_block)
+    own_zde = []  # ... and the entries whose own differ from their family's: (entry index, ai.zde_block)
     always, first, _ = d.engine_lists()
     always, first = set(always), set(first)
+
+    def zdm_owner(fam, first_loc):
+        """The family's per-state ZDM bodies come from a perso of it that has them (a collide set without +0x36, with
+        its ZDM activation list): the bodies are each perso's own, and the family's first one may sweep a single
+        sphere instead (its CMEC own row) or have none (2026-11-18: sud0's tomatoes, whose marsh chameleon alone has
+        a ZDM sphere)."""
+        for loc2, _, _ in cast:
+            p2 = lv.ptr(loc2)
+            if p2 and lv.ptr(p2, 0x14) == fam:
+                cs2 = lv.ptr(loc2, 0x14)
+                if cs2 and not d.un('B', cs2, 0x36)[0] and lv.ptr(cs2, 8) and lv.ptr(cs2, 0x18):
+                    return loc2
+        return first_loc
     for loc, _, a in cast:
         pid = idx_of[loc]
         p3d = lv.ptr(loc)
@@ -570,8 +593,11 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
                 c = lv.ptr(st, 0x30)
                 row.append(cards.setdefault(c, len(cards)) if c and d.un('I', c)[0] in ai.CARD_SIZES else 0xFFFF)
             fam_cards.append(row)
-            fam_walk.append(walk_block(d, loc, a.states, keys))
+            fam_walk.append(walk_block(d, zdm_owner(fam, loc), a.states, keys))
             fam_zde.append(ai.zde_block(d, loc, len(a.states)))
+        zb = ai.zde_block(d, loc, len(a.states))  # its own: collide sets are each perso's (2026-11-18)
+        if zb != fam_zde[families[fam]]:
+            own_zde.append((len(entries), zb))
         frozen = freeze_story_removals(a)
         names = d.perso_names(loc)
         if fix_ed_plays and names[1] in PROMPT_ANY_BUTTON:
@@ -665,11 +691,12 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         if cs:
             diameter, = d.un('f', cs, 0x30)
             prio, meets, single = d.un('3B', cs, 0x34)
-            own.append((diameter * 0.5 if single and diameter > 0 else 0.0, prio, 1 if meets else 0, ftype))
+            # +0x36: one sphere at its origin (0: a point) whatever the state; -1: none (its family's ZDM bodies)
+            own.append((max(diameter, 0.0) * 0.5 if single else -1.0, prio, 1 if meets else 0, ftype))
         else:
-            own.append((0.0, 0, 0, ftype))
+            own.append((-1.0, 0, 0, ftype))
     return (head + b''.join(fam_blocks) + b''.join(entries), listing,
-            mech_chunk(d, cards, fam_cards, own, fam_walk, fam_zde))
+            mech_chunk(d, cards, fam_cards, own, fam_walk, fam_zde, own_zde))
 
 
 def walk_block(d, perso, states, keys):
@@ -697,15 +724,19 @@ def walk_block(d, perso, states, keys):
     return out
 
 
-def mech_chunk(d, cards, fam_cards, own=(), walk=(), zde=()):
+def mech_chunk(d, cards, fam_cards, own=(), walk=(), zde=(), own_zde=()):
     """CMEC (the cast's mechanics; core tc_cast_mec.c, docs/ENGINE.md "Moving collision, read"): u16 n_cards, u16 n_families
     (= CAST's), n_cards x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw: as the .ttai
     CARD chunk) }, n_families x { u16 n_states, n_states x u16 card (0xFFFF none) },
     u16 n_entries (= CAST's), u16 0, n_entries x { f32 radius (its collide set's single sphere at its origin, +0x36 with
-    +0x30 x 0.5 (DAT_004d2928), as MEC_SweepSphere_0043d480 sweeps it; 0 none), u8 priority (+0x34), u8 meets persos
+    +0x30 x 0.5 (DAT_004d2928), as MEC_SweepSphere_0043d480 sweeps it, in every state; 0 a point; -1 none: the family's
+    ZDM bodies (before 2026-11-18: 0 none)), u8 priority (+0x34), u8 meets persos
     (+0x35), u16 family index (std game +0: what T22 nodes hold; 0xFFFF none) },
     u16 n_families (= CAST's; 0: none), u16 0, n_families x walk_block (root motion and ZDM bodies),
-    u16 n_families (0: none), u16 0, n_families x ai.zde_block (ZDE zones and their activation per state)."""
+    u16 n_families (0: none), u16 0, n_families x ai.zde_block (ZDE zones and their activation per state),
+    u16 n, u16 0, n x { u16 entry index, u16 0, ai.zde_block }: the entries whose own ZDE zones differ from their
+    family's (2026-11-18: a collide set is each perso's; until then the family's first perso's stood for all: sud0's
+    tomato family took ZOR_CoulisDeTomate's none, so no tomato could be hit or hurt Ed)."""
     out = struct.pack('<HH', len(cards), len(fam_cards))
     for c in cards:
         t = d.un('I', c)[0]
@@ -716,4 +747,5 @@ def mech_chunk(d, cards, fam_cards, own=(), walk=(), zde=()):
     out += struct.pack('<HH', len(own), 0) + b''.join(struct.pack('<f2BH', r, p, m, f) for r, p, m, f in own)
     out += struct.pack('<HH', len(walk), 0) + b''.join(walk)
     out += struct.pack('<HH', len(zde), 0) + b''.join(zde)
+    out += struct.pack('<HH', len(own_zde), 0) + b''.join(struct.pack('<HH', k, 0) + b for k, b in own_zde)
     return out

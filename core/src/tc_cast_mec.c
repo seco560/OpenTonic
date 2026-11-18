@@ -160,11 +160,13 @@ static void own_sweep(tc_cast *c, tc_cast_actor *a, tc_vec3 start, float dt) {
     int32_t self, ignore;
     uint8_t prio;
     bool meets;
-    if (!w || !(a->entry->own_radius > 0) || !(dt > 0)) return;
+    if (!w || !(a->entry->own_radius >= 0) || !(dt > 0)) return; /* radius 0: a point's sweep (FUN_004717d0, sud0's
+                                                                     cannon tomato rolling down its corridor) */
     if (end.x == start.x && end.y == start.y && end.z == start.z) return;
     memset(&body, 0, sizeof(body));
     body.count = 1;
     body.spheres[0].radius = a->entry->own_radius;
+    body.spheres[0].point = a->entry->own_radius > 0 ? 0 : 1;
     body.spheres[0].flags = 1;
     body.spheres[0].rebound = body.spheres[0].grip = 1;
     solid = w->solid, self = w->self, ignore = w->ignore, prio = w->self_priority, meets = w->self_meets;
@@ -209,8 +211,12 @@ static void float_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, con
         a->body->position = start;
         tc_player_move(a->body, dt, tc_v3_scale(tc_v3_sub(end, start), 1 / dt));
         p->position = a->body->position;
-    } else
+    } else if (a->entry->own_radius >= 0) {
+        /* its sweep's contacts are its contacts (the collide-move's records: NoContact, AgainstWall). Until 2026-11-18
+         * a float reported none, and the cannon tomato's roll (B1: until Not NoContact) never ended */
         own_sweep(c, a, start, dt);
+        p->contacts = tc_mec_walk_contacts(&d->walk) & 0x1F;
+    }
     d->tilted = d->rot.x != 0 || d->rot.y != 0;
     p->heading = d->rot.z;
     d->moving = tc_v3_length_sq(d->velocity) > 0 || tc_v3_length_sq(wanted->v) > 0;
@@ -543,8 +549,22 @@ static bool card_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, cons
 bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
     const tc_cast_family *f = &c->level->cast.families[a->entry->family];
     tc_ai_perso *p = a->ai;
+    tc_ai_sphere_set own;
     uint16_t ci;
     if (!f->cards || p->state >= f->state_count || (ci = f->cards[p->state]) == 0xFFFF) return false;
+    if (a->entry->own_radius >= 0) {
+        /* its collide set sweeps one sphere at its origin whatever the state (+0x36: GAM_00431720, FUN_0043d480; radius
+         * +0x30 / 2, a point at 0), not the family's ZDM: a body is the perso's own, not its family's. sud0's cannon,
+         * kamikaze and baseball tomatoes sweep a point; their family's other perso, the marsh chameleon, a ZDM sphere.
+         * Until 2026-11-18 the family's first perso decided for all, and the tomatoes had no body: they glided through
+         * walls and Ed, never in contact (their roll ends on contact: it never did) */
+        memset(&own, 0, sizeof(own));
+        own.count = 1;
+        own.spheres[0].radius = a->entry->own_radius;
+        own.spheres[0].point = a->entry->own_radius > 0 ? 0 : 1;
+        own.spheres[0].rebound = own.spheres[0].grip = 1;
+        return card_step(c, a, &c->level->cast.cards[ci], &own, dt);
+    }
     return card_step(c, a, &c->level->cast.cards[ci],
                      f->body && f->body[p->state] != 0xFFFF ? &f->bodies[f->body[p->state]] : NULL, dt);
 }

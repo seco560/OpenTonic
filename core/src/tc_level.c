@@ -77,6 +77,7 @@ static void free_speech(tc_speech_data *s) {
     }
     tc_free(s->dialogues);
     tc_free(s->glyphs);
+    tc_free(s->exits);
     tc_free(s->atlas);
 }
 
@@ -103,6 +104,8 @@ void tc_level_free(tc_level *level) {
     for (i = 0; i < level->light_perso_count; i++) tc_free(level->light_persos[i].scripts);
     tc_free(level->light_persos);
     tc_free(level->sound_rolloffs);
+    for (i = 0; level->picks && i < level->pick_count; i++) tc_free(level->picks[i].clips);
+    tc_free(level->picks);
     for (i = 0; i < level->ed.part_count; i++) free_mesh(&level->ed.parts[i].mesh);
     tc_free(level->ed.parts);
     for (i = 0; i < level->ed.anim_count; i++) {
@@ -139,6 +142,7 @@ void tc_level_free(tc_level *level) {
     tc_free(level->cast.cards);
     for (i = 0; level->cast.entries && i < level->cast.count; i++) {
         tc_free(level->cast.entries[i].scripts);
+        tc_zde_set_free(&level->cast.entries[i].zde);
         tc_free(level->cast.entries[i].tables);
         tc_free(level->cast.entries[i].zones);
     }
@@ -357,6 +361,7 @@ static void read_cast(tc_cast_data *c, reader *r) {
         uint32_t size;
         e->family_type = 0xFFFF; /* CMEC's, when there */
         e->id = rd_u16(r);
+        e->own_radius = -1; /* CMEC's own sweep body: none until it says (0 is a point) */
         e->prso = rd_u16(r);
         e->family = rd_u16(r);
         e->sector = rd_u16(r);
@@ -550,6 +555,20 @@ static void read_cmec(tc_cast_data *c, reader *r) {
             tc_zde_set_read(&z, r);
             if (i < c->family_count && z.state_count == c->families[i].state_count) c->families[i].zde = z;
             else tc_zde_set_free(&z);
+        }
+    }
+    if (r->offset < r->size) { /* the entries whose own ZDE zones are not their family's (cast.py, 2026-11-18) */
+        uint16_t n = rd_u16(r);
+        (void)rd_u16(r);
+        for (i = 0; i < n && !r->error; i++) {
+            uint16_t k = rd_u16(r);
+            tc_zde_set z;
+            (void)rd_u16(r);
+            tc_zde_set_read(&z, r);
+            if (k < c->count && z.state_count == c->families[c->entries[k].family].state_count && !c->entries[k].has_zde) {
+                c->entries[k].zde = z;
+                c->entries[k].has_zde = true;
+            } else tc_zde_set_free(&z);
         }
     }
 }
@@ -1005,6 +1024,42 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 
+    if (chunk_need(&cs, "SCNX", r)) { /* optional: a hint scene's way out (absent: the cover follows the line) */
+        n = rd_u16(r);
+        (void)rd_u16(r);
+        level->speech.exits = (struct tc_scene_exit *)rd_array(r, n, sizeof(struct tc_scene_exit), 16);
+        if (level->speech.exits) level->speech.exit_count = (uint16_t)n;
+        for (i = 0; i < level->speech.exit_count && !r->error; i++) {
+            level->speech.exits[i].behaviour = rd_u16(r);
+            (void)rd_u16(r);
+            level->speech.exits[i].point.x = rd_f32(r);
+            level->speech.exits[i].point.y = rd_f32(r);
+            level->speech.exits[i].point.z = rd_f32(r);
+        }
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "SPIK", r)) { /* optional: the random picks (absent: those events play nothing) */
+        n = rd_u16(r);
+        (void)rd_u16(r);
+        level->picks = (tc_level_pick *)rd_array(r, n, sizeof(tc_level_pick), 8);
+        if (level->picks) level->pick_count = n;
+        for (i = 0; i < level->pick_count && !r->error; i++) {
+            tc_level_pick *pk = &level->picks[i];
+            pk->event = rd_u16(r);
+            pk->clip_count = rd_u16(r);
+            pk->silence = rd_u32(r);
+            pk->clips = (tc_level_pick_clip *)rd_array(r, pk->clip_count, sizeof(tc_level_pick_clip), 8);
+            if (!pk->clips) pk->clip_count = 0;
+            for (k = 0; k < pk->clip_count && !r->error; k++) {
+                pk->clips[k].event = rd_u16(r);
+                (void)rd_u16(r);
+                pk->clips[k].weight = rd_u32(r);
+            }
+        }
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
     if (chunk_need(&cs, "EDIT", r)) { /* optional: the game version the level comes from (absent: retail) */
         level->edition = rd_u32(r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
@@ -1034,6 +1089,25 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 fail:
     tc_level_free(level);
     return e;
+}
+
+int32_t tc_level_pick_sound(const tc_level *level, uint16_t event, uint32_t *rng) {
+    uint32_t i, k, total, x;
+    for (i = 0; i < level->pick_count; i++) {
+        const tc_level_pick *pk = &level->picks[i];
+        if (pk->event != event) continue;
+        total = pk->silence;
+        for (k = 0; k < pk->clip_count; k++) total += pk->clips[k].weight;
+        if (!total) return -1;
+        *rng = *rng * 1103515245u + 12345u;
+        x = (*rng >> 8) % total;
+        for (k = 0; k < pk->clip_count; k++) {
+            if (x < pk->clips[k].weight) return pk->clips[k].event;
+            x -= pk->clips[k].weight;
+        }
+        return -1; /* the silence's share */
+    }
+    return event;
 }
 
 const tc_sound_rolloff *tc_level_sound_rolloff(const tc_level *level, int32_t perso) {

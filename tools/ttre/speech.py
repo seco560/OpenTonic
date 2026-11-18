@@ -207,6 +207,68 @@ class Table:
                 return p.world[3], p.world[7], p.world[11]
         return None
 
+    def exits(self):
+        """A hint scene's way out (2026-11-18; docs/ENGINE.md "Walkable scenes"): [(speaker behaviour, (x, y, z))]. After its
+        line the speaker forces its scene's Ed (ForceReflex R3, the head let go, and ForceBehaviour Bx) into a walk to one
+        of his waypoints (Bx's GoToWaypoint(dsgK)), waits, covers and changes level: the barman's B6 sends him to the
+        door, the mammoth's B6 25 back down the path, SpyCarota's B4 then B5 to two spots in turn. The real Ed plays the
+        scene, so the core walks him there when the speaker enters that behaviour: up to the speaker before the line (its
+        walk in, with R2: the head turned to the speaker), off after it."""
+        from . import ai, cast, level
+        data = level.LevelData(self.lv)
+        scene_ed = speaker = None
+        for p in data.persos():
+            n = data.perso_names(p.loc)
+            if n[1] == cast.SCENE_ED:
+                scene_ed = p
+            elif n[1] in cast.SCENE_SPEAKERS:
+                speaker = p
+        if not scene_ed or not speaker:
+            return []
+        se, sp = ai.AI(data, scene_ed.loc), ai.AI(data, speaker.loc)
+        names = dict(se.beh_names)
+        parts = ai._dsg_parts(data, scene_ed.loc)
+        targets = {}  # the scene Ed's behaviour name -> where its walk goes
+        for b in se.behaviours:
+            bi = b.index
+            if b.reflex:
+                continue
+            for sc in b.scripts + ([b.schedule] if b.schedule else []):
+                for n in ai.walk_nodes(sc):
+                    if n.type != 5 or n.param != 21 or not n.children or f'B{bi}' in targets:
+                        continue
+                    c, w = n.children[0], None
+                    if c.type in (8, 9, 11) and parts and c.param < len(parts[0]) and parts[0][c.param][1] == 8:
+                        w = self.lv.ptr(parts[1], parts[0][c.param][0])
+                    elif c.type == 29:
+                        w = c.ref
+                    if w and not self.lv.ptr(w, 0x14):  # no father: in world axes
+                        targets[f'B{bi}'] = tuple(data.un('3f', w, 4))
+        out = []
+        for b in sp.behaviours:
+            if b.reflex:
+                continue
+            bi, forced, walk_in = b.index, [], False
+            for sc in b.scripts + ([b.schedule] if b.schedule else []):
+                for n in ai.walk_nodes(sc):
+                    if n.type == 4 and n.param in (237, 238) and len(n.children) == 2 and n.children[0].type == 24 \
+                            and n.children[0].ref == scene_ed.loc:
+                        name = names.get(n.children[1].ref, '?')
+                        if n.param == 238 and name == 'R2':
+                            walk_in = True
+                        elif n.param == 237 and name in targets:
+                            forced.append(targets[name])
+            if forced:
+                out.append((bi, forced[0]))
+        return out
+
+    def exits_chunk(self):
+        """The SCNX chunk (ttlv.py): u16 n, u16 0, n x { u16 speaker behaviour, u16 0, f32 point[3] }; None without."""
+        rows = self.exits() if self.dialogues else []
+        if not rows:
+            return None
+        return struct.pack('<2H', len(rows), 0) + b''.join(struct.pack('<2H3f', b, 0, *pt) for b, pt in rows)
+
     def at(self, loc):
         """The 1-based dialogue of the type 21 node at loc, 0 none."""
         from .sfx import mem_address

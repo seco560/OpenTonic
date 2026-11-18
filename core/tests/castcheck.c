@@ -449,6 +449,18 @@ static void level(const char *dir, const char *name) {
             }
             printf("    then B%u\n", (unsigned)c->main->normal.behaviour);
         }
+        { /* a chameleon (docs/ENGINE.md "The chameleons"): Ed's Action at its generator makes it the player; Action in
+           * it gives the player back to Ed, where it stands. The presses above may have left it in control */
+            int k;
+            for (k = 0; k < 3 && (c->globals.main_character != 0 || !c->main->active); k++) {
+                run(&v, 3, 0);
+                if (c->globals.main_character == 0 && c->main->active) break;
+                printf("    a chameleon (perso %d) has the player: Action gives him back\n", c->globals.main_character);
+                run(&v, 0.2f, 1u << TC_VA_ACTION);
+                run(&v, 5, 0);
+            }
+            check(c->globals.main_character == 0 && c->main->active, "the player is Ed's again (no chameleon keeps him)");
+        }
         moved = best_run(&v);
         printf("  lever perso %u: held in B%u; Action: lever state %u -> %u;", (unsigned)a->entry->id, held_on,
                (unsigned)state_before, (unsigned)state_after);

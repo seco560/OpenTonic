@@ -32,7 +32,11 @@ extern "C" {
                                       The inaudible ones go on (a loop is heard once its emitter comes near) */
 #define TC_CAST_SOUND_GAP_MS 250u
 #define TC_CAST_TALK_REACH 7.0f    /* port: how near a speaker Action talks to it, along the ground: the bar's counter keeps Ed
-                                      5.8 off the barman, SpyCarota's ledge 6, and the mammoth towers 23 above him */
+                                      5.8 off the barman, SpyCarota's ledge 6 */
+#define TC_CAST_TALK_RISE 3.0f     /* ... and within this height of it. In a hint scene the place its own Ed stands (the
+                                      arrival, where Ed starts) is a talking place too: the mammoth stands on its ledge 51
+                                      away and 23 up, and comes to that place itself (user, 2026-11-18: "the Press to talk
+                                      zone should be down on the ground, NOT up where the elephant is") */
 
 /* An actor's mechanics: the perso's dynamics (tc_mec.h). */
 typedef tc_mec_dyn tc_cast_dyn;
@@ -235,6 +239,12 @@ bool tc_cast_pose(const tc_cast *c, const tc_cast_actor *a, float t, tc_mat34 *w
 void tc_cast_launch_main(tc_cast *c, const tc_mat34 *at);
 /* Diagnostics: the primitives the cast's scripts skipped, summed (as tc_ai_perso.unknown, 10 * TC_AI_UNKNOWN_STRIDE). */
 void tc_cast_unknown(const tc_cast *c, uint32_t *out);
+/* The cast perso that is the main character now (PROC 4 Proc_SetMainActor: a chameleon holds the player; docs/ENGINE.md
+ * "The chameleons"), NULL while it is Ed. The host's camera follows it, its sector is drawn and wakes the others. */
+tc_cast_actor *tc_cast_character(const tc_cast *c);
+/* Whether the main character at `at` is where Action talks to the speaker a (TC_CAST_TALK): within TC_CAST_TALK_REACH
+ * along the ground and TC_CAST_TALK_RISE in height of it, or, in a hint scene, of the arrival place. */
+bool tc_cast_talk_reach(const tc_cast *c, const tc_cast_actor *a, tc_vec3 at);
 /* After the main actor's death (or the ski levels' retry) and the port's respawn: the original initialises the map
  * again (GameAction0), so its level logic starts over. Port: the undrawn persos that started active start again, with
  * their level-saved variables as they are (the start text, World and its race clock, the finish gates, the pit markers

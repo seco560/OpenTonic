@@ -1772,7 +1772,11 @@ static void scene_scenario(const char *dir) {
     check(tc_v3_distance(tc_viewer_player(&v)->position, level.speech.arrival) < 1, "bar: Ed arrives where the scene's Ed stood");
     run(&v, 3, 0);
     check(!tc_viewer_speech(&v) && !speaker->talking, "bar: the barman waits for Ed");
-    check(!tc_viewer_talk_prompt(&v) && !tc_viewer_speech_panel(&v, 4.0f / 3, &panel), "bar: no prompt out of his reach");
+    /* 2026-11-18: the place the scene's Ed stood (Ed's arrival) is a talking place (TC_CAST_TALK_RISE): the prompt there */
+    check(tc_viewer_talk_prompt(&v), "bar: the prompt shows where Ed arrives (the scene's Ed's place)");
+    tc_player_teleport((tc_player *)tc_viewer_player(&v), tc_v3_add(level.speech.arrival, tc_v3(-12, 6, 0.3f)), 0);
+    run(&v, 1, 0);
+    check(!tc_viewer_talk_prompt(&v) && !tc_viewer_speech_panel(&v, 4.0f / 3, &panel), "bar: no prompt out of reach");
     for (i = 0; i < level.speech.dialogue_count; i++) {
         tc_speech s;
         tc_speech_init(&s, &level.speech);
@@ -1864,21 +1868,15 @@ static void hint_scenes_scenario(const char *dir) {
         snprintf(what, sizeof(what), "%s: the speaker is in the cast", name);
         check(speaker != NULL, what);
         if (!speaker) { tc_viewer_free(&v); tc_level_free(&level); continue; }
-        run(&v, 2, 0);
-        for (i = 0; i < 60 * 20; i++) { /* the stick toward him, as the camera has it */
-            tc_vec3 e = ed(&v), f = tc_camera_forward(&v.camera), r = tc_camera_right(&v.camera), s = speaker->ai->position;
-            float dx = s.x - e.x, dy = s.y - e.y, fl = sqrtf(f.x * f.x + f.y * f.y), rl = sqrtf(r.x * r.x + r.y * r.y);
-            ground = sqrtf(dx * dx + dy * dy);
-            if (ground < TC_CAST_TALK_REACH - 1.5f || fl <= 0 || rl <= 0) break;
-            dx /= ground, dy /= ground;
-            tc_viewer_set_move_stick(&v, (dx * r.x + dy * r.y) / rl, (dx * f.x + dy * f.y) / fl);
-            frame(&v, 1.0f / 60);
+        run(&v, 3, 0);
+        { /* since 2026-11-18 the scene's Ed's place (his arrival) is where Ed talks: the mammoth stands on its ledge 51 away
+           * and 23 up, and comes over itself (the user: "the Press to talk zone should be down on the ground") */
+            tc_vec3 e = ed(&v), s = speaker->ai->position;
+            ground = sqrtf((s.x - e.x) * (s.x - e.x) + (s.y - e.y) * (s.y - e.y));
         }
-        tc_viewer_set_move_stick(&v, 0, 0);
-        run(&v, 1, 0);
         prompt = tc_viewer_talk_prompt(&v) && tc_viewer_speech_panel(&v, 4.0f / 3, &panel);
-        snprintf(what, sizeof(what), "%s: Ed walks within reach (%.1f along the ground, %.1f s) and the prompt shows", name,
-                 (double)ground, (double)i / 60);
+        snprintf(what, sizeof(what), "%s: the prompt shows where Ed arrives (the speaker %.1f off along the ground)", name,
+                 (double)ground);
         check(prompt, what);
         /* with the blowgun (power 8: B86 / B87 take a fresh Action to B72), held a while: the press is the speaker's */
         ((tc_cast *)c)->globals.powers |= 8;
@@ -1894,17 +1892,26 @@ static void hint_scenes_scenario(const char *dir) {
             snprintf(what, sizeof(what), "%s: Action starts the scene, and Ed keeps his blowgun away", name);
             check(speaker->talking && !drew, what);
         }
-        for (i = 0; i < 60 * 40 && !pending; i++) {
-            if (!said && tc_viewer_speech(&v)) { /* mammyon's comes some 18 s on: the mammoth walks in first */
-                said = 1;
-                run(&v, 2, 0);
-                run(&v, 0.1f, BIT(TC_VA_JUMP));
+        {
+            tc_vec3 after = tc_v3(0, 0, 0);
+            float walked = 0;
+            for (i = 0; i < 60 * 40 && !pending; i++) {
+                if (!said && tc_viewer_speech(&v)) { /* mammyon's comes some 18 s on: the mammoth walks in first */
+                    said = 1;
+                    run(&v, 2, 0);
+                    run(&v, 0.1f, BIT(TC_VA_JUMP));
+                    after = ed(&v);
+                }
+                frame(&v, 1.0f / 60);
+                if (said) walked = fmaxf(walked, tc_v3_distance(after, ed(&v)));
+                pending = tc_viewer_pending_level(&v);
             }
-            frame(&v, 1.0f / 60);
-            pending = tc_viewer_pending_level(&v);
+            snprintf(what, sizeof(what), "%s: the speaker says his line", name);
+            check(said, what);
+            /* its way out (SCNX): the speaker sends its scene's Ed off before the cover; Ed walks there */
+            snprintf(what, sizeof(what), "%s: after the line Ed walks off (%.1f) before the level changes", name, (double)walked);
+            check(walked > 1, what);
         }
-        snprintf(what, sizeof(what), "%s: the speaker says his line", name);
-        check(said, what);
         snprintf(what, sizeof(what), "%s: then hands over to %s (%s)", name, scenes[n][1], pending ? pending->level : "none");
         check(pending && strcmp(pending->level, scenes[n][1]) == 0, what);
         tc_viewer_free(&v);

@@ -417,6 +417,18 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
         e->dyn.contacts = 0;
         e->events.teleported = true;
     }
+    if (!a->active) { /* port of his deactivation (B57: a chameleon took the player; GAM_Objinit_00419a10): out of the
+                       * world, his scripts and mechanics asleep, until a perso puts him back (PROC 27 wakes him). The input
+                       * entries still run (the chameleon reads them through his counters) */
+        a->inputs = inputs;
+        a->stick_x = stick_x;
+        a->stick_y = stick_y;
+        a->screen_covered = e->screen_covered;
+        if (e->camera >= 0) a->other_positions[e->camera] = camera;
+        tc_ai_step_asleep(a, dt);
+        p->velocity = tc_v3(0, 0, 0);
+        return;
+    }
     run_triggers(e);
     run_portals(e, !e->cast_portals);
     a->screen_covered = e->screen_covered;

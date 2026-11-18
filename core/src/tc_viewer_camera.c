@@ -254,8 +254,27 @@ static bool cam_v(const tc_ed_ai *e, uint32_t k, tc_vec3 *out) {
 
 /* Ed as the directed shots aim at him: his origin as drawn, and the aim height (the follow's record +0x24 offset, which
  * B8 keeps; B22 clears it: the rail aims at his origin). */
-static tc_vec3 ed_drawn(const tc_viewer_play *p) {
+static tc_vec3 ed_drawn(const tc_viewer_play *p) { return tcv_main_drawn(p); }
+
+tc_vec3 tcv_main_position(const tc_viewer_play *p) {
+    const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
+    return a ? a->ai->position : p->main.player.position;
+}
+
+tc_vec3 tcv_main_drawn(const tc_viewer_play *p) {
+    const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
+    tc_vec3 out;
+    if (a && tc_cast_drawn_position(&p->cast, a->entry->id, p->tick_time / TC_ED_AI_TICK, &out)) return out;
     return p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->main.player.position;
+}
+
+float tcv_main_drawn_heading(const tc_viewer_play *p) {
+    const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
+    if (a) {
+        float t = fminf(1, fmaxf(0, p->tick_time / TC_ED_AI_TICK));
+        return a->rot_prev.z + remainderf(a->ai->heading - a->rot_prev.z, 2 * TC_PI) * t;
+    }
+    return p->main.player.heading;
 }
 
 /* Port (the user, 2026-11-16: no zoom blocking): the wheel's zoom and the close-up (5) changed since the eye shot
@@ -737,8 +756,9 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
     {
         tc_cam_target t;
         const uint8_t *solid = p->world.solid;
-        t.position = p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->main.player.position;
-        t.behind = TC_PI - p->main.player.heading; /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
+        const tc_cast_actor *chara = p->has_cast ? tc_cast_character(&p->cast) : NULL; /* a chameleon holds the player */
+        t.position = tcv_main_drawn(p);
+        t.behind = TC_PI - tcv_main_drawn_heading(p); /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
         if (p->use_ai && p->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
                                        * the last tick's: the ski follow holds within 0.05 rad of it and stepped at 30 Hz
                                        * with it */
@@ -746,6 +766,11 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
                                    2 * TC_PI); /* behind = pi - heading: a heading change counts negative */
         t.speed = v->inspecting ? 0 : tc_player_horizontal_speed(&p->main.player); /* paused he stands, whatever he was doing */
         t.velocity = v->inspecting ? tc_v3(0, 0, 0) : p->main.player.velocity;
+        if (chara) { /* its own speed: what it moved last tick */
+            tc_vec3 d = tc_v3_scale(tc_v3_sub(chara->ai->position, chara->position_prev), 1 / TC_ED_AI_TICK);
+            t.velocity = v->inspecting ? tc_v3(0, 0, 0) : d;
+            t.speed = v->inspecting ? 0 : sqrtf(d.x * d.x + d.y * d.y);
+        }
         t.distance = v->orbit_distance;
         t.situation = tc_viewer_camera_situation(v);
         /* riding on a sliding stage (the skier is the player there: the cast's main alias; Ed's own slides on the walking

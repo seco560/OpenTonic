@@ -507,6 +507,57 @@ floating mercury heals. Nearly all of it is Ed's own scripts and the level's; th
   fall state, so its `OnGround` may never hold (its drop is checked only by forcing the contact). The game over screen
   (the 'death' level) is still the port's restart. Seen only headless.
 
+## The chameleons (2026-11-18; **read** unless marked)
+The user's report: "the tomatoes and beans, Ed currently can't interact with them". Some of sud0's tomatoes are the
+**chameleon disguise**, an Ed behaviour the port never had: with power 512, Action at a generator turns Ed into a
+tomato (sud0's marsh), a Pyrex jar, a mummy (sud0), a mine (cavedoc), a rock (Land), a crate or Grogh (marmite), a scarab
+or a column (pyramide), and the player plays that perso.
+- **The flow.** The generator (model HEG_GenCameleonPyrex's: B0, Ed within its dsg1 and Action) writes Ed's dsg57 = the
+  chameleon, dsg85 = where it appears, and forces his R4 + B31. Ed's B31: without power 512 back to R0 / B0; with it
+  B57: state 253 (the change), dsg0 = 200, `Proc_ActivateObjectOnPosition(dsg57, his position + dsg85)`, state 328,
+  `DeactivatePerso(Me)`. The generator's B2 sees Ed's dsg0 = 200: `Proc_SetMainActor(chameleon)`,
+  `SetCameraTarget(camera, chameleon)`. The chameleon (HEG_TomateCameleonMarais: B1 `Proc_SetMainActor(Me)`, B0 reads
+  the pad: `ButtonAnalog` angle and magnitude, the direction keys, TurnBy, its walk / run states) plays until Action
+  (B3) or a boundary waypoint: `Proc_ActivateObjectOnPosition(Ed, where it is)`, forces Ed's B33 + R4. Ed's B33:
+  `Proc_SetMainActor(Me)`, the camera back on him, `DeactivatePerso(dsg57)`, B58 (state 254) -> B0. The marsh tomato's
+  B6 (near a waypoint) has the turnip bat it across (mode 19 at a perso).
+- **PROC 4 `Proc_SetMainActor`** (SE name; retail index 4) sets the main-character list (DAT_008c1720) to the perso.
+  It was not handled: the scripts went on and nothing changed hands. Ported: `tc_ai_globals.main_character` (a perso id,
+  0 = the level's main actor). It moves (core): `MainActor` (KW 5), `MainActorWithin` and the activity radii
+  (tc_cast.c main_place), the awake sectors, the camera's follow target and the drawn sector (tc_cast_character,
+  tcv_main_drawn). Not from a perso kept off the main actor.
+- **Input.** The exe's input entries are global; the chameleon reads Ed's button counters (as every cast perso does)
+  and now his stick too (`ButtonAnalog` through the button owner). Ed deactivated keeps his counters going
+  (tc_ai_step_asleep: the clock and the buttons, no thinking, no mechanics, no portals) and is not drawn.
+- **Ed woken by a placement.** `Proc_ActivateObjectOnPosition` on Ed activates him as on any perso (it did not: "the
+  player stays").
+- **Who may force Ed (cast.py).** B31, B33 and R0 (his play reflex: carota's talking beans give it back after their
+  hold) joined SAFE_MAIN_FORCES; before, every generator, chameleon and both beans were kept off Ed.
+- **Checked** (scratch probe, sud0's marsh): Action at the generator, Ed's change (3 s), the tomato main (camera target
+  on it), the stick walks and turns it, Action: Ed back where it stood, B58 then play. Not checked: the other seven
+  chameleons, the marsh tomato's bat across, enemies ignoring a disguised Ed, carota's beans' whole scene (Harry Cover
+  drops off its ledge into Ed's start room in its state 50 before and after this change; its scene then waits for Ed
+  above z 4: not walked headless).
+
+## Collide sets are each perso's (2026-11-18; **read** unless marked)
+A perso's collide set (+0x14) is its own; the cast exported a family's mechanics bodies (ZDM) and ZDE hit zones from the
+family's **first** perso. sud0's tomato family's first is ZOR_CoulisDeTomate, with neither: no tomato had a body (every
+walker state fell back to the port's glide: no collision, always "on the ground") nor a hit zone (Ed's bees and stick
+could not hit them, their touch could not hurt him). Fixed (cast.py; core tc_cast_mec.c, tc_cast.c):
+- a collide set with +0x36 sweeps one sphere at its origin in every state (radius +0x30 / 2; **0: a point**,
+  FUN_004717d0), whatever the family: CMEC own row radius >= 0 (it was "0 = none"; now -1 is none). The cannon,
+  kamikaze, baseball tomatoes and TomLut sweep a point;
+- the type 7 float now reports its own sweep's contacts (MEC_CollideMoveNoTurn: they were never reported, so the cannon
+  tomato's roll, `If Not NoContact`, never ended);
+- the family's per-state ZDM bodies come from a perso of it that has them (the marsh chameleon's sphere r 1 at 0.9);
+- an entry whose own ZDE zones differ from its family's carries them (CMEC's last tail).
+How far it reached (the re-export): 104 cast persos of 11 retail levels have ZDE zones other than their family's
+first perso's (sud0 20, pyramide 27, carota 11, cock01 11, Land 10, BigBoss 10 ...); every one of them was hit-tested
+with someone else's zones before. Beyond the tomatoes none was probed one by one: enemies that "could not be hit" or
+"never hurt Ed" elsewhere may have changed too (playtest).
+Probes (sud0): the cannon tomato rolls at Ed, hurts him (5 -> 4) and splats; the kamikaze stops at its wall; TomLut takes
+the bees (state 17) and is knocked back towards the water; the marsh chameleon walks on the ground (it floated).
+
 ## Perso motion (2026-11-06; all **read** unless marked)
 What moves a perso, top down. A script does not move anything itself: it fills the **proposal** and queues **requests**,
 and the state's card type turns those into motion.
@@ -571,6 +622,17 @@ used to walk away from Ed with its back turned; it now turns and closes 6 -> 2.8
 **Next for motion:** card types 8 (pyr_dentier, patcat2; `DNM_RequestType8_004af04e` read, forces not) and 9 (the rolling
 stones, gen_pierres), PROC 12-15 (a perso parented to a perso), PROC 116 / 117 / 109 (**moved sectors** over time: read as far
 as `GAM_0042a350` / `GAM_0042a270`; these are probably what opens the story gates that `GATES_OPEN` removes at export).
+
+## Random sound picks (2026-11-18; **read** from the banks)
+A bank resource of type 10 is a weighted random pick, not a waveform: its record's +0x0C is the size of its entries
+(12 bytes: u32 resource key = bank << 16 | index, u32 weight / 65536, u32 0), +0x10 their offset in the table after the
+resource records, +0x18 their count, +0x1C the weight of silence. Bnk_0: event 55 = one of Ed's four cries (ed06b,
+vEd_he, vEd_aie, ed19), 64 = one of four cheers (vEdyoupi, vEd_joy, ed20, ed15a), 72 = Super Ed's shout (vSu_att) one
+time in two, 28 = a rumble one time in five; bank 70: the swamp's frogs, crickets, snakes, birds. They played nothing
+(the exporter took type 10 for raw samples): Ed's states fire 55 in 7 states (hurt, effort), 64 in 7, 72 in 3 (his
+attacks). Now: each clip is an events.tsv row (sfx.RANDOM_SOUND + rank), the .ttlv SPIK chunk holds the picks, and the
+viewer picks once per play with its own seeded stream (tc_viewer.c pick_sounds: replays hear the same). The exe's own
+random numbers are not read. Type 11 resources (about 20 level banks; 24-byte entries) are another kind, not read.
 
 ## InPersoContext and the procedures (2026-11-16; **read** unless marked)
 OP 24 `InPersoContext(perso, expression)` (`OP_24_004913d0`) evaluates its expression with `DAT_004ffcf4` = the perso
@@ -706,7 +768,16 @@ acted on by forces, and the real Ed is switched off (the "double Ed"); NBD_Appui
 - **The prompt** "Press Action to talk" (`tc_viewer_talk_prompt`, `tc_speech_render_prompt`): the game's font in a small box in the text window's
   place, within TC_CAST_TALK_REACH of a waiting speaker. It is the same panel, so the frontends needed nothing. The text is English and names the
   action, not the key.
-- **Open:** the exit place (the user's plan has Ed walk out; here the cover follows the line), the scenes' camera
+- **2026-11-18, the user: the mammoth's prompt was "up where the elephant is"; Ed should walk off, the scene not end at
+  the line.** (1) The talk place is also where the scene's Ed stands (the arrival, where Ed starts; the speaker's own
+  place too, now within TC_CAST_TALK_RISE in height): the mammoth stands 51 away and 23 up and comes over itself.
+  (2) **Read:** every speaker sends its scene's Ed walking with a force (ForceReflex R2 + ForceBehaviour B8 before the
+  line: up to it; R3 + B9 / B10 after it: off to a waypoint), waits, covers, changes level. Exported as SCNX (speech.py
+  Table.exits: the speaker behaviour and the waypoint its forced behaviour's GoToWaypoint heads for); when the speaker
+  enters it, the host walks Ed there (tc_viewer_play.c scene_walk: the stick towards it, the player held). (3) After the
+  line the speaker's waits run at full length (`brisk` off), so its shots and Ed's walk play before the cover.
+  viewcheck checks all six: the prompt at the arrival, the line, Ed walking off (6-16 units), the right next level.
+- **Open:** the scenes' camera
   shots (`SetCameraTarget`, dsg writes: refused by read_only_for_cast), Ed's own side of the conversation. `dsg2` restarts each visit: the same
   hint every time. The arrival is against a wall in pyr_fou and spynorth, so the camera swings to the open side and faces Ed.
 

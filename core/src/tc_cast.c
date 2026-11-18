@@ -25,7 +25,36 @@ static tc_ai_perso *cast_each(void *user, uint32_t k) {
         if (!p->model || !p->active || p->frozen) continue;
         if (k-- == 0) return p;
     }
-    return k == 0 ? c->main : NULL;
+    return k == 0 && c->main && c->main->active ? c->main : NULL; /* not Ed while a chameleon plays (his B57) */
+}
+
+static bool near_place(tc_vec3 a, tc_vec3 b) {
+    float dx = a.x - b.x, dy = a.y - b.y;
+    return dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH && fabsf(a.z - b.z) <= TC_CAST_TALK_RISE;
+}
+
+bool tc_cast_talk_reach(const tc_cast *c, const tc_cast_actor *a, tc_vec3 at) {
+    if (c->level->speech.has_arrival && near_place(at, c->level->speech.arrival)) return true;
+    return near_place(at, a->ai->position);
+}
+
+tc_cast_actor *tc_cast_character(const tc_cast *c) {
+    int32_t id = c ? c->globals.main_character : 0;
+    int32_t k;
+    if (id <= 0 || id == c->main_id || (uint32_t)id >= c->id_count || (k = c->by_id[id]) < 0 || (uint32_t)k >= c->count)
+        return NULL;
+    return c->actors[k].ai->model ? &c->actors[k] : NULL;
+}
+
+/* Where the main character is, for the others' frames: his, or the chameleon's that holds the player (its sector too:
+ * the exe wakes the sectors round the main character's, GAM_00428490). */
+static tc_vec3 main_place(const tc_cast *c, uint16_t *sector) {
+    const tc_cast_actor *a = tc_cast_character(c);
+    if (a) {
+        if (sector && a->sector.sector != TC_SECTOR_NONE) *sector = a->sector.sector;
+        return a->ai->position;
+    }
+    return c->main ? c->main->position : tc_v3(0, 0, 0);
 }
 
 /* ---- sounds (tc_sound.h) ---- */
@@ -641,7 +670,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
         a->model.root = c->level->cast.families[e->family].root;
         a->model.root_count = c->level->cast.families[e->family].root_count;
         a->model.sphere_sets = c->level->cast.families[e->family].bodies;
-        a->model.zde = c->level->cast.families[e->family].zde;
+        a->model.zde = e->has_zde ? e->zde : c->level->cast.families[e->family].zde; /* its own where they differ */
         a->model.sphere_set_count = c->level->cast.families[e->family].body_count;
         a->model.state_count = f->state_count;
         a->model.initial_state = e->initial_state < f->state_count ? e->initial_state : 0;
@@ -842,8 +871,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         p->world = c->world; /* FUNC 162's probe: the static world */
         think = (p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
         if ((a->entry->flags & TC_CAST_TALK) && !a->talking) { /* port: its scene waits for him */
-            float dx = p->position.x - main_pos.x, dy = p->position.y - main_pos.y;
-            a->talking = c->talk_press && dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH;
+            a->talking = c->talk_press && tc_cast_talk_reach(c, a, main_pos);
             think = think && a->talking;
         }
         animate = p->run_mechanics || p->run_animation;
@@ -920,8 +948,9 @@ static void begin_step(tc_cast *c) {
 
 static void step_pass(tc_cast *c, bool first, float dt, const tc_sectors *s, uint16_t main_sector) {
     uint32_t i;
+    tc_vec3 main_pos;
     c->sectors = s;
-    tc_vec3 main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+    main_pos = main_place(c, &main_sector);
     for (i = 0; i < c->count; i++)
         if (((c->actors[i].entry->flags & TC_CAST_RUN_FIRST) != 0) == first) {
             step_actor(c, &c->actors[i], dt, s, main_sector, main_pos);
@@ -1086,7 +1115,7 @@ void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_
     prof = TC_PROF_BEGIN();
     c->sectors = s;
     sector = ops->sector(self);
-    main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+    main_pos = main_place(c, &sector);
     for (i = 0; i < c->count; i++) {
         tc_cast_actor *a = &c->actors[i];
         if (a->entry->flags & TC_CAST_RUN_FIRST) continue;
@@ -1096,7 +1125,7 @@ void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_
             stepped = true;
             prof = TC_PROF_BEGIN();
             sector = ops->sector(self);
-            main_pos = c->main ? c->main->position : tc_v3(0, 0, 0);
+            main_pos = main_place(c, &sector);
         }
         step_actor(c, a, dt, s, sector, main_pos);
         pose_obstacle(c, a);

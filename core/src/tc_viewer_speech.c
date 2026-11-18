@@ -36,6 +36,9 @@ void tcv_update_speech(tc_viewer *v, float dt, bool fresh) {
             tc_ai_set_state(g->speaker, d->events[v->speech_event++].state);
         if (fresh || gone || (!d->text && s->time >= length)) {
             tcv_push_sound(v, TC_AI_VOICE_STOP, NULL);
+            /* a hint scene plays on at its own pace now: the speaker's waits pace its way out (Ed walking off, the
+             * cover), as they do in the original */
+            if (v->level->speech.has_arrival && g->speaker) g->speaker->brisk = false;
             tc_speech_end(s);
             tc_ai_speech_end(g);
             v->scene_said = v->level->speech.has_arrival;
@@ -48,7 +51,18 @@ void tcv_update_speech(tc_viewer *v, float dt, bool fresh) {
 void tcv_update_scene(tc_viewer *v) {
     tc_viewer_play *p = v->play;
     uint32_t i;
-    if (!v->scene_said || !p->has_cast) return;
+    if (!p->has_cast || !v->level->speech.has_arrival) return;
+    for (i = 0; i < p->cast.count; i++) { /* its walks (SCNX): the behaviour that sends the scene's Ed sends Ed */
+        const tc_cast_actor *a = &p->cast.actors[i];
+        uint16_t k;
+        if (!(a->entry->flags & TC_CAST_TALK) || !a->talking) continue;
+        for (k = 0; k < v->level->speech.exit_count && k < 32; k++)
+            if (a->ai->normal.behaviour == v->level->speech.exits[k].behaviour && !(v->scene_exits_done & (1u << k))) {
+                v->scene_exits_done |= 1u << k;
+                v->scene_exit = k;
+            }
+    }
+    if (!v->scene_said) return;
     if (v->scene_leaving) {
         if (p->main.driver.screen_covered && !p->main.driver.events.level) p->main.driver.events.level = tc_level_after_cutscene(p->main.level_name);
         return;
@@ -74,10 +88,8 @@ bool tc_viewer_talk_prompt(const tc_viewer *v) {
     if (!p || !p->has_cast || !p->cast.main || v->phase != TC_VP_PLAY || v->speech.dialogue || v->director || v->tape) return false;
     for (i = 0; i < p->cast.count; i++) {
         const tc_cast_actor *a = &p->cast.actors[i];
-        float dx, dy;
         if (!(a->entry->flags & TC_CAST_TALK) || a->talking || !a->ai->active) continue;
-        dx = a->ai->position.x - p->cast.main->position.x, dy = a->ai->position.y - p->cast.main->position.y;
-        if (dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH) return true;
+        if (tc_cast_talk_reach(&p->cast, a, p->cast.main->position)) return true;
     }
     return false;
 }

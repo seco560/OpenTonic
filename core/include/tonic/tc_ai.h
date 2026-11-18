@@ -404,6 +404,12 @@ typedef struct tc_ai_globals {
     int32_t cam_target;
     float cam_focal;
     uint32_t cam_serial;
+    /* The main character (the exe's main-character list, DAT_008c1720: one perso), as PROC 4 Proc_SetMainActor sets it:
+     * a perso id, 0 = the level's main actor (Ed). The chameleons (docs/ENGINE.md "The chameleons") take it: the tomato
+     * in sud0's marsh, the crates, rocks and mines; MainActor (KW 5), MainActorWithin and the activity radii measure from
+     * it, the camera follows it, input reaches it (its scripts read the main actor's buttons). */
+    int32_t main_character;
+    uint32_t main_character_serial; /* + 1 each time PROC 4 runs */
     /* GameState63's latch (DAT_004ec748): GameAction2 (GAM_00429070) clears it as the cover starts, the cover's end
      * (GAM_004290b0) sets it, the reveal (GAM_00429010) sets it too and nothing clears it after: true in play but while a
      * cover runs. Port: cover_pending from any GameAction2 until a perso sees the screen covered (step_begin). */
@@ -613,6 +619,9 @@ void tc_ai_step(tc_ai_perso *p, float dt);
 /* A step in parts, for the cast: the clock (time_ms) is the host's; think = run the AI (reflex, then normal);
  * animate = the state's animation clock and its events. tc_ai_step = the clock, think and animate. */
 void tc_ai_step_parts(tc_ai_perso *p, float dt, bool think, bool animate);
+/* A deactivated perso's frame that still reads the input (the main actor's button counters: the exe's input module runs
+ * whoever reads it, and a chameleon in control reads his): the clock and the counters, no thinking, no animation. */
+void tc_ai_step_asleep(tc_ai_perso *p, float dt);
 /* Another perso sets this one's normal behaviour (PROC_237): it starts from its beginning on the next step. */
 void tc_ai_force_behaviour(tc_ai_perso *p, uint16_t behaviour);
 /* The same for the reflex (PROC_238); reflex = index among the reflexes. */

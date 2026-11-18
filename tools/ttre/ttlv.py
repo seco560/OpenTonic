@@ -78,6 +78,12 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
               LevelData.sound_rolloffs)
           u16 n_sectors (= SECT's), u16 0, n_sectors x { u16 n, n x u16 sector } (its +0x70 sound list's entries of value
               0: the objects in those sectors are not heard while the listener is in it)
+  SCNX* a hint scene's way out (2026-11-18; speech.py Table.exits; reader core/src/tc_level.c): u16 n, u16 0,
+        n x { u16 speaker behaviour, u16 0, f32 point[3] }: entered after its line, the core walks Ed to the point
+  SPIK* the sound events that play one of several clips at random (2026-11-18; tools/ttre/sfx.py random_events; reader
+        core/src/tc_level.c, the pick core/src/tc_viewer.c). Absent: those events play nothing, as before:
+          u16 n, u16 0, n x { u16 event, u16 n_clips, u32 silence weight (out of 65536: nothing plays),
+              n_clips x { u16 clip event (sfx.RANDOM_SOUND + rank: its events.tsv row), u16 0, u32 weight } }
   VEHI* the custom layer's cars (tools/ttre/vehicle.py; layout in core custom/tcx_vehicle.h): per car its PRSO entry (body on
         channel 0, a channel per wheel), its PCOL box's perso id, the body's bounds, the wheels, the driver's seat and Ed's
         scale in it. Imported levels only.
@@ -121,7 +127,7 @@ import math
 import os
 import struct
 
-from . import ai, cast, chunks, export, gf, level
+from . import ai, cast, chunks, export, gf, level, sfx
 
 ALPHA_TEST = 1 << 0  # TC_FLAG_ALPHA_TEST: a cut-out (texture flags 0x12, see surface())
 TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8, see surface())
@@ -518,6 +524,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
         with open(os.path.splitext(path)[0] + '_cast.txt', 'w', encoding='utf-8') as f:
             f.write(f'{len(cast_list)} persos run their AI; left out: {cast_skipped}\n' + '\n'.join(listing) + '\n')
     spch = data.speech().chunk() if persos else None
+    scnx = data.speech().exits_chunk() if spch else None
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
     mesh = struct.pack('<I', len(meshes)) + b''.join(fitted_surface(m) + geometry(m) for m in meshes.values())
@@ -534,8 +541,10 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('PZDR', pzdr) if pzdr else None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
            ('SPCH', spch) if spch else None,
+           ('SCNX', scnx) if scnx else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,
            ('SND3', snd3(data, sect.sectors)) if not data.se else None,
+           ('SPIK', picks(data)),
            ('LITE', lite(data, sect.sectors, list(meshes.values()) + lite_parts + (lite_ed if edpl is not None else []),
                          donor_lite)),
            ('CHLT', chlt(sect.sectors)) if data.se else None]
@@ -557,6 +566,19 @@ def _decal(prims, m):
         if abs(n[2]) <= 0.5 * math.sqrt(sum(x * x for x in n)):
             return False
     return True
+
+
+def picks(data):
+    """The SPIK chunk (module docstring; sfx.picks_chunk): the sound events that pick one of their clips at random. The
+    Special Edition's levels keep Bnk_0's (the retail Ed's) only: their own banks are numbered apart."""
+    if not data.se:
+        return sfx.picks_chunk()
+    rows = [r for r in sfx.random_events() if r[0] < sfx.LEVEL_SOUND]
+    out = [struct.pack('<2H', len(rows), 0)]
+    for event, _, silence, clips in rows:
+        out.append(struct.pack('<2HI', event, len(clips), silence))
+        out += [struct.pack('<2HI', c, 0, w) for c, w, _ in clips]
+    return b''.join(out)
 
 
 def snd3(data, sectors):

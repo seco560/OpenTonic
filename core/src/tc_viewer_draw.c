@@ -595,7 +595,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
                                    ? &v->play->main.driver.ai : NULL;
     float ed_alpha = ed_ai && !ed_ai->display_flag8 ? ed_ai->transparency / 255.0f : 1; /* his scripts' fades too (the
                                     hurt blink at 127; the passages' 0) */
-    bool see_through = ed_alpha <= 0;
+    bool see_through = ed_alpha <= 0 || (ed_ai && !ed_ai->active); /* out of the world: a chameleon holds the player */
     if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target && !see_through) {
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
