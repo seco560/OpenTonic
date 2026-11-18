@@ -1113,8 +1113,12 @@ def ski_portals(ai, strings):
             # again, tc_ed_ai's restart). The stand-in's capture (radius 6) cut into that walk: its cover and teleport came
             # first, the step-in went on at the top of the run, then the scripts' own cover and restart followed.
             continue
-        else:
-            fire = [(POP_LEVEL, 0, sid(arrival[1]), sid('sud0'), sid(arrival[0]), (0, 0, 0))]
+        if lv.name.lower() == 'totalski':
+            # No stand-in since 2026-11-18 either (the user: at the finish he went through it instead of his script):
+            # the skier's own B22 calls ChangeMapAtPosition('sud0', .., heg_positionedtotalski, ..), which the core now
+            # hands to the host. skymap's arch keeps its stand-in (not checked there).
+            continue
+        fire = [(POP_LEVEL, 0, sid(arrival[1]), sid('sud0'), sid(arrival[0]), (0, 0, 0))]
         rows = (p.world[0:3], p.world[4:7], p.world[8:11])
         out.append((tuple(p.world[3::4][:3]), 6.0, rows, persos[p.loc], 1, 0, 0,
                     [(POP_COVER, 0, 0, 0, 0, (0, 0, 0))], fire, (fam, inst)))

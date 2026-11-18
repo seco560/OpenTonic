@@ -39,6 +39,22 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     as before (51 frames with the character between his head and the eye). Making Ed collide with characters that have
     no collision of their own would be a port choice (by the exe's rules as read he walks into them): not done, ask the user.
 
+* North Plain Zone Teleport Loop (the user, 2026-11-18, recording 2026-11-18_103949_metal.ttrec, at 81 s and 124 s):
+  after a zone teleport (the "walk-in arches" between the north plain's parts) Ed is put back at the arrival point
+  every few ticks, for good.
+  * **Fixed 2026-11-18 (Claude), awaiting a playtest; core only, no re-export.** Not the portals' old stand-in: the
+    teleport persos (KEV_ChangementSousMap: B0 holds Ed and covers, B1 = `If GameState63` then PROC_8, radius 4) run
+    their own scripts as read. After the teleport Ed's own B63 puts him in B102 (dsg142 == 1; R34 frees him 1.5 s
+    later), and the 2026-11-17 port rule for north's lift ("the perso that holds Ed stays awake and *thinking*",
+    tc_cast.c step_actor) took that for the teleport perso's hold: 70 units away, past its radius, it thought on, saw
+    GameState63 true and teleported him again. The rule now only keeps such a perso awake; whether it thinks is the
+    exe's radius test again (`GAM_PersoFrame_0042b520`; the lift holds with radius "always"). The recording replayed
+    headless: one teleport, Ed free 1.6 s after it. Swept (portalcheck `TELEPORT_SWEEP=1`): north's five zone teleports
+    and marmite's one looped before (121 arrivals in 12 s), arrive once now; every other teleport of north, LeCanyon,
+    marmite, cock01, BigBoss, Land and sud0 unchanged. Seen there, not looked into: after cock01's two, a hold of
+    cock01's own keeps Ed. The second spot (124 s) could not be replayed past the first fix: the run takes
+    another course from there.
+
 * Vegetable HQ Button Softlock (the user, 2026-11-17, recording 2026-11-17_174144_metal.ttrec; a regression): pressing
   the button that brings the guided platform holds Ed for good, and the shot shows the platform's sector without drawing it.
   * **Fixed 2026-11-17 (Claude), awaiting a playtest; the levels are re-exported.** The button's camera perso

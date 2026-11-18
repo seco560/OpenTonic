@@ -822,9 +822,13 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         if (c->main) p->screen_covered = c->main->screen_covered; /* GameState63: the engine's */
         if (!p->model || !p->active) { a->awake = false; return; }
         /* port (2026-11-17, the user's north lock): the perso that holds the main actor (he is in the fix Ed's hold B15
-         * or its wait B102, by its force) stays awake and thinking until it lets him go. north's lift
-         * (KEV_Plate_Forme_Joyeuse) holds Ed while its camera shot looks into another sector; asleep there, it never
-         * reached its release (B103 after 6.5 s) and Ed stood still for good */
+         * or its wait B102, by its force) stays awake until it lets him go. north's lift (KEV_Plate_Forme_Joyeuse) holds
+         * Ed while its camera shot looks into another sector; asleep there, it never reached its release (B103 after
+         * 6.5 s) and Ed stood still for good. Awake only: whether it thinks is still the exe's radius test below (the lift
+         * holds with radius "always"). Until 2026-11-18 it thought too, whatever the radius, and north's zone teleports
+         * (KEV_ChangementSousMap, radius 4) looped: after the teleport Ed's own B63 puts him in B102 (dsg142 == 1, R34
+         * frees him 1.5 s later), so the teleport perso, 70 units away, still "held" him, saw GameState63 true and teleported
+         * him again, for good (the user's recording 2026-11-18_103949) */
         holding = c->main && c->main != p && c->main->forced_by == (int32_t)a->entry->id &&
                   (c->main->normal.behaviour == 15 || c->main->normal.behaviour == 102);
         a->awake = holding || (a->entry->flags & TC_CAST_ALWAYS_AWAKE) || !s || main_sector == TC_SECTOR_NONE ||
@@ -836,7 +840,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         p->time_ms = c->main ? c->main->time_ms : p->time_ms + (uint32_t)(dt * 1000 + 0.5f);
         if (d2 <= TC_CAST_NEAR * TC_CAST_NEAR) p->near_main_ms = p->time_ms ? p->time_ms : 1;
         p->world = c->world; /* FUNC 162's probe: the static world */
-        think = (holding || p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
+        think = (p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
         if ((a->entry->flags & TC_CAST_TALK) && !a->talking) { /* port: its scene waits for him */
             float dx = p->position.x - main_pos.x, dy = p->position.y - main_pos.y;
             a->talking = c->talk_press && dx * dx + dy * dy <= TC_CAST_TALK_REACH * TC_CAST_TALK_REACH;

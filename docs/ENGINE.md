@@ -1160,8 +1160,11 @@ level change. The player's save holds Ed's dsgvars with flag 0x200 only.
   (`start_chain`), tc_ed_ai `start_step`, card type 6 holds still (also Ed's states 142 / 143); the viewer's hold of
   2026-11-12 is gone, and with it the open question of why he crept and dropped.
 - **Retry.** The scripts' own (B18 walks to the arch, B7 steps in and covers, B22 calls GameAction0). The stand-in
-  portal on the Retry arch (ai.py `ski_portals`) cut into it and is gone; the arch to sud0 keeps its stand-in (the
-  skier's PROC 29 is still not run).
+  portal on the Retry arch (ai.py `ski_portals`) cut into it and is gone. **Since 2026-11-18 Totalski's arch to sud0
+  too** (the user: at the finish he went through the stand-in, not his script): the main actor's own PROC 29 now goes to
+  the host (tc_ed_ai.c), so B22 picks the arrival itself (dsg40 2 with SaveValue(4) < 6: heg_positionedskymap, else
+  heg_positionedtotalski; the stand-in always took the latter). Checked headless by forcing B22 (both places), not by a
+  whole run. skymap's arch keeps its stand-in (not checked); his plain ChangeLevel calls other than 'death' stay unhandled.
 - **A restart (GameAction0). Port, the exe's map re-initialisation is not read in full:** every undrawn perso that
   started active starts again (was: only those that were out), keeping its level-saved values; on the ski levels the fix
   Ed's player-saved dsgvars go back to the level's start (Totalski's save point is at the start gate). **Open:** whether

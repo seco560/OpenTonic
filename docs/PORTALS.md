@@ -175,6 +175,11 @@ the cover from any perso, GameState63 for all (docs/ENGINE.md "The game's reques
 - Still records: the skier's portals (Totalski, skymap: `ski_portals`), the Special Edition's (se.py), the custom
   layer's arches (custom.py: no perso behind them), and every portal under the simple controller.
 - The arches' camera: the fixed shot, since later that day (docs/CAMERA.md "The fixed shot").
+- **The zone teleports sleep after the teleport (2026-11-18).** KEV_ChangementSousMap's B1 has no way out: it teleports
+  Ed whenever GameState63 holds, and GameState63 is true in play but while a cover runs. What ends it in the exe is its
+  activation radius (4, set by its B0): Ed lands far away and it stops thinking. A port rule of 2026-11-17 (a perso
+  holding Ed thinks whatever its radius) kept it thinking while Ed waited in B102 after the arrival, and it teleported
+  him again for good (docs/BUGS.md "North Plain Zone Teleport Loop"). portalcheck checks one arrival and Ed free again.
 
 ## Level changers (2026-11-13, after the arches)
 The other persos that change level or move Ed (PROC 7 / 8 / 29) run in the cast too, and may force him (tools/ttre/

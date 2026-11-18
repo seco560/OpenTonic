@@ -469,7 +469,16 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     if (a->change_level >= 0) {
         const char *to = (uint32_t)a->change_level < a->model->string_count ? a->model->strings[a->change_level] : NULL;
         if (to && same_name(to, "death")) a->restart_requested = true;
-        a->change_level = -1;
+        /* His own ChangeMapAtPosition (PROC 29: a level with an arrival place) goes to the host, as any perso's does
+         * (2026-11-18: Totalski's skier, B22 after the finish arch's step-in, to sud0; until then the arch's stand-in
+         * portal, ai.py ski_portals, cut in first). Plain ChangeLevel calls of his other than 'death' stay unhandled. */
+        else if (to && (uint32_t)a->change_place < a->model->string_count) {
+            e->events.level = to;
+            e->events.place = a->model->strings[a->change_place];
+            e->events.camera_place = (uint32_t)a->change_camera_place < a->model->string_count
+                                         ? a->model->strings[a->change_camera_place] : NULL;
+        }
+        a->change_level = a->change_place = a->change_camera_place = -1;
     }
     if (a->restart_requested) {
         const tc_ai_globals *g = a->globals ? a->globals : &a->own_globals;

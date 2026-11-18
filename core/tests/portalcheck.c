@@ -244,6 +244,7 @@ static int holes(const char *dir, int *inside, int *outside) {
 }
 
 static int look_away; /* in_game: turn the camera 0.5 s into the fixed shot */
+static float after_teleport = 4; /* in_game: how long it goes on after the teleport */
 static float wait_far;  /* in_game: first stand this far out (on the ground, the same way) for a second: the portal wakes
                            with Ed out of the removal guard's reach (TC_CAST_NEAR) */
 
@@ -257,6 +258,9 @@ typedef struct game_result {
     int looked_back;       /* with look_away: the shot dropped while the player turned its camera */
     float turned;          /* ... how far its eye moved meanwhile (it orbits the look point) */
     float teleport_at;
+    int arrivals;          /* times Ed was forced into his teleport arrival B67 (2026-11-18: north's zone teleports did it
+                              again and again; the fix Ed's model, the same on every retail level) */
+    float free_at;         /* after the teleport, when he is his own again: out of B15 / B102 / B63 / B67; -1 never */
     char level[64];
     tc_vec3 end;
 } game_result;
@@ -284,7 +288,7 @@ static int in_game_at(const char *dir, const char *name, int op, const char *lev
     int i, k, last_beh = -1, last_state = -1, flags = 0;
     int32_t first_forced;
     memset(res, 0, sizeof(*res));
-    res->teleport_at = -1;
+    res->teleport_at = res->free_at = -1;
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
     if (!(data = read_file(path, &size)) || tc_level_load(&lv, data, size) != TC_OK) { free(data); return 0; }
     free(data);
@@ -372,6 +376,10 @@ static int in_game_at(const char *dir, const char *name, int op, const char *lev
         }
         if (e->ai.state == 228) res->saw_228 = 1;
         if (e->ai.state == 229 && res->teleport_at >= 0) res->saw_229 = 1;
+        if ((int)e->ai.normal.behaviour != last_beh && e->ai.normal.behaviour == 67) res->arrivals++;
+        if (res->teleport_at >= 0 && res->free_at < 0 && e->ai.normal.behaviour != 15 && e->ai.normal.behaviour != 102 &&
+            e->ai.normal.behaviour != 63 && e->ai.normal.behaviour != 67)
+            res->free_at = t;
         if ((int)e->ai.normal.behaviour != last_beh || (int)e->ai.state != last_state) {
             last_beh = e->ai.normal.behaviour;
             last_state = e->ai.state;
@@ -395,7 +403,7 @@ static int in_game_at(const char *dir, const char *name, int op, const char *lev
             printf("  %5.2f  level %s%s%s\n", (double)t, c->level, c->place[0] ? " at " : "", c->place);
             break;
         }
-        if (res->teleport_at >= 0 && t > res->teleport_at + 4) break;
+        if (res->teleport_at >= 0 && t > res->teleport_at + after_teleport) break;
     }
     res->end = tc_viewer_player(&v)->position;
     res->hidden_left = e && e->ai.transparency == 0;
@@ -697,7 +705,23 @@ int main(int argc, char **argv) {
         if (in_game(dir, "north", TC_AI_POP_TELEPORT, NULL, 2, &g)) {
             check(g.captured && !g.saw_228 && g.covers >= 1 && g.teleport_at >= 0,
                   "north zone portal, in the game: cover, no walk-in, teleport");
+            /* 2026-11-18 (the user's recording 2026-11-18_103949): the teleport perso, out of its radius 4, thought on as
+             * "holding" Ed and teleported him again every few ticks, for good (tc_cast.c step_actor) */
+            check(g.arrivals == 1 && g.free_at >= 0 && g.free_at - g.teleport_at < 2.5f,
+                  "north zone portal, in the game: teleported once, Ed his own again 1.6 s later (R34)");
         } else failures++;
+        /* TELEPORT_SWEEP=1: every teleport record of these levels, 12 s after the teleport (a diagnostic, no checks).
+         * 2026-11-18: before the fix, north's five zone teleports and marmite's one looped (121 arrivals); cock01's two
+         * arrive once, then a hold of its own keeps Ed (not looked into) */
+        if (getenv("TELEPORT_SWEEP")) {
+            after_teleport = 12;
+            static const char *levels[] = {"north", "LeCanyon", "marmite", "cock01", "BigBoss", "Land", "sud0"};
+            int n, l;
+            for (l = 0; l < (int)(sizeof(levels) / sizeof(levels[0])); l++)
+                for (n = 0; in_game(dir, levels[l], TC_AI_POP_TELEPORT, NULL, n, &g); n++)
+                    printf("SWEEP %s #%d: captured %d covers %d teleport %.2f arrivals %d free %.2f\n", levels[l], n,
+                           g.captured, g.covers, (double)g.teleport_at, g.arrivals, (double)(g.free_at - g.teleport_at));
+        }
     }
     { /* north's exit arch (SDO_ArcheFinSud, the second record to sud0): it starts deactivated (its B3:
        * DeactivatePerso(Me), which the removal guard keeps as a frozen prop) until Suzy (NBD_SuzyNorth, with power 8)
