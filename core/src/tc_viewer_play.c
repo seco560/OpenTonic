@@ -327,7 +327,7 @@ static void step_ai(tc_viewer *v, float dt, const tc_game_input *in) {
         v->walk_seen = p->walk_serial;
         v->ski_shot = false;
     }
-    if (!tc_main_is_ed(&p->main)) return; /* Ed is drawn as the character in the slot says (update_custom) */
+    if (tc_main_riding(&p->main)) return; /* Ed is drawn as the character in the slot says (update_custom) */
     t = p->tick_time / TC_ED_AI_TICK;
     v->ed_pose = pose_lerp(&p->main.pose_prev, &p->main.pose_cur, t);
     v->ed_clip = p->main.clip_cur;

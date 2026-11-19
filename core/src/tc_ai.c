@@ -2524,6 +2524,15 @@ static uint32_t go_along(tc_ai_perso *p, tc_vec3 d, bool there) {
     p->motion.mode_count = n;
     if (there) return F_META_DONE;
     if (d.x != 0 || d.y != 0 || d.z != 0) d = tc_v3_scale(d, 1 / l);
+    if (p->main_actor == 0 && p->motion.proposal[10] == 0) {
+        /* GAM_0042a8d0 feeds the speed from the playing state's root motion before the AI (the cast's actors' by
+         * root_to_proposal, tc_cast.c); a script's SetSpeed then stands (the arches' walk-ins, carota's helm, the
+         * tower lever, the ruby guide). Port: the main actor's, where no script set one, here: without it his scripted
+         * walks (B108's GoToWaypoint: sud0's walk-in director, pyramide's sarcophagi, the skier's finish) asked for
+         * speed 0 and he stood, turned towards the point (2026-11-19, forcecheck) */
+        float speed = root_speed(p);
+        if (speed > 0) p->motion.proposal[10] = speed;
+    }
     p->motion.proposal[7] = d.x, p->motion.proposal[8] = d.y, p->motion.proposal[9] = d.z;
     p->motion.direction_set = true;
     set_mech_mode(p, 20);

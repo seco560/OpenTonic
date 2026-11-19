@@ -6,7 +6,7 @@
  * `player`. His tick is the game's: the cast steps him between its run-first persos (lifts, platforms) and the others
  * (tc_main_tick -> tc_cast_tick), as the exe's frame orders them.
  *
- * Another character (tc_character_ops: custom gameplay's car, core/src/custom) takes the slot when Ed gets into it, and
+ * Another character (by its brain, tc_brain.h: custom gameplay's car, core/src/custom) takes the slot when Ed gets into it, and
  * gives it back when he is on his feet again. Meanwhile Ed rides along: his scripts and mechanics sleep, his physics'
  * place is where it puts him (his sector and the lights follow it), and it says how to draw him (his hop in and out,
  * his seat). It moves on the host's frames, by its own clock; the game's tick goes on round it (tc_main_tick: the cast's
@@ -21,43 +21,11 @@
 #include "tc_ai.h"
 #include "tc_ed_ai.h"
 #include "tc_cast.h"
+#include "tc_brain.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* A frame of the player's, for a character in the slot (it moves on the host's frames). */
-typedef struct tc_character_input {
-    tc_player *ed;               /* Ed's physics: where he rides; placed by it when he gets out */
-    uint32_t held;               /* 1 << tc_view_action (tc_game.h) */
-    float move_x, move_y;        /* the left stick */
-    bool paused;
-    bool held_back;              /* the game holds the player (a line, the director's shot, the pause's look round) */
-    float animation_speed;
-    int ed_clip;                 /* how Ed was drawn last frame (an idle it keeps playing) */
-    float ed_phase;
-} tc_character_input;
-
-/* How Ed is drawn while a character holds the slot. */
-typedef struct tc_character_pose {
-    tc_mat4 model;               /* Ed -> world */
-    int clip;                    /* tc_level.ed.anims index, -1 none */
-    float phase;
-    bool loop;
-} tc_character_pose;
-
-struct tc_cam_target;
-typedef struct tc_character_ops {
-    /* A frame while it holds the slot: moves it by the player's input and says how Ed is drawn. false: it gives the
-     * slot back this frame (Ed is on his feet at in->ed's place: his own control from now). */
-    bool (*frame)(void *self, const tc_character_input *in, float dt, tc_character_pose *pose);
-    /* The play camera's target (what the host made for Ed: it changes what it needs). */
-    void (*camera_target)(const void *self, struct tc_cam_target *t);
-    /* Its part of the title bar (", driving 42 km/h"); false: none. */
-    bool (*status)(const void *self, char *out, size_t size);
-    /* Leaving play mode: Ed out at once, placed on `ed` (the slot is given back by tc_main_abort). */
-    void (*abort)(void *self, tc_player *ed);
-} tc_character_ops;
 
 struct tcx_play;
 typedef struct tc_main {
@@ -74,6 +42,7 @@ typedef struct tc_main {
     uint8_t zone_fired[64];
     tc_ed_ai driver;             /* his scripts; has_driver false: the simple controller only */
     bool has_driver;
+    tc_sector_track sector;      /* his sector without a driver (the simple controller's; tc_main_track_sector) */
     char level_name[128];        /* tc_ed_ai keeps a pointer to it */
     /* What to draw, after the last two ticks (tc_main_capture): his model matrix, his state's clip (level->ed.anims
      * index), its frame, its rate and whether it loops. */
@@ -83,10 +52,18 @@ typedef struct tc_main {
     float phase_prev, phase_cur;
     float rate_cur;              /* animation frames per second of the state after the last tick */
     bool loop_cur;
-    /* The slot: the character that is main instead of Ed (NULL: Ed), and how Ed is drawn riding it (its last frame). */
-    const tc_character_ops *ops;
-    void *self;
+    /* The slot: the character that is main instead of Ed, by its brain (ops NULL: none, Ed is), and how Ed is drawn
+     * riding it (its last frame). */
+    tc_brain slot;
     tc_character_pose rider;
+    /* Inside tc_main_tick: what his brain's tick (the cast steps him by it) works with. */
+    struct {
+        tc_cast *cast;
+        const struct tc_main_input *in;
+        uint16_t *sounds;
+        tc_sound_source *sources;
+        uint32_t *count, cap;
+    } tick;
     /* Custom gameplay in play (tcx.h; NULL: none), set by the host: the skier's tick hook reads its course (a boost). */
     const struct tcx_play *custom;
 } tc_main;
@@ -126,10 +103,17 @@ void tc_main_capture(tc_main *m);
 bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *sounds, tc_sound_source *sources,
                   uint32_t *count, uint32_t cap, int *mode_switch);
 
-/* The slot. Ed is main (no other character holds it). */
-static inline bool tc_main_is_ed(const tc_main *m) { return m->ops == NULL; }
-/* A character takes the slot (Ed gets in); it runs from the next tc_main_frame. */
-void tc_main_take(tc_main *m, const tc_character_ops *ops, void *self);
+/* After the frame's moves: his sector follows him (his driver's own track, else `sector`). */
+void tc_main_track_sector(tc_main *m);
+/* Ed's sector (TC_SECTOR_NONE: none known, or a level without sectors). */
+uint16_t tc_main_sector(const tc_main *m);
+
+/* The slot. A character holds it: Ed rides it (until 2026-11-19 tc_main_is_ed, negated: "Ed is main" was not true while
+ * a chameleon held the player; who the player plays is tc_game_main's). */
+static inline bool tc_main_riding(const tc_main *m) { return m->slot.ops != NULL; }
+/* A character takes the slot (Ed gets in), by its brain (its frame, camera_target, status and abort); it runs from the
+ * next tc_main_frame. */
+void tc_main_take(tc_main *m, const tc_brain_ops *ops, void *self);
 /* A frame of the character in the slot (Ed's own control otherwise: false, nothing done). false also when it gave the
  * slot back this frame: Ed is main again. m->rider: how to draw Ed. */
 bool tc_main_frame(tc_main *m, const tc_character_input *in, float dt);

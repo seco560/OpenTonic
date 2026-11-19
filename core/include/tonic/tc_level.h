@@ -176,16 +176,27 @@ typedef struct tc_cast_family {
     tc_cast_state *states;
     tc_cast_anim *anims;
     uint16_t *cards;             /* .ttlv CMEC: per state, its ID card (tc_cast_data.cards), 0xFFFF none; NULL: none */
-    /* CMEC's walker part (tools/ttre/cast.py walk_block, as a .ttai BODY + ZDMF): root motion rows (units per animation
-     * frame in its axes), per state its rows and its ZDM body (0xFFFF none); NULL: none. */
+    /* CMEC's root motion (tools/ttre/cast.py roots_block, as a .ttai BODY): rows (units per animation frame in its axes),
+     * per state its rows; NULL: none. A family has its states, cards and animations; its persos' bodies and zones are
+     * each one's own (tc_cast_collide). */
     uint32_t root_count;
     tc_vec3 *root;
     uint32_t *root_first;
-    uint16_t *root_rows, *body;
+    uint16_t *root_rows;
+} tc_cast_family;
+/* A cast perso's collide set (perso +0x14; .ttlv CMEC, tools/ttre/cast.py collide_block): each perso's own, persos with
+ * the same sharing one (docs/ARCHITECTURE.md stage 4: until 2026-11-18 a family's first perso stood for all of it). */
+typedef struct tc_cast_collide {
+    /* its sweep body for its mechanics where it is a single sphere at the origin (+0x36: radius +0x30 / 2, in every
+     * state; 0 a point); -1: its ZDM bodies, per state */
+    float radius;
+    uint8_t priority, meets;     /* +0x34, +0x35 (it meets persos) */
+    uint16_t state_count;
+    uint16_t *body;              /* per state: its ZDM body (bodies), 0xFFFF none; NULL: none */
     uint16_t body_count;
     tc_ai_sphere_set *bodies;
-    tc_zde_set zde;              /* CMEC's ZDE part (none: no zones) */
-} tc_cast_family;
+    tc_zde_set zde;              /* its ZDE zones and their activation per state (none: no zones) */
+} tc_cast_collide;
 /* A ZDD zone of a cast perso (COND 13): spheres (kind 7: a centre, b.x radius) and boxes (8: a min, b max) in its axes. */
 #define TC_CAST_ZONE_PRIMS 8
 typedef struct tc_cast_zone_prim { uint32_t kind; tc_vec3 a, b; } tc_cast_zone_prim;
@@ -206,17 +217,12 @@ typedef struct tc_cast_entry {
     uint8_t *scripts;            /* for tc_ai_model_load_scripts */
     uint32_t tables_size;        /* TC_CAST_TABLES: the strings and constant vectors they index (tc_ai_model_load_tables) */
     uint8_t *tables;
-    /* .ttlv CMEC: its own sweep body for its mechanics (its collide set's single sphere at the origin, +0x36: radius
-     * +0x30 / 2, in every state; 0 a point; -1 none: its family's ZDM bodies) and the set's priority (+0x34) and +0x35
-     * (it meets persos) */
-    float own_radius;
-    uint8_t own_priority, own_meets;
+    /* .ttlv CMEC: its collide set (tc_cast_data.collides; never NULL: none is tc_cast_no_collide, a radius of -1, no
+     * bodies, no zones) */
+    const tc_cast_collide *collide;
     uint16_t family_type;        /* CMEC: its family's index (std game +0; what T22 nodes hold), 0xFFFF unknown */
-    /* CMEC: its own ZDE zones where they are not its family's (collide sets are each perso's: sud0's tomato family's
-     * first perso has none, the cannons, kamikazes, baseballs and TomLut a body zone and a hit zone) */
-    bool has_zde;
-    tc_zde_set zde;
 } tc_cast_entry;
+extern const tc_cast_collide tc_cast_no_collide;
 #define TC_CAST_MAY_FORCE_MAIN 1u /* its PROC 237 / 238 may set the main actor's behaviours (tools/ttre/cast.py) */
 #define TC_CAST_SAVE_POINT 2u     /* a save point: when it takes itself out, the main actor's checkpoint is where he is */
 #define TC_CAST_ALWAYS_AWAKE 4u   /* on the engine's always-awake list (gpt -> 0x8c172c): runs whatever sector the main
@@ -254,6 +260,8 @@ typedef struct tc_cast_data {
     struct tc_cast_ghost { uint16_t id, fix_role; tc_vec3 position; uint32_t size; uint8_t *dsg; } *ghosts;
     uint16_t card_count;         /* .ttlv CMEC: the families' states' ID cards (the cast's mechanics, tc_cast_mec.c) */
     tc_ai_card *cards;
+    uint16_t collide_count;      /* .ttlv CMEC: the persos' collide sets (tc_cast_entry.collide) */
+    tc_cast_collide *collides;
 } tc_cast_data;
 
 /* .ttlv SPCH (tools/ttre/speech.py; docs/ENGINE.md "Speech"): the level's dialogues and the engine's font FontLips. */

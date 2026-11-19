@@ -20,6 +20,7 @@
 #include "tc_sector.h"
 #include "tc_mec.h"
 #include "tc_player.h"
+#include "tc_brain.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -83,6 +84,9 @@ typedef struct tc_cast_actor {
     tc_player own_body;
     bool has_body;
     bool capsule;
+    /* What steps it in the walk instead of its scripts (tc_brain.h): the main character's actor's is his driver (tc_main.c,
+     * through tc_cast_attach_main); ops NULL: its own scripts, as every other actor's. */
+    tc_brain brain;
 } tc_cast_actor;
 
 
@@ -117,6 +121,7 @@ typedef struct tc_cast {
      * NULL: none attached. */
     tc_cast_actor *main_actor;
     tc_cast_entry main_entry;
+    tc_cast_collide main_collide; /* main_entry's: his collide set's priority and +0x35 (PCOL), no bodies (his model's) */
     uint8_t *alias_saved;        /* the fix Ed's dsgvars at the level's start, where he stands for the main actor (the ski
                                     levels): his player-saved ones go back to these at a restart (tc_cast_respawn) */
     uint32_t alias_saved_size;
@@ -159,6 +164,10 @@ typedef struct tc_cast {
  * position is its perso's now; the main actor (TC_SOUND_EMITTER_MAIN or his id) is always heard, at his own position; a
  * perso whose sector is not known is not (volume 0), as the exe's callback (0x422860) has it. */
 int tc_cast_sound_place(const tc_cast *c, const tc_sound_source *s, const tc_sound_listener *l, int *pan, int *dolby);
+/* Whether perso `id` is the main actor (Ed): his own id, or the fix Ed's where another perso is the player (the ski
+ * levels' skier: CAST main_alias, who stands for him in everything but his dsgvars, tc_ai.h alias_dsg). The one test of
+ * "his ids" (docs/ARCHITECTURE.md stage 3: until 2026-11-19 each lookup repeated it). */
+bool tc_cast_is_main_id(const tc_cast *c, int32_t id);
 /* `emitter` as the sources name it: TC_SOUND_EMITTER_MAIN for the main actor under any of his ids. */
 int32_t tc_cast_sound_emitter(const tc_cast *c, int32_t emitter);
 /* True: nobody can ever hear this sound (its emitter is no perso of the level, or a ghost in a level with sectors): not
@@ -182,20 +191,17 @@ void tc_cast_step(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_secto
  * (tc_cast_step_rest). */
 void tc_cast_step_first(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
 void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_sector);
-/* The main character as the cast steps it (tc_cast_tick; tc_main.h): its own tick, and the sector it is in. */
-typedef struct tc_cast_main_ops {
-    void (*step)(void *self, float dt);
-    uint16_t (*sector)(const void *self);    /* TC_SECTOR_NONE: none known */
-} tc_cast_main_ops;
 /* One tick of the game, the exe's frame (docs/ENGINE.md "The frame"): the run-first persos (tc_cast_step_first), then
- * the dynamic world's walk in tree order with the main character's step (ops->step(self, dt)) at his own place in it
- * (main_id: the persos before him in the walk run first), each perso from his sector and position as they are when it
- * runs; then the moved sectors. */
-void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_ops *ops, void *self);
+ * the dynamic world's walk in tree order with the main character's actor stepped by its brain (tick: tc_brain.h) at his
+ * own place in it (main_id: the persos before him in the walk run first), each perso from his sector (his: the brain's)
+ * and position as they are when it runs; then the moved sectors. The main character's actor must be attached
+ * (tc_cast_attach_main). */
+void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s);
 /* The main character as the cast's actor (tc_main.h): his AI, his dynamics and his physics (his capsule, tc_player) are
- * his driver's; his record: his id, always awake, his own collide set (the level's PCOL main). Again after his driver is
- * made anew (the Special Edition's walk / ski switch); a cast without actors has none. */
-void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player *body);
+ * his driver's, and the brain the cast steps him by (his driver's tick and sector; tc_brain.h); his record: his id,
+ * always awake, his own collide set (the level's PCOL main). Again after his driver is made anew (the Special Edition's
+ * walk / ski switch) and when his brain changes (riding a character); a cast without actors has none. */
+void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player *body, tc_brain brain);
 /* His mechanics for this step, the cast's as any actor's (his driver's step calls it in place of its own: tc_ed_ai's
  * mechanics hook): by his state's card, the walkers with a body, 6, 7, 10 and 12 through the cast's integrators (his
  * physics copied in and out), the rest through the shared step (tc_mec_perso_step: 1 2 5 8 11, his capsule). x: his

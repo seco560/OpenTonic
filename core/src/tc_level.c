@@ -129,20 +129,22 @@ void tc_level_free(tc_level *level) {
         tc_free(f->states);
         tc_free(f->anims);
         tc_free(f->cards);
-        tc_zde_set_free(&f->zde);
         tc_free(f->root);
         tc_free(f->root_first);
         tc_free(f->root_rows);
-        tc_free(f->body);
-        tc_free(f->bodies);
     }
+    for (i = 0; level->cast.collides && i < level->cast.collide_count; i++) {
+        tc_free(level->cast.collides[i].body);
+        tc_free(level->cast.collides[i].bodies);
+        tc_zde_set_free(&level->cast.collides[i].zde);
+    }
+    tc_free(level->cast.collides);
     tcx_level_free(level->custom);
     level->custom = NULL;
     tc_free(level->cast.families);
     tc_free(level->cast.cards);
     for (i = 0; level->cast.entries && i < level->cast.count; i++) {
         tc_free(level->cast.entries[i].scripts);
-        tc_zde_set_free(&level->cast.entries[i].zde);
         tc_free(level->cast.entries[i].tables);
         tc_free(level->cast.entries[i].zones);
     }
@@ -361,7 +363,7 @@ static void read_cast(tc_cast_data *c, reader *r) {
         uint32_t size;
         e->family_type = 0xFFFF; /* CMEC's, when there */
         e->id = rd_u16(r);
-        e->own_radius = -1; /* CMEC's own sweep body: none until it says (0 is a point) */
+        e->collide = &tc_cast_no_collide; /* CMEC's, when there */
         e->prso = rd_u16(r);
         e->family = rd_u16(r);
         e->sector = rd_u16(r);
@@ -451,125 +453,123 @@ void tc_zde_set_free(tc_zde_set *z) {
     memset(z, 0, sizeof(*z));
 }
 
-/* .ttlv CMEC (tools/ttre/cast.py mech_chunk): after CAST. */
-static void read_cmec(tc_cast_data *c, reader *r) {
-    uint32_t i, k, n_fam;
+const tc_cast_collide tc_cast_no_collide = {-1.0f, 0, 0, 0, NULL, 0, NULL, {0, 0, NULL, 0, NULL, NULL}};
+
+/* A ZDM body list (cast.py collide_block): u16 n_bodies, u16 0, n_bodies x { u16 n, u16 0, n x sphere }. */
+static void read_bodies(tc_cast_collide *k, reader *r) {
+    uint32_t j;
+    k->body_count = rd_u16(r);
+    (void)rd_u16(r);
+    k->bodies = (tc_ai_sphere_set *)rd_array(r, k->body_count, sizeof(tc_ai_sphere_set), 4);
+    if (!k->bodies) k->body_count = 0;
+    for (j = 0; j < k->body_count && !r->error; j++) {
+        tc_ai_sphere_set *b = &k->bodies[j];
+        uint16_t m = rd_u16(r), q;
+        (void)rd_u16(r);
+        for (q = 0; q < m && !r->error; q++) {
+            tc_ai_sphere sp;
+            memset(&sp, 0, sizeof(sp));
+            sp.center.x = rd_f32(r);
+            sp.center.y = rd_f32(r);
+            sp.center.z = rd_f32(r);
+            sp.radius = rd_f32(r);
+            sp.flags = rd_u16(r);
+            sp.point = rd_u16(r) == 5;
+            sp.rebound = rd_f32(r);
+            sp.grip = rd_f32(r);
+            if (b->count < TC_AI_MAX_SPHERES) b->spheres[b->count++] = sp;
+        }
+    }
+}
+
+/* .ttlv CMCS (tools/ttre/cast.py mech_chunk): after CAST. The families' cards and root motion, the persos' collide sets
+ * (until 2026-11-19 CMEC: bodies and zones per family, from its first perso). */
+static void read_cmcs(tc_cast_data *c, reader *r) {
+    uint32_t i, k, n_fam, n;
     c->card_count = rd_u16(r);
     n_fam = rd_u16(r);
     c->cards = (tc_ai_card *)rd_array(r, c->card_count, sizeof(tc_ai_card), 8);
     if (!c->cards) c->card_count = 0;
     for (i = 0; i < c->card_count && !r->error; i++) {
         tc_ai_card *d = &c->cards[i];
-        uint32_t n;
+        uint32_t w_n;
         d->type = rd_u32(r);
-        n = rd_u32(r);
-        d->word_count = n < 19 ? n : 19;
-        for (k = 0; k < n; k++) {
+        w_n = rd_u32(r);
+        d->word_count = w_n < 19 ? w_n : 19;
+        for (k = 0; k < w_n && !r->error; k++) {
             uint32_t w = rd_u32(r);
             if (k < 19) d->words[k] = w;
         }
     }
     for (i = 0; i < n_fam && !r->error; i++) {
-        uint16_t n = rd_u16(r);
+        uint16_t m = rd_u16(r);
         tc_cast_family *f = i < c->family_count ? &c->families[i] : NULL;
-        uint16_t *row = (uint16_t *)rd_array(r, n, 2, 2);
-        for (k = 0; row && k < n; k++) {
+        uint16_t *row = (uint16_t *)rd_array(r, m, 2, 2);
+        for (k = 0; row && k < m; k++) {
             row[k] = rd_u16(r);
             if (row[k] != 0xFFFF && row[k] >= c->card_count) row[k] = 0xFFFF;
         }
-        if (f && row && n == f->state_count) f->cards = row;
+        if (f && row && m == f->state_count) f->cards = row;
         else tc_free(row);
     }
-    if (r->offset < r->size) { /* the entries' own sweep bodies */
-        uint16_t n = rd_u16(r);
-        (void)rd_u16(r);
-        for (i = 0; i < n && !r->error; i++) {
-            float rad = rd_f32(r);
-            uint8_t prio = rd_u8(r), meets = rd_u8(r);
-            uint16_t ftype = rd_u16(r); /* older files: 0 there */
-            if (i < c->count) {
-                c->entries[i].own_radius = rad;
-                c->entries[i].own_priority = prio;
-                c->entries[i].own_meets = meets;
-                c->entries[i].family_type = ftype;
-            }
+    /* the families' root motion (cast.py roots_block) */
+    n = rd_u16(r);
+    (void)rd_u16(r);
+    if (n && n != c->family_count) r->error = r->error ? r->error : TC_ERR_TRUNCATED; /* not CAST's families */
+    for (i = 0; i < n && !r->error; i++) {
+        tc_cast_family *f = &c->families[i];
+        uint32_t rows = rd_u32(r), j;
+        f->root = (tc_vec3 *)rd_array(r, rows, sizeof(tc_vec3), 12);
+        if (rows && !f->root) return;
+        f->root_count = rows;
+        for (j = 0; j < rows; j++) {
+            f->root[j].x = rd_f32(r);
+            f->root[j].y = rd_f32(r);
+            f->root[j].z = rd_f32(r);
         }
-    }
-    if (r->offset < r->size) { /* the walkers: root motion and ZDM bodies per family (tools/ttre/cast.py walk_block) */
-        uint16_t n = rd_u16(r);
-        (void)rd_u16(r);
-        for (i = 0; i < n && !r->error; i++) {
-            tc_cast_family scratch, *f = i < c->family_count ? &c->families[i] : &scratch;
-            uint32_t rows = rd_u32(r), j;
-            memset(&scratch, 0, sizeof(scratch));
-            if (f == &scratch) return; /* more families than CAST's: a mismatch, stop */
-            f->root = (tc_vec3 *)rd_array(r, rows, sizeof(tc_vec3), 12);
-            if (rows && !f->root) return;
-            f->root_count = rows;
-            for (j = 0; j < rows; j++) {
-                f->root[j].x = rd_f32(r);
-                f->root[j].y = rd_f32(r);
-                f->root[j].z = rd_f32(r);
-            }
-            f->root_first = (uint32_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint32_t));
-            f->root_rows = (uint16_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint16_t));
-            f->body = (uint16_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint16_t));
-            if (!f->root_first || !f->root_rows || !f->body) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
-            for (j = 0; j < f->state_count; j++) {
-                f->root_first[j] = rd_u32(r);
-                f->root_rows[j] = rd_u16(r);
-                f->body[j] = rd_u16(r);
-                if ((uint64_t)f->root_first[j] + f->root_rows[j] > rows) f->root_rows[j] = 0;
-            }
-            f->body_count = rd_u16(r);
+        f->root_first = (uint32_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint32_t));
+        f->root_rows = (uint16_t *)tc_calloc(f->state_count ? f->state_count : 1, sizeof(uint16_t));
+        if (!f->root_first || !f->root_rows) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
+        for (j = 0; j < f->state_count; j++) {
+            f->root_first[j] = rd_u32(r);
+            f->root_rows[j] = rd_u16(r);
             (void)rd_u16(r);
-            f->bodies = (tc_ai_sphere_set *)rd_array(r, f->body_count, sizeof(tc_ai_sphere_set), 4);
-            if (!f->bodies) f->body_count = 0;
-            for (j = 0; j < f->body_count && !r->error; j++) {
-                tc_ai_sphere_set *b = &f->bodies[j];
-                uint16_t m = rd_u16(r), q;
-                (void)rd_u16(r);
-                for (q = 0; q < m; q++) {
-                    tc_ai_sphere sp;
-                    memset(&sp, 0, sizeof(sp));
-                    sp.center.x = rd_f32(r);
-                    sp.center.y = rd_f32(r);
-                    sp.center.z = rd_f32(r);
-                    sp.radius = rd_f32(r);
-                    sp.flags = rd_u16(r);
-                    sp.point = rd_u16(r) == 5;
-                    sp.rebound = rd_f32(r);
-                    sp.grip = rd_f32(r);
-                    if (b->count < TC_AI_MAX_SPHERES) b->spheres[b->count++] = sp;
-                }
-            }
-            for (j = 0; j < f->state_count; j++)
-                if (f->body[j] != 0xFFFF && f->body[j] >= f->body_count) f->body[j] = 0xFFFF;
+            if ((uint64_t)f->root_first[j] + f->root_rows[j] > rows) f->root_rows[j] = 0;
         }
     }
-    if (r->offset < r->size) { /* the ZDE zones per family (ai.py zde_block) */
-        uint16_t n = rd_u16(r);
-        (void)rd_u16(r);
-        for (i = 0; i < n && !r->error; i++) {
-            tc_zde_set z;
-            tc_zde_set_read(&z, r);
-            if (i < c->family_count && z.state_count == c->families[i].state_count) c->families[i].zde = z;
-            else tc_zde_set_free(&z);
-        }
+    /* the collide sets (cast.py collide_block) */
+    n = rd_u16(r);
+    (void)rd_u16(r);
+    c->collides = (tc_cast_collide *)rd_array(r, n, sizeof(tc_cast_collide), 12);
+    c->collide_count = c->collides ? (uint16_t)n : 0;
+    for (i = 0; i < c->collide_count && !r->error; i++) {
+        tc_cast_collide *q = &c->collides[i];
+        uint32_t j;
+        q->radius = rd_f32(r);
+        q->priority = rd_u8(r);
+        q->meets = rd_u8(r);
+        q->state_count = rd_u16(r);
+        q->body = (uint16_t *)rd_array(r, q->state_count, 2, 2);
+        if (!q->body) q->state_count = 0;
+        for (j = 0; j < q->state_count; j++) q->body[j] = rd_u16(r);
+        read_bodies(q, r);
+        for (j = 0; j < q->state_count; j++)
+            if (q->body[j] != 0xFFFF && q->body[j] >= q->body_count) q->body[j] = 0xFFFF;
+        tc_zde_set_read(&q->zde, r);
+        if (q->zde.state_count != q->state_count) tc_zde_set_free(&q->zde);
     }
-    if (r->offset < r->size) { /* the entries whose own ZDE zones are not their family's (cast.py, 2026-11-18) */
-        uint16_t n = rd_u16(r);
-        (void)rd_u16(r);
-        for (i = 0; i < n && !r->error; i++) {
-            uint16_t k = rd_u16(r);
-            tc_zde_set z;
-            (void)rd_u16(r);
-            tc_zde_set_read(&z, r);
-            if (k < c->count && z.state_count == c->families[c->entries[k].family].state_count && !c->entries[k].has_zde) {
-                c->entries[k].zde = z;
-                c->entries[k].has_zde = true;
-            } else tc_zde_set_free(&z);
-        }
+    /* each entry's: its collide set, its family's index */
+    n = rd_u16(r);
+    (void)rd_u16(r);
+    for (i = 0; i < n && !r->error; i++) {
+        uint16_t set = rd_u16(r), ftype = rd_u16(r);
+        tc_cast_entry *e = i < c->count ? &c->entries[i] : NULL;
+        if (!e) continue;
+        e->family_type = ftype;
+        /* a set made for another state count than its family's (cast.py writes none): none */
+        if (set < c->collide_count && e->family < c->family_count &&
+            c->collides[set].state_count == c->families[e->family].state_count)
+            e->collide = &c->collides[set];
     }
 }
 
@@ -973,9 +973,12 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 
-    if (chunk_need(&cs, "CMEC", r)) { /* optional: the cast's cards (absent: the cast runs no mechanics) */
-        read_cmec(&level->cast, r);
+    if (chunk_need(&cs, "CMCS", r)) { /* the cast's mechanics and collide sets: with a cast (cast.py writes it with CAST) */
+        read_cmcs(&level->cast, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
+    } else if (level->cast.count) { /* a cast without: an older file (CMEC, its families' bodies) */
+        e = TC_ERR_STALE;
+        goto fail;
     }
 
     if (chunk_need(&cs, "PCOL", r)) { /* optional: older files have the persos' collision in COLL */

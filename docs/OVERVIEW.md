@@ -32,7 +32,7 @@ docs/DECOMP.md, docs/TYPES.md).
 | `.ttlv` | TEXS, MESH, PRSO | textures, the level's geometry, the characters' models and animations |
 | | COLL, FLOR, PCOL | the static collision, the floors, each character's own collision |
 | | SECT | the sectors: their portals, what each sees, their water, who and what is in them |
-| | CAST, CMEC, WAYS | which characters run their scripts, their physics cards, the waypoints |
+| | CAST, CMCS, WAYS | which characters run their scripts, their physics cards and collide sets, the waypoints |
 | | LITE, CHLT, LAIS, LMAP | lights, character lights, the light managers, lightmaps |
 | | SPCH, EDPL, EDIT | speech lines, Ed's start places, the custom layer (our own additions) |
 | `.ttai` | SCPT, STAT, CARD, BODY | the scripts, the states (which animation, which physics card), Ed's body spheres |
@@ -51,7 +51,7 @@ for all levels, `progress.ttpg`, shown by the debug menu).
 | `tc_level.c` | reads a `.ttlv` |
 | `tc_ai.c` | the script interpreter: runs one character's behaviours, as the exe does. Also holds the game's shared state (powers, save values, lives) |
 | `tc_ed_ai.c` | Ed: his scripts joined to his physics |
-| `tc_main.c` | the main character (the exe's main-character list): Ed, his physics and scripts, and the game's tick around him (the run-first persos, Ed, the rest) |
+| `tc_main.c` | the main character (the exe's main-character list): Ed, his physics and scripts, and the game's tick around him (the run-first persos, Ed, the rest). The cast steps Ed by his **brain** (`tc_brain.h`: his driver); another character's brain (custom gameplay's car) can hold his slot. Who the player plays now (Ed, a chameleon, the car) is asked in one place, `tc_game_main` |
 | `tc_mec.c`, `tc_mec_walk.c` | the physics, one "ID card" type at a time: walking and falling, flying, the ski board |
 | `tc_cast.c`, `tc_cast_mec.c` | every other character: who is awake, their scripts, their physics, the moving sectors |
 | `tc_collision.c`, `tc_obstacle.c` | the static world's triangles; the characters' own collision, moved with them |
@@ -98,9 +98,17 @@ The direction is to fold each back into the cast, one subsystem at a time (docs/
 
 ## How it is checked
 
-`make -C core checkall` is the gate: seventeen headless checks on the real levels (walking, skiing, portals, sectors, the
-camera, the cast, replays, the debug menu, the HUD, the menus, sound, the probe's smoke run). They prove the build has not changed against what was measured before; they do not prove it
+`make -C core checkall` is the gate: eighteen headless checks on the real levels (walking, skiing, portals, sectors, the
+camera, the cast, the cast's forces on Ed, replays, the debug menu, the HUD, the menus, sound, the probe's smoke run). They prove the build has not changed against what was measured before; they do not prove it
 looks or feels right. Only a playtest does.
+
+**forcecheck (2026-11-19, `core/tests/forcecheck.c`; docs/ARCHITECTURE.md stage 5).** Every cast perso may force Ed,
+as in the exe; this is what keeps that safe. On every level with a cast (8 at a time), each perso whose scripts force
+the player is met in a fresh level, Ed in front of it pressing Action; one that takes him must let him go (he runs
+again, or it changed the level, or it handed the player to a chameleon that moves). A perso that keeps him fails the
+gate: a gap to port, or a line in `tools/ttre/cast.py` KEPT_OFF_MAIN with its reason. `FORCE_ONLY=id` traces one
+(every change of Ed's behaviour), `FORCE_VERBOSE` lists them all. Each level's `_cast.txt` shows what its persos force
+("forces main B15 R4").
 
 **The probe (2026-11-19, `core/tests/probe.c`; docs/ARCHITECTURE.md stage 1).** For looking into one thing, not for
 the gate: a level played headless under a script of commands given on the command line or in a file, printing a line

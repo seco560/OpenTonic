@@ -10,6 +10,8 @@
 #   make sectorcheck -> every level's sectors against the game's own data (tc_sector.h)
 #   make camcheck   -> the play camera (tc_cam.h) on hand-made geometry, then a walk's line of sight on a few levels
 #   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
+#   make forcecheck -> the cast's forces on the player, every level with a cast: each perso that takes Ed from in front
+#                      of it must let him go (tests/forcecheck.c; tools/ttre/cast.py KEPT_OFF_MAIN)
 #   make movecheck  -> what each level perso does with Ed near it: rows to diff between builds (docs/ENGINE.md "Perso motion")
 #   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
 #   make hudcheck   -> the game's HUD (tc_hud.h): its data, Totalski's start text and clock, the standard HUD, the inventory
@@ -46,7 +48,7 @@ SRC := $(wildcard src/*.c) $(wildcard src/custom/*.c)
 endif
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay $(BUILD)/probe
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/forcecheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay $(BUILD)/probe
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -84,6 +86,9 @@ $(BUILD)/sectorcheck: tests/sectorcheck.c tests/testlevels.h $(BUILD)/libtonicco
 $(BUILD)/camcheck: tests/camcheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 $(BUILD)/castcheck: tests/castcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
+$(BUILD)/forcecheck: tests/forcecheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/movecheck: tests/movecheck.c $(BUILD)/libtoniccore.a
@@ -149,6 +154,15 @@ castcheck: $(BUILD)/castcheck
 movecheck: $(BUILD)/movecheck
 	$(BUILD)/movecheck ../files/out/ttlv
 
+# The cast's forces on the player (tests/forcecheck.c): every level with a cast (a LEVEL_cast.txt), 8 at a time.
+forcecheck: $(BUILD)/forcecheck
+	@mkdir -p $(BUILD)/logs/force; rm -f $(BUILD)/logs/force/*
+	@ls ../files/out/ttlv | sed -n 's/_cast\.txt$$//p' | \
+		xargs -P 8 -I{} sh -c '$(BUILD)/forcecheck ../files/out/ttlv {} > $(BUILD)/logs/force/{}.log 2>&1; echo "{} $$?"' \
+		> $(BUILD)/logs/force/exits
+	@cat $(BUILD)/logs/force/*.log
+	@! grep -qv ' 0$$' $(BUILD)/logs/force/exits
+
 perfcheck: $(BUILD)/perfcheck
 	$(BUILD)/perfcheck ../files/out/ttlv
 
@@ -183,7 +197,7 @@ menucheck: $(BUILD)/menucheck
 	$(BUILD)/menucheck ../files/out/ttlv
 
 # The gate. Each check runs whatever the others did; a red line names its log.
-GATE := check probecheck mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck
+GATE := check probecheck mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck forcecheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck
 SE_TTLV := ../files/out/se/ttlv
 checkall: all
 	@mkdir -p $(BUILD)/logs; failed=""; \
@@ -200,4 +214,4 @@ checkall: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay probe probecheck clean
+.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck forcecheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay probe probecheck clean

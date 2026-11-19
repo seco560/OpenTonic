@@ -110,7 +110,7 @@ static void lighting_check(const char *file, const tc_level *l, uint32_t exporte
     tc_viewer_update(&v, 1.0f / 60);
     f = (tc_view_frame *)malloc(sizeof *f);
     tc_viewer_frame(&v, 16.0f / 9, f);
-    sec = tc_viewer_ed_sector(&v);
+    sec = tc_viewer_main_sector(&v);
     if (sec != TC_SECTOR_NONE) {
         uint32_t want = 0;
         for (k = 0; k < s->sectors[sec].light_count; k++) {

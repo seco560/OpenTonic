@@ -2,9 +2,9 @@
  * awake and thinking, the primitives their scripts skipped, every frame's draw list valid. Then Ed is put at every
  * perso that sleeps behind an activation radius (PROC 18 / 20: pickups, props) for 2 s each, and the check counts the
  * ones that wake (their AI runs) and the ones that take themselves out (PROC 257: picked up). Ed must still run at the
- * end. The allowed persos (cast.py MAY_FORCE_MAIN): a lever takes Ed over on Action and lets him go; a popcorn machine
- * makes him Super Ed, drawn with other parts, until it wears off. Usage: castcheck DIR [level ...] (default: sud0
- * north Land). Env: FORCE_TRACE (who forces Ed), GAP_TRACE (the first-frame pose gaps). Test-only stdio. */
+ * end. The levers and machines (every perso may force Ed: forcecheck judges the others): a lever takes Ed over on
+ * Action and lets him go; a popcorn machine makes him Super Ed, drawn with other parts, until it wears off. Usage:
+ * castcheck DIR [level ...] (default: sud0 north Land). Env: FORCE_TRACE (who forces Ed), GAP_TRACE (the first-frame pose gaps). Test-only stdio. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -367,9 +367,10 @@ static void level(const char *dir, const char *name) {
            "themselves out; cast sound events heard %u\n", visited, unreached, woke, taken, cast_sounds);
     visited -= unreached;
     check(visited == 0 || woke * 10 >= visited * 9, "the sleepers wake when Ed comes within their radius");
-    /* The persos allowed to force Ed (tools/ttre/cast.py MAY_FORCE_MAIN: the levers): Ed beside one, Action; he must be
-     * taken over, then let go (back to running). Only drawn ones: World and the pit markers are invisible (above); and
-     * only those whose scripts force him (PROC 237 / 238): the tornados are allowed only to write his dsgvars. */
+    /* The levers and the popcorn machines: Ed beside one, Action; he must be taken over (B47, B11), then let go (back to
+     * running). Only drawn ones whose scripts force him (PROC 237 / 238). Since 2026-11-19 every perso may force Ed
+     * (tools/ttre/cast.py KEPT_OFF_MAIN): the others it takes are forcecheck's, which judges every forcer of every
+     * level. */
     for (i = 0; i < c->count; i++) {
         const tc_cast_actor *a = &c->actors[i];
         int side, k, taken_over = 0;
@@ -398,6 +399,10 @@ static void level(const char *dir, const char *name) {
                 if (!taken_over && c->main->forced_by == (int32_t)a->entry->id) forced_into = c->main->normal.behaviour;
                 taken_over |= c->main->forced_by == (int32_t)a->entry->id;
             }
+        }
+        if (taken_over && forced_into != 11 && forced_into != 47) { /* not a lever's or a machine's: forcecheck's */
+            printf("  info  perso %u took Ed into B%u: forcecheck judges it\n", (unsigned)a->entry->id, forced_into);
+            continue;
         }
         if (forced_into == 11) { /* a popcorn (Crunch) machine: Super Ed (Ed's B11 -> B93, reflex R13 until dsg15 ms) */
             uint32_t r13 = (uint32_t)c->main->model->normal_count + 13, t, super_at = 0, ended_at = 0;
@@ -485,7 +490,7 @@ static void level(const char *dir, const char *name) {
      * marmite: still holding a lever). The real check is "Ed runs with the cast awake" above. */
     printf("  info  Ed %s after the visits\n", moved > 2 ? "runs" : "does not run");
     /* Falling into a pit (docs/NOTES.md "Falling into pits"): the invisible markers allowed to force Ed that are not
-     * always awake are the holes of nothingness (cast.py MAY_FORCE_MAIN_MODELS), plus north's World below z -105. Ed
+     * always awake are the holes of nothingness (ZOR_LesTrousDeNeantCestBonMangezEn), plus north's World below z -105. Ed
      * dropped half a unit above one must be put into his falling death (B60: falling, B77's 1000 ms, the cover) within
      * 1 s, covered within 1.2 s of it whether or not he lands (carota and Land have pit floors 8-18 below their markers,
      * in his own sector's collision list: the original's data), and back playing; twice for the first marker (each

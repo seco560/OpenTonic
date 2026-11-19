@@ -237,7 +237,7 @@ static void sector_scenario(const char *dir) {
     run(&v, 1, 0);
     near = static_triangles(&v);
     tc_viewer_status(&v, NULL, status, sizeof(status));
-    check(tc_viewer_ed_sector(&v) != TC_SECTOR_NONE, "Ed has a sector");
+    check(tc_viewer_main_sector(&v) != TC_SECTOR_NONE, "Ed has a sector");
     snprintf(what, sizeof(what), "Ed's sector and its list: %u of %u triangles; title: %s", near, total, status);
     check(near > 0 && near < total && strstr(status, ", sector ") != NULL && !strstr(status, "alone"), what);
     check(tc_viewer_status_live(&v), "the title refreshes by itself while sectors are drawn by Ed's");
@@ -255,15 +255,15 @@ static void sector_scenario(const char *dir) {
     check(v.sector_mode == TC_VS_ALONE && alone > 0 && alone < near && strstr(status, " alone") != NULL, what);
     tc_viewer_cycle_sectors(&v);
     check(v.sector_mode == TC_VS_SECTOR, "K again: Ed's sector and its list");
-    last = tc_viewer_ed_sector(&v);
+    last = tc_viewer_main_sector(&v);
     for (i = 0; i < 60 * 6; i++) {
         tc_viewer_set_action(&v, TC_VA_FORWARD, true);
         tc_viewer_set_action(&v, TC_VA_LOOK_RIGHT, i % 120 < 30);
         frame(&v, 1.0f / 60);
-        if (tc_viewer_ed_sector(&v) != last) {
+        if (tc_viewer_main_sector(&v) != last) {
             changes++;
-            printf("  %.2f s: Ed into %s\n", (double)(i / 60.0f), tc_sectors_name(v.sectors, tc_viewer_ed_sector(&v)));
-            last = tc_viewer_ed_sector(&v);
+            printf("  %.2f s: Ed into %s\n", (double)(i / 60.0f), tc_sectors_name(v.sectors, tc_viewer_main_sector(&v)));
+            last = tc_viewer_main_sector(&v);
         }
     }
     tc_viewer_release_all(&v);
@@ -1430,7 +1430,16 @@ static void guide_scenario(const char *dir) {
     pw = tc_ways_of(&level.ways, guide);
     way = pw && pw->count ? &level.ways.ways[pw->first] : NULL;
     check(way && way->count == 10, "the ruby has its way (10 waypoints)");
-    run(&v, 0.5f, 0);
+    run(&v, 2, 0);
+    { /* the duck spy at the start (MAD_EspionCanard) talks to Ed first (it may take him since 2026-11-19): Jump on, as
+       * the player does, or Ed walks off the ruby to face it */
+        int taps;
+        for (taps = 0; taps < 10 && tc_viewer_speech(&v); taps++) {
+            run(&v, 0.1f, 1u << TC_VA_JUMP);
+            run(&v, 0.4f, 0);
+        }
+        run(&v, 1, 0);
+    }
     p = (tc_player *)tc_viewer_player(&v);
     os = p->world->obstacles;
     ob = os ? tc_obstacles_find(os, guide) : NULL;

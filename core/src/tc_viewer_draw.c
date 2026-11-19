@@ -439,7 +439,7 @@ const uint8_t *tcv_shown_sectors(tc_viewer *v) {
     const tc_sectors *s = v->sectors;
     uint16_t from;
     if (!s || v->sector_mode == TC_VS_ALL) return NULL;
-    from = tc_viewer_ed_sector(v);
+    from = tc_viewer_main_sector(v);
     if (from >= s->count) return NULL;
     memset(v->sector_shown, 0, s->count);
     show_sector(v, from);
@@ -591,7 +591,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     /* first person, or the camera pushed into him by a wall (tc_cam.hide_target): not drawn. Nor made wholly see-through
      * by his scripts (SetTransparency 0: sud0's walk-in passages, HEG_GenTransitionFade, while they move him); partly:
      * blended (tc_view_draw.alpha) */
-    const tc_ai_perso *ed_ai = v->playing && v->game && v->game->use_ai && v->game->main.has_driver && tc_main_is_ed(&v->game->main)
+    const tc_ai_perso *ed_ai = v->playing && v->game && v->game->use_ai && v->game->main.has_driver && !tc_main_riding(&v->game->main)
                                    ? &v->game->main.driver.ai : NULL;
     float ed_alpha = ed_ai && !ed_ai->display_flag8 ? ed_ai->transparency / 255.0f : 1; /* his scripts' fades too (the
                                     hurt blink at 127; the passages' 0) */
@@ -601,10 +601,10 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;
         /* The skier's board tilts with the slope; custom gameplay (a car) may pose him. */
-        tc_mat4 model = !tc_main_is_ed(&v->game->main)              ? v->game->main.rider.model
+        tc_mat4 model = tc_main_riding(&v->game->main)               ? v->game->main.rider.model
                         : v->game->use_ai && v->game->main.has_driver ? v->ed_pose
                                                                  : tc_player_model_matrix(&v->game->main.player);
-        sec = tc_viewer_ed_sector(v);
+        sec = tc_viewer_main_sector(v);
         v->draw_alpha = ed_alpha;
         z = water && sec != TC_SECTOR_NONE && sec < v->sectors->count ? v->sector_water[sec] : NAN;
         v->draw_lit = v->sector_lit && sec < v->sectors->count ? &v->sector_lit[sec] : NULL;
@@ -972,7 +972,7 @@ bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {
     if (!p || !v->playing || v->ed_draw_count == 0) return false;
     if (p->use_ai && p->main.has_driver && (p->main.driver.dyn.card_type == 1 || p->main.driver.dyn.card_type == 7)) return false; /* swimming */
     /* Where he is drawn (between the AI's ticks), as the camera's target */
-    o = !tc_main_is_ed(&p->main) ? p->main.player.position /* where the character in the slot puts him */
+    o = tc_main_riding(&p->main) ? p->main.player.position /* where the character in the slot puts him */
         : p->use_ai ? tc_v3(v->ed_pose.m[12], v->ed_pose.m[13], v->ed_pose.m[14]) : p->main.player.position;
     if (!tc_collision_raycast(&p->world, tc_v3_add(o, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1), TC_VIEW_SHADOW_REACH + 0.5f, &hit))
         return false;

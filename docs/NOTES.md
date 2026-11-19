@@ -116,7 +116,8 @@ The cast's card types 6 and 7 run, its persos' collision is posed where they are
 - Left out of the cast: the camera and its directors (Camera, GenD_Cam), gen_cheatCode, World (lives / death /
   respawn), the portals and level changers (ai.portals, PROC 7 / 8 / 29: .ttai PORT), the skier's start (PROC 6 on the
   fix Ed), the light persos (LAIS), Totalski's obstacles (TRIG).
-- The cast may not force the main actor's behaviours nor write his dsgvars, except families in cast.py MAY_FORCE_MAIN:
+- *(Superseded 2026-11-19: every perso may; cast.py KEPT_OFF_MAIN, core/tests/forcecheck.c.)* The cast may not force
+  the main actor's behaviours nor write his dsgvars, except families in cast.py MAY_FORCE_MAIN:
   the levers (sud_mecalevier) and the popcorn machines (distrib). The talking characters (gd00 on cock01, Agent XYZ,
   the outro's cinematique) hand Ed to behaviours that wait for conversations and cutscenes the port does not run: he
   would stand there for good. marmite's magnet switch (JET_SwAimant) is held out too (MAY_NOT_FORCE_MAIN): Ed holds it

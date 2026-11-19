@@ -8,9 +8,13 @@
 #include "tonic/tc_collision.h"
 #include "tc_prof_hooks.h"
 
+bool tc_cast_is_main_id(const tc_cast *c, int32_t id) {
+    return id == c->main_id || (c->level && c->level->cast.main_alias && id == c->level->cast.main_alias);
+}
+
 static tc_ai_perso *cast_find(void *user, int32_t id) {
     tc_cast *c = (tc_cast *)user;
-    if (id == c->main_id || (c->level->cast.main_alias && id == c->level->cast.main_alias)) return c->main;
+    if (tc_cast_is_main_id(c, id)) return c->main;
     if (id <= 0 || (uint32_t)id >= c->id_count || c->by_id[id] < 0) return NULL;
     if ((uint32_t)c->by_id[id] >= c->count) return &c->ghosts[c->by_id[id] - (int32_t)c->count].ai;
     return c->actors[c->by_id[id]].ai;
@@ -41,7 +45,7 @@ bool tc_cast_talk_reach(const tc_cast *c, const tc_cast_actor *a, tc_vec3 at) {
 tc_cast_actor *tc_cast_character(const tc_cast *c) {
     int32_t id = c ? c->globals.main_character : 0;
     int32_t k;
-    if (id <= 0 || id == c->main_id || (uint32_t)id >= c->id_count || (k = c->by_id[id]) < 0 || (uint32_t)k >= c->count)
+    if (id <= 0 || tc_cast_is_main_id(c, id) || (uint32_t)id >= c->id_count || (k = c->by_id[id]) < 0 || (uint32_t)k >= c->count)
         return NULL;
     return c->actors[k].ai->model ? &c->actors[k] : NULL;
 }
@@ -62,8 +66,7 @@ static tc_vec3 main_place(const tc_cast *c, uint16_t *sector) {
 /* The main actor under any of his ids (his own, the alias the fix Ed has): one emitter, so that a loop he started is
  * the one a stop naming him ends, whoever's script asked. */
 int32_t tc_cast_sound_emitter(const tc_cast *c, int32_t emitter) {
-    if (emitter > 0 && (emitter == c->main_id || (c->level->cast.main_alias && emitter == c->level->cast.main_alias)))
-        return TC_SOUND_EMITTER_MAIN;
+    if (emitter > 0 && tc_cast_is_main_id(c, emitter)) return TC_SOUND_EMITTER_MAIN;
     return emitter;
 }
 
@@ -87,8 +90,7 @@ int tc_cast_sound_place(const tc_cast *c, const tc_sound_source *s, const tc_sou
     int32_t k;
     *pan = 64, *dolby = 0; /* SND_004044e0 with -1: pan 0x40, rear 0 */
     if (s->kind == TC_SOUND_FLAT) return 127; /* no object: SND_004044e0 with -1 (2D, as asked) */
-    if (s->emitter == TC_SOUND_EMITTER_MAIN || s->emitter == c->main_id ||
-        (c->level->cast.main_alias && s->emitter == c->level->cast.main_alias)) {
+    if (s->emitter == TC_SOUND_EMITTER_MAIN || tc_cast_is_main_id(c, s->emitter)) {
         q = c->main, main = true;
     } else if (s->emitter > 0 && (uint32_t)s->emitter < c->id_count && (k = c->by_id[s->emitter]) >= 0) {
         if ((uint32_t)k < c->count) {
@@ -294,8 +296,8 @@ static bool family_states(tc_cast *c, uint32_t k) {
         d->repeats = s->repeats;
         d->anim = s->anim;
         d->card = d->spheres = d->water_points = TC_AI_NONE16;
-        if (f->body) { /* CMEC's walker part: the family's ZDM bodies and root motion (the actors' models borrow them) */
-            d->spheres = f->body[i];
+        if (f->root_first) { /* CMEC's root motion (the actors' models borrow it; their bodies are their collide sets':
+                                tc_cast_mec.c) */
             d->root_first = f->root_first[i];
             d->root_count = f->root_rows[i];
         }
@@ -564,7 +566,7 @@ static void link_alias(tc_cast *c) {
     c->main->alias_dsg = &c->ghosts[k - (int32_t)c->count].ai;
 }
 
-void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player *body) {
+void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player *body, tc_brain brain) {
     tc_cast_actor *a;
     if (!c || !c->actors) return;
     a = &c->actors[c->count];
@@ -578,8 +580,10 @@ void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player
         e->flags = TC_CAST_ALWAYS_AWAKE;
         e->radius2 = -1;
         e->world = c->level->ed.start;
-        e->own_priority = c->level->pcol.main_priority;
-        e->own_meets = (c->level->pcol.main_flags & TC_PCOL_MEETS_PERSOS) != 0;
+        c->main_collide = tc_cast_no_collide;
+        c->main_collide.priority = c->level->pcol.main_priority;
+        c->main_collide.meets = (c->level->pcol.main_flags & TC_PCOL_MEETS_PERSOS) != 0;
+        e->collide = &c->main_collide;
         a->entry = e;
         a->sector.sector = TC_SECTOR_NONE;
         a->generated = -1;
@@ -589,6 +593,7 @@ void tc_cast_attach_main(tc_cast *c, tc_ai_perso *ai, tc_mec_dyn *dyn, tc_player
     a->dyn = dyn;
     a->body = body;
     a->has_body = a->capsule = true;
+    a->brain = brain;
 }
 
 void tc_cast_set_main(tc_cast *c, tc_ai_perso *main) {
@@ -669,9 +674,7 @@ tc_result tc_cast_init(tc_cast *c, const tc_level *l, tc_ai_perso *main) {
         a->model.states = c->states[e->family];
         a->model.root = c->level->cast.families[e->family].root;
         a->model.root_count = c->level->cast.families[e->family].root_count;
-        a->model.sphere_sets = c->level->cast.families[e->family].bodies;
-        a->model.zde = e->has_zde ? e->zde : c->level->cast.families[e->family].zde; /* its own where they differ */
-        a->model.sphere_set_count = c->level->cast.families[e->family].body_count;
+        a->model.zde = e->collide->zde; /* its collide set's: each perso's own */
         a->model.state_count = f->state_count;
         a->model.initial_state = e->initial_state < f->state_count ? e->initial_state : 0;
         a->model.sounds = c->sounds[e->family];
@@ -1104,34 +1107,45 @@ void tc_cast_step_rest(tc_cast *c, float dt, const tc_sectors *s, uint16_t main_
  * are the walk's positions (level perso k + 1: tools/ttre/cast.py), his main_id: the persos before him run on where he
  * was last tick, those after him on where he is now (each perso measures him when it runs: GAM_0042a680). Until
  * 2026-11-13 he ran between the passes, before all the others (port). */
-void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s, const tc_cast_main_ops *ops, void *self) {
+/* The main character's actor by its brain (tc_brain.h): a tick, and the sector it is in. */
+static void main_brain_tick(tc_cast *c, float dt) {
+    const tc_brain *b = c->main_actor ? &c->main_actor->brain : NULL;
+    if (b && b->ops && b->ops->tick) b->ops->tick(b->self, dt);
+}
+
+static uint16_t main_brain_sector(const tc_cast *c) {
+    const tc_brain *b = c->main_actor ? &c->main_actor->brain : NULL;
+    return b && b->ops && b->ops->sector ? b->ops->sector(b->self) : TC_SECTOR_NONE;
+}
+
+void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s) {
     double prof = TC_PROF_BEGIN();
     uint16_t sector;
     tc_vec3 main_pos;
     uint32_t i;
     bool stepped = false;
-    tc_cast_step_first(c, dt, s, ops->sector(self));
+    tc_cast_step_first(c, dt, s, main_brain_sector(c));
     TC_PROF_END(TC_PZ_CAST_FIRST, prof);
     prof = TC_PROF_BEGIN();
     c->sectors = s;
-    sector = ops->sector(self);
+    sector = main_brain_sector(c);
     main_pos = main_place(c, &sector);
     for (i = 0; i < c->count; i++) {
         tc_cast_actor *a = &c->actors[i];
         if (a->entry->flags & TC_CAST_RUN_FIRST) continue;
         if (!stepped && a->entry->id > c->main_id) { /* his place in the walk */
             TC_PROF_END(TC_PZ_CAST_REST, prof);
-            ops->step(self, dt);
+            main_brain_tick(c, dt);
             stepped = true;
             prof = TC_PROF_BEGIN();
-            sector = ops->sector(self);
+            sector = main_brain_sector(c);
             main_pos = main_place(c, &sector);
         }
         step_actor(c, a, dt, s, sector, main_pos);
         pose_obstacle(c, a);
     }
     TC_PROF_END(TC_PZ_CAST_REST, prof);
-    if (!stepped) ops->step(self, dt); /* the last of the walk */
+    if (!stepped) main_brain_tick(c, dt); /* the last of the walk */
     move_sectors(c, dt);
     move_surfaces(c, dt, s);
 }
@@ -1180,8 +1194,8 @@ bool tc_cast_position(const tc_cast *c, int32_t id, tc_vec3 *out) {
 
 bool tc_cast_drawn_position(const tc_cast *c, int32_t id, float t, tc_vec3 *out) {
     const tc_cast_actor *a;
-    if (!c || !c->by_id || id <= 0 || (uint32_t)id >= c->id_count || id == c->main_id || c->by_id[id] < 0 ||
-        (uint32_t)c->by_id[id] >= c->count || (c->level->cast.main_alias && id == c->level->cast.main_alias))
+    if (!c || !c->by_id || id <= 0 || (uint32_t)id >= c->id_count || tc_cast_is_main_id(c, id) || c->by_id[id] < 0 ||
+        (uint32_t)c->by_id[id] >= c->count)
         return tc_cast_position(c, id, out);
     a = &c->actors[c->by_id[id]];
     t = fminf(1, fmaxf(0, t));

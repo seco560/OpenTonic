@@ -138,10 +138,10 @@ void tcv_measure_sky(tc_viewer *v) {
  * (carota's guided platform: the eye 41 away, still "in" Ed's sector 29): the exe's camera is a perso, placed after such
  * a jump by the floor below it (FUN_00451240, tc_sectors_find), so the reveal's is found that way (2026-11-17). */
 static uint16_t camera_sector(const tc_viewer *v) {
-    uint16_t s = tc_viewer_ed_sector(v), r;
+    uint16_t s = tc_viewer_main_sector(v), r;
     if (s == TC_SECTOR_NONE || !v->game) return s;
     if (v->shot.on && v->shot.reveal && (r = tc_sectors_find(v->sectors, v->camera.position)) != TC_SECTOR_NONE) return r;
-    return tc_sectors_cross(v->sectors, s, tc_v3_add(tc_game_main_position(v->game), tc_v3(0, 0, 1.1f)), v->camera.position);
+    return tc_sectors_cross(v->sectors, s, tc_v3_add(tc_game_main(v->game).position, tc_v3(0, 0, 1.1f)), v->camera.position);
 }
 
 void tcv_view_light(tc_view_light *o, const tc_light *L, float w) {
@@ -194,7 +194,7 @@ static void update_char_lights(tc_viewer *v) {
     memset(v->sector_lit, 0, s->count * sizeof *v->sector_lit);
     if (v->lighting != TC_VL_GAME) return;
     shown = tcv_shown_sectors(v);
-    ed = tc_viewer_ed_sector(v);
+    ed = tc_viewer_main_sector(v);
     if (ed < s->count) gather_char_lights(v, ed);
     if (v->light_sector < s->count) gather_char_lights(v, v->light_sector);
     for (i = 0; i < v->level->perso_count; i++) {

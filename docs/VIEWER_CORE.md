@@ -88,7 +88,7 @@ State in the viewer, changed through small functions so both frontends behave th
   LAIS; `tc_viewer_status_live` says when to refresh the title), `tc_viewer_step_gamma(v, up)` (x1.1, 0.5-2.5),
   `tc_viewer_step_fov(v, +1/-1)` (5 degree steps, 30-100), `tc_viewer_toggle_fog`.
 - `tc_viewer_cycle_sectors(v)` (K, levels with a .ttlv SECT): the sectors drawn, from Ed's sector: his sector
-  and its list (the default, sky included) / all of them / his sector alone; `tc_viewer_ed_sector` (name:
+  and its list (the default, sky included) / all of them / his sector alone; `tc_viewer_main_sector` (name:
   `tc_sectors_name`). docs/NOTES.md "Sectors".
 - `tc_viewer_wheel(v, y)`: orbit zoom while playing, fly speed (0.5-500) in free-fly, both x1.1 per notch.
 - `tc_viewer_status(v, buf, size)`: the UTF-8 readout both title bars show today: `view: anim 1.00×, gamma 1.00,

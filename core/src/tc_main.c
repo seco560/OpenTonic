@@ -21,6 +21,7 @@ void tc_main_init(tc_main *m, const tc_level *l, tc_collision *world, const void
     memset(m, 0, sizeof(*m));
     m->level = l;
     m->sectors = l->sectors.count ? &l->sectors : NULL;
+    m->sector.sector = TC_SECTOR_NONE;
     tc_player_init(&m->player, world, tc_v3(start.m[3], start.m[7], start.m[11]), tc_heading_of(&start));
     tc_player_apply_floors(&m->player);
     /* Lengths of the one-shot clips the simple controller plays (jump, land). */
@@ -109,16 +110,6 @@ void tc_main_capture(tc_main *m) {
     }
 }
 
-/* Ed's own tick, between the cast's passes (tc_cast_tick) or alone. */
-typedef struct ed_tick {
-    tc_main *m;
-    tc_cast *cast;
-    const tc_main_input *in;
-    uint16_t *sounds;
-    tc_sound_source *sources;
-    uint32_t *count, cap;
-} ed_tick;
-
 /* His sound k: on him (TC_SOUND_EMITTER_MAIN), or on the perso his script named (OP 24's). */
 static tc_sound_source main_source(const tc_ai_perso *ai, const tc_cast *cast, uint32_t k) {
     tc_sound_source s;
@@ -189,10 +180,12 @@ static void launch_main(tc_main *m, tc_cast *cast, float aim_pitch) {
     tc_cast_launch_main(cast, &w);
 }
 
+/* Ed's brain (tc_brain.h): his driver's tick, between the cast's passes (tc_cast_tick) or alone; what it works with is
+ * m->tick (tc_main_tick sets it). */
 static void ed_step(void *self, float dt) {
-    ed_tick *x = (ed_tick *)self;
-    tc_main *m = x->m;
-    const tc_main_input *in = x->in;
+    tc_main *m = (tc_main *)self;
+    const tc_main_input *in = m->tick.in;
+    tc_cast *cast = m->tick.cast;
     uint32_t n;
     double prof;
     /* port: in first person Ed faces where the player looks (the original's stick mode turns him with the stick, B29),
@@ -212,21 +205,21 @@ static void ed_step(void *self, float dt) {
     prof = TC_PROF_BEGIN();
     tc_ed_ai_step(&m->driver, dt, in->inputs, in->stick_x, in->stick_y, in->eye);
     TC_PROF_END(TC_PZ_ED, prof);
-    if (x->cast && m->driver.ai.launch_channel >= 0) launch_main(m, x->cast, in->aim_pitch);
+    if (cast && m->driver.ai.launch_channel >= 0) launch_main(m, cast, in->aim_pitch);
     if (m->driver.events.restarted) {
         m->driver.events.restarted = false;
-        if (x->cast) tc_cast_respawn(x->cast);
+        if (cast) tc_cast_respawn(cast);
         memset(m->zone_fired, 0, sizeof(m->zone_fired)); /* the SE reloads the level: its triggers fire again */
     }
-    for (n = 0; n < m->driver.ai.sound_count && *x->count < x->cap; n++) {
-        x->sources[*x->count] = main_source(&m->driver.ai, x->cast, n);
-        x->sounds[(*x->count)++] = m->driver.ai.sounds[n];
+    for (n = 0; n < m->driver.ai.sound_count && *m->tick.count < m->tick.cap; n++) {
+        m->tick.sources[*m->tick.count] = main_source(&m->driver.ai, cast, n);
+        m->tick.sounds[(*m->tick.count)++] = m->driver.ai.sounds[n];
     }
 }
 
-static uint16_t ed_sector(const void *self) { return ((const ed_tick *)self)->m->driver.sector.sector; }
+static uint16_t ed_sector(const void *self) { return ((const tc_main *)self)->driver.sector.sector; }
 
-static const tc_cast_main_ops ed_ops = {ed_step, ed_sector};
+static const tc_brain_ops ed_brain = {.tick = ed_step, .sector = ed_sector};
 
 /* His mechanics: the cast's, as any actor's (tc_cast_main_mechanics). */
 static void cast_mechanics(void *user, const tc_mec_perso *x, float dt) { tc_cast_main_mechanics((tc_cast *)user, x, dt); }
@@ -234,14 +227,22 @@ static void cast_mechanics(void *user, const tc_mec_perso *x, float dt) { tc_cas
 /* Ed riding the character in the slot: his scripts and mechanics sleep, but the cast's scripts still see him as the main
  * actor where it carries him, and the game's clock (his: the cast runs on it) goes on as his own step would move it. */
 static void ride_step(void *self, float dt) {
-    tc_main *m = ((ed_tick *)self)->m;
+    tc_main *m = (tc_main *)self;
     m->driver.ai.position = m->player.position;
     m->driver.ai.velocity = m->player.velocity;
     m->driver.ai.heading = m->player.heading;
     m->driver.ai.time_ms += (uint32_t)(dt * 1000 + 0.5f); /* as tc_ai_step */
 }
 
-static const tc_cast_main_ops ride_ops = {ride_step, ed_sector};
+static const tc_brain_ops ride_brain = {.tick = ride_step, .sector = ed_sector};
+
+/* He is the cast's actor: his record, his mechanics through the cast's, and the brain it steps him by. */
+static void attach(tc_main *m, tc_cast *cast, const tc_brain_ops *brain) {
+    tc_brain b;
+    b.ops = brain;
+    b.self = m;
+    tc_cast_attach_main(cast, &m->driver.ai, &m->driver.dyn, &m->player, b);
+}
 
 /* What the cast's scripts asked of the game this tick, as the host's events (tc_ed_ai_events): a cover (GameAction2), a
  * level change (ChangeLevel, PROC 29 with its places: a speaker's way out, docs/ENGINE.md "Walkable scenes"; the arches,
@@ -274,17 +275,15 @@ static void take_requests(tc_main *m, tc_cast *cast) {
 /* A tick while another character holds the slot: the cast's passes round Ed riding it. */
 static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, tc_sound_source *sources, uint32_t *count,
                       uint32_t cap) {
-    ed_tick x;
-    memset(&x, 0, sizeof(x));
-    x.m = m;
     if (!cast) {
-        ride_step(&x, TC_ED_AI_TICK);
+        ride_step(m, TC_ED_AI_TICK);
         return true;
     }
     cast->main_carrier = -1; /* he rides it, not a perso of theirs */
     cast->main_mass = 0;
     cast->talk_press = false; /* his Action is its own (getting out) */
-    tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors, &ride_ops, &x);
+    attach(m, cast, &ride_brain); /* his brain asleep: carried */
+    tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors);
     cast_sounds(cast, sounds, sources, count, cap);
     take_requests(m, cast);
     return true;
@@ -292,57 +291,72 @@ static bool ride_tick(tc_main *m, tc_cast *cast, uint16_t *sounds, tc_sound_sour
 
 bool tc_main_tick(tc_main *m, tc_cast *cast, const tc_main_input *in, uint16_t *sounds, tc_sound_source *sources,
                   uint32_t *count, uint32_t cap, int *mode_switch) {
-    ed_tick x;
     *mode_switch = 0;
-    if (!tc_main_is_ed(m)) return m->has_driver && ride_tick(m, cast, sounds, sources, count, cap);
+    if (tc_main_riding(m)) return m->has_driver && ride_tick(m, cast, sounds, sources, count, cap);
     m->pose_prev = m->pose_cur, m->clip_prev = m->clip_cur, m->phase_prev = m->phase_cur;
     *mode_switch = tc_main_mode_zones(m, cast);
     if (!m->has_driver) return false;
-    x.m = m, x.cast = cast, x.in = in, x.sounds = sounds, x.sources = sources, x.count = count, x.cap = cap;
+    m->tick.cast = cast, m->tick.in = in, m->tick.sounds = sounds, m->tick.sources = sources;
+    m->tick.count = count, m->tick.cap = cap;
     if (cast) {
         /* what the run-first persos need of him: what he rides and what he weighs on it */
         const tc_ai_state *st = &m->driver.ai.model->states[m->driver.ai.state];
         cast->main_carrier = m->driver.dyn.walk.carrier;
         cast->talk_press = in->talk_press;
         cast->main_mass = st->card != TC_AI_NONE16 ? tc_ai_card_f32(&m->driver.ai.model->cards[st->card], 4) : 0;
-        /* he is the cast's actor: his record, and his mechanics through the cast's (again after a walk / ski switch) */
-        tc_cast_attach_main(cast, &m->driver.ai, &m->driver.dyn, &m->player);
+        /* he is the cast's actor: his record, his brain, and his mechanics through the cast's (again after a walk / ski
+         * switch) */
+        attach(m, cast, &ed_brain);
         m->driver.cast_portals = true; /* the portals it runs are its (TC_AI_PORTAL_CAST) */
         m->driver.mechanics = cast_mechanics;
         m->driver.mechanics_user = cast;
         /* the exe's frame (docs/ENGINE.md): the run-first persos (platforms, lifts) move before the rest, so Ed rides
          * and collides with them where they are this tick; then Ed, then the other persos */
-        tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors, &ed_ops, &x);
+        tc_cast_tick(cast, TC_ED_AI_TICK, m->sectors);
         cast_sounds(cast, sounds, sources, count, cap);
         take_requests(m, cast);
     } else
-        ed_step(&x, TC_ED_AI_TICK);
+        ed_step(m, TC_ED_AI_TICK);
+    memset(&m->tick, 0, sizeof(m->tick)); /* nothing of this tick's outlives it */
     tc_main_capture(m);
     return true;
 }
 
+void tc_main_track_sector(tc_main *m) {
+    if (!m->sectors) return;
+    if (m->has_driver) tc_ed_ai_track_sector(&m->driver);
+    else tc_sector_follow(&m->sector, m->sectors, m->player.position, m->player.placed);
+}
+
+uint16_t tc_main_sector(const tc_main *m) {
+    if (!m->sectors) return TC_SECTOR_NONE;
+    return m->has_driver ? m->driver.sector.sector : m->sector.sector;
+}
+
 /* ---- the slot ---- */
 
-void tc_main_take(tc_main *m, const tc_character_ops *ops, void *self) {
-    m->ops = ops;
-    m->self = self;
+void tc_main_take(tc_main *m, const tc_brain_ops *ops, void *self) {
+    m->slot.ops = ops;
+    m->slot.self = self;
 }
 
 bool tc_main_frame(tc_main *m, const tc_character_input *in, float dt) {
-    if (!m->ops) return false;
-    if (m->ops->frame(m->self, in, dt, &m->rider)) return true;
-    m->ops = NULL, m->self = NULL; /* Ed on his feet: main again */
+    if (!m->slot.ops) return false;
+    if (m->slot.ops->frame && m->slot.ops->frame(m->slot.self, in, dt, &m->rider)) return true;
+    m->slot.ops = NULL, m->slot.self = NULL; /* Ed on his feet: main again */
     return false;
 }
 
 void tc_main_abort(tc_main *m) {
-    if (!m->ops) return;
-    m->ops->abort(m->self, &m->player);
-    m->ops = NULL, m->self = NULL;
+    if (!m->slot.ops) return;
+    if (m->slot.ops->abort) m->slot.ops->abort(m->slot.self, &m->player);
+    m->slot.ops = NULL, m->slot.self = NULL;
 }
 
 void tc_main_camera_target(const tc_main *m, struct tc_cam_target *t) {
-    if (m->ops) m->ops->camera_target(m->self, t);
+    if (m->slot.ops && m->slot.ops->camera_target) m->slot.ops->camera_target(m->slot.self, t);
 }
 
-bool tc_main_status(const tc_main *m, char *out, size_t size) { return m->ops && m->ops->status(m->self, out, size); }
+bool tc_main_status(const tc_main *m, char *out, size_t size) {
+    return m->slot.ops && m->slot.ops->status && m->slot.ops->status(m->slot.self, out, size);
+}

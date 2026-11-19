@@ -160,21 +160,21 @@ static void own_sweep(tc_cast *c, tc_cast_actor *a, tc_vec3 start, float dt) {
     int32_t self, ignore;
     uint8_t prio;
     bool meets;
-    if (!w || !(a->entry->own_radius >= 0) || !(dt > 0)) return; /* radius 0: a point's sweep (FUN_004717d0, sud0's
+    if (!w || !(a->entry->collide->radius >= 0) || !(dt > 0)) return; /* radius 0: a point's sweep (FUN_004717d0, sud0's
                                                                      cannon tomato rolling down its corridor) */
     if (end.x == start.x && end.y == start.y && end.z == start.z) return;
     memset(&body, 0, sizeof(body));
     body.count = 1;
-    body.spheres[0].radius = a->entry->own_radius;
-    body.spheres[0].point = a->entry->own_radius > 0 ? 0 : 1;
+    body.spheres[0].radius = a->entry->collide->radius;
+    body.spheres[0].point = a->entry->collide->radius > 0 ? 0 : 1;
     body.spheres[0].flags = 1;
     body.spheres[0].rebound = body.spheres[0].grip = 1;
     solid = w->solid, self = w->self, ignore = w->ignore, prio = w->self_priority, meets = w->self_meets;
     w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
     w->self = a->entry->id;
     w->ignore = -1;
-    w->self_priority = a->entry->own_priority;
-    w->self_meets = a->entry->own_meets != 0;
+    w->self_priority = a->entry->collide->priority;
+    w->self_meets = a->entry->collide->meets != 0;
     p->position = start;
     v = tc_v3_scale(tc_v3_sub(end, start), 1 / dt);
     tc_mec_collide_move(&a->dyn->walk, NULL, w, &body, 0, dt, &p->position, &v);
@@ -211,7 +211,7 @@ static void float_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, con
         a->body->position = start;
         tc_player_move(a->body, dt, tc_v3_scale(tc_v3_sub(end, start), 1 / dt));
         p->position = a->body->position;
-    } else if (a->entry->own_radius >= 0) {
+    } else if (a->entry->collide->radius >= 0) {
         /* its sweep's contacts are its contacts (the collide-move's records: NoContact, AgainstWall). Until 2026-11-18
          * a float reported none, and the cannon tomato's roll (B1: until Not NoContact) never ended */
         own_sweep(c, a, start, dt);
@@ -308,8 +308,8 @@ static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, cons
         w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
     w->self = a->entry->id;
     w->ignore = -1;
-    w->self_priority = a->entry->own_priority;
-    w->self_meets = a->entry->own_meets != 0;
+    w->self_priority = a->entry->collide->priority;
+    w->self_meets = a->entry->collide->meets != 0;
     if (c->sectors && a->sector.sector != TC_SECTOR_NONE) tc_mec_env_at(c->sectors, a->sector.sector, p->position, &env);
     p->env_water = env.water != 0;
     if (m->detach) d->walk.carrier = -1;
@@ -433,7 +433,7 @@ static void projectile_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card
  * turns in place as before), in its own sector's collision, with itself left out of the perso obstacles as walk_step
  * does. Its body carries the position, heading and velocity in and out. Until 2026-11-13 these turned in place. */
 static bool shared_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, float dt) {
-    const tc_cast_family *f = &c->level->cast.families[a->entry->family];
+    const tc_cast_collide *k = a->entry->collide;
     tc_ai_perso *p = a->ai;
     tc_cast_dyn *d = a->dyn;
     tc_collision *w = c->world;
@@ -442,7 +442,7 @@ static bool shared_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, fl
     uint8_t prio;
     bool meets;
     tc_mec_perso x;
-    if (!w || !f->body || p->state >= f->state_count || f->body[p->state] == 0xFFFF) return false;
+    if (!w || !k->body || p->state >= k->state_count || k->body[p->state] == 0xFFFF) return false;
     if (!a->has_body) {
         tc_player_init(a->body, w, p->position, p->heading);
         a->has_body = true;
@@ -455,8 +455,8 @@ static bool shared_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, fl
     w->solid = c->sectors && a->sector.sector != TC_SECTOR_NONE ? tc_sectors_solid(c->sectors, a->sector.sector) : NULL;
     w->self = a->entry->id;
     w->ignore = -1;
-    w->self_priority = a->entry->own_priority;
-    w->self_meets = a->entry->own_meets != 0;
+    w->self_priority = a->entry->collide->priority;
+    w->self_meets = a->entry->collide->meets != 0;
     d->env = tc_mec_env_default();
     d->env_depth = c->sectors && a->sector.sector != TC_SECTOR_NONE
                        ? tc_mec_env_at(c->sectors, a->sector.sector, p->position, &d->env) : 0;
@@ -464,7 +464,7 @@ static bool shared_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, fl
     x.body = a->body;
     x.dyn = d;
     x.card = card;
-    x.spheres = &f->bodies[f->body[p->state]];
+    x.spheres = &k->bodies[k->body[p->state]];
     x.root = tc_mec_root_motion(p);
     x.ground = 0;
     x.sectors = c->sectors;
@@ -548,11 +548,12 @@ static bool card_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, cons
 
 bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
     const tc_cast_family *f = &c->level->cast.families[a->entry->family];
+    const tc_cast_collide *k = a->entry->collide;
     tc_ai_perso *p = a->ai;
     tc_ai_sphere_set own;
     uint16_t ci;
     if (!f->cards || p->state >= f->state_count || (ci = f->cards[p->state]) == 0xFFFF) return false;
-    if (a->entry->own_radius >= 0) {
+    if (k->radius >= 0) {
         /* its collide set sweeps one sphere at its origin whatever the state (+0x36: GAM_00431720, FUN_0043d480; radius
          * +0x30 / 2, a point at 0), not the family's ZDM: a body is the perso's own, not its family's. sud0's cannon,
          * kamikaze and baseball tomatoes sweep a point; their family's other perso, the marsh chameleon, a ZDM sphere.
@@ -560,13 +561,14 @@ bool tc_cast_mechanics(tc_cast *c, tc_cast_actor *a, float dt) {
          * walls and Ed, never in contact (their roll ends on contact: it never did) */
         memset(&own, 0, sizeof(own));
         own.count = 1;
-        own.spheres[0].radius = a->entry->own_radius;
-        own.spheres[0].point = a->entry->own_radius > 0 ? 0 : 1;
+        own.spheres[0].radius = k->radius;
+        own.spheres[0].point = k->radius > 0 ? 0 : 1;
         own.spheres[0].rebound = own.spheres[0].grip = 1;
         return card_step(c, a, &c->level->cast.cards[ci], &own, dt);
     }
     return card_step(c, a, &c->level->cast.cards[ci],
-                     f->body && f->body[p->state] != 0xFFFF ? &f->bodies[f->body[p->state]] : NULL, dt);
+                     k->body && p->state < k->state_count && k->body[p->state] != 0xFFFF ? &k->bodies[k->body[p->state]] : NULL,
+                     dt);
 }
 
 void tc_cast_main_mechanics(tc_cast *c, const tc_mec_perso *x, float dt) {

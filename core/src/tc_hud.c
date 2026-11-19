@@ -291,6 +291,16 @@ static float slide(float out, bool on, float in_rate, float out_rate) {
     return out > GONE ? GONE : out;
 }
 
+/* One tick of the elements' slides: in when `all` or asked for, else out (GAM_0041a720's rates). */
+static void slides(tc_hud *h, bool all) {
+    h->out_life = slide(h->out_life, all || (h->asked & 1), 0.5f, 2.0f);
+    h->out_lives = slide(h->out_lives, all || (h->asked & 1), 0.4f, 1.5f);
+    h->out_spade = slide(h->out_spade, (all || (h->asked & 4)) && !(h->asked & 0x20), 0.5f, 2.0f);
+    h->out_tings = slide(h->out_tings, all || (h->asked & 0x10), 0.5f, 2.0f);
+    h->out_doc = slide(h->out_doc, (h->asked & 0x20) != 0, 0.5f, 2.0f);
+    h->out_bees = slide(h->out_bees, all || (h->asked & 8), 0.5f, 2.0f);
+}
+
 void tc_hud_tick(tc_hud *h, tc_ai_globals *g, const tc_hud_values *now) {
     uint32_t k;
     bool all = now->show_all;
@@ -329,14 +339,11 @@ void tc_hud_tick(tc_hud *h, tc_ai_globals *g, const tc_hud_values *now) {
         h->since_ms = 0;
     }
     h->since_ms += TICK_MS;
-    h->out_life = slide(h->out_life, all || (h->asked & 1), 0.5f, 2.0f);
-    h->out_lives = slide(h->out_lives, all || (h->asked & 1), 0.4f, 1.5f);
-    h->out_spade = slide(h->out_spade, (all || (h->asked & 4)) && !(h->asked & 0x20), 0.5f, 2.0f);
-    h->out_tings = slide(h->out_tings, all || (h->asked & 0x10), 0.5f, 2.0f);
-    h->out_doc = slide(h->out_doc, (h->asked & 0x20) != 0, 0.5f, 2.0f);
-    h->out_bees = slide(h->out_bees, all || (h->asked & 8), 0.5f, 2.0f);
+    slides(h, all);
     if (h->since_ms > SHOWN_MS) h->asked = 0;
 }
+
+void tc_hud_slide(tc_hud *h, bool all) { slides(h, all); }
 
 static void put_standard_text(draw *d, int which, const char *s, float x, float y, float depth, float anchor) {
     const tc_hud_text *t = text_of(d->h, d->h->data.standard[which]);

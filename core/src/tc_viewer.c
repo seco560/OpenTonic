@@ -55,7 +55,6 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
 
     v->sectors = l->sectors.count ? &l->sectors : NULL;
     v->sector_mode = TC_VS_SECTOR; /* the user's default (2026-10-30): Ed's sector and its list; K cycles */
-    v->ed_sector.sector = TC_SECTOR_NONE;
     if (v->sectors) {
         v->sector_shown = (uint8_t *)tc_calloc(v->sectors->count, 1);
         v->sector_water = (float *)tc_calloc(v->sectors->count, sizeof(float));
@@ -304,20 +303,14 @@ bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float eve
     return true;
 }
 
-/* Ed's sector after this frame's moves: his AI's, else tracked here for the simple controller. */
+/* Ed's sector after this frame's moves (tc_main_track_sector). */
 static void update_sectors(tc_viewer *v) {
-    tc_game *p = v->game;
-    if (!v->sectors || !p) return;
-    if (p->main.has_driver) tc_ed_ai_track_sector(&p->main.driver);
-    else tc_sector_follow(&v->ed_sector, v->sectors, p->main.player.position, p->main.player.placed);
+    if (v->sectors && v->game) tc_main_track_sector(&v->game->main);
 }
 
-uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
-    const tc_cast_actor *a;
+uint16_t tc_viewer_main_sector(const tc_viewer *v) {
     if (!v->sectors || !v->game) return TC_SECTOR_NONE;
-    if (v->game->has_cast && (a = tc_cast_character(&v->game->cast)) != NULL && a->sector.sector != TC_SECTOR_NONE)
-        return a->sector.sector; /* a chameleon holds the player: its sector is drawn, lit, heard */
-    return v->game->main.has_driver ? v->game->main.driver.sector.sector : v->ed_sector.sector;
+    return tc_game_main(v->game).sector;
 }
 
 static void update_frame(tc_viewer *v, float dt) {
@@ -349,10 +342,23 @@ static void update_frame(tc_viewer *v, float dt) {
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
 
+/* The original shows the HUD under its pause menu (the user, 2026-11-19): behind the game menu the standard elements
+ * slide in, at the game's tick, whatever auto-hide says; back in the game its ticks slide them out again where auto-hide
+ * has them out (tc_hud_tick). Drawn under the menu's dim and its swirl: the frontends draw the menu over the HUD. */
+static void game_menu_hud(tc_viewer *v, float dt) {
+    if (!v->game_menu || !v->game || !(dt > 0)) return;
+    v->game_menu_hud += dt;
+    while (v->game_menu_hud >= 1.0f / 30) {
+        v->game_menu_hud -= 1.0f / 30;
+        tc_hud_slide(&v->game->hud, true);
+    }
+}
+
 void tc_viewer_update(tc_viewer *v, float dt) {
     double prof = TC_PROF_BEGIN();
     if (v->rec) tc_rec_frame_in(v->rec, v, dt);
     update_frame(v, dt);
+    game_menu_hud(v, dt);
     if (v->game) tc_game_pick_sounds(v->game); /* the events that play one of their clips at random (.ttlv SPIK) */
     if (v->rec) tc_rec_frame_out(v->rec, v, dt);
     TC_PROF_END(TC_PZ_UPDATE, prof);
@@ -395,7 +401,7 @@ void tc_viewer_set_game_menu(tc_viewer *v, bool on) {
         h = (uint32_t)(v->animation_time * 1000.0f) * 2654435761u ^ v->draw_count * 40503u;
         h ^= h >> 15, h *= 2246822519u, h ^= h >> 13;
         v->game_menu = true;
-        v->game_menu_time = 0;
+        v->game_menu_time = v->game_menu_hud = 0;
         v->game_menu_turn = h & 1 ? 1.0f : -1.0f;
         v->game_menu_phase = h & 2 ? 0.5f * TC_PI : -0.5f * TC_PI; /* cos(0.31 t -+ pi/2): no rise at the start */
     } else {
@@ -499,7 +505,7 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
         APPEND("%s", v->fog_enabled ? ", fog on" : ", fog off");
     if (v->lighting == TC_VL_PORT && v->level->has_lighting) APPEND("%s", ", old lighting");
     if (v->sectors && v->sector_mode != TC_VS_ALL)
-        APPEND(", sector %s%s", tc_sectors_name(v->sectors, tc_viewer_ed_sector(v)),
+        APPEND(", sector %s%s", tc_sectors_name(v->sectors, tc_viewer_main_sector(v)),
                v->sector_mode == TC_VS_ALONE ? " alone" : "");
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
     if (v->playing && tc_viewer_has_ai(v) && !v->game->use_ai) APPEND("%s", ", simple controller");

@@ -402,7 +402,8 @@ platforms on the way to the north plain.
   flying guard taking off (KEV_ActiveGardeVolantEtCamera, 9 s), cock01's armour room (SLY_CamOriente_SalleGardeArmure).
   They hold Ed in the original (ForceBehaviour B15 + R4, released after); the port refuses most persos' holds (cast.py
   MAY_FORCE_MAIN), so Ed can walk away behind walls while the camera shows the scene. **Not changed: ask the user**
-  whether these cutscenes should hold Ed (with a time-out so none can strand him). Not found: any "weird clipping" of
+  whether these cutscenes should hold Ed (with a time-out so none can strand him). *2026-11-19: they hold him now (every
+  perso may force Ed, docs/ARCHITECTURE.md stage 5), with no time-out; forcecheck reports any that keeps him.* Not found: any "weird clipping" of
   the follow camera; an F9 mark in a recording at the moment would say which.
 - **Checks:** viewcheck `platforms_scenario` (both carota platforms, the slab and its lever, north's death camera): 4 of
   its 5 checks fail on the code before this change. Not seen in the app: all of it.

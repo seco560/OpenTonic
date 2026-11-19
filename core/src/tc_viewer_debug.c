@@ -63,8 +63,9 @@ bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
         return false;
     if (tc_game_hud_covered(p)) return false;
     /* Port (the user, 2026-11-13, a stand-in for a photo mode): no HUD while paused, live (P) or in a paused playback
-     * (tc_replay_pause): both set the pause's look round. It comes back as it was. */
-    if (v->paused || v->inspecting) return false;
+     * (tc_replay_pause): both set the pause's look round. It comes back as it was. The game menu's pause shows it, as
+     * the original's does (2026-11-19: game_menu_hud in tc_viewer.c slides it in). */
+    if ((v->paused || v->inspecting) && !v->game_menu) return false;
     g = p->has_cast ? &p->cast.globals : NULL;
     for (k = 0; g && k < TC_AI_HUD_SLOTS; k++) { /* a boss's life bar: its perso's hit points (GAM_00418d70) */
         const tc_ai_hud_slot *s = &g->hud[k];

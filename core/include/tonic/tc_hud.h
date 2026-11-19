@@ -92,6 +92,10 @@ void tc_hud_free(tc_hud *h);
 tc_result tc_hud_load(tc_hud *h, const void *data, size_t size);
 /* One game tick (1/30 s): the standard HUD's timers and slides, and the text slots' frame counts. */
 void tc_hud_tick(tc_hud *h, tc_ai_globals *g, const tc_hud_values *now);
+/* One tick (1/30 s) of the standard elements' slides alone, the values and timers held: while the game holds behind
+ * the game menu, the elements slide in (all) whatever auto_hide says (the user, 2026-11-19: the original shows the HUD
+ * under its pause menu); back in the game, tc_hud_tick slides them out again where auto_hide has them out. */
+void tc_hud_slide(tc_hud *h, bool all);
 /* Port: the standard elements off the screen at once (behind a covered screen or a loading screen: tc_viewer); the
  * next ticks slide them in again. */
 void tc_hud_away(tc_hud *h);

@@ -313,11 +313,10 @@ typedef struct tc_viewer {
     bool looked;
     float look_yaw_frame, look_rise_frame; /* the player's turn this frame (tc_cam_look's yaw and rise) */
 
-    /* Sectors (tc_sector.h; none: the level has no SECT and everything is drawn). Ed's sector is his AI's (it looks his
-     * water up there), else tracked here for the simple controller. */
+    /* Sectors (tc_sector.h; none: the level has no SECT and everything is drawn). The main character's sector is the
+     * game's (tc_game_main). */
     const tc_sectors *sectors;
     tc_view_sectors sector_mode;
-    tc_sector_track ed_sector;
     uint8_t *sector_shown;        /* this frame's TC_SHOWN_* per sector */
     float *sector_water;          /* this frame's water plane per sector (tc_view_draw.water_z), NAN: no water effect */
     uint32_t *mesh_ranges;        /* per tc_viewer_mesh: first and count of its index ranges in `ranges` (count 0: one */
@@ -387,6 +386,7 @@ typedef struct tc_viewer {
      * against the level's surfaces as ever. */
     bool game_menu;
     float game_menu_time, game_menu_turn, game_menu_phase;
+    float game_menu_hud;         /* the HUD's slides behind the game menu: time not yet ticked (tc_hud_slide, 1/30 s) */
 } tc_viewer;
 
 /* Sets up the start camera (the middle of the level), the play session (with Ed's AI when ai_data loads) and
@@ -516,9 +516,9 @@ float tc_viewer_fov(const tc_viewer *v);
 void tc_viewer_toggle_fog(tc_viewer *v);            /* G */
 void tc_viewer_cycle_lighting(tc_viewer *v);        /* L: the original's lighting <-> the port's earlier one */
 void tc_viewer_cycle_sectors(tc_viewer *v);         /* K: Ed's sector + its list (default) -> all -> his alone -> ... */
-/* Ed's sector, or the main character's while a cast perso holds the player (a chameleon, tc_cast_character)
- * (TC_SECTOR_NONE: none); tc_sectors_name for its name. */
-uint16_t tc_viewer_ed_sector(const tc_viewer *v);
+/* The main character's sector (tc_game_main: Ed's, a chameleon's while one holds the player) (TC_SECTOR_NONE: none);
+ * tc_sectors_name for its name. */
+uint16_t tc_viewer_main_sector(const tc_viewer *v);
 /* Wheel notches (positive = up): orbit zoom while playing, fly speed in free-fly; x1.1 per notch. */
 void tc_viewer_wheel(tc_viewer *v, float notches);
 /* The play camera (tc_cam.h, docs/CAMERA.md): the look input turns it round Ed (and up / down); it stays while he stands

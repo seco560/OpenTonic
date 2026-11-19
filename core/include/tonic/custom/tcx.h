@@ -114,8 +114,9 @@ const char *tcx_prompt(const tcx_play *x);
 /* The start text to show this frame as a HUD text slot (the game's "Press 'Jump' to start", as Totalski's scripts show
  * it: blinking, in a window), its font left to the host (FontLips). false: none. */
 bool tcx_hud_slot(const tcx_play *x, tc_ai_hud_slot *slot);
-/* The car Ed is in, as the main character (tc_main.h; self: the tcx_play). */
-const tc_character_ops *tcx_character(void);
+/* The car Ed is in, as the main character: its brain (tc_brain.h: frame, camera_target, status, abort; self: the
+ * tcx_play), for tc_main_take. */
+const tc_brain_ops *tcx_character(void);
 /* The Action held now was its own (getting in or out): keep it from Ed's scripts until let go. */
 bool tcx_holds_action(const tcx_play *x);
 /* The same for Shoot (a course's finish). */
@@ -164,7 +165,7 @@ static inline bool tcx_update(tcx_play *x, const tcx_host *h, float dt, tcx_even
 }
 static inline const char *tcx_prompt(const tcx_play *x) { (void)x; return NULL; }
 static inline bool tcx_hud_slot(const tcx_play *x, tc_ai_hud_slot *slot) { (void)x, (void)slot; return false; }
-static inline const tc_character_ops *tcx_character(void) { return NULL; }
+static inline const tc_brain_ops *tcx_character(void) { return NULL; }
 static inline bool tcx_holds_action(const tcx_play *x) { (void)x; return false; }
 static inline bool tcx_holds_shoot(const tcx_play *x) { (void)x; return false; }
 static inline void tcx_camera_obstacles(tcx_play *x, bool on) { (void)x, (void)on; }

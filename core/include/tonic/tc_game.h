@@ -233,8 +233,23 @@ void tc_game_push_sound(tc_game *g, uint16_t event, const tc_sound_source *s);
 void tc_game_pick_sounds(tc_game *g);
 /* No HUD over a covered screen or the loading screen; it comes back, sliding in, with the reveal. */
 bool tc_game_hud_covered(const tc_game *g);
-/* The main character's place after the last tick: a chameleon's while one holds the player, else Ed's. */
-tc_vec3 tc_game_main_position(const tc_game *g);
+/* Who the player plays now: the one place the host asks (docs/ARCHITECTURE.md stage 3). The exe's main-character list
+ * holds one perso (DAT_008c1720); here it is
+ *   ED         Ed, by his scripts or the simple controller;
+ *   PERSO      a cast perso his scripts handed the player to (PROC 4 Proc_SetMainActor: a chameleon; tc_cast_character),
+ *              while Ed sleeps where he stood;
+ *   CHARACTER  a character in Ed's slot (tc_main.h: custom gameplay's car), Ed riding it.
+ * (Never PERSO and CHARACTER at once: riding, Ed runs no scripts to hand the player on; PERSO is asked first.) The camera
+ * follows it (a CHARACTER says where to look: tc_main_camera_target), its sector is drawn, lit and heard. */
+typedef enum tc_game_main_kind { TC_GAME_MAIN_ED, TC_GAME_MAIN_PERSO, TC_GAME_MAIN_CHARACTER } tc_game_main_kind;
+typedef struct tc_game_main_info {
+    tc_game_main_kind kind;
+    const tc_cast_actor *actor;  /* PERSO: its actor (drawn between the ticks: tc_cast_drawn_position); else NULL */
+    tc_vec3 position;            /* after the last tick (CHARACTER: where it carries Ed) */
+    uint16_t sector;             /* TC_SECTOR_NONE: none known, or a level without sectors (PERSO: Ed's while its own
+                                    is not known) */
+} tc_game_main_info;
+tc_game_main_info tc_game_main(const tc_game *g);
 /* A save of this game (tc_save.h), NULL: nothing to save (no Ed's AI). */
 uint8_t *tc_game_save_make(tc_game *g, const tc_game_view *view, const char *name, uint64_t time, size_t *size);
 

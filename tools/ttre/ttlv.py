@@ -40,7 +40,8 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         the state animations for the AI: one per distinct A3D, named "s<k>" (k = the first state using it; .ttai states
         point at it), one sample per animation frame, sample_rate = the A3D's own frames per second (no
         ANIM_TIME_SCALE; the AI's state clock picks the frame), loop 0.
-  CMEC* the cast's mechanics: its families' states' ID cards (cast.mech_chunk has the layout)
+  CMCS* the cast's mechanics: its families' states' ID cards and root motion, its persos' collide sets (cast.mech_chunk
+        has the layout; before 2026-11-19 CMEC, per family)
   SPCH* what the characters say: dialogues, their text, the font (speech.py has the layout)
   PCOL* the persos' own collision, in their objects' axes (perso_collision has the layout); COLL no longer holds it
         (2026-11-05): the core poses it where each perso is, every tick (docs/ENGINE.md "Moving collision, read").
@@ -536,7 +537,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('SECT', sect.chunk(list(meshes.values()))) if sect.sectors else None,
            ('CAST', cast_body) if cast_body else None,  # this level's cast, else the one passed in
            ('INVT', invt(data)) if cast_body and not data.se else None,
-           ('CMEC', cmec) if cmec else None,
+           ('CMCS', cmec) if cmec else None,
            ('PCOL', pcol) if pcol else None,
            ('PZDR', pzdr) if pzdr else None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,

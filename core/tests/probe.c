@@ -260,7 +260,7 @@ static void describe(int32_t w, char *state, size_t n, char *where, size_t m) {
                      e->contacts & TC_AI_CONTACT_WALL ? "+wall" : "", e->forced_by);
         }
         if (p) snprintf(where, m, "at (%.2f %.2f %.2f) h %.2f sector %u", (double)p->position.x, (double)p->position.y,
-                        (double)p->position.z, (double)p->heading, (unsigned)tc_viewer_ed_sector(&S.v));
+                        (double)p->position.z, (double)p->heading, (unsigned)tc_viewer_main_sector(&S.v));
     } else {
         const tc_cast_actor *a = actor(w);
         char r[8];
@@ -307,6 +307,14 @@ static void report(void) {
     }
 }
 
+/* Its collide set's place in the level's (-1: none, or the main actor's own record). */
+static int collide_index(const tc_cast_collide *k) {
+    uint32_t i;
+    for (i = 0; i < S.level.cast.collide_count; i++)
+        if (k == &S.level.cast.collides[i]) return (int)i;
+    return -1;
+}
+
 static void info(int32_t id) {
     const tc_cast_actor *a = actor(id);
     const tc_cast_entry *e = a->entry;
@@ -315,18 +323,21 @@ static void info(int32_t id) {
     printf("perso %d %s: family %u (type %d), %u states, initial state %u, sector %u, prso %d\n", id, instance_of(id), e->family,
            e->family_type == 0xFFFF ? -1 : (int)e->family_type, f->state_count, e->initial_state, e->sector,
            e->prso == 0xFFFF ? -1 : (int)e->prso);
-    printf("  flags %#x flags2 %#x%s%s%s%s%s%s%s%s r2 %.1f hp %u/%u own body %s%.2f prio %u meets %u, %u ZDD zones, ZDE %s\n",
+    printf("  flags %#x flags2 %#x%s%s%s%s%s%s%s%s r2 %.1f hp %u/%u collide set %d: sphere %s%.2f prio %u meets %u, %u ZDD zones, "
+           "%u ZDE zones\n",
            e->flags, e->flags2, e->flags & TC_CAST_MAY_FORCE_MAIN ? " may-force-main" : "", e->flags & TC_CAST_SAVE_POINT ? " save-point" : "",
            e->flags & TC_CAST_ALWAYS_AWAKE ? " always-awake" : "", e->flags & TC_CAST_RUN_FIRST ? " run-first" : "",
            e->flags & TC_CAST_TALK ? " talk" : "", e->flags & TC_CAST_SPAWN ? " spawn" : "",
            e->flags2 & TC_CAST2_MOVES_MAIN ? " moves-main" : "", e->flags2 & TC_CAST2_DIRECTOR ? " director" : "",
-           (double)e->radius2, e->hit_points, e->hit_points_max, e->own_radius < 0 ? "none (family's) " : "", (double)e->own_radius,
-           e->own_priority, e->own_meets, e->zone_count, e->has_zde ? "its own" : "its family's");
+           (double)e->radius2, e->hit_points, e->hit_points_max,
+           collide_index(e->collide),
+           e->collide->radius < 0 ? "none (ZDM bodies) " : "", (double)e->collide->radius, e->collide->priority,
+           e->collide->meets, e->zone_count, e->collide->zde.zone_count);
     printf("  AI: keep_off_main %d removal_guard %d read_only_for_cast %d forces_blocked %u removals_kept %u\n", a->ai->keep_off_main,
            a->ai->removal_guard, a->ai->read_only_for_cast, a->ai->forces_blocked, a->ai->removals_kept);
     for (s = 0; s < f->state_count; s++) {
         uint16_t card = f->cards ? f->cards[s] : 0xFFFF;
-        uint16_t body = f->body ? f->body[s] : 0xFFFF;
+        uint16_t body = e->collide->body && s < e->collide->state_count ? e->collide->body[s] : 0xFFFF;
         printf("  state %3u  card %5d type %3d  body %d\n", s, card == 0xFFFF ? -1 : card,
                card == 0xFFFF ? -1 : (int)S.level.cast.cards[card].type, body == 0xFFFF ? -1 : body);
     }

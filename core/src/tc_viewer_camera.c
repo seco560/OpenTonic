@@ -258,7 +258,7 @@ static tc_vec3 ed_drawn(const tc_viewer *v) { return tcv_main_drawn(v); }
 
 tc_vec3 tcv_main_drawn(const tc_viewer *v) {
     const tc_game *p = v->game;
-    const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
+    const tc_cast_actor *a = tc_game_main(p).actor; /* a chameleon holds the player */
     tc_vec3 out;
     if (a && tc_cast_drawn_position(&p->cast, a->entry->id, p->tick_time / TC_ED_AI_TICK, &out)) return out;
     return p->use_ai ? tc_v3(v->ed_pose.m[12], v->ed_pose.m[13], v->ed_pose.m[14]) : p->main.player.position;
@@ -266,7 +266,7 @@ tc_vec3 tcv_main_drawn(const tc_viewer *v) {
 
 float tcv_main_drawn_heading(const tc_viewer *v) {
     const tc_game *p = v->game;
-    const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
+    const tc_cast_actor *a = tc_game_main(p).actor;
     if (a) {
         float t = fminf(1, fmaxf(0, p->tick_time / TC_ED_AI_TICK));
         return a->rot_prev.z + remainderf(a->ai->heading - a->rot_prev.z, 2 * TC_PI) * t;
@@ -431,7 +431,7 @@ static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at, bool feet, float dt
 static bool shot_target(const tc_viewer *v, tc_vec3 *out) {
     const tc_game *p = v->game;
     int32_t id = p->has_cast ? p->cast.globals.cam_target : 0;
-    if (id != 0 && id != p->cast.main_id && !(v->level->cast.main_alias && id == (int32_t)v->level->cast.main_alias) &&
+    if (id != 0 && !tc_cast_is_main_id(&p->cast, id) &&
         tc_cast_drawn_position(&p->cast, id, p->tick_time / TC_ED_AI_TICK, out) && isfinite(out->x) && isfinite(out->y) &&
         isfinite(out->z))
         return false;
@@ -753,7 +753,8 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
     {
         tc_cam_target t;
         const uint8_t *solid = p->world.solid;
-        const tc_cast_actor *chara = p->has_cast ? tc_cast_character(&p->cast) : NULL; /* a chameleon holds the player */
+        const tc_game_main_info who = tc_game_main(p); /* who the player plays: Ed, a chameleon, the car */
+        const tc_cast_actor *chara = who.actor;
         t.position = tcv_main_drawn(v);
         t.behind = TC_PI - tcv_main_drawn_heading(v); /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
         if (p->use_ai && v->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
@@ -775,7 +776,7 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         if (p->use_ai && p->main.has_driver && p->main.driver.dyn.card_type == 2 && v->level->cast.main_alias != 0) v->ski_shot = true;
         t.shot = tc_viewer_camera_shot(v);
         t.chase = 0;
-        tc_main_camera_target(&p->main, &t); /* a character in the slot (the car) says where to look */
+        if (who.kind == TC_GAME_MAIN_CHARACTER) tc_main_camera_target(&p->main, &t); /* the car says where to look */
         t.world = &p->world;
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;

@@ -22,7 +22,7 @@ frontend (Swift/Metal or SDL3)
                                           tc_main_tick                                       tc_main.c
                                             tc_cast_tick                                     tc_cast.c
                                               run-first persos (lifts, platforms)  step_actor x n
-                                              Ed: ed_step -> tc_ed_ai_step (scripts, portals, mechanics)
+                                              Ed, by his brain: ed_step -> tc_ed_ai_step (scripts, portals, mechanics)
                                               the other persos                     step_actor x n
                                               moving sectors, water surfaces
                                             take_requests (cover, level change, camera place)
@@ -71,7 +71,9 @@ The core is 25,400 lines of C.
 
 Four mechanisms for one concept, each with its own places to consult (camera target, sector, MainActor, input). This is
 the knot most other knots tie into. *Judgement:* the chameleon model (a perso id) is the right one; the others should
-fold into it.
+fold into it. *Since 2026-11-19 (stage 3, first part):* the alias is one test (`tc_cast_is_main_id`), Ed's step and
+the car are one kind of thing (a brain, `tc_brain.h`), and the host asks one place who the player plays
+(`tc_game_main`). The car is not a cast actor yet (stage 3 below).
 
 ### 3.2 The viewer is the game session
 `tc_viewer` (203-line struct) holds the camera, the draw lists, menus, debug, tapes, **and** game rules: hint scenes
@@ -85,14 +87,16 @@ cast.py holds 15 name sets (MAY_FORCE_MAIN, MAY_FORCE_MAIN_MODELS, MAY_NOT_FORCE
 ZONES_HELD, LEVEL_CHANGERS_LEFT_OUT, PROMPT_ANY_BUTTON ...) and level.py its story gates. They were stopgaps for missing
 features: a perso whose force on Ed would strand him is kept off him. The cost shows today: the chameleons (an Ed
 behaviour never implemented) and the talking beans were silently blocked for weeks; the blocks hid the gap instead of
-reporting it. The 2026-11-17 "safe forces" rule (allow what hands Ed back) was the right direction.
+reporting it. The 2026-11-17 "safe forces" rule (allow what hands Ed back) was the right direction. *Since 2026-11-19
+(stage 5):* the force lists are gone; every perso may force the player and forcecheck reports the ones that keep him.
 
 ### 3.4 Per-family shortcuts for per-perso data
 A cast *family* is exported once, from its first perso: states, animations (right: they are the family's), but also the
 mechanics bodies and the ZDE hit zones (wrong: they live in each perso's collide set). Found today: sud0's tomato family
 took ZOR_CoulisDeTomate's (none), so no tomato could be hit or hurt Ed, and every tomato glided through walls. Fixed by
 per-perso overrides (CMEC own rows, own ZDE tail), but the pattern (one perso stands for its kind) may hide elsewhere:
-the ZDR zones (PZDR) are per perso already; cards and transitions are per family by the data.
+the ZDR zones (PZDR) are per perso already; cards and transitions are per family by the data. *Since 2026-11-19 (stage
+4):* a perso's whole collide set is its own by construction (.ttlv CMCS).
 
 ### 3.5 Two ways to run the same thing
 Some persos are reduced to data at export (PORT portals, TRIG Totalski obstacles, LAIS light persos, ski_portals) and
@@ -108,7 +112,8 @@ read_only_for_cast), diagnostics. `main_actor == 0` doubles as "this is Ed" in a
 ### 3.7 File formats grow by appending
 Optional tails read while `r->offset < r->size` (CMEC now has five), "older files: 0 there" branches, sentinel values
 that change meaning (CMEC own radius: 0 meant none until today, now a point). It works because every level is
-re-exported on a converter change, but each tail is order-dependent and unversioned.
+re-exported on a converter change, but each tail is order-dependent and unversioned. *Since 2026-11-19:* CMEC's tails
+are gone (stage 4: CMCS is read whole, required with a CAST); no reader probes for bytes left any more (stage 6 below).
 
 ### 3.8 Frontends duplicate
 Swift and SDL each implement input mapping, audio voices, menus wiring and file handling (4,200 / 5,200 lines). The SDL
@@ -147,21 +152,119 @@ recordings with frame hashes (docs/RECORDING.md); stages 1-3 change nothing a pl
    actor whose brain is his driver (his mechanics already go through the cast's integrators); the skier's alias folds
    in; the car becomes a cast actor with a native brain (its tc_character_ops become a brain vtable). Camera, sector,
    input and MainActor read one place. This is the character-interface plan the user set on 2026-11-13.
+   *First part done 2026-11-19*, in three steps, each proven unchanged on its own:
+   - **3a, the skier's alias folds in.** `tc_cast_is_main_id(c, id)`: Ed's own id or the fix Ed's that stands for him
+     (CAST main_alias). The lookups that repeated the test (find, the sound emitter and its placing, the drawn position,
+     the camera's shot target) ask it.
+   - **3b, one place to ask who the player plays.** `tc_game_main(g)`: ED, PERSO (a chameleon: its actor) or CHARACTER
+     (the car, Ed riding), with its place and its sector. The camera, the light, the drawn sector and the title bar ask
+     it; the viewer no longer reads `tc_cast_character` or the alias to find the player (it still asks tc_main whether
+     Ed rides, to draw him at the car's seat, and reads main_alias as the ski levels' mark for the ski camera). Ed's sector without a driver (the
+     simple controller's) moved from the viewer into tc_main (`tc_main_track_sector`, `tc_main_sector`).
+     `tc_viewer_ed_sector` is `tc_viewer_main_sector`; `tc_main_is_ed` (which was false only for the car, not for a
+     chameleon) is `tc_main_riding`.
+   - **3c, a brain.** `tc_brain.h`: one table for what moves a character other than its own scripts in the cast: a tick
+     and a sector (on the game's ticks, in the cast's walk) and a frame, camera target, status and abort (on the host's
+     frames, holding Ed's slot). Ed's actor in the cast carries his (his driver; riding the car, the asleep one that
+     carries his AI record) and `tc_cast_tick` steps him by it at his place in the walk, where it used to be handed a
+     `tc_cast_main_ops` each tick; the car's `tc_character_ops` are a brain too, held by tc_main's slot.
+   Proof of no change, after each step: the gate and CUSTOM=0 (after 3c), the Swift build, the user's recording of
+   2026-11-19 14:40 exact (six segments, ~107,000 frames: Totalski, sud0, cavedoc, SpyCarota, carota), and fifteen probe
+   scripts printing the same lines every 0.1 s on the build before and after: stage 2's nine (hint scenes, the SE outro,
+   sud0's tomatoes and arches, the car, a saved game twice) plus two chameleons (sud0's marsh tomato and Pyrex: Ed hands
+   the player over and takes it back), Totalski and skymap (the skier's alias), and two moments of that recording.
+   *Not done, and why:* **the car as a cast actor.** Liberty City, its level, has no CAST, so no cast exists there. Giving
+   it one changes Ed's own physics on that level (with a cast his walkers go through the cast's integrators,
+   `tc_cast_main_mechanics`, not the shared step) and his scripts' globals, unless "a cast exists" and "the level's cast
+   runs" are separated first. And with the car's id on the main-character list, MainActor in the scripts would name a
+   perso with no AI record: a rule is needed first (MainActor = its rider while the main character has no scripts).
+   Both are behaviour questions, not refactoring; they wait for a stage of their own, with a playtest of the car.
 4. **Per-perso data at export, by construction.** One exporter function per perso's collide set (ZDM, ZDE, ZDR, the
    +0x36 sphere), families only for states, cards and animations. Remove the "first perso" lookups.
+   *Done 2026-11-19*, in two steps:
+   - **4a, the format.** .ttlv CMEC became **CMCS** (a new tag: chunks.py's rule for a changed layout; the core refuses
+     a level with a CAST and no CMCS as stale, "re-run the conversion"). Families carry their cards and root motion
+     (cast.py `roots_block`); each perso's collide set is one block (`collide_block`: the +0x36 sphere, +0x34 / +0x35,
+     the ZDM bodies per state, the ZDE zones), the persos that share one sharing its block; each entry names its own.
+     Core: `tc_cast_collide` (tc_level.h), `tc_cast_entry.collide` (never NULL: `tc_cast_no_collide`); the cast's
+     mechanics read it (tc_cast_mec.c), the actor's model borrows its ZDE zones. This step still filled the bodies from
+     the family's stand-in, to prove the format alone: every cast perso's mechanics data (cards, root motion, bodies,
+     zones, sphere, priority, family index) dumped from all 32 levels (retail and SE) was identical, old core on old
+     files against new on new; 23 probe scripts identical, the user's recording exact, both gates.
+   - **4b, each perso's own bodies.** The stand-in lookup (`zdm_owner`) is gone. What changed (dumps compared): 31
+     persos of 6 levels lose a borrowed walking body in walker states (pyramide's 17 bonuses, carota's 5 bean teeth,
+     sud0's generated mushrooms, the tomato coulis and EclairFin, BigBoss's tower and two platforms, marmite's guard
+     MAD_GardeKaisse: the port glides them, `glide_step`), and Land's stone SDO_MPierreCave1 sits on its own sphere.
+     The exe sweeps each perso's own set (`MEC_SweepZones_0043bff0`: `so->perso->collset`); one with no ZDM zones meets
+     nothing. Probes: those two moved, everything else identical.
 5. **Allow-lists become a report.** Let every perso force Ed by default; castcheck lists the forces that lead to a
    behaviour of Ed's whose primitives are not ported (by walking his model), so a gap shows as a failing line, not as
    a silent block. Keep a very short deny-list with a reason per entry.
+   *Done 2026-11-19.* MAY_FORCE_MAIN, MAY_FORCE_MAIN_MODELS, MAY_NOT_FORCE_MAIN and SAFE_MAIN_FORCES are gone: every
+   retail cast perso may force the player, write his dsgvars, place him and take the main character, as in the exe
+   (86 persos of 15 levels had been kept off him). `KEPT_OFF_MAIN` (cast.py) holds one: marmite's magnet switch
+   (leaning it to let go is not ported). The level's `_cast.txt` shows what each perso forces ("forces main B15 R4").
+   The report is **forcecheck** (core/tests/forcecheck.c, in the gate, every level at once): each perso whose scripts
+   force the player, in a fresh level, Ed in front of it pressing Action; if it takes him, the player gets past what
+   holds him (Jump for lines, pictures and the director; Action, Jump), and Ed must run (or the level change it asked
+   for, or the chameleon it gave him to, must go). Not "by walking his model": the interpreter knows a primitive is
+   unported only when it runs one, and a force strands Ed through the scene, not only through a primitive. 2026-11-19:
+   401 forcers, 169 take Ed from in front of them and all let him go; 231 need a story step, a zone or a timer first
+   (not judged); death and outro are not played. On the way it found and fixed: the main actor's GoTo walks asked for
+   speed 0 (tc_ai.c `go_along`: the exe feeds it from the state's root motion, GAM_0042a8d0; sud0's walk-in director,
+   pyramide's 12 sarcophagi, the skier's finish all stood); the test's own blind spots (a spy waits to be seen: the
+   draw list; the mushroom boss is met past its spy: forcecheck's `approaches`). castcheck's lever test keeps the
+   levers and machines. *Not a time-out:* docs/BUGS.md asked whether the cutscene reveals may hold Ed "with a
+   time-out so none can strand him"; they hold him now, as the exe's do, with no time-out (a port choice for the user).
 6. **Versioned chunks.** Each chunk starts with a version word; readers switch on it instead of probing tails.
+   *Status 2026-11-19:* the tails are gone (stage 4's CMCS, read whole); chunks.py's rule stands instead of a version
+   word: a changed layout takes a new tag, and the stamp re-exports. Left: four chunks an older export lacked, read by
+   name with a fallback (.ttai ZDES, STRT, STDG; .ttlv PCOL), some legitimately absent (STRT is the ski levels' only;
+   imported levels have no PCOL).
 7. **Thinner frontends.** Input mapping and the audio voice logic into core (tc_mixer is already shared); frontends keep
    devices, GPU and files.
 
 *Judgement on order:* 1 and 2 are cheap and make 3 safe; 3 is the big one and unblocks the user's planned playable
 characters; 4-6 can go in any order between features.
 
-## 5. What is in good shape
+## 5. The Special Edition: a plan (user, 2026-11-19)
+The user's direction: one engine, both editions' levels, and in time the full Ed in the SE levels instead of a donor.
+The core already is one engine (edition branches only in saves, recordings, a debug HUD, the demo tape, drawing); the
+split is in the converter (about 30 `d.se` branches). "Merging" means the converter brings the SE's data into the same
+model as retail's, so the core needs no SE cases.
+
+**What the SE export leaves out today** (each a `d.se` branch in tools/ttre):
+- which persos run: only the items and save points (SE_ITEM_FAMILIES, SE_SAVE_MODELS) and the outro's actors;
+- collide sets: none (no ZDE zones, no ZDM bodies). Read 2026-11-19 with retail's layout: the zone lists come out
+  plausible (SE Ed 17 ZDE zones, retail Ed 18; items one each), the tail +0x30..+0x37 does not (the sphere's size reads
+  as a denormal): that tail's layout is to be read in the SE exe (MAID3DVR.EXE keeps its COL_* names);
+- root motion (an SE animation frame's vector, not read), waypoints (WAYS), the activation radius (retail added
+  SetActivity: an SE perso has none), animation events, the SE's own sound tables;
+- script references: a family, a sector, a water surface, a waypoint, a font resolve to nothing on SE levels;
+- the primitives: mapped (tools/exe/se_ai_map.tsv, every SE primitive has a retail counterpart); the pairs matched by
+  order alone are the least sure.
+
+**Order:** (1) collide sets: `collide_block` is the one place since stage 4; (2) root motion and waypoints; (3) the
+script references; (4) sounds and animation events; (5) let the SE persos run, level by level, judged by forcecheck
+and castcheck (the report of stage 5, not a list of names).
+
+**The full Ed instead of the donor.** Today an SE level borrows the player from the retail level of its name (EDPL and
+.ttai, its level-bound chunks emptied: docs/SE.md), with the SE persos numbered from SE_ID_BASE. Measured 2026-11-19:
+Ed's exported scripts differ between bar, sud0 and north in 254 of 49,277 words, all of them the level's numbering of
+the fix persos. So:
+1. Ed exported once from the fix, the fix persos named by role (the camera, the cheat reader) and bound at load; the
+   level-bound parts (PORT, TRIG, PLAC, ZONE, FSND) from each level. Retail uses it too; SE_ID_BASE goes.
+2. The SE levels' own data for him: portals (none today: no level changes), footsteps by floor (FSND).
+3. What the SE scripts ask of SE Ed: they force his behaviours, read his dsgvars and test his ZDE zones by number,
+   and retail Ed's differ (17 zones against 18). A map from SE Ed to retail Ed: behaviours by name (the SE's level
+   scripts are text, .dsc, with names), zones by shape and place. forcecheck reports what is left unmatched.
+4. SE Totalski: the SE has no skier (SE Ed skis himself, Proc_SkiTurnLeft / Right); retail Ed does not ski. The skier
+   as a character a level asks for (stage 3's playable characters), not a donor.
+1 and 2 are mechanical and help retail too; 3 is most of the work; 4 waits for the playable characters.
+
+## 6. What is in good shape
 - The exe-first method: subsystems read from the exe and documented with addresses (ENGINE.md, CAMERA.md) — fixes
   today (PROC 4, random sound picks, per-perso collide sets) were each a matter of reading what the data already says.
 - The layering core / frontends: the core has no platform code.
-- The gate: 17 checks, 42 s, run before and after every change.
+- The gate: 18 checks, about 75 s since forcecheck (2026-11-19), run before and after every change.
 - Recordings that replay bit-exact: the best regression tool the project has.

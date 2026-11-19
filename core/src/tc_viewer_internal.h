@@ -87,8 +87,8 @@ tc_sound_listener tcv_listener(const tc_viewer *v);
 void tcv_fly(tc_viewer *v, float dt);
 void tcv_set_inspecting(tc_viewer *v, bool on);
 void tcv_toggle_play(tc_viewer *v);
-/* The main character (tc_main.h; a chameleon while one holds the player, tc_cast_character) as drawn this frame
- * (between the ticks), its heading as drawn; where it is after the last tick: tc_game_main_position. */
+/* The main character (tc_game_main: Ed, a chameleon while one holds the player, Ed riding the car) as drawn this frame
+ * (between the ticks), its heading as drawn; where it is after the last tick: tc_game_main. */
 tc_vec3 tcv_main_drawn(const tc_viewer *v);
 float tcv_main_drawn_heading(const tc_viewer *v);
 void tcv_update_play(tc_viewer *v, float dt, bool fresh);

@@ -89,9 +89,15 @@ void tc_game_free(tc_game *g) {
     tc_free(g);
 }
 
-tc_vec3 tc_game_main_position(const tc_game *g) {
+tc_game_main_info tc_game_main(const tc_game *g) {
+    tc_game_main_info r;
     const tc_cast_actor *a = g->has_cast ? tc_cast_character(&g->cast) : NULL;
-    return a ? a->ai->position : g->main.player.position;
+    r.kind = a ? TC_GAME_MAIN_PERSO : !tc_main_riding(&g->main) ? TC_GAME_MAIN_ED : TC_GAME_MAIN_CHARACTER;
+    r.actor = a;
+    r.position = a ? a->ai->position : g->main.player.position;
+    r.sector = tc_main_sector(&g->main);
+    if (a && g->main.sectors && a->sector.sector != TC_SECTOR_NONE) r.sector = a->sector.sector;
+    return r;
 }
 
 void tc_game_push_sound(tc_game *g, uint16_t event, const tc_sound_source *s) {
@@ -169,7 +175,7 @@ int tc_game_custom_frame(tc_game *g, const tc_game_input *gi, float dt) {
         g->main.driver.events.camera_place = out.camera_place;
     }
     held = false;
-    if (!tc_main_is_ed(&g->main)) {
+    if (tc_main_riding(&g->main)) {
         in.ed = &g->main.player;
         in.held = h.held;
         in.move_x = h.move_x, in.move_y = h.move_y;

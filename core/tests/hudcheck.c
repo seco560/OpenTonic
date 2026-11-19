@@ -280,7 +280,39 @@ static void sud0(const char *dir) {
     snprintf(what, sizeof what, "set to hide, it leaves once nothing has changed for five seconds (after %.1f s; life slid %.2f of 2 out)",
              i / 60.0, g.v.game->hud.out_life);
     check(g.v.game->hud.out_life >= 2.0f && g.v.game->hud.out_lives >= 2.0f && !bounds(&g.v, 4.0f / 3, b43), what);
+    { /* the game menu (Esc) shows it, as the original's pause does (the user, 2026-11-19): set to hide, it slides in
+       * behind the menu; back in the game it slides out again. Photo mode (P) still has none. */
+        int in_at = -1, out_at = -1;
+        tc_viewer_set_game_menu(&g.v, true);
+        for (i = 0; i < 60 * 3 && in_at < 0; i++) {
+            frames(&g.v, 1);
+            if (g.v.game->hud.out_life < 0.01f && g.v.game->hud.out_lives < 0.01f && bounds(&g.v, 4.0f / 3, b43)) in_at = i;
+        }
+        frames(&g.v, 60);
+        snprintf(what, sizeof what, "the game menu shows the HUD though it is set to hide: slid in after %.2f s", in_at / 60.0);
+        check(in_at >= 0 && in_at < 60 && g.v.game->hud.out_life == 0 && bounds(&g.v, 4.0f / 3, b43), what);
+        tc_viewer_set_game_menu(&g.v, false);
+        for (i = 0; i < 60 * 3 && out_at < 0; i++) {
+            frames(&g.v, 1);
+            if (g.v.game->hud.out_life >= 2.0f && g.v.game->hud.out_lives >= 2.0f) out_at = i;
+        }
+        snprintf(what, sizeof what, "back in the game it slides out again (after %.2f s)", out_at / 60.0);
+        check(out_at >= 0 && !bounds(&g.v, 4.0f / 3, b43), what);
+        tc_viewer_toggle_pause(&g.v);
+        frames(&g.v, 30);
+        check(!bounds(&g.v, 4.0f / 3, b43), "photo mode (P) shows no HUD");
+        tc_viewer_toggle_pause(&g.v);
+        frames(&g.v, 30);
+    }
     g.v.game->hud.auto_hide = false;
+    { /* not set to hide: it stays through the game menu and after */
+        tc_viewer_set_game_menu(&g.v, true);
+        frames(&g.v, 60);
+        check(g.v.game->hud.out_life == 0 && bounds(&g.v, 4.0f / 3, b43), "the game menu shows the HUD as it was");
+        tc_viewer_set_game_menu(&g.v, false);
+        frames(&g.v, 60);
+        check(g.v.game->hud.out_life == 0 && bounds(&g.v, 4.0f / 3, b43), "... and back in the game it is still there");
+    }
 
     /* the inventory: Ed onto the level's bonuses (the persos whose object shares the World's save value) */
     for (i = 0; i < g.level.cast.inv_count; i++)

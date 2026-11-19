@@ -35,7 +35,7 @@ CAST: u16 main_actor (the player's perso id: level perso k + 1, as perso nodes; 
   n_cast x {
     u16 perso id, u16 PRSO index (0xFFFF: not drawn), u16 family, u16 sector (0xFFFF none),
     u16 initial state, u8 hit points, u8 max, u8 active, u8 dead, u8 mechanics, u8 animation, u8 re-init,
-    u8 flags (1: may force the main actor's behaviours, MAY_FORCE_MAIN; 2: a save point, SAVE_POINTS; 4: on the engine's
+    u8 flags (1: may force the main actor, every retail perso but KEPT_OFF_MAIN's; 2: a save point, SAVE_POINTS; 4: on the engine's
       always-awake list, 8: on its run-first list: LevelData.engine_lists; 16: a scene's actor, SCENE; 32: TABLES;
       64: a spawnable template, SPAWN, out until instanced),
     u16 flags2 (1: a portal or level changer the cast runs, MOVES_MAIN: portal_ids, level_changer_ids; 2: a camera
@@ -55,69 +55,37 @@ from . import ai
 # Since 2026-11-13 the camera directors (GenD_Cam) run: they pick the camera's shots (docs/CAMERA.md "The directors'
 # shots"). 'Camera': the fix camera's family (carota's IVP_Cam_Fixe, a level perso of it, writes nothing).
 EXCLUDED_FAMILIES = {'Camera', 'gen_cheatCode', 'gen_arche'}
-# Port choice: only these families may force the main actor's behaviour or reflex (PROC 237 / 238). The others (the
-# talking characters, Agent XYZ, the cutscene and trap triggers) hand Ed to behaviours that wait for conversations,
-# cameras and cutscenes the port does not run yet: he would stand there for good. Checked headless (castcheck).
-MAY_FORCE_MAIN = {'sud_mecalevier', 'distrib',  # the levers; the popcorn (Crunch) machines: Super Ed
-                  'World',  # the game flow: north's fall height (R0: z < -105 -> Ed's B60), the collect-N reward (B41)
-                  'grille',  # cavedoc's popcorn grille: Super Ed holding Action in its zone works it (Ed's dsg58 = 1)
-                  'mais',  # cavedoc's corn cob boss: its intro / end hold Ed (B15 + R4, then B103), as the robot's
-                  'Tornado',  # the swirly cones (FRB_tornadodudes): while Ed is in one (COND 15) they write his dsg33 =
-                  #             1 and dsg84 = their push (dsg0, (0, 0, 2) in LeCanyon, weaker towards their top); his flight
-                  #             B45 -> B74 takes it as a velocity change (fly mode 21) every frame. Nothing else of his.
-                  # carota's steered platform (IVP_Plate_forme_nourrie1): Action on it forces Ed's B47 (he takes the
-                  # helm, his dsg0 = 13), B48 steers it (Left / Right: his dsg13, which its B1 turns by), Action or
-                  # Jump / Shoot gets off (B49). Kept off Ed until 2026-11-17: his own Action walked him off into the pit.
-                  'leg_PFnouri',
-                  'genski'}  # the ski levels' flow: the finish (SYM_Gen_Arrivee, NBD_Arrivee_Et_Retry) writes the
-#                              skier's arrival waypoints and next / retry (dsg35 / 36 / 40) and the fix Ed's dsg148 = 3,
-#                              which start his own finish (B19: state 321, stepping off); the start (PAT_DEPARTESSAI)
-# ... and these AI models, whatever their family: the "holes of nothingness" (genplainesud; 11 on carota, cock01, Land,
-# sud0, one script): when Ed drops below the marker, his falling death (B15, then B60: falling 1 s, then B73's cover),
-# his hit points 0, the camera frozen watching him (docs/NOTES.md "Falling into pits").
-MAY_FORCE_MAIN_MODELS = {'ZOR_LesTrousDeNeantCestBonMangezEn',
-                         # cavedoc's robot (FRB_RoBneus), the power 7 boss: its intro holds Ed (B15 + R4, B103 after
-                         # its line); beaten, it ends his Super Ed (dsg15 := 0), sends him to take the power (B76 sets
-                         # his dsg58 = 1) and gives power 7 (its B11). Kept off Ed, the fight ran but gave nothing.
-                         'FRB_RoboBne',
-                         # cavedoc's last door (BEM_PorteDeFinDoc): its lever pulled (SDO_OuvrePorte's dsg0 1 or 2), it
-                         # holds Ed (B?: his wait, R4) while it opens and starts Doc's way home (BEM_Doc B5, B3: the
-                         # cutscene after the robot; Doc runs since 2026-11-13, level_changer_ids)
-                         'BEM_DocPorteFin',
-                         # LeCanyon's wings (gencanyon): the fall into the canyon (J2P_CutTrou1's shot) takes Ed's
-                         # flying power; dropping past YAS_RemoveWings (model YAS_EnleveAilePasSM) without it gives it
-                         # back and opens his wings (B67 -> B63 with dsg142 = 1: falling, state 44; 300 ms later R15 +
-                         # B26, the flight start). SDO_ActiveLesAiles (SDO_AA*): the same within its dsg2 = 30, no wait.
-                         'YAS_EnleveAilePasSM', 'SDO_ActiveLesAiles'}
-# ... but not these instances: marmite's magnet switch keeps Ed holding it (his dsg3 = 1: Jump and Shoot steer the
-# magnet; leaning it to let go with Action does not take in the port yet, castcheck 2026-11-02): he would be stuck.
-MAY_NOT_FORCE_MAIN = {'JET_SwAimant',
-                      # sud0's mushroom boss (its forces pass SAFE_MAIN_FORCES since B78 did, 2026-11-17): its first hint
-                      # (B23 -> B31) holds Ed until the spy SDO_EspionMagicMush has talked, and the spy talks only with
-                      # Ed within 5 (and spies may not force him): castcheck found him held for good beside the boss
-                      'HEG_BossMush'}
-# ... and, since 2026-11-17, any retail perso whose every force on the fix Ed (PROC 237 / 238 naming him or the main
-# actor) is one of his behaviours that hand him back by themselves (forces_main_safely): the hold B15 + R4 together with
-# its release B103 (the signposts, the typo explainers, the HUD's thermometer explainers, the puzzles' pieces ...), B41
-# (the extra life point's cheer: HEG_Inventaire, World), B51 / B80 (pushing a button: gen_bouton; the head scratch),
-# and his damage: B1 (hurt: the mines, carrots and tomatoes that hit him force it), B101 (knocked back: pyramide's
-# platforms and columns, marmite's pistons), B34 (pushed aside, then back to B0: the stones), B78 (his states 285 / 284,
-# then B0: what the armoured guards and north's KEV_MechantEdJeVaisTeManger do to him when they catch him; 2026-11-17). Without it his own Action
-# took his blowgun out at a signpost or a button, the explainers' text did not hold him and those enemies never hurt him.
-# A release B103 alone may (2026-11-17: carota's guided platform releases the hold of its camera perso). A hold without
-# its release, or the talk reflex R21 (the spies, Suzy: they held Ed for good when allowed) stays off;
-# so does B33 (he takes the main character back from another perso). Indices into the fix Ed's model (NewEd), the same on
-# every retail level he plays.
-# Since 2026-11-18 (docs/ENGINE.md "The chameleons"): B31 and B33, the chameleon's hand-over and hand-back. A generator
-# (HEG_GenCameleonPyrex's model: the marsh tomato's, the Pyrex jar's, the mummy's, cavedoc's mine, Land's rock, marmite's
-# crate and Grogh, pyramide's scarab and column) forces B31 on Action: without power 512 his B31 hands him back at once
-# (R0, B0), with it B57 plays his change (state 253), puts the chameleon where he stands and deactivates him; the
-# generator then makes the chameleon the main character (Proc_SetMainActor). The chameleon (its own pad-reading scripts)
-# puts him back where it stands and forces B33 (+ R4): Proc_SetMainActor(Me), the chameleon deactivated, B58 (state 254)
-# -> B0. And R0, his own play reflex: carota's talking beans (Gun_HarryCover, JFR_Harry_le_malin) give it back after
-# their hold. Before, all of these were kept off Ed: the chameleons never took the player, the beans' scenes never held
-# him.
-SAFE_MAIN_FORCES = {'B15', 'B103', 'R4', 'B41', 'B51', 'B80', 'B1', 'B101', 'B34', 'B78', 'B31', 'B33', 'R0'}
+# The main actor and the cast (docs/ARCHITECTURE.md stage 5, 2026-11-19): every retail cast perso may force the player's
+# behaviour or reflex (PROC 237 / 238), write his dsgvars, place him and take the main character (PROC 4), as in the
+# exe. Until 2026-11-19 only allow-listed ones might (MAY_FORCE_MAIN by family, MAY_FORCE_MAIN_MODELS, the portals and
+# level changers, and from 2026-11-17 those whose forces were all in SAFE_MAIN_FORCES): a force the port could not finish
+# would strand Ed, so the others were kept off him, silently. 86 persos of 15 levels still were (the spies' and Suzys'
+# talk reflex R21, pyramide's sarcophagus teleports' walk B75, the drawbridges and target games' B32, BigBoss's tower,
+# the ski levels' mines and stalagmites crashing the skier, B9 ...). Now core/tests/forcecheck.c reports: every perso
+# whose scripts force the player, Ed set beside it and pressing Action, must take him and let him go (or not take him);
+# one that holds him is a failing line, a gap to port, not a silent block.
+#
+# What the old lists recorded, kept as reading notes (each perso's force read and probed):
+# - the levers (sud_mecalevier) and popcorn machines (distrib: Super Ed); World's fall height (north: z < -105 -> B60)
+#   and the collect-N reward (B41); cavedoc's grille (Super Ed holding Action works it, dsg58 = 1), the corn cob boss
+#   and the robot FRB_RoboBne (hold B15 + R4, B103; beaten, the robot ends Super Ed and gives power 7 by B76's dsg58);
+#   the tornados (they write Ed's dsg33 = 1 and dsg84 = their push, which his flight B45 -> B74 takes as a velocity
+#   change); carota's steered platform (leg_PFnouri: Action forces B47, B48 steers by dsg13, B49 gets off); the ski
+#   levels' flow (genski: the finish writes the skier's dsg35 / 36 / 40 and the fix Ed's dsg148 = 3); the holes of
+#   nothingness (ZOR_LesTrousDeNeantCestBonMangezEn: B15, then B60's fall and B73's cover); cavedoc's last door
+#   (BEM_DocPorteFin); LeCanyon's wings (YAS_EnleveAilePasSM, SDO_ActiveLesAiles: B67 -> B63, then R15 + B26).
+# - Ed's behaviours that hand him back by themselves: the hold B15 + R4 with its release B103 (the signposts, the typo
+#   and thermometer explainers, the puzzles), B41 (the extra hit point's cheer), B51 / B80 (a button; the head
+#   scratch), his damage B1 (hurt), B101 (knocked back), B34 (pushed aside), B78 (caught by the armoured guards), the
+#   chameleons' B31 / B33 (docs/ENGINE.md "The chameleons") and R0, his play reflex. Indices into the fix Ed's model
+#   (NewEd), the same on every retail level he plays.
+# Kept off the main actor (instance name: why). Each is a gap forcecheck found, waiting for its port.
+KEPT_OFF_MAIN = {
+    # marmite's magnet switch: Action forces his B47, B48 then holds it (his dsg3 = 1: Jump and Shoot steer the
+    # magnet); leaning it to let go (his dsg13, then Action) does not take in the port yet: he would hold it for good
+    # (castcheck 2026-11-02; forcecheck 2026-11-19: B48, state 189)
+    'JET_SwAimant': 'leaning the magnet to let go is not ported',
+}
 # Port choice (user, 2026-11-17): the two thermometer explainers wait for Jump alone; every other text prompt of the
 # game (the signposts, marmite's and cock01's typo spies) takes Jump, Action or Shoot. Their ButtonJustPressed(jump)
 # becomes the same Or of the three at export (widen_prompt_buttons).
@@ -402,7 +370,7 @@ def freeze_story_removals(a):
 
 def _forces_on(a, main_loc):
     """{behaviour location} the perso's ForceBehaviour / ForceReflex (PROC 237 / 238) hand the main actor: those naming
-    him by the MainActor keyword (KW 5) or by his perso node (his location)."""
+    him by the MainActor keyword (KW 5) or by his perso node (his location). The cast listing shows them."""
     out = set()
     for n in a.nodes():
         c = n.children
@@ -411,16 +379,6 @@ def _forces_on(a, main_loc):
             if (who.type == 0 and who.param == 5) or (who.type == 24 and who.ref == main_loc):
                 out.add(c[1].ref)
     return out
-
-
-def forces_main_safely(a, main_loc, main_names):
-    """Whether every force of this perso on the main actor is in SAFE_MAIN_FORCES (main_names: his model's {behaviour
-    location: 'B15' / 'R4' ...}), with the hold B15 only beside its release B103. A release alone is safe (2026-11-17):
-    B103 hands Ed back whatever he was doing, and some holds are released by another perso (carota's JFR_Activecam_platform1
-    holds Ed while the guided platform IVP_plate_forme1 rides its way, and the platform's arrival releases him: kept off
-    Ed, the platform's release was dropped and Ed stayed held for good)."""
-    got = {main_names.get(ref, '?') for ref in _forces_on(a, main_loc)}
-    return bool(got) and got <= SAFE_MAIN_FORCES and ('B15' not in got or 'B103' in got)
 
 
 def widen_prompt_buttons(a, main_ai):
@@ -554,30 +512,17 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
     world_id = idx_of.get(world_loc) or next((idx_of[p.loc] for p in persos if d.perso_names(p.loc)[0] == 'World'), 0)
     main_ai = ai.AI(d, player) if player else None
     main_buttons = ai.button_order(main_ai) if main_ai else {}
-    # forces_main_safely / PROMPT_ANY_BUTTON: on the retail levels the fix Ed plays (his behaviours' names are his model's)
+    # PROMPT_ANY_BUTTON: on the retail levels the fix Ed plays
     fix_ed_plays = not d.se and player is not None and bool(d.perso_in_fix) and player == d.perso_in_fix[0][0]
-    main_names = {ref: name for ref, name in main_ai.beh_names.items()} if fix_ed_plays else {}
+    main_names = dict(main_ai.beh_names) if main_ai and not d.se else {}  # the listing's "forces main" (his B / R names)
     zones_named = named_zones(cast)
     families, fam_blocks, entries, listing = {}, [], [], []
-    cards, fam_cards = {}, []  # CMEC: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
-    fam_walk = []  # CMEC's walker tail: each family's root motion and ZDM bodies (walk_block)
-    fam_zde = []  # CMEC's ZDE tail: each family's ZDE zones (ai.zde_block)
-    own_zde = []  # ... and the entries whose own differ from their family's: (entry index, ai.zde_block)
+    cards, fam_cards = {}, []  # CMCS: the ID cards of the families' states (cast mechanics, core tc_cast_mec.c)
+    fam_roots = []  # CMCS: each family's root motion (roots_block: its animations')
+    sets, entry_sets = {}, []  # CMCS: the collide sets (collide_block: each perso's own), and each entry's
     always, first, _ = d.engine_lists()
     always, first = set(always), set(first)
 
-    def zdm_owner(fam, first_loc):
-        """The family's per-state ZDM bodies come from a perso of it that has them (a collide set without +0x36, with
-        its ZDM activation list): the bodies are each perso's own, and the family's first one may sweep a single
-        sphere instead (its CMEC own row) or have none (2026-11-18: sud0's tomatoes, whose marsh chameleon alone has
-        a ZDM sphere)."""
-        for loc2, _, _ in cast:
-            p2 = lv.ptr(loc2)
-            if p2 and lv.ptr(p2, 0x14) == fam:
-                cs2 = lv.ptr(loc2, 0x14)
-                if cs2 and not d.un('B', cs2, 0x36)[0] and lv.ptr(cs2, 8) and lv.ptr(cs2, 0x18):
-                    return loc2
-        return first_loc
     for loc, _, a in cast:
         pid = idx_of[loc]
         p3d = lv.ptr(loc)
@@ -593,11 +538,9 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
                 c = lv.ptr(st, 0x30)
                 row.append(cards.setdefault(c, len(cards)) if c and d.un('I', c)[0] in ai.CARD_SIZES else 0xFFFF)
             fam_cards.append(row)
-            fam_walk.append(walk_block(d, zdm_owner(fam, loc), a.states, keys))
-            fam_zde.append(ai.zde_block(d, loc, len(a.states)))
-        zb = ai.zde_block(d, loc, len(a.states))  # its own: collide sets are each perso's (2026-11-18)
-        if zb != fam_zde[families[fam]]:
-            own_zde.append((len(entries), zb))
+            fam_roots.append(roots_block(d, a.states, keys))
+        cb = collide_block(d, loc, len(a.states))  # its own (2026-11-19: no perso stands for its family's)
+        entry_sets.append(sets.setdefault(cb, len(sets)))
         frozen = freeze_story_removals(a)
         names = d.perso_names(loc)
         if fix_ed_plays and names[1] in PROMPT_ANY_BUTTON:
@@ -617,11 +560,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         sector = d.perso_sector(loc)
         world = by_loc[loc].world
         names = d.perso_names(loc)
-        flags = 1 if (names[0] in MAY_FORCE_MAIN or names[1] in MAY_FORCE_MAIN_MODELS) and names[2] not in MAY_NOT_FORCE_MAIN else 0
-        if pid in portal_ids(d) or pid in level_changer_ids(d):
-            flags |= 1  # a portal or a level changer: it moves the player (portal_ids, level_changer_ids)
-        if fix_ed_plays and names[2] not in MAY_NOT_FORCE_MAIN and forces_main_safely(a, player, main_names):
-            flags |= 1  # its forces on Ed all hand him back by themselves (SAFE_MAIN_FORCES)
+        flags = 0 if names[2] in KEPT_OFF_MAIN else 1  # it may force the main actor (KEPT_OFF_MAIN)
+        forced = _forces_on(a, player) if player and not d.se else set()
         if names[1] in SCENE_SPEAKERS:
             flags |= TALK
         if d.se:  # SE_CAST_LEVELS: a scene; elsewhere the items, and the save points as retail's DFM_Save
@@ -652,6 +592,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
                        f'prso {prso_index.get(loc, -1):4d} sector {sector} active {active} mech {mech} anim {anim} '
                        f'r2 {radius2:g}' + (' always' if flags & 4 else '') + (' first' if flags & 8 else '')
                        + (f' story removals kept {frozen}' if frozen else '')
+                       + (' forces main ' + ' '.join(sorted({main_names.get(r, '?') for r in forced})) if forced else '')
+                       + (' KEPT OFF MAIN' if not flags & 1 and not d.se else '')
                        + (f' unresolved {unresolved}' if unresolved else ''))
     # the main actor's own ZDD zones (spheres, boxes), for the cast's COND_13(Ed, k, Me): the machine in front of Ed
     main_zones = [(k, z[:8]) for k, z in ((k, ai.zdd_zone(d, player, k - 1)) for k in range(1, 9)) if z] if player else []
@@ -683,60 +625,67 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         role = fix_locs.index(loc) if loc in fix_locs[1:] else 0  # its place on the fix's list (core: fix_role)
         gblock += struct.pack('<HH3fI', gid, role, w[3], w[7], w[11], len(dsg)) + dsg
     head = struct.pack('<4H', main, len(fam_blocks), len(entries), alias) + zblock + gblock
-    own = []  # CMEC: each entry's own sweep body (its collide set: a single sphere, +0x36 / +0x30) and +0x34 / +0x35
-    for loc, _, _ in cast:
-        cs = lv.ptr(loc, 0x14)
+    rows = []  # CMCS: each entry's collide set and its family's index (std game +0: what T22 nodes hold)
+    for (loc, _, _), k in zip(cast, entry_sets):
         sg = lv.ptr(loc, 4)
-        ftype = d.un('I', sg)[0] & 0xFFFF if sg and not d.se else 0xFFFF  # its family's index (T22 nodes hold it)
-        if cs:
-            diameter, = d.un('f', cs, 0x30)
-            prio, meets, single = d.un('3B', cs, 0x34)
-            # +0x36: one sphere at its origin (0: a point) whatever the state; -1: none (its family's ZDM bodies)
-            own.append((max(diameter, 0.0) * 0.5 if single else -1.0, prio, 1 if meets else 0, ftype))
-        else:
-            own.append((-1.0, 0, 0, ftype))
+        rows.append((k, d.un('I', sg)[0] & 0xFFFF if sg and not d.se else 0xFFFF))
     return (head + b''.join(fam_blocks) + b''.join(entries), listing,
-            mech_chunk(d, cards, fam_cards, own, fam_walk, fam_zde, own_zde))
+            mech_chunk(d, cards, fam_cards, fam_roots, list(sets), rows))
 
 
-def walk_block(d, perso, states, keys):
-    """A family's walker data (CMEC's last part; the card types 0 / 4 of core tc_cast_mec.c), from its first cast perso,
-    as Ed's .ttai BODY + ZDMF (ai.py): u32 n_rows, n_rows x f32[3] (root motion: each A3D frame's own vector, units per
-    animation frame in its axes), n_states x { u32 first row, u16 n_rows, u16 body (0xFFFF none) }, u16 n_bodies, u16 0,
-    n_bodies x { u16 n, u16 0, n x { f32 centre[3], f32 radius, u16 collide flags, u16 element type (7 sphere, 5
-    point), f32 rebound, f32 grip } } (ai.zdm_sets: its collide set's ZDM zones active per state; a collide set with
-    +0x36: the one sphere at its origin). The Special Edition's: none (its collide sets are not read)."""
+def roots_block(d, states, keys):
+    """A family's root motion (CMCS; the walkers of core tc_cast_mec.c): its animations', so its family's, as Ed's .ttai
+    BODY (ai.py): u32 n_rows, n_rows x f32[3] (each A3D frame's own vector, units per animation frame in its axes),
+    n_states x { u32 first row, u16 n_rows, u16 0 }. The Special Edition's: none."""
     n = len(states)
     if d.se:
-        return struct.pack('<I', 0) + struct.pack('<IHH', 0, 0, 0xFFFF) * n + struct.pack('<HH', 0, 0)
+        return struct.pack('<I', 0) + struct.pack('<IHH', 0, 0, 0) * n
     roots = ai.root_motion(d, states, keys)
-    sets, per_state = ai.zdm_sets(d, perso, n)
     rows, index = [], []
     for k in keys:
         r = roots.get(k, [])
         index.append((len(rows), len(r)))
         rows += r
-    out = struct.pack('<I', len(rows)) + b''.join(struct.pack('<3f', *r) for r in rows)
-    out += b''.join(struct.pack('<IHH', first, cnt, b) for (first, cnt), b in zip(index, per_state))
-    out += struct.pack('<HH', len(sets), 0)
-    for zs in sets:
+    return (struct.pack('<I', len(rows)) + b''.join(struct.pack('<3f', *r) for r in rows)
+            + b''.join(struct.pack('<IHH', first, cnt, 0) for first, cnt in index))
+
+
+def collide_block(d, perso, n_states):
+    """A perso's collide set (perso +0x14), all of it the perso's own (2026-11-19, docs/ARCHITECTURE.md stage 4: until
+    2026-11-18 a cast family's first perso stood for all of it; sud0's tomato family took ZOR_CoulisDeTomate's none, so
+    no tomato could be hit or hurt Ed): f32 radius (+0x36 set: one sphere at its origin of +0x30 x 0.5, DAT_004d2928,
+    as MEC_SweepSphere_0043d480 sweeps it, in every state; 0 a point; -1 none: its ZDM bodies), u8 priority (+0x34),
+    u8 meets persos (+0x35), u16 n_states, n_states x u16 body (0xFFFF none), u16 n_bodies, u16 0, n_bodies x { u16 n,
+    u16 0, n x { f32 centre[3], f32 radius, u16 collide flags, u16 element type (7 sphere, 5 point), f32 rebound,
+    f32 grip } } (ai.zdm_sets: its ZDM zones active per state; with +0x36, the one sphere), then ai.zde_block (its ZDE
+    zones and their activation per state). Until 2026-11-19 the ZDM bodies were its family's, from a perso of it that
+    had them: 40 cast persos of 13 retail levels walked on another's body (most have none of their own: pyramide's
+    bonuses, carota's bean teeth, cock01's gears, sud0's generated mushrooms). The Special Edition's collide sets are
+    read for the sphere only (no bodies, no zones: its layout past the lists is not read)."""
+    cs = d.lv.ptr(perso, 0x14)
+    if cs:
+        diameter, = d.un('f', cs, 0x30)
+        prio, meets, single = d.un('3B', cs, 0x34)
+        out = struct.pack('<f2B', max(diameter, 0.0) * 0.5 if single else -1.0, prio, 1 if meets else 0)
+    else:
+        out = struct.pack('<f2B', -1.0, 0, 0)
+    bodies, per_state = ([], [0xFFFF] * n_states) if d.se else ai.zdm_sets(d, perso, n_states)
+    out += struct.pack(f'<H{n_states}H', n_states, *per_state) + struct.pack('<HH', len(bodies), 0)
+    for zs in bodies:
         out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f2H2f', *z[:4], z[4], z[5], z[6], z[7]) for z in zs)
-    return out
+    return out + ai.zde_block(d, perso, n_states)
 
 
-def mech_chunk(d, cards, fam_cards, own=(), walk=(), zde=(), own_zde=()):
-    """CMEC (the cast's mechanics; core tc_cast_mec.c, docs/ENGINE.md "Moving collision, read"): u16 n_cards, u16 n_families
-    (= CAST's), n_cards x { u32 type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw: as the .ttai
-    CARD chunk) }, n_families x { u16 n_states, n_states x u16 card (0xFFFF none) },
-    u16 n_entries (= CAST's), u16 0, n_entries x { f32 radius (its collide set's single sphere at its origin, +0x36 with
-    +0x30 x 0.5 (DAT_004d2928), as MEC_SweepSphere_0043d480 sweeps it, in every state; 0 a point; -1 none: the family's
-    ZDM bodies (before 2026-11-18: 0 none)), u8 priority (+0x34), u8 meets persos
-    (+0x35), u16 family index (std game +0: what T22 nodes hold; 0xFFFF none) },
-    u16 n_families (= CAST's; 0: none), u16 0, n_families x walk_block (root motion and ZDM bodies),
-    u16 n_families (0: none), u16 0, n_families x ai.zde_block (ZDE zones and their activation per state),
-    u16 n, u16 0, n x { u16 entry index, u16 0, ai.zde_block }: the entries whose own ZDE zones differ from their
-    family's (2026-11-18: a collide set is each perso's; until then the family's first perso's stood for all: sud0's
-    tomato family took ZOR_CoulisDeTomate's none, so no tomato could be hit or hurt Ed)."""
+def mech_chunk(d, cards, fam_cards, roots=(), sets=(), rows=()):
+    """CMCS (the cast's mechanics and collide sets; core tc_cast_mec.c, docs/ENGINE.md "Moving collision, read"; until
+    2026-11-19 CMEC, whose bodies and zones were per family): u16 n_cards, u16 n_families (= CAST's), n_cards x { u32
+    type (0-12), u32 n_words, n_words x u32 (the card after its type word, raw: as the .ttai CARD chunk) }, n_families x
+    { u16 n_states, n_states x u16 card (0xFFFF none) }, then what is the families' (their states, cards and
+    animations), and what is each perso's (its collide set):
+    u16 n_families (= CAST's; 0: none), u16 0, n_families x roots_block,
+    u16 n_sets, u16 0, n_sets x collide_block (the distinct ones: persos sharing a collide set share its block),
+    u16 n_entries (= CAST's), u16 0, n_entries x { u16 collide set (0xFFFF none), u16 family index (std game +0: what
+    T22 nodes hold; 0xFFFF none) }."""
     out = struct.pack('<HH', len(cards), len(fam_cards))
     for c in cards:
         t = d.un('I', c)[0]
@@ -744,8 +693,7 @@ def mech_chunk(d, cards, fam_cards, own=(), walk=(), zde=(), own_zde=()):
         out += struct.pack('<II', t, n) + struct.pack(f'<{n}I', *d.un(f'{n}I', c, 4))
     for row in fam_cards:
         out += struct.pack(f'<H{len(row)}H', len(row), *row)
-    out += struct.pack('<HH', len(own), 0) + b''.join(struct.pack('<f2BH', r, p, m, f) for r, p, m, f in own)
-    out += struct.pack('<HH', len(walk), 0) + b''.join(walk)
-    out += struct.pack('<HH', len(zde), 0) + b''.join(zde)
-    out += struct.pack('<HH', len(own_zde), 0) + b''.join(struct.pack('<HH', k, 0) + b for k, b in own_zde)
+    out += struct.pack('<HH', len(roots), 0) + b''.join(roots)
+    out += struct.pack('<HH', len(sets), 0) + b''.join(sets)
+    out += struct.pack('<HH', len(rows), 0) + b''.join(struct.pack('<HH', k, f) for k, f in rows)
     return out

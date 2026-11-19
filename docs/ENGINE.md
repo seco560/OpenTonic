@@ -88,8 +88,9 @@ the hook for it.
   character** (tc_main.h: the exe's main-character list): his physics, scripts and the tick around him (run-first
   persos, Ed, the rest: `tc_main_tick`) left the viewer, unchanged (the gate's logs and replay hashes identical). Later
   that day: the cast steps him (`tc_cast_tick`: the run-first pass, the main character's own step through
-  `tc_cast_main_ops`, the rest), and the main character is a **slot** another character can take (`tc_character_ops`,
-  `tc_main_take`): the toy car takes it when Ed gets in and gives it back when he lands (below, "Vehicles"). Proven
+  `tc_cast_main_ops`, since 2026-11-19 his actor's **brain**, tc_brain.h, the rest), and the main character is a
+  **slot** another character can take (`tc_character_ops`, since 2026-11-19 the same brain table; `tc_main_take`): the
+  toy car takes it when Ed gets in and gives it back when he lands (below, "Vehicles"). Proven
   unchanged too, the car ride included (viewcheck's car ride: a hash of Ed's drawing, the car and the camera on every
   frame of a hop in, a drive and a hop out). Then, the same day: **the game goes on while Ed drives** (the cast's passes
   round him riding the car, his scripts asleep, his AI record where the car carries him, the game's clock running: a
@@ -119,7 +120,7 @@ the hook for it.
 - **Perso collision (2026-11-05):** each perso's collision is its own (.ttlv PCOL, tc_obstacle.h), no longer baked
   into the static world. Cast actors pose theirs after each step (state animation, position, tilt); the others stand
   at their frame-0 pose. Ed's sweeps meet them by the exe's rules and tests (below); `FUNC 54` and riding work.
-- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMEC): card types 6 (MoveLift), 7 (pushed and floating things), the
+- **The cast's mechanics** (tc_cast_mec.c, .ttlv CMCS, CMEC before 2026-11-19): card types 6 (MoveLift), 7 (pushed and floating things), the
   walkers 0 / 4 / 12 (below, "Walkers") and the projectiles 10 ("Perso motion"); since 2026-11-13 also 1 2 5 8 11
   through the shared step (tc_mec_perso.c, above). Type 9 still only turns in place (**port**); 3 is the camera,
   outside the cast.
@@ -352,7 +353,8 @@ guards' patrols, Suzy, the mummies, the haricot).
 
 ## Walkers: card types 0, 4, 12 for the cast (2026-11-05 evening)
 - **Data:** CMEC's last part (tools/ttre/cast.py `walk_block`): per family, from its first cast perso, its root motion
-  and ZDM bodies, as Ed's .ttai BODY + ZDMF. A collide set with +0x36 and radius 0 (north's guards) sweeps **a point**
+  and ZDM bodies, as Ed's .ttai BODY + ZDMF. *Since 2026-11-19 (.ttlv CMCS): root motion per family (`roots_block`),
+  the bodies each perso's own (`collide_block`; docs/ARCHITECTURE.md stage 4).* A collide set with +0x36 and radius 0 (north's guards) sweeps **a point**
   at its origin (`MEC_SweepSphere_0043d480` with r = 0: **read**); ai.zdm_sets exported nothing for those before.
 - **Types 0 / 4** (tc_cast_mec.c `walk_step`) run as Ed's walk (tc_ed_ai.c `walk`): riding, the requests (mode 12, mode
   0x14, the air modes) or the animation's root motion, then `tc_mec_walk_step`.
@@ -438,7 +440,8 @@ floating mercury heals. Nearly all of it is Ed's own scripts and the level's; th
   (`tc_viewer_carry.fix_dsg`, `tcv_carry_fix`) and into a saved game (.ttsv FIXD; its dsg26 is player-saved in the exe).
   Ed's points and maximum go through a portal too now (they were reset to the level's).
 - **The mercury** (gen_icon3) gives `AddHitPoints(Ed, 1)` when he is hurt: it worked, but nothing ever hurt him.
-- **Who may force Ed (port, cast.py).** The allow-list stays, plus a rule read from each perso's scripts: every force on
+- **Who may force Ed (port, cast.py).** *Superseded 2026-11-19: every perso may (cast.py KEPT_OFF_MAIN, forcecheck;
+  docs/ARCHITECTURE.md stage 5).* The allow-list stays, plus a rule read from each perso's scripts: every force on
   Ed is one that hands him back (`SAFE_MAIN_FORCES`: the hold B15 + R4 with its release B103, the cheer B41, the button
   B51 / B80, the damage B1 / B101 / B34). It lets in the signposts, the text explainers, the typo spies, the buttons,
   the puzzles' pieces, the damaging enemies and the levels' opening shots (Land's entrance camera, north's flying
@@ -539,6 +542,17 @@ or a column (pyramide), and the player plays that perso.
   drops off its ledge into Ed's start room in its state 50 before and after this change; its scene then waits for Ed
   above z 4: not walked headless).
 
+## The main actor's scripted walks (2026-11-19)
+The GoTo meta-actions (META 2, 3, 20-27: GoToWaypoint, GoOverWay ...) write a direction into the perso's request
+(proposal [7..9]) and ask for mode 0x14; the speed [10] is not theirs (`FUN_0049f580`): it is the script's, or what
+`GAM_0042a8d0` feeds before the AI from the playing state's root motion (`DNM_RequestWalk_004ae392` mode 0x14 moves at
+that speed). The port fed it to the cast's actors (`root_to_proposal`) and, for the main actor, only in META 12. Ed's
+B108 (`GoToWaypoint?(dsg98)` after B75, forced on him by sud0's walk-in director SRU_ForceToWalk1, pyramide's
+sarcophagi YAS_Sarcoport*, and as the skier's finish on skymap) asked for speed 0: he turned towards the point and
+stood for good. Now (tc_ai.c `go_along`): the main actor's request takes the state's root speed where no script set one
+(a script's SetSpeed stands: the arches' walk-ins, carota's helm, the tower lever, the ruby guide). **Port**, in
+effect: the exe's feed runs every tick for everyone; the port's for Ed only where a GoTo needs it. Found by forcecheck.
+
 ## Collide sets are each perso's (2026-11-18; **read** unless marked)
 A perso's collide set (+0x14) is its own; the cast exported a family's mechanics bodies (ZDM) and ZDE hit zones from the
 family's **first** perso. sud0's tomato family's first is ZOR_CoulisDeTomate, with neither: no tomato had a body (every
@@ -551,6 +565,10 @@ could not hit them, their touch could not hurt him). Fixed (cast.py; core tc_cas
   tomato's roll, `If Not NoContact`, never ended);
 - the family's per-state ZDM bodies come from a perso of it that has them (the marsh chameleon's sphere r 1 at 0.9);
 - an entry whose own ZDE zones differ from its family's carries them (CMEC's last tail).
+- *2026-11-19 (stage 4):* all of a collide set is each perso's by construction: .ttlv CMCS holds the distinct collide
+  sets (sphere, +0x34 / +0x35, ZDM bodies per state, ZDE zones) and each entry names its own; no perso stands for its
+  family. The exe's sweep reads the perso's own set (`MEC_SweepZones_0043bff0`: `so->perso->collset`). It moved 31
+  walkers off a borrowed body (they glide: no ZDM of their own) and one of Land's stones onto its own sphere.
 How far it reached (the re-export): 104 cast persos of 11 retail levels have ZDE zones other than their family's
 first perso's (sud0 20, pyramide 27, carota 11, cock01 11, Land 10, BigBoss 10 ...); every one of them was hit-tested
 with someone else's zones before. Beyond the tomatoes none was probed one by one: enemies that "could not be hit" or
@@ -1166,6 +1184,10 @@ menucheck`): the core keeps the screens and lays them out; the frontends draw tw
   0.11 rad/s one way or the other, rising and falling, a zoom of 3-9 picked from a hash of the clock, not the viewer's
   rng), everything back as it was on closing. The SDL build bakes the swirls' translucency into the picture (its overlay
   pipeline has no blend factor; no shader change).
+  The HUD shows under the dim and the swirls, as the original's pause shows it (the user, 2026-11-19): behind the game
+  menu its standard elements slide in at the game's tick even when auto-hide has them out (`tc_hud_slide`, tc_viewer.c
+  `game_menu_hud`), and back in the game auto-hide slides them out again. Both frontends draw the menu over the HUD, so
+  the dim dims it. Photo mode (P) still has none. Checked in hudcheck.
 - REPLAYS (the recordings, the original demos) is in EXTRAS, below TONIC VIEWER (the user; the levels grid's button
   is gone); its Back is the main menu (the frontends open the menu afresh). Cmd-L / Ctrl+L are Tonic Viewer's alone: a level of the grid back to the grid,
   the grid to the main menu; nothing in a game, on the menus or in a playback.
@@ -1275,8 +1297,8 @@ LibertyCity2001 is a GTA III car mod (files/sources/Vehicles/manana: the Mazda M
   layer skips a level whose edits are already in it (CUST holds their digest), so a re-run doesn't rewrite Liberty City.
 - **Core:** core/include/tonic/custom/tcx_vehicle.h, core/src/custom/tcx_vehicle.c (the car, the ride), tcx_play.c (its
   part of the play session: the viewer's hooks; since 2026-11-13 the car Ed is in is the main character, tc_main.h's
-  slot: `tcx_update` moves the cars and boards one, the car's `tc_character_ops` hop him in, drive, hop him out and give
-  the slot back), tcx_level.c (VEHI) (second pass 2026-11-12, "tighter, more engaging and realistic"). Fixed
+  slot: `tcx_update` moves the cars and boards one, the car's brain (tc_brain.h; `tc_character_ops` until 2026-11-19)
+  hops him in, drives, hops him out and gives the slot back), tcx_level.c (VEHI) (second pass 2026-11-12, "tighter, more engaging and realistic"). Fixed
   1/60 s ticks: a rear-wheel-drive engine whose push falls off with speed against aero drag (0-100 km/h in 5 s, about
   150 km/h top), brakes into reverse; two axles whose tyres push sideways with their slip angle up to a grip limit (about
   15 u/s^2; 12 felt too slippery to the user), the yaw from the two about the centre of mass: it runs wide at the limit (the front's limit a little under

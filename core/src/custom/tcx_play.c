@@ -344,6 +344,7 @@ const tcx_vehicle *tcx_play_vehicle(const tcx_play *x, uint32_t i) { return x &&
 
 const tcx_ride *tcx_play_ride(const tcx_play *x) { return x ? &x->ride : NULL; }
 
-static const tc_character_ops car_ops = {car_frame, car_camera_target, car_status, car_abort};
+static const tc_brain_ops car_brain = {
+    .frame = car_frame, .camera_target = car_camera_target, .status = car_status, .abort = car_abort};
 
-const tc_character_ops *tcx_character(void) { return &car_ops; }
+const tc_brain_ops *tcx_character(void) { return &car_brain; }

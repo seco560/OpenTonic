@@ -114,7 +114,7 @@ static void read_sample(const tc_viewer *v, uint32_t frame, tc_rec_sample *s) {
         s->ed_hash = fold(hash_perso(1, &d->ai));
         if (d->ai.running_reflex) s->flags |= TC_RS_REFLEX;
     }
-    s->sector = tc_viewer_ed_sector(v);
+    s->sector = tc_viewer_main_sector(v);
     s->camera_sector = v->light_sector;
     s->viewer_phase = g ? (uint32_t)g->phase : 0;
     s->light_set = v->light_set;
