@@ -21,6 +21,7 @@ Why it exists: docs/FINDINGS.md item 4.
 | What happened | `core/build/replay timeline FILE`: levels, marks, settings, behaviours, hit points, deaths, sectors, story values |
 | The trail as a table | `core/build/replay csv FILE`, for plots |
 | Does it still play the same | `core/build/replay check [-d DIR] FILE...` |
+| Look closer at a moment | `core/build/probe -r FILE SECONDS COMMAND...`: plays it to that time of the session, then takes over (watch persos, press, place Ed: docs/OVERVIEW.md "The probe") |
 | Keep one as a regression test | copy it to `files/recordings/`: `make -C core replaycheck` runs them all |
 
 `make -C core replay` builds the tool, and it runs from `core/`. Size: about 37 MB an hour, measured on a 60 s demo run

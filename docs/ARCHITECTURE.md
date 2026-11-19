@@ -112,7 +112,7 @@ build cannot be fully built here (no glslangValidator), so half the duplicate is
 
 ### 3.9 Debugging is rebuilt every session
 Each session writes the same scratch probes (place Ed, press a button, print a perso's behaviour/state/HP: today
-hitprobe, sceneprobe, champrobe, hintprobe, cardprobe) and then throws them away.
+hitprobe, sceneprobe, champrobe, hintprobe, cardprobe) and then throws them away. Since 2026-11-19: core/tests/probe.c does what they did.
 
 ## 4. A plan to rein it in
 
@@ -121,6 +121,8 @@ recordings with frame hashes (docs/RECORDING.md); stages 1-3 change nothing a pl
 
 1. **A probe tool** (small, first): core/tests/probe.c with subcommands (`probe LEVEL place X Y Z press action watch
    ID ...`), kept in the tree. Pays for itself in every later stage.
+   *Done 2026-11-19:* `core/build/probe` (docs/OVERVIEW.md "The probe"): a script of commands on a level or from a
+   moment of a recording; levels followed through portals; `probecheck` in the gate runs every command once.
 2. **Split the game session out of the viewer.** A `tc_game` (game rules: the tick, speech, hint scenes, HUD state, level
    changes, saves, sound picks) that tc_viewer *uses*; tc_viewer keeps camera, drawing, menus, debug, tapes. No
    behaviour change; the 115 reaches into the driver go through a handful of tc_game calls. tc_save stops including the

@@ -97,9 +97,29 @@ The direction is to fold each back into the cast, one subsystem at a time (docs/
 
 ## How it is checked
 
-`make -C core checkall` is the gate: fourteen headless checks on the real levels (walking, skiing, portals, sectors, the
-camera, the cast, replays, the debug menu, the HUD). They prove the build has not changed against what was measured before; they do not prove it
+`make -C core checkall` is the gate: seventeen headless checks on the real levels (walking, skiing, portals, sectors, the
+camera, the cast, replays, the debug menu, the HUD, the menus, sound, the probe's smoke run). They prove the build has not changed against what was measured before; they do not prove it
 looks or feels right. Only a playtest does.
+
+**The probe (2026-11-19, `core/tests/probe.c`; docs/ARCHITECTURE.md stage 1).** For looking into one thing, not for
+the gate: a level played headless under a script of commands given on the command line or in a file, printing a line
+whenever a watched perso's behaviours, state, hit points or activity change. It replaces the scratch probes each
+session used to write and throw away. `make -C core probe`, run from `core/`:
+
+```
+build/probe sud0 near HEG_TomateKamikaze1 3 watch 64 watch ed aim 64 pulse shoot 0.66 run 5 skipped 64
+build/probe sud0 watch game portal 2 run 14             # through the arch into bar: the level change is followed
+build/probe -r ~/Library/.../Recordings/FILE.ttrec 90 watch ed run 5   # a recording up to 90 s, then the commands
+build/probe -f my.probe                                 # words from a file, '#' comments (tests/probecheck.probe)
+```
+
+Persos are named by id, instance name or family name (from `LEVEL_cast.txt`), or `ed`; `game` watches speech, the
+camera's target, the main character, the transition phase, the powers. The commands: place Ed (`place`, `near`, `at`,
+`portal`, `face`, `aim`), drive him (`hold`, `tap`, `pulse`, `stick`, `free`), run (`run`, `frames`, `until P B S`),
+print (`watch`, `every`, `show`, `info`, `list`, `portals`, `skipped`), set (`power`, `value`, `hp`, `setdsg`, `dsg`
+to read). The full list is the head of probe.c. It drives the viewer as a frontend does (60 frames a second, a draw
+each frame, the HUD, a 16:9 window), so what it shows is what a play session does with those inputs; it bypasses
+nothing but the window. `make -C core probecheck` (in the gate) runs every command once on sud0, so it keeps working.
 
 `make -C core perfcheck` is not in the gate: it times the core's own work per frame (`tc_prof.h`), headless, on sud0,
 LibertyCity2001 (walking and free-fly) and the biggest SSX course, and prints the draws and triangles handed to the GPU.

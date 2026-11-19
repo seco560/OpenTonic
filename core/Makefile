@@ -22,6 +22,8 @@
 #   make perfcheck  -> where a frame's time goes (tc_prof.h) on sud0, LibertyCity2001 and an SSX course: informational, not
 #                      in the gate (timings vary); compare runs on one machine before and after a change
 #   make replay     -> build/replay: a recording's info, timeline, csv, check
+#   make probe      -> build/probe: a level played headless under a script of commands (place Ed, press, watch persos);
+#                      docs/OVERVIEW.md "The probe". make probecheck: its smoke run on sud0 (in the gate)
 #   make CC=arm-vita-eabi-gcc AR=arm-vita-eabi-ar lib   (cross-compile just the library)
 #   make CUSTOM=0 ...  -> the same without custom gameplay (src/custom: ours, not the game's; include/tonic/custom/tcx.h),
 #                      into build-nocustom: `make CUSTOM=0 checkall` shows the game doesn't lean on any of it
@@ -44,7 +46,7 @@ SRC := $(wildcard src/*.c) $(wildcard src/custom/*.c)
 endif
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay $(BUILD)/probe
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -107,6 +109,9 @@ $(BUILD)/tapecheck: tests/tapecheck.c $(BUILD)/libtoniccore.a
 $(BUILD)/replay: tests/replay.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
+$(BUILD)/probe: tests/probe.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -152,6 +157,12 @@ tapecheck: $(BUILD)/tapecheck
 
 replay: $(BUILD)/replay
 
+probe: $(BUILD)/probe
+
+# The probe's commands, once each, on sud0: it must get through them all (exit 0).
+probecheck: $(BUILD)/probe
+	$(BUILD)/probe -f tests/probecheck.probe -d ../files/out/ttlv
+
 RECORDINGS := $(wildcard ../files/recordings/*.ttrec)
 replaycheck: $(BUILD)/replaycheck $(BUILD)/replay
 	$(BUILD)/replaycheck ../files/out/ttlv
@@ -172,7 +183,7 @@ menucheck: $(BUILD)/menucheck
 	$(BUILD)/menucheck ../files/out/ttlv
 
 # The gate. Each check runs whatever the others did; a red line names its log.
-GATE := check mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck
+GATE := check probecheck mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck
 SE_TTLV := ../files/out/se/ttlv
 checkall: all
 	@mkdir -p $(BUILD)/logs; failed=""; \
@@ -189,4 +200,4 @@ checkall: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay clean
+.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay probe probecheck clean
