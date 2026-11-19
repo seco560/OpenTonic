@@ -373,6 +373,11 @@ the dump never decompiled, disassembled; the camera's sud0 scripts dumped with `
   turned by the angle table of `FUN_004a3760`, k pi / 4 all round; variants when the camera is above the pivot; one
   behind the target's velocity), sorts them (`FUN_004a4660`, not decoded), validates them (`FUN_004a4bb0`) and cuts
   (`FUN_004a5c60`).
+- **The camera's collide set** (read from the data 2026-11-20): the fix camera StdCamer's has priority **74** and meets
+  persos (+0x35), Ed's 127. Its sweep meets a perso's meshes only when their priority is 74 or less (`FUN_0043c640`; above
+  it, their ZDR zones only). Port until 2026-11-20: the camera's sweep took the world's settings as the last mover left
+  them (Ed's 127, his `self`), and met every perso Ed meets. Now .ttlv PCOL's tail carries the camera's (ttlv.py
+  `perso_collision`; `tc_pcol.camera_*`), and tc_cam.c `clear_distance_r` sweeps with them, itself none.
 - **What the camera sees is the drawn geometry:** its ray (`FUN_004a3a00` -> `FUN_00484210`) tests the visual objects
   (`GLIGLOU_004427d0`) of the camera's and the target's sectors, and the persos in them (`FUN_004a3920`).
 - **CameraFlag (PROC 184)** masks: word 0 (+0x94) bits 1..7 = 1, 2, 4, 0x10, 0x200, 0x400, 0x800; word 1 (+0x92)

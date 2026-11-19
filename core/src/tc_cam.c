@@ -126,8 +126,18 @@ static float clear_distance_r(const tc_cam_target *t, tc_vec3 pivot, tc_vec3 dir
     body.spheres[0].rebound = 1;
     body.spheres[0].grip = 1;
     body.count = 1;
-    if (tc_mec_sweep(world, &body, 0, pivot, tc_v3_add(pivot, tc_v3_scale(dir, distance)), &hit))
-        d = fminf(d, fmaxf(0, hit.t * distance - 0.02f)); /* just short of touching */
+    {
+        /* the camera's own collide set (2026-11-20): before, the sweep took the player's (priority 127) left on the world
+         * and met every perso Ed meets (the user's "camera clipping" walking past persos and grass: the eye pulled in at
+         * once against collision nothing draws); the exe's camera (StdCamer, 74) passes through those of 75 .. 127 */
+        int32_t self = world->self, ignore = world->ignore;
+        uint8_t prio = world->self_priority;
+        bool meets = world->self_meets, hit_found;
+        if (t->use_priority) world->self = world->ignore = -1, world->self_priority = t->priority, world->self_meets = t->meets;
+        hit_found = tc_mec_sweep(world, &body, 0, pivot, tc_v3_add(pivot, tc_v3_scale(dir, distance)), &hit);
+        world->self = self, world->ignore = ignore, world->self_priority = prio, world->self_meets = meets;
+        if (hit_found) d = fminf(d, fmaxf(0, hit.t * distance - 0.02f)); /* just short of touching */
+    }
     if (tc_collision_raycast(world, pivot, dir, distance + radius, &h))
         d = fminf(d, fmaxf(0, h.distance - radius));
     if (least) *least = fminf(out, d);

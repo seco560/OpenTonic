@@ -51,13 +51,20 @@ Left out (they don't start the walk-in or the cover): `GenTransitionSubMap` (zon
 
 Exe: `ChangeLevel` = PROC 7 -> `GAM_Basic_004105f0` (store the name, engine state 7); `PROC_29` -> `GAM_Basic_00410640`
 (the same plus the two names, `GAM_Basic_0040f670`); `PROC_8` -> engine state 0x1B (teleport); `PROC_242(deg)` =
-`FUN_0048ba00`: the perso's rotation about Z = deg x pi/180 - pi/2 (wrapped), i.e. set the heading.
+`FUN_0048ba00`: the perso's rotation about Z = deg x pi/180 + pi/2 (wrapped below 2 pi), i.e. set the heading (a mode 5
+mechanics request; the constant subtracted, `DAT_004d2ce8`, is -pi/2: read as - pi/2 until 2026-11-20, which turned
+every arrival 180 degrees).
 Not portals but the same mechanism: `GenTransitionSubMap` persos (Land, zone-triggered PROC_8 teleports via
 `GameAction2` / `GameState63`), `ChangeMapDebut/Fin` (Land -> bigboss), Ed's B59 (`ChangeLevel('land')` when
 dying), Doc's `PROC_29('transit', ...)` (the training levels).
 
 ### Arrival
-Ed lives in the fix, so his dsgvars survive the level change. The new level starts him in **B63**: with
+Ed lives in the fix, so his dsgvars survive the level change, and so does the clock they keep their times by (GetTime:
+the engine's timer, not restarted by a level change: **inferred**). The port carries it (`tc_game_carry.clock_ms`, since
+2026-11-20); before, each level restarted Ed's clock at 60 s and a time stored just before a portal lay in the future:
+his blink after a hit (dsg50 + dsg51 ms, ended by R0 and 19 other reflexes, not by a hold's R4) and its invulnerability
+stayed on for as long as the last level had run. cavedoc's opening showed him see-through to XYZ (the hold's B42 sets
+127 while dsg47 is on). The new level starts him in **B63**: with
 `dsg134 == 2` it sets his heading (`PROC_242(dsg136)`) and plays **state 229 (stepping out of the portal)**; with
 `dsg134 == 1` it puts him at a saved position (`dsg139`, camera `dsg140`). Then normal play (B79). The engine starts
 the **reveal** transition after every level load (`GAM_Initeng_0040de70`) and after a PROC_8 teleport

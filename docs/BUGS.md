@@ -28,6 +28,18 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     record; with 0, the default: 8 units, 0.6 rad), and the camera never keeps such a value (docs/CAMERA.md "The
     directors' shots"). camcheck rides the lift.
 
+* Playtest 2026-11-19 (the user, recording 2026-11-19_235319_metal.ttrec): carota's green bean falls off his ledge
+  and the game softlocks; Ed faces away from the corn before its fight; Ed see-through talking to XYZ in cavedoc;
+  camera clipping through persos (entry "Camera Inside Persos" above).
+  * **2026-11-20 (Claude), headless; re-exported.** (1) The bean (Gun_HarryCover): the port kept a held animation's
+    root motion (docs/ENGINE.md "Perso motion"): he walked off while his rule waited; fixed, the recording now plays his
+    scene out and frees Ed. (2) SetHeading (PROC 242) had its pi / 2 the wrong way round (docs/PORTALS.md): every
+    arrival, portals included, turned 180 degrees; the corn's arch now faces Ed at the corn. (3) Ed's clock restarted
+    at each level while his dsgvars' timestamps came along: a blink after a hit (and its invulnerability) could last
+    over a minute past a portal; carried now. **Not fixed:** the see-through at XYZ: the portal walk-in B66 turns the
+    blink on (dsg47 = 1), XYZ takes Ed 0.1 s after the arrival and his talk hold (R21, B42) keeps it on and shows it;
+    by the scripts as read the exe would do the same unless R0 runs a tick first, and no reason for that is found.
+
 * Camera Inside Persos (the user, 2026-11-13; written down by Claude from the user's report): whenever Ed collides with another perso, the camera clips through it and shows its inside. Try walking into Suzy or the tomato in sud0. An earlier fix (2026-11-11: the sight test puts the eye beyond a character Ed overlaps, `tc_cam_sight_fn`'s `inside`, core/src/tc_viewer_camera.c) did not cover it fully.
   * **Partly fixed 2026-11-13 (Claude), awaiting a playtest.** Measured (camcheck "walking into Suzy and the tomato": Ed
     walks into each from 8 sides, and backs into it, 3 s each): Suzy and the tomato have no collision of their own (no
@@ -38,6 +50,14 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     the one seen a scripted shot's eye. Left: while Ed stands inside one of them the camera puts itself beyond it,
     as before (51 frames with the character between his head and the eye). Making Ed collide with characters that have
     no collision of their own would be a port choice (by the exe's rules as read he walks into them): not done, ask the user.
+  * **2026-11-20 (Claude), headless; re-exported.** The user: still seen in recording 2026-11-19_235319, "when we go
+    through other persos, even the blades of grass that have some sort of collision". Found and fixed: the camera's
+    sweep met persos with Ed's collide set (priority 127) instead of the camera's own (StdCamer, 74; docs/CAMERA.md).
+    Measured on the recording replayed exactly (a scratch build; probe `PROBE_CLIP=1` / `PROBE_CAMCUT=1`, new): the
+    eye inside an opaque perso 13 frames in 20 minutes (a turnip and a mushroom tree in sud0, the close-up beside
+    them), the near plane in one 66 frames (Doc, a tree, a door, the kamikaze tomato), 79 sudden pull-ins of the eye
+    (most a director handing back or level geometry). No grass perso in these levels: **which moments the user means
+    is not known yet** (ask for the recording's times).
 
 * North Plain Zone Teleport Loop (the user, 2026-11-18, recording 2026-11-18_103949_metal.ttrec, at 81 s and 124 s):
   after a zone teleport (the "walk-in arches" between the north plain's parts) Ed is put back at the arrival point

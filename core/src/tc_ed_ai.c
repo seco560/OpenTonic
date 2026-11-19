@@ -51,6 +51,7 @@ tc_result tc_ed_ai_init(tc_ed_ai *e, const tc_ai_model *model, tc_player *player
     e->mechanics = NULL;
     e->mechanics_user = NULL;
     e->cast_portals = false;
+    e->sight = NULL; /* the host sets it (tc_game); NULL: FUNC 162 casts on the player's world */
     e->camera = -1;
     e->run_scale = 2.0f;  /* run (state 10) 4.5 -> 9.0 u/s: a little under the old controller's 9.9 (user) */
     e->walk_scale = 1;    /* walk (state 1) 3.5 u/s, already close to the old 3.3 */
@@ -445,11 +446,12 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     /* report_seen's perso bits (COND 37) and the perso he rides (FUNC 54: with both bits, his carrier) */
     a->report_high = (e->dyn.walk.report | e->dyn.walk.report_prev) & TC_MEC_ON_PERSO;
     a->standing_on = a->report_high == TC_MEC_ON_PERSO && e->dyn.walk.carrier > 0 ? e->dyn.walk.carrier : 0;
-    a->world = p->world;
+    a->world = e->sight ? e->sight : p->world;
     /* The material conditions read the collide flags of Ed's own part that made the contact (ContactRecord +0x70):
      * the walk's, which flight and swimming do not update */
     a->ground_material = e->dyn.card_type == 1 || e->dyn.card_type == 5 ? 0 : e->dyn.walk.ground_own;
     a->wall_material = e->dyn.card_type == 1 || e->dyn.card_type == 5 ? 0 : e->dyn.walk.wall_own;
+    a->ground_kind = e->dyn.walk.ground_kind, a->wall_kind = e->dyn.walk.wall_kind, a->perso_kind = e->dyn.walk.other_kind;
     if (e->camera >= 0) a->other_positions[e->camera] = camera;
     /* dynamics +0x2BC / +0x2C0: the lagged attack / bank in flight, the lagged polar angle / heading swimming */
     a->report_2bc = e->dyn.card_type == 1 ? e->dyn.swim.polar_lagged : e->dyn.fly.attack_lagged;

@@ -185,7 +185,7 @@ static void launch(tc_cast *c, tc_cast_actor *a, uint32_t ch) {
     g = &c->actors[a->generated];
     a->generated = -1;
     if (!g->ai->model || g->ai->dead || g->ai->active) return;
-    if (!tc_cast_pose(c, a, 1, &w, &an, &sm) || ch >= an->channel_count) return;
+    if (!tc_cast_pose(c, a, 0, &w, &an, &sm) || ch >= an->channel_count) return;
     m = tc_m34_mul(&w, &an->transforms[(size_t)sm.s0 * an->channel_count + ch]);
     at = tc_v3(m.m[3], m.m[7], m.m[11]);
     front = tc_v3(-m.m[1], -m.m[5], 0);
@@ -796,7 +796,7 @@ static void root_to_proposal(tc_ai_perso *p) {
     const tc_ai_state *st = &p->model->states[p->state];
     float *pr = p->motion.proposal, len;
     tc_vec3 row;
-    if (!st->root_count) return;
+    if (!st->root_count || p->state_ended) return; /* held at its end: no frame passes (tc_mec_root_motion) */
     row = p->model->root[st->root_first + (p->state_frame > 0 ? (uint32_t)p->state_frame % st->root_count : 0)];
     row = tc_v3_scale(row, (float)p->frame_rate); /* units per animation frame -> per second, as ground_wanted */
     if ((len = tc_v3_length(row)) == 0) return;
@@ -871,7 +871,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         p->main_distance2 = d2;
         p->time_ms = c->main ? c->main->time_ms : p->time_ms + (uint32_t)(dt * 1000 + 0.5f);
         if (d2 <= TC_CAST_NEAR * TC_CAST_NEAR) p->near_main_ms = p->time_ms ? p->time_ms : 1;
-        p->world = c->world; /* FUNC 162's probe: the static world */
+        p->world = c->sight ? c->sight : c->world; /* FUNC 162's probe: the static world as drawn */
         think = (p->radius2 < 0 || p->radius2 > d2) && !p->frozen; /* GAM_PersoFrame_0042b520; frozen: a prop */
         if ((a->entry->flags & TC_CAST_TALK) && !a->talking) { /* port: its scene waits for him */
             a->talking = c->talk_press && tc_cast_talk_reach(c, a, main_pos);

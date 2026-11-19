@@ -11,6 +11,29 @@
 #include "tonic/custom/tcx.h"
 #include "tc_prof_hooks.h"
 
+/* tc_game.sight: the static meshes' triangles as drawn (engine space). Out of memory: left empty. */
+static void build_sight(tc_collision *col, const tc_level *l) {
+    uint32_t i, k, n = 0;
+    tc_vec3 *v;
+    for (i = 0; i < l->mesh_count; i++) n += l->meshes[i].index_count / 3;
+    if (!n || !(v = (tc_vec3 *)tc_calloc((size_t)n * 3, sizeof(tc_vec3)))) return;
+    n = 0;
+    for (i = 0; i < l->mesh_count; i++) {
+        const tc_mesh *m = &l->meshes[i];
+        for (k = 0; k + 2 < m->index_count; k += 3) {
+            uint32_t j;
+            for (j = 0; j < 3; j++) {
+                uint32_t x = m->indices[k + j];
+                const float *q = x < m->vertex_count ? m->vertices[x].position : m->vertices[0].position;
+                v[n * 3 + j] = tc_v3(q[0], q[1], q[2]);
+            }
+            n++;
+        }
+    }
+    if (tc_collision_init(col, v, n * 3, NULL) != 0) memset(col, 0, sizeof(*col));
+    tc_free(v);
+}
+
 tc_game *tc_game_create(const tc_game_desc *desc) {
     const tc_level *l = desc->level;
     const tc_game_carry *carry = desc->carry;
@@ -28,6 +51,7 @@ tc_game *tc_game_create(const tc_game_desc *desc) {
         return NULL;
     }
     tc_collision_set_sectors(&g->world, l->sectors.collision_sector, l->sectors.collision_count, l->sectors.count);
+    build_sight(&g->sight, l);
     tc_main_init(&g->main, l, &g->world, desc->ai_data, desc->ai_size, desc->level_name, &g->ai_result);
     if (g->main.has_driver && l->cast.count) {
         tc_result r;
@@ -59,6 +83,10 @@ tc_game *tc_game_create(const tc_game_desc *desc) {
         if (g->has_cast) tc_cast_set_obstacles(&g->cast, &g->obstacles);
     }
     if (g->has_cast) g->cast.world = &g->world;
+    if (g->sight.tri_count) {
+        if (g->has_cast) g->cast.sight = &g->sight;
+        if (g->main.has_driver) g->main.driver.sight = &g->sight;
+    }
     g->use_ai = g->main.has_driver;
     g->custom = tcx_play_create(l, desc->ai_data, desc->ai_size, &g->world, &g->obstacles, desc->perso_first);
     g->main.custom = g->custom;
@@ -84,6 +112,7 @@ void tc_game_free(tc_game *g) {
     tc_main_free(&g->main);
     tcx_play_free(g->custom);
     tc_collision_free(&g->world);
+    tc_collision_free(&g->sight);
     tc_obstacles_free(&g->obstacles);
     tc_free(g->carry);
     tc_free(g);

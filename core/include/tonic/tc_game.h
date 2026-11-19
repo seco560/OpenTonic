@@ -75,6 +75,13 @@ typedef struct tc_game_carry {
      * them. Kept at the end (a recording's older carry reads as 0). */
     uint32_t fix_dsg_size;
     uint8_t fix_dsg[TC_GAME_CARRY_FIX_DSG];
+    /* Ed's clock (GetTime, tc_ai_perso.time_ms) as the last level left it; 0: the level's own start. His dsgvars come
+     * along with their timestamps (dsg50, the blink after a hit: TimeElapsed(dsg50, dsg51)), which only mean something
+     * on a clock that goes on; the exe's engine timer is not restarted by a level change (**inferred**: GetTime reads
+     * the engine's running timer). Until 2026-11-20 every level restarted it at 60 s, and a hit just before a portal
+     * left his blink (and its invulnerability) on for as long as the last level had run: cavedoc's opening showed him
+     * see-through to XYZ. Kept at the end (a recording's older carry reads as 0). */
+    uint32_t clock_ms;
 } tc_game_carry;
 
 /* Where the game is between levels and screen transitions (docs/PORTALS.md): playing, covering the screen, covered,
@@ -133,6 +140,9 @@ typedef struct tc_game {
     const tc_level *level;
     /* The world and who is in it. */
     tc_collision world;
+    /* The static world's drawn triangles (tc_level.meshes), for the scripts' ray FUNC 162: the exe's (FUN_00484130) walks
+     * the sectors' objects' visual geometry (LOD 0), not their collision. Empty when out of memory (then: world). */
+    tc_collision sight;
     tc_obstacles obstacles;      /* the persos' own collision (.ttlv PCOL), met by Ed's sweeps (world.obstacles) */
     tc_main main;                /* the main character: Ed, his physics and his scripts (tc_main.h) */
     tc_cast cast;                /* the level persos that run their own AI (.ttlv CAST), with Ed as the main actor */

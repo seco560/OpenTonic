@@ -45,6 +45,7 @@ void tc_game_arrive(tc_game *g, const tc_game_carry *c) {
     uint16_t i;
     if (!m) return;
     if (c->dsg_size && c->dsg_size == m->dsg.size && g->main.driver.ai.dsg) memcpy(g->main.driver.ai.dsg, c->dsg, c->dsg_size);
+    if (c->clock_ms) g->main.driver.ai.time_ms = c->clock_ms; /* his timestamps' clock goes on (tc_game_carry.clock_ms) */
     if (c->has_progress && g->has_cast) { /* before the cast's first tick: its scripts' first tests see them */
         tc_ai_globals *gl = &g->cast.globals;
         gl->lives = c->lives;
@@ -139,6 +140,7 @@ void tc_game_update_portals(tc_game *g, float dt, const tc_game_view *view) {
             tc_copy_text(c->camera_place, sizeof(c->camera_place), scene ? NULL : ev->camera_place);
             c->dsg_size = m->dsg.size <= TC_GAME_CARRY_DSG && e->ai.dsg ? m->dsg.size : 0;
             if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
+            c->clock_ms = e->ai.time_ms;
             c->vertical_fov = view->vertical_fov;
             c->orbit_distance = TC_CAM_PORTAL_DISTANCE; /* not the wheel's zoom: a fixed close start (tc_cam.h) */
             c->closeup = view->closeup;

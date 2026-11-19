@@ -389,6 +389,13 @@ ProposalVecA := V (`AI_00488070`). Ed's projectile is `LOL_Actor1` (gen_abeille,
   is the **squared** distance from the perso to a point. The port had both wrong (a local point, a length), which hid
   each other in Ed's uses (B29 fired with the wall further than 10 instead of 3.2, B82 climbed within 2.25 instead of 1.5)
   and broke the bee's wall test. Fixed; north / cavedoc / Land's hang runs are unchanged.
+  **2026-11-19, the ray read** (`0x49c690`, not a Ghidra function: disassembled): `FUN_00484130` along origin + offset ->
+  + direction against the perso's own sector's SuperObject tree (`FUN_00483dc0`; any hit there wins), else the nearest
+  over its sector's collide list; per object `FUN_0047a8f0` -> `FUN_004611b0` (elements 1, 2, 7, 8, 9) -> `FUN_004687a0`
+  (plane, t >= 0, the side noted) -> `FUN_00460350`, which keeps **front faces only**, nearest first. The geometry: each
+  object's LOD 0 (`FUN_004427d0` -> +0xC), its drawn mesh. **Port:** tc_game.sight, the static meshes' triangles as
+  drawn, front faces (tc_collision_raycast_front), nearest overall, reach 1000; not ported: the own-sector-first rule,
+  the persos' parts, the objects' bounds gating against the segment.
 **Port** (tools/ttre: `LevelData.spawnables`, `perso_ids`, ai.py `zde_block`; core: tc_ai.c ZDE section, tc_cast.c
 `cast_spawn` / `cast_each`, tc_cast_mec.c `projectile_step`):
 - The templates are cast entries with flag SPAWN (64), ids after the level's persos (the scripts' perso nodes name them:
@@ -582,7 +589,15 @@ and the state's card type turns those into motion.
 
 **Before the AI, the animation (`GAM_0042a8d0`, from `GAM_PlayAnim_Update_00415c00`).** A playing animation with root
 motion this frame writes the proposal's direction [7..9] (unit) and speed [10] (its length, units per second:
-`GAM_004170d0` scales the frame's displacement by 1 / (ms x 0.001)) and queues mode 12. That is the default way a perso
+`GAM_004170d0` scales the frame's displacement by 1 / (ms x 0.001)) and queues mode 12. **The displacement is the frames
+passed this tick** (re-read 2026-11-20): `GAM_004170d0` sums the A3D frame vectors from the last tick's frame (3dData
++0x7C) to this one's (+0x74), the partial frames at either end weighted by their fraction. An animation held at its end
+(no repeat, no next state: `state_ended`) passes no frame and moves nothing. **Port:** the current frame's vector x the
+frame rate (the same while it plays); until 2026-11-20 a held animation kept that row every tick and walked on for as
+long as a rule waited: carota's Harry Cover (B0's rule: `ChangeStateAndWait(state 2)`, then a 10-frame turn and 750 ms
+with the patrol's schedule skipped, AI_0048eb20) went 3.7 units on along his heading and off his ledge, and the scene
+that holds Ed never came back up (the user's recording 2026-11-19_235319, 10.75 s into carota: a softlock). Now none
+while held (tc_mec_root_motion, root_speed, root_to_proposal, ground_wanted); the same recording plays the scene out. That is the default way a perso
 walks. A zero row writes nothing and queues nothing, so the old speed stays.
 
 **The go-to core (`FUN_0049f580`) keeps that speed.** It drops this frame's mode 12, overwrites only the direction, and
@@ -683,11 +698,27 @@ step_begin would drop them before its mechanics saw them); Ed's mechanics now ho
 as the cast's walkers did.
 Checks: viewcheck's guide (the toasters' speeds), portalcheck's sud0 passage (Ed hidden, then seen again), a scratch
 probe of Transit (the six platforms count; SDO_ContentVol1 reaches its B2; before: none did).
-**Open** (seen on the way, cavedoc's toasters): the toast (JET_ToastMortelle, card type 10, 22 u/s) flies at Ed with
-his lead but nothing hurts him (his hurt flow is his dsg0, set by what hits him: not traced for the toast); the port
+**cavedoc's toasts burn Ed (2026-11-19, the user's request; read unless marked).** The toast (JET_ToastMortelle, card
+type 10: gravity factor 0, mode 0x15 sets its velocity once, it flies straight, as the port had it) aims at Ed's x y at
+the guide's height + 6, the guide's deck being 5.36 above its origin (its collision): Ed's middle. It has no ZDE zone of
+its own; its mesh object's physical object holds one at collide set +8 (a 2.5 box, material 0x80, burnt). Ed's R0
+`CollectNearby(dsg96, 6, 0x80)` finds it through `FUN_0041fd00`'s second path: when none of a perso's own ZDE zones
+met, the ZDE geometry of each of its channel objects (child SuperObjects of type 0xB / 0x14, physical object +4 -> +8;
+`FUN_0041f060` picks the element whose material passes the mask), at the child's matrix. Two port gaps hid it: that
+path was not exported (now ai.py `part_zones`: zones flagged 1 in the ZDES block, posed at frame 0 of the initial
+animation (**port**), met only as the other perso's, tc_ai.c `zde_zone_of`), and the port kept 4 perso lists per perso
+(TC_AI_MAX_LISTS) while Ed's R0 fills 6 (dsg92-97): his burn list never ran, nothing could burn him anywhere. Probe
+(Ed on the guide's deck, 60 s): one toast burns him (B1, state 292, 5 -> 4 points). **Second pass, same day (the
+user: the toasts must reach him):** most toasts burst at their launch point, on the shelf under their toaster. Two causes:
+(1) the launch channel (the toaster's channel 9, hidden) carries the toast up to the slot over frames 0-5 of state 1 and
+is parked at the toaster's origin from frame 6, the event's frame; the port posed it after the tick's clock (frame 6,
+inside the shelf), the exe reads the channel SuperObject's global matrix (`FUN_0047c950`), which the engine's hierarchy
+pass computes after AI and animation: the last tick's pose (**inferred** from the frame order, not traced in the exe).
+tc_cast.c `launch` now poses at the tick before (frame 5: the slot, ~3 above the base). (2) FUNC 162 (read, below and
+tc_ai.c): front faces only, against the objects' drawn geometry; the port had both faces on the collision. Probe (Ed on
+the deck, 60 s, standing still): 5 toasts launched, 5 burns, the last one his death. The rest of the old note: the port
 keeps one instance per spawnable template (the exe takes a free slot of the level's num_always pool for every launch,
-`GAM_Always_004259a0`: cavedoc 15, north 25), so a toast still in flight (up to 5 s) blocks the next toaster's; the
-first toaster's toast does not move from its launch point (blocked at once, not looked into).
+`GAM_Always_004259a0`: cavedoc 15, north 25), so a toast still in flight (up to 5 s) blocks the next toaster's.
 
 ## Transparency and display (2026-11-16; **read** unless marked)
 - PROC 205 SetTransparency(n) (`PROC_ShowEtc_0048c1c0` case 0xcd): the SuperObject's +0x3C := n held in 0..255
@@ -762,6 +793,15 @@ at 1152 x 192 (`tc_viewer_speech_panel`), which the frontends show as one quad; 
 - **Ed is held while a line is on** (`speech_held`, until the key is let go). The exe's scripts hold him (`ForceBehaviour(Ed, B15)`), which
   the cast may not do (MAY_FORCE_MAIN: he could be parked for good), so he stands, without the scripts' listening pose.
 - A line waits for the one on show (the exe would leave the first speaker waiting for ever).
+- **A race in cock01's opening, in the port (2026-11-19, the user's recording 2026-11-19_201356):** the armour room's
+  camera SLY_CamOriente_SalleGardeArmure (B1: 13.2 s of shots) ends by freeing Ed if the guard SDO_GNPSauve's line is
+  done (guard dsg12), then Wait(100), then B0; the guard, its line dismissed, frees him only if the camera is not in B1.
+  A line dismissed in between (8 frames at 60, 13.42..13.53 s into the level; a sweep of every frame 4.3..21.7 s found
+  those 8) left Ed in his B102 for good. **Port fix** (tools/ttre/cast.py SCRIPT_FIXES, `_wait_then_check`): the Wait
+  before the check, so the check and the B0 come in one tick; the sweep then frees him at all 1041. **Not shown to be the
+  exe's:** the user (2026-11-19) has never seen the original lock here, so the port more likely reaches this gap where the
+  exe cannot (how the exe orders the two scripts, Wait's continuation, when a line can be dismissed: none read). The fix
+  is a workaround for playability; when the real difference is found, it goes and SCRIPT_FIXES with it.
 - Lines heard unprompted (40 s standing, no story flags): BigBoss's taunt, cavedoc's Agent, cock01's guard, Transit's flight lesson, the
   outro. **Not done:** the mouth shapes (`GAM_00417a10`, called from `GAM_PlayAnim_00415500`: the phonemes pick the nearest entry of
   the 3D data's table, `GAM_cineinfo_00426f10`, by their three bytes, for the listed channels; needs that table exported and a channel's
@@ -814,6 +854,49 @@ placed in 3D since 2026-11-14, "3D sound" below), animation sound events, Displa
 | PROC 212-214 particles | 8 | | **skipped**, purely visual |
 | PROC 165 / 173 / 182 / 192 / 199 | 134 | camera speed, angle, shake, orientation | **skipped** (the camera is the port's own) |
 | PROC 241 (c2boxer) | 2 | under a distance, something on a channel (`0x48b7d0`, not read): 750 hits in 5 s | **skipped**, not understood |
+
+## Unported primitives sweep (2026-11-19)
+Found two ways: statically, every primitive the retail cast's and Ed's scripts hold (core `.ttlv` CAST + `.ttai` nodes)
+against the interpreter's case labels (tc_ai.c `condition` / `function` / `operation` / `procedure` / `meta_action`);
+dynamically, each retail level run 60 s headless (`probe LEVEL stick 0.3 1 pulse jump 3 pulse action 2 run 60 skipped
+skipped ed`). Handlers from the exe's tables (COND 0x4e63a0, FUNC 0x4e6718, PROC 0x4e5a48: 8-byte entries), names from
+the Special Edition exe's exports (tools/exe/se_ai_map.tsv: what ai.load_names shows). **Read** unless marked.
+- **Ported 2026-11-19:**
+  - COND 39-43 `Cond_CollideWithPoint / Triangle / Edge / Sphere / AlignedBox` (`COND_39Etc_004984a0`): the dynamics
+    report's first record by its bits (1 / 2: the ground record, +0x1C; 4 / 8 / 0x10: the wall record, +0x98; 0x10000:
+    the perso record, +0x114; none: false), and its +0x7A (what was touched: 0 vertex .. 4 box) == c - 39. Ed asks
+    `Not(Cond_CollideWithEdge)` before sliding (on a slope material, not a ground one: his reflex 0); the port read
+    false, so on an edge he slid where the exe keeps him. tc_mec_walk keeps `ground_kind` / `wall_kind` / `other_kind`
+    beside the materials; the hosts feed `tc_ai_perso.ground_kind` ... (tc_ed_ai.c, tc_cast_mec.c).
+  - The perso lists: PROC 15 `Proc_FillListWithSons` (`PROC_12Etc_00488340` case 0xF: the list emptied, then the
+    persos among the SuperObject's children down the hierarchy, to the capacity; **port**: the children are the persos
+    riding it, `standing_on`, then theirs), COND 53 `Cond_IsPersoInList` (`0x48fd50`: membership; tools/exe called it
+    "ModelNameIs?"), FUNC 47 (the count) / FUNC 48 `Func_GivePersoInList` (`0x4902d0`: the n-th, 255 the last, past
+    the count none). Land's and north's boats (POC_PfBato, ARG_TheBato1) wait at a dock while Ed is near and *not
+    aboard*; the skier (skymap, Totalski) reads his dsg20 list.
+  - PROC 3 (`PROC_GameAction0Etc_00488530` case 3 -> `GAM_00429010`, the reveal): GameState63's latch set
+    (`cover_pending` cleared); the host already reveals after the moves that cover (the skier's B10 respawn).
+- **No-ops in the exe too:** PROC 281 / 282 (`0x48c990`, empty), PROC 287-289 and 236 (`0x495df0`, `Nop`).
+- **Visual, left out:** PROC 290 (Ed's look modes: a 4-vertex sprite, `PTR_DAT_004e0b68` built by `FUN_004567d0`, from
+  his channel 0x27 towards the camera, 100 long; shown by `GAM_00411fb0`); PROC 291 / 292 `Mode291 / 292`
+  (`0x48cc20`: the perso into or out of three 4-slot effect tables, `GAM_004145f0` (position and velocity: a splash),
+  `GAM_00414980`, `GAM_004142b0`; drawn as particles and quads by `GAM_00414170` / `GAM_00414330`); PROC 126-128
+  (perso lights), PROC 212-214, FUNC 111 `Func_ColorRGB` (carota's lightning, north's torches).
+- **Open, read as far as here:**
+  - PROC 12-14 `SetParent` family (case 0xC: Me under the perso; 0xD: the perso under Me; 0xE: Me under the perso's
+    channel n): carota's IVP_plate_forme1, sud0's HEG_Shield and boss mushroom, marmite's crates. Needs the port's
+    riding (tc_mec_walk.carrier) to take a parent set by a script.
+  - PROC 23 (`GAM_00424320`: std game +0x26 := n; the carried-velocity rule reads +0x26 == 3): sud0's HEG_BossMushPf.
+  - PROC 37 `Proc_ResetOrientation(x)` (case 0x25 -> `GAM_cineinfo_00426af0`: the perso's cine info +0x30 := x; its
+    reader not traced): the skier, 1.3 and 0.01.
+  - FUNC 133-136 (`0x49c220`, the World persos, once each): FUNC 133 a save value's low byte, the one World's
+    std game +0x34's material index picks (`FUN_0043bc00`: 0xFF none); 136 the sum of save values 7, 9 .. 25.
+  - PROC 206 `Proc_SetDisplayFixFlag` (the hint scenes' speakers, the outro, the game over), PROC 209 (game over,
+    outro), PROC 115 `Proc_PlayerSaveRotationSector`, PROC 157 `Procedure_Camera_Reset`, COND 91 `Cond_IsActivable`,
+    FUNC 56 / 70 / 87 (camera: the main camera, its speed, its target point), PROC 165 / 173 / 182 / 184 / 192 / 199
+    (the camera is the port's own).
+- Stubs that stay (tc_ai.c's "no-ops for now"): PROC 25 / 26 (the SuperObject's display flag 0x10000, +0x198 /
+  +0x2C; its reader not traced), 32 / 33, 80, 105-108 (channel overrides), 278 / 279.
 
 ## 3D sound (2026-11-14; **read** unless marked)
 How the original places a sound: read from the exe's sound3d.c (`SND_sound3d_00404db0` the request,
@@ -929,7 +1012,9 @@ activated (`GAM_Objinit_004199f0`), its mechanics started (`DNM_CardTypeInit`, r
 cavedoc's corn: state 2, frame 17, channel id 4, at its mouth (0.65 in front, 2.09 up); Ed: states 126 / 187 / 325 /
 326, channel id 88, his blowpipe (0.79 in front, 1.30 up). **Port:** the events ride in the SNDS / CAST sound rows as
 `TC_AI_LAUNCH_EVENT` | the channel's index (tools/ttre/ai.py launch_row); the cast holds a spawned instance inactive
-and launches it from the channel (tc_cast.c launch); its heading is the channel's front about Z. The corn's kernels
+and launches it from the channel (tc_cast.c launch); its heading is the channel's front about Z. Since 2026-11-19 the
+channel is posed at the tick before the event's (the matrix the exe's hierarchy pass last computed; cavedoc's toaster
+parks its launch channel at its origin on the event's frame: "cavedoc's toasts burn Ed"). The corn's kernels
 started at its feet before, so on their way back from a target they flew under its ZDE box (0.79-3.01 above its
 origin) and never hurt it (BUGS.md (d)); now a returning kernel bursts on it and takes 2 hit points (headless probe).
 The launch may come in a later state of the chain (sud0's navets: state 19 -> 20; the magic mushroom: 7 -> 8 -> 9); north's

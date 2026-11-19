@@ -31,6 +31,8 @@
  *   state      power MASK         the game's powers (0x... ok)                  value K V          save value K
  *              hp P N             hit points                 dsg P K            dsgvar K, as a float
  *              setdsg P K V       dsgvar K = V (float)
+ * Audits while a recording replays (-r), by environment: PROBE_CLIP=1 (the eye inside a drawn perso, or the near plane
+ * in one; PROBE_CLIP_ALL=1 counts see-through ones too), PROBE_CAMCUT=1 (the eye pulled in at once, what lies between).
  * Exit 0, or 1 with the reason on a command it could not do. */
 #include <ctype.h>
 #include <dirent.h>
@@ -255,9 +257,12 @@ static void describe(int32_t w, char *state, size_t n, char *where, size_t m) {
         if (!e) { snprintf(state, n, "(no AI)"); }
         else {
             char r[8];
-            snprintf(state, n, "B%u R%s st%u hp%d/%d %s%s forced_by %d", e->normal.behaviour, beh(e->reflex.behaviour, r), e->state,
+            char alpha[24] = "";
+            /* as drawn (tc_viewer_draw.c): his transparency counts while the default display (flag 8) is off */
+            if (!e->display_flag8 && e->transparency != 255) snprintf(alpha, sizeof alpha, " alpha %u", (unsigned)e->transparency);
+            snprintf(state, n, "B%u R%s st%u hp%d/%d %s%s forced_by %d%s", e->normal.behaviour, beh(e->reflex.behaviour, r), e->state,
                      e->hit_points, e->hit_points_max, e->contacts & TC_AI_CONTACT_GROUND ? "ground" : "air",
-                     e->contacts & TC_AI_CONTACT_WALL ? "+wall" : "", e->forced_by);
+                     e->contacts & TC_AI_CONTACT_WALL ? "+wall" : "", e->forced_by, alpha);
         }
         if (p) snprintf(where, m, "at (%.2f %.2f %.2f) h %.2f sector %u", (double)p->position.x, (double)p->position.y,
                         (double)p->position.z, (double)p->heading, (unsigned)tc_viewer_main_sector(&S.v));
@@ -660,6 +665,126 @@ static int read_script(const char *path) {
     return 1; /* text stays: the words point into it */
 }
 
+/* PROBE_CLIP=1 (a recording's replay): every frame, the eye against the drawn persos (Ed's own parts left out): the near
+ * plane in one of their triangles (within 0.09, camcheck's CLIP_NEAR) or the eye inside one (an odd count of crossings
+ * on each of three rays, 30 long). Each run of such frames is printed once: when, how long, which perso. */
+static struct { int32_t who; int kind; double since; uint32_t frames; } S_clip = {-9, 0, 0, 0};
+
+static tc_vec3 clip_xform(const tc_mat4 *m, const float *p) {
+    const float *a = m->m;
+    return tc_v3(a[0] * p[0] + a[4] * p[1] + a[8] * p[2] + a[12], a[1] * p[0] + a[5] * p[1] + a[9] * p[2] + a[13],
+                 a[2] * p[0] + a[6] * p[1] + a[10] * p[2] + a[14]);
+}
+
+static bool clip_ray(tc_vec3 o, tc_vec3 d, tc_vec3 a, tc_vec3 b, tc_vec3 c) {
+    tc_vec3 e1 = tc_v3_sub(b, a), e2 = tc_v3_sub(c, a), p = tc_v3_cross(d, e2), sv, q;
+    float det = tc_v3_dot(e1, p), inv, u, w, t;
+    if (fabsf(det) < 1e-12f) return false;
+    inv = 1 / det;
+    sv = tc_v3_sub(o, a);
+    u = tc_v3_dot(sv, p) * inv;
+    if (u < 0 || u > 1) return false;
+    q = tc_v3_cross(sv, e1);
+    w = tc_v3_dot(d, q) * inv;
+    if (w < 0 || u + w > 1) return false;
+    t = tc_v3_dot(e2, q) * inv;
+    return t > 0 && t <= 1;
+}
+
+static void clip_flush(void) {
+    char l[96];
+    if (S_clip.who == -9) return;
+    if (S_clip.frames >= 2) {
+        label(S_clip.who, l, sizeof l);
+        printf("%7.2f clip: eye %s%s [%s] for %u frames\n", S_clip.since, S_clip.kind % 10 == 2 ? "INSIDE" : "near plane in",
+               S_clip.kind >= 10 ? " see-through" : "", l, (unsigned)S_clip.frames);
+    }
+    S_clip.who = -9;
+}
+
+/* PROBE_CAMCUT=1: the eye's distance to Ed's head (tc_cam.pivot) falling by over a third and over 1 unit in one frame
+ * (a cut in), not during a director's shot, with the perso drawn between the head and the old eye, if any. */
+static struct { float last; bool have; } S_cut;
+
+static void cut_audit(void) {
+    const tc_viewer *v = &S.v;
+    float d = tc_v3_distance(v->camera.position, v->cam.pivot);
+    if (S_cut.have && !tc_viewer_directed(v) && d < S_cut.last - 1.0f && d < S_cut.last * 0.67f) {
+        uint32_t count, opaque, i, k;
+        const tc_view_draw *draws = tc_viewer_draws(&S.v, &count, &opaque);
+        tc_vec3 head = v->cam.pivot, far = tc_v3_add(head, tc_v3_scale(tc_v3_normalize(tc_v3_sub(v->camera.position, head)), S_cut.last));
+        int32_t who = -9;
+        const char *what = "nothing drawn";
+        for (i = 0; i < count && who == -9; i++) {
+            const tc_view_draw *dr = &draws[i];
+            const tc_mesh *m = tc_viewer_mesh(v, dr->mesh);
+            uint32_t pi = 0, first = v->perso_first;
+            if (!m || dr->mesh >= v->ed_first || (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER))) continue;
+            for (k = dr->first_index; k + 2 < dr->first_index + dr->index_count && k + 2 < m->index_count; k += 3)
+                if (clip_ray(head, tc_v3_sub(far, head), clip_xform(&dr->model, m->vertices[m->indices[k]].position),
+                             clip_xform(&dr->model, m->vertices[m->indices[k + 1]].position),
+                             clip_xform(&dr->model, m->vertices[m->indices[k + 2]].position))) break;
+            if (k + 2 >= dr->first_index + dr->index_count || k + 2 >= m->index_count) continue;
+            if (dr->mesh < v->perso_first) { what = "level"; continue; }
+            while (pi < v->level->perso_count && first + v->level->persos[pi].part_count <= dr->mesh)
+                first += v->level->persos[pi].part_count, pi++;
+            {
+                const tc_cast_actor *a = cast() ? tc_cast_actor_of(cast(), pi) : NULL;
+                who = a ? a->entry->id : 100000 + (int32_t)pi;
+                what = dr->flags & TC_FLAG_TRANSPARENT ? "perso (see-through)" : "perso";
+            }
+        }
+        if (who != -9) {
+            char l[96];
+            label(who, l, sizeof l);
+            printf("%7.2f cut: eye %.2f -> %.2f from Ed's head, %s [%s] between\n", S.time, (double)S_cut.last, (double)d, what, l);
+        } else printf("%7.2f cut: eye %.2f -> %.2f from Ed's head, %s between\n", S.time, (double)S_cut.last, (double)d, what);
+    }
+    S_cut.last = d, S_cut.have = true;
+}
+
+static void clip_audit(void) {
+    uint32_t count, opaque, i, k, r;
+    const tc_view_draw *draws = tc_viewer_draws(&S.v, &count, &opaque);
+    const tc_viewer *v = &S.v;
+    const tc_cast *c = cast();
+    tc_vec3 eye = v->camera.position;
+    static const float dirs[3][3] = {{30, 0, 0}, {0.37f * 30, 0.9f * 30, 0.22f * 30}, {-0.41f * 30, 0.24f * 30, 0.88f * 30}};
+    int32_t who = -9;
+    int kind = 0;
+    for (i = 0; i < count && kind % 10 < 2; i++) {
+        const tc_view_draw *d = &draws[i];
+        const tc_mesh *m = tc_viewer_mesh(v, d->mesh);
+        uint32_t odd[3] = {0, 0, 0}, pi = 0, first = v->perso_first;
+        float near = 1e9f;
+        tc_vec3 at = tc_v3(d->model.m[12], d->model.m[13], d->model.m[14]);
+        if (!m || d->mesh < v->perso_first || d->mesh >= v->ed_first) continue;
+        if (d->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER)) continue;
+        if ((d->flags & TC_FLAG_TRANSPARENT) && !getenv("PROBE_CLIP_ALL")) continue;
+        if (tc_v3_distance(at, eye) > 40) continue;
+        for (k = d->first_index; k + 2 < d->first_index + d->index_count && k + 2 < m->index_count; k += 3) {
+            tc_vec3 a = clip_xform(&d->model, m->vertices[m->indices[k]].position);
+            tc_vec3 b = clip_xform(&d->model, m->vertices[m->indices[k + 1]].position);
+            tc_vec3 q = clip_xform(&d->model, m->vertices[m->indices[k + 2]].position);
+            near = fminf(near, tc_v3_distance(tc_closest_point_on_triangle(a, b, q, eye), eye));
+            for (r = 0; r < 3; r++) odd[r] += clip_ray(eye, tc_v3(dirs[r][0], dirs[r][1], dirs[r][2]), a, b, q);
+        }
+        while (pi < v->level->perso_count && first + v->level->persos[pi].part_count <= d->mesh)
+            first += v->level->persos[pi].part_count, pi++;
+        if ((odd[0] & 1) && (odd[1] & 1) && (odd[2] & 1)) kind = 2;
+        else if (near < 0.09f && kind % 10 < 1) kind = 1;
+        else continue;
+        {
+            const tc_cast_actor *a = c ? tc_cast_actor_of(c, pi) : NULL;
+            who = a ? a->entry->id : 100000 + (int32_t)pi;
+            if (d->flags & TC_FLAG_TRANSPARENT) kind += 10; /* see-through (alpha): the camera's tests leave these out */
+        }
+    }
+    if (kind && who == S_clip.who && kind == S_clip.kind) { S_clip.frames++; return; }
+    clip_flush();
+    if (kind) { S_clip.who = who; S_clip.kind = kind; S_clip.since = S.time; S_clip.frames = 1; }
+}
+
 /* A recording's session played up to `seconds` (its segments' run times summed), with the segment's own level and carry. */
 static int start_from_recording(const char *path, float seconds) {
     static tc_replay r;
@@ -681,7 +806,12 @@ static int start_from_recording(const char *path, float seconds) {
         if (!load_level(folder, s->level, s->has_carry ? &s->carry : NULL, s->seed)) return 0;
     }
     tc_replay_begin(&r, seg, &S.v, false);
-    while (before + r.time < seconds && tc_replay_step(&r, &dt)) { S.frame++; S.time += dt; }
+    while (before + r.time < seconds && tc_replay_step(&r, &dt)) {
+        S.frame++, S.time += dt;
+        if (getenv("PROBE_CLIP")) clip_audit();
+        if (getenv("PROBE_CAMCUT")) cut_audit();
+    }
+    if (getenv("PROBE_CLIP")) clip_flush();
     tc_viewer_release_all(&S.v);
     printf("%7.2f recording %s: level %u (%s) at %.2f s of it\n", S.time, path, seg, r.segments[seg].level, r.time);
     return 1;

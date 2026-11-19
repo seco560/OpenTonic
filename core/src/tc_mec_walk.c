@@ -501,6 +501,7 @@ static bool step_up(collide_ctx *x, const tc_mec_hit *h) {
     x->w->ground_tri = s.tri ? s.tri->source : UINT32_MAX;
     x->w->ground_sound = s.tri ? 0xFF : s.sound;
     x->w->ground_own = s.own_flags;
+    x->w->ground_kind = (uint8_t)s.kind;
     return true;
 }
 
@@ -554,12 +555,14 @@ static uint32_t classify(collide_ctx *x, const tc_mec_hit *h) {
             x->w->ground_tri = h->tri ? h->tri->source : UINT32_MAX;
             x->w->ground_sound = h->tri ? 0xFF : h->sound;
             x->w->ground_own = h->own_flags;
+            x->w->ground_kind = (uint8_t)h->kind;
         }
     } else {
         x->w->wall_normal = h->normal;
         x->w->wall_grip = hit_grip(h);
         x->w->wall_tri = h->tri ? h->tri->source : UINT32_MAX;
         x->w->wall_own = h->own_flags;
+        x->w->wall_kind = (uint8_t)h->kind;
     }
     x->target = tc_v3_add(x->target, tc_v3_scale(h->normal, PUSH_OUT));
     return bits;
@@ -568,6 +571,7 @@ static uint32_t classify(collide_ctx *x, const tc_mec_hit *h) {
 static void keep_other(collide_ctx *x, const tc_mec_hit *h) {
     x->w->other = h->obstacle;
     x->w->other_channel = h->obstacle_channel;
+    x->w->other_kind = (uint8_t)h->kind;
 }
 
 /* MEC_004bd689: a contact with a perso. The carrier itself: as any contact, and 0x30000 (still on it); on the carried
@@ -596,6 +600,7 @@ static uint32_t respond_perso(collide_ctx *x, const tc_mec_hit *h) {
         x->w->ground_tri = UINT32_MAX;
         x->w->ground_sound = h->sound;
         x->w->ground_own = h->own_flags;
+        x->w->ground_kind = (uint8_t)h->kind;
         x->target = tc_v3_add(x->target, tc_v3_scale(h->normal, PUSH_OUT));
         return bits;
     }
@@ -650,6 +655,7 @@ static bool resnap(collide_ctx *x, tc_vec3 *position, float distance, float min_
     x->w->ground_tri = h.tri ? h.tri->source : UINT32_MAX;
     x->w->ground_sound = h.tri ? 0xFF : h.sound;
     x->w->ground_own = h.own_flags;
+    x->w->ground_kind = (uint8_t)h.kind;
     return true;
 }
 

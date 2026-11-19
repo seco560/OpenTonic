@@ -1409,7 +1409,7 @@ static void guide_scenario(const char *dir) {
     const tc_perso_ways *pw;
     const tc_way *way;
     tc_player *p;
-    uint32_t i, k, next = 0, order_ok = 1, rode = 0, frames = 60 * 90; /* 50 s until 2026-11-16: the toasters slow it */
+    uint32_t i, k, next = 0, order_ok = 1, rode = 0, burns = 0, frames = 60 * 90; /* 50 s until 2026-11-16: the toasters slow it */
     float slow = 1e9f, fast = 0;
     const tc_cast_actor *ga = NULL;
     float last_d = 1e9f;
@@ -1455,7 +1455,13 @@ static void guide_scenario(const char *dir) {
     }
     for (i = 0; i < frames; i++) {
         tc_vec3 at;
+        tc_ai_perso *ed = (tc_ai_perso *)&tc_viewer_driver(&v)->ai; /* test-only: his points refilled */
+        uint32_t st = ed->state;
+        /* The toasters' toasts burn a rider who stands still (2026-11-19, docs/ENGINE.md "cavedoc's toasts burn Ed"):
+         * counted, and his points refilled, as this check is about the ruby's way, not about his dodging */
+        ed->hit_points = ed->hit_points > 0 ? 5 : ed->hit_points;
         frame(&v, 1.0f / 60);
+        burns += ed->state == 292 && st != 292;
         if (ga && next > 0 && next < way->count) { /* its speed on the way (the scripts' SetMoveDirection) */
             slow = fminf(slow, ga->ai->motion.proposal[10]);
             fast = fmaxf(fast, ga->ai->motion.proposal[10]);
@@ -1483,6 +1489,9 @@ static void guide_scenario(const char *dir) {
     snprintf(what, sizeof(what), "the toasters slow it while they shoot and speed it up after (speed %.1f .. %.1f)",
              (double)slow, (double)fast);
     check(slow <= 3.01f && fast >= 9.99f, what);
+    /* the toasts reach him (their burn zone on their mesh object, his burn list dsg96, the toasters' launch channel) */
+    snprintf(what, sizeof(what), "the toasts burn him on the way (%u burns)", burns);
+    check(burns >= 3, what);
     tc_viewer_free(&v);
     tc_level_free(&level);
 }

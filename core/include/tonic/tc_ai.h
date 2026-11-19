@@ -442,8 +442,10 @@ void tc_ai_globals_new_game(tc_ai_globals *g);
 
 #define TC_AI_MAX_WAYS 8 /* ways per perso (the 21 retail levels: 3 at most) */
 /* A perso list dsgvar (type 11: byte 0 its count, byte 1 its capacity, then the persos; CollectNearby fills one): the
- * port keeps the persos here, by dsgvar, and writes the count into byte 0. */
-#define TC_AI_MAX_LISTS 4
+ * port keeps the persos here, by dsgvar, and writes the count into byte 0. Lists per perso: Ed has the most, 6 (his R0's
+ * five hit kinds dsg92-96 and dsg97; every level, 2026-11-19). Until 2026-11-19 4: his burn list (dsg96, mask 0x80)
+ * and dsg97 got no slot, so nothing ever burnt him (cavedoc's toasts). */
+#define TC_AI_MAX_LISTS 8
 #define TC_AI_LIST_CAP 8
 typedef struct tc_ai_list { uint32_t dsg; uint8_t count; int32_t ids[TC_AI_LIST_CAP]; } tc_ai_list;
 
@@ -464,6 +466,9 @@ struct tc_ai_perso {
     /* The collide flags of the body part (tc_ai_sphere.flags) that made the ground and wall contacts, 0 none: the
      * material conditions read these (ContactRecord +0x70, the own material; COND 44-49, FUN_00497890). */
     uint16_t ground_material, wall_material;
+    /* What those contacts and the perso one touched (the records' +0x7A, TC_MEC_VERTEX 0 .. TC_MEC_BOX 4): COND 39-43,
+     * Cond_CollideWithPoint / Triangle / Edge / Sphere / AlignedBox (COND_39Etc_004984a0). Host-fed. */
+    uint8_t ground_kind, wall_kind, perso_kind;
     float report_2bc, report_2c0; /* dynamics +0x2BC / +0x2C0 (FUNC 91 / 92): in flight the lagged attack / bank, rad */
     bool has_axes;               /* host-fed: the perso's drawn axes (its world matrix's columns: tilted in flight and
                                     swimming); FUNC 102 / 103 (point LocalToGlobal / GlobalToLocal) use them */

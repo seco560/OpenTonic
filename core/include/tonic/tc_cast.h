@@ -137,6 +137,7 @@ typedef struct tc_cast {
     uint32_t rng;
     struct tc_obstacles *obstacles; /* the perso obstacles its actors pose (tc_cast_set_obstacles), NULL none */
     struct tc_collision *world;  /* host-fed: the static world (and its obstacles) the actors' own sweeps meet, NULL none */
+    struct tc_collision *sight;  /* host-fed: FUNC 162's geometry (tc_game.sight), NULL: world */
     const tc_sectors *sectors;   /* the step's (tc_cast_step*): an actor sweeps its own sector's collide list */
     int32_t main_carrier;        /* host-fed: the perso the main actor rides (tc_mec_walk.carrier), -1 none */
     uint16_t main_sector;        /* the main actor's sector, as the last step got it (a spawn by him starts there) */

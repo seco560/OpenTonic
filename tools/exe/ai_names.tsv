@@ -183,7 +183,7 @@ PROC	79	TakeLife	0x4899e0
 PROC	236	Nop	0x495df0
 PROC	244	JumpBallistic	0x48bbe0	(vector, height): impulse and mechanics slot 9
 DSGTYPE	0	DsgVarTypes	0x4e5910	table: 12 bytes {value type, getter, setter} per dsgvar type (1 char, 2 byte?, 3 ubyte, 5 ushort, 6/7 int, 0x19 perso ref, 0x23 ...)
-COND	53	ModelNameIs?	0x4988c0	0x35: func_0x0048fd50(string, perso model name)
+COND	53	IsPersoInList	0x4988c0	0x35: 0x48fd50(list, perso): membership (SE export Cond_IsPersoInList; docs/ENGINE.md "Unported primitives sweep")
 COND	54	IsEmpty?	0x4988c0	0x36: *arg == 0 (Ed: on dsgvars 93/97)
 COND	59	TouchingObject	0x498bb0	0x3B: report non-zero and FUN_004978d0(perso, object)
 COND	63	GameState63	0x498bb0	GAM_004290a0()
@@ -230,7 +230,7 @@ PROC	196	SetCameraValue84	0x496640	record +0x84 (default 0.6)
 PROC	197	SetCameraTargetChannel	0x496790	(cam, op, channel) record +0xA0: the target's channel to follow (0xFF none); first person uses Ed's 0x27
 PROC	237	ForceBehaviour	0x48b730	(perso, behaviour): set another perso's normal behaviour (NOTES "Skiing": the skier takeover; portals)
 PROC	238	ForceReflex	0x48b800	(perso, reflex): set another perso's reflex
-PROC	242	SetHeading	0x48ba00	(deg): rotation about Z = deg x pi / 180 - pi / 2 (docs/PORTALS.md)
+PROC	242	SetHeading	0x48ba00	(deg): rotation about Z = deg x pi / 180 + pi / 2 (DAT_004d2ce8 = -pi/2, subtracted; docs/PORTALS.md)
 PROC	291	Mode291	0x48cc20	0x123: func_0x0042cf00(0, perso, n) + GAM_00414xxx per n (0-3); camera/inventory mode?
 PROC	292	Mode292	0x48cc20	0x124: func_0x0042cf00(1, perso, n) (0-2)
 PROC	283	SetLightSet	0x48ca60	(set, duration ms, absolute) -> 0x449ad0: the baked light set (sud0's day / night cycle, Land's lightning)

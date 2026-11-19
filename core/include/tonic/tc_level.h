@@ -161,7 +161,8 @@ typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX
  * b.x radius) and boxes (8: a min, b max) in its axes, each with its type (the collide material flags the conditions
  * mask), and per state which zones are active (bit k: zone k, the scripts' zone k + 1). */
 typedef struct tc_zde_prim { uint8_t kind; uint16_t type; tc_vec3 a, b; } tc_zde_prim;
-typedef struct tc_zde_zone { uint32_t first; uint16_t count; } tc_zde_zone;       /* prims[first .. first + count) */
+/* prims[first .. first + count); part: a part object's ZDE geometry (ai.py part_zones), met only as the other perso's */
+typedef struct tc_zde_zone { uint32_t first; uint16_t count; uint8_t part; } tc_zde_zone;
 typedef struct tc_zde_set {
     uint16_t zone_count, state_count;
     tc_zde_zone *zones;
@@ -347,6 +348,10 @@ typedef struct tc_pcol_perso {
 } tc_pcol_perso;
 typedef struct tc_pcol {
     uint8_t main_priority, main_flags; /* the player's own collide set (his sweeps: +0x35 must be set to meet persos) */
+    /* The fix camera's (StdCamer, 74 and meets persos): its sweep meets the persos of a priority up to its own. has_camera
+     * false (an export from before 2026-11-20): the camera sweeps as the player. */
+    uint8_t camera_priority, camera_flags;
+    bool has_camera;
     uint16_t count;
     tc_pcol_perso *persos;
     uint32_t prim_count;

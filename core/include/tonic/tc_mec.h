@@ -163,6 +163,7 @@ typedef struct tc_mec_walk {
     bool firm_floors;
     uint32_t ground_tri, wall_tri; /* the contacts' triangles (tc_tri.source; UINT32_MAX none): their materials */
     uint16_t ground_own, wall_own; /* the collide flags of the body part that made them (tc_ai_sphere.flags) */
+    uint8_t ground_kind, wall_kind; /* what they touched (TC_MEC_VERTEX ...: the records' +0x7A; COND 39-43) */
     uint8_t ground_sound;        /* the ground contact's floor sound when it is a perso's (tc_pcol_prim.sound), 0xFF none */
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
@@ -173,6 +174,7 @@ typedef struct tc_mec_walk {
     tc_vec3 carrier_local, carrier_front; /* its origin and front (local -y) in the carrier channel's axes */
     tc_vec3 carried;             /* the carried move this step / dt (DNM_FollowCarrier_004a83d2's out) */
     int32_t other;               /* contact record +0x1C4: the last perso contact (id, channel), -1 none */
+    uint8_t other_kind;          /* its kind (the perso record's +0x7A: TC_MEC_SPHERE or TC_MEC_BOX) */
     uint16_t other_channel;
     bool moved;                  /* this step ran the collide-and-move (standing still does not) */
 } tc_mec_walk;

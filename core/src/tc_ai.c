@@ -938,13 +938,17 @@ static int way_back(const tc_way *w, uint8_t *c, int go_on) {
 
 /* ---- ZDE zones: the hits (COND 18-29, CollectNearby; docs/ENGINE.md "Shooting") ---- */
 
-/* Zone k of q, when active in its playing state (GAM_PersoActiveZones_0041f280). */
-static const tc_zde_zone *zde_zone(const tc_ai_perso *q, int32_t k) {
+/* Zone k of q, when active in its playing state (GAM_PersoActiveZones_0041f280); with parts, its part zones too. */
+static const tc_zde_zone *zde_zone_of(const tc_ai_perso *q, int32_t k, bool parts) {
     const tc_zde_set *z = q && q->model ? &q->model->zde : NULL;
     uint32_t st = q && q->zone_state ? q->zone_state - 1u : q ? q->state : 0; /* the tick's (zone_state), else now */
-    if (!z || k < 0 || k >= (int32_t)z->zone_count || k >= 32 || st >= z->state_count) return NULL;
+    if (!z || k < 0 || k >= (int32_t)z->zone_count || k >= 32) return NULL;
+    if (z->zones[k].part) return parts ? &z->zones[k] : NULL;
+    if (st >= z->state_count) return NULL;
     return (z->active[st] >> k) & 1u ? &z->zones[k] : NULL;
 }
+/* Its own zones (list 2, FUN_0041efe0): what a script names, and the side that looks. */
+static const tc_zde_zone *zde_zone(const tc_ai_perso *q, int32_t k) { return zde_zone_of(q, k, false); }
 
 /* Whether the zone holds an element of that type (GAM_0041f060: flags & mask == mask; mask 0: any). */
 static bool zde_has(const tc_ai_perso *q, const tc_zde_zone *zn, uint16_t mask) {
@@ -1003,7 +1007,9 @@ static bool zde_zones_meet(const tc_ai_perso *qa, const tc_zde_zone *za, const t
     return false;
 }
 
-/* Whether zone za of qa (NULL: any of its active zones of type mask_a) meets any active zone of qb of type mask_b. */
+/* Whether zone za of qa (NULL: any of its active zones of type mask_a) meets any active zone of qb of type mask_b, or
+ * one of qb's part zones (FUN_0041fd00's second path: the ZDE geometry of qb's channel objects, ai.py part_zones; the
+ * exe tries them when none of qb's own met, which gives the same answer). */
 static bool zde_meets(const tc_ai_perso *qa, const tc_zde_zone *za, uint16_t mask_a, const tc_ai_perso *qb, uint16_t mask_b) {
     uint32_t a, b;
     if (!qa || !qb || qa == qb || !qa->model || !qb->model) return false;
@@ -1011,7 +1017,7 @@ static bool zde_meets(const tc_ai_perso *qa, const tc_zde_zone *za, uint16_t mas
         const tc_zde_zone *x = za ? za : zde_zone(qa, (int32_t)a);
         if (!x || (!za && !zde_has(qa, x, mask_a))) { if (za) break; continue; }
         for (b = 0; b < qb->model->zde.zone_count; b++) {
-            const tc_zde_zone *y = zde_zone(qb, (int32_t)b);
+            const tc_zde_zone *y = zde_zone_of(qb, (int32_t)b, true);
             if (y && zde_has(qb, y, mask_b) && zde_zones_meet(qa, x, qb, y)) return true;
         }
         if (za) break;
@@ -1437,6 +1443,10 @@ static tc_ai_hud_slot *hud_slot(tc_ai_globals *g, int32_t k) { return k >= 0 && 
 /* The conditions that test OP 24's perso when they are its expression (the exe's g_ai_conditions[k].flag, 0x4E63A0:
  * AI_004927c0 -> AI_004913a0 takes DAT_004ffcf4): the contact and material tests 31-52 (InPersoContext(main actor,
  * OnGround): Transit's flight-training platforms), 69-76, 91-103, 110; and 63 / 64, which the port keeps as game state. */
+static tc_ai_list *perso_list(tc_ai_perso *p, uint32_t k);
+static void list_store(tc_ai_perso *p, uint32_t k, tc_ai_list *l);
+static int32_t list_arg(run *r, uint32_t i, int k);
+
 static bool cond_on_context(uint32_t c) {
     return (c >= 31 && c <= 52) || (c >= 69 && c <= 76) || (c >= 91 && c <= 103) || c == 110;
 }
@@ -1568,6 +1578,26 @@ static bool condition(run *r, uint32_t i) {
         return p->screen_covered || !g->cover_pending;
     }
     /* FUN_004985e0: the contact's collide identifier & mask (FUN_00497890), when the report has that contact */
+    case 39: case 40: case 41: case 42: case 43: { /* Cond_CollideWithPoint / Triangle / Edge / Sphere / AlignedBox
+                * (COND_39Etc_004984a0): the report's first contact record by its bits (ground or steep slope: the
+                * ground record; else wall, overhang or ceiling: the wall record; else on a perso: the perso one) and
+                * what it touched (+0x7A) is c - 39; no record, false */
+        uint32_t f = p->contacts;
+        int kind = f & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE) ? p->ground_kind
+                 : f & (TC_AI_CONTACT_WALL | TC_AI_CONTACT_OVERHANG | TC_AI_CONTACT_CEILING) ? p->wall_kind
+                 : p->report_high & 0x10000u ? p->perso_kind : -1;
+        return kind == (int)c - 39;
+    }
+    case 53: { /* Cond_IsPersoInList(list, perso) (COND_ModelNameIsEtc_004988c0 case 0x35 -> 0x48fd50): one of its persos */
+        int32_t k = list_arg(r, i, 0), id, j;
+        tc_ai_list *l = k >= 0 ? perso_list(r->p, (uint32_t)k) : NULL;
+        value who = arg(r, i, 1);
+        if (!l || who.type != V_PERSO || who.i < 0) return false;
+        id = who.i == 0 ? r->p->self_id : who.i;
+        for (j = 0; j < l->count; j++)
+            if (l->ids[j] == id) return true;
+        return false;
+    }
     case 44: return (p->contacts & TC_AI_CONTACT_GROUND) && (p->ground_material & as_int(arg(r, i, 0)));
     case 45: return (p->contacts & TC_AI_CONTACT_WALL) && (p->wall_material & as_int(arg(r, i, 0)));
     case 47: return (p->contacts & TC_AI_CONTACT_SLOPE) && (p->ground_material & as_int(arg(r, i, 0)));
@@ -1691,6 +1721,18 @@ static value function(run *r, uint32_t i) {
         default: return v_float(tc_v3_length(d));
         }
     }
+    case 47: case 48: { /* FUNC_47Etc_0049b130: a list's count (47), its n-th perso (48, 0x4902d0: 255 the last, past
+                         * the count none) */
+        int32_t k = list_arg(r, i, 0), n;
+        tc_ai_list *l = k >= 0 ? perso_list(p, (uint32_t)k) : NULL;
+        value v = v_int(-1);
+        if (N(r, i)->param == 47) return v_int(l ? l->count : 0);
+        v.type = V_PERSO;
+        n = as_int(arg(r, i, 1)) & 0xFF;
+        if (l && l->count && n == 0xFF) n = l->count - 1;
+        if (l && n < l->count && live(p, l->ids[n])) v.i = l->ids[n] == p->self_id ? 0 : l->ids[n];
+        return v;
+    }
     case 54: { /* FUNC_54_0049b240 (Func_GetFather): with report_seen & 0x30000, the first perso up the parent chain: the
         * perso it rides (tc_mec_walk.carrier; docs/ENGINE.md "Moving collision, read"); asked as another perso
         * (InPersoContext), the asker itself reads as Me */
@@ -1762,10 +1804,15 @@ static value function(run *r, uint32_t i) {
         const tc_ai_perso *me = r->ctx ? live(p, r->ctx) : p;
         return v_float(tc_v3_length_sq(tc_v3_sub((me ? me : p)->position, argv3(r, i, 0))));
     }
-    case 162: { /* FUNC_162_0049c690: from OP 24's perso's origin + the offset (world axes: added as it is) along the
-                 * direction (in its axes, FUN_0047b3d0) to the nearest surface of its sector's lists (FUN_00484130):
-                 * the hit point, in world axes; none: (FLT_MAX, ..). Port: the static world's raycast, up to 1000 (the
-                 * exe's reach is not read: its uses compare FUNC 13 of it, a squared distance, with 2.25 and 10). */
+    case 162: { /* FUNC_162_0049c690 (read 2026-11-19): from OP 24's perso's origin + the offset (world axes: added as it
+                 * is) along the direction (in its axes, FUN_0047b3d0): FUN_00484130 against its own sector's tree first
+                 * (any hit there wins), else the nearest over its sector's collide list; the hit point in world axes,
+                 * none: (FLT_MAX, ..). Per triangle (FUN_004611b0 -> FUN_004687a0): the plane from t >= 0, the side
+                 * noted, and FUN_00460350 keeps front faces only, the nearest. Port: the static collision triangles
+                 * (the exe walks each sector's SuperObject tree, its objects' geometry and the persos' parts too),
+                 * nearest overall, up to 1000 (the exe gates by each object's bounds against the segment origin ->
+                 * origin + direction: not ported). Until 2026-11-19 both faces: cavedoc's toasts burst at launch on
+                 * the shelf behind or under their toaster. */
         const tc_ai_perso *me = r->ctx ? live(p, r->ctx) : p;
         tc_vec3 o = argv3(r, i, 0), d = argv3(r, i, 1), from;
         float l = tc_v3_length(d), reach = 1000;
@@ -1774,7 +1821,7 @@ static value function(run *r, uint32_t i) {
         from = tc_v3_add(me->position, o);
         if (!(l > 0)) return v_vec(from);
         d = local_to_global(me, tc_v3_div(d, l));
-        if (me->world && tc_collision_raycast(me->world, from, d, reach, &hit)) reach = hit.distance;
+        if (me->world && tc_collision_raycast_front(me->world, from, d, reach, &hit)) reach = hit.distance;
         return v_vec(tc_v3_add(from, tc_v3_scale(d, reach)));
     }
     case 102: case 103: if (r->ctx != 0) { /* OP 24's perso (Ed's dsg57, the thing he carries): its own frame */
@@ -2435,10 +2482,14 @@ static uint32_t procedure(run *r, uint32_t i) {
         g->cover_pending = true;
         return 0;
     }
-    case 242: { /* FUN_0048ba00: the perso's rotation about Z = deg * pi / 180 - pi / 2, for 0 <= deg <= 360 */
+    case 242: { /* FUN_0048ba00 (re-read 2026-11-20): a mechanics request, mode 5, its angle in proposal +0x34 about
+                 * (0, 0, 1): deg * pi / 180 - DAT_004d2ce8, a constant of -pi / 2, so + pi / 2, less 2 pi past it; for
+                 * 0 <= deg <= 360. Until 2026-11-20 read as - pi / 2: every SetHeading turned 180 degrees (portal
+                 * arrivals, cavedoc's arches: Ed faced away from the corn) */
         float deg = argf(r, i, 0), h;
         if (!(deg >= 0 && deg <= 360)) return 0;
-        h = deg * TC_PI / 180 - TC_PI / 2;
+        h = deg * TC_PI / 180 + TC_PI / 2;
+        if (h > 2 * TC_PI) h -= 2 * TC_PI;
         p->motion.heading_set = true;
         p->motion.heading = h;
         return 0;
@@ -2492,6 +2543,31 @@ static uint32_t procedure(run *r, uint32_t i) {
     case 0: p->restart_requested = true; return 0; /* GameAction0: the host restarts (tc_ed_ai) */
     case 104: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->speech_stop = true; return 0; }
     case 118: { tc_ai_globals *g = p->globals ? p->globals : &p->own_globals; g->save_serial++; return 0; } /* SaveGame: the host saves */
+    case 15: { /* PROC_12Etc_00488340 case 0xF (list): the list emptied, then the persos among this one's children, down
+                * the hierarchy, to its capacity. The exe's children are the SuperObjects parented to it, which a perso
+                * becomes by standing on it (docs/ENGINE.md "Moving collision, read"); port: the persos that ride it
+                * (standing_on), then those riding them */
+        int32_t k = list_arg(r, i, 0);
+        tc_ai_list *l = k >= 0 ? perso_list(p, (uint32_t)k) : NULL;
+        tc_ai_perso *o;
+        uint32_t j, from = 0;
+        int32_t parent = p->self_id;
+        if (!l) return 0;
+        l->count = 0;
+        while (p->each && parent != 0) {
+            for (j = 0; l->count < TC_AI_LIST_CAP && (o = p->each(p->find_user, j)) != NULL; j++)
+                if (o != p && o->standing_on == parent && o->self_id != 0) l->ids[l->count++] = o->self_id;
+            parent = from < l->count ? l->ids[from++] : 0;
+        }
+        list_store(p, (uint32_t)k, l);
+        return 0;
+    }
+    case 3: { /* PROC_GameAction0Etc_00488530 case 3 -> GAM_00429010, the reveal: GameState63's latch set (the host
+               * reveals the screen itself after the moves that cover it) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        g->cover_pending = false;
+        return 0;
+    }
     case 16: /* PROC_12Etc_00488340 -> GAM_00428ea0: off its carrier */
         p->motion.detach = true;
         if (p != r->p) p->motion.detach_by_other = true;
@@ -2511,7 +2587,7 @@ static uint32_t procedure(run *r, uint32_t i) {
 static float root_speed(const tc_ai_perso *p) {
     const tc_ai_state *st = &p->model->states[p->state];
     tc_vec3 row;
-    if (!p->model->root || !st->root_count) return 0;
+    if (!p->model->root || !st->root_count || p->state_ended) return 0; /* held at its end: no frame passes */
     row = p->model->root[st->root_first + (p->state_frame > 0 ? (uint32_t)p->state_frame % st->root_count : 0)];
     return tc_v3_length(row) * (float)p->frame_rate;
 }

@@ -67,6 +67,7 @@ typedef struct tc_ed_ai {
     const tc_sectors *sectors;
     tc_sector_track sector;
     bool stepping;               /* inside tc_ed_ai_step: his sector's solid row is set on the player's world */
+    struct tc_collision *sight;  /* host-fed: FUNC 162's geometry (tc_game.sight), NULL: the player's world */
     uint8_t *solid_union;        /* his row and the row of the sector found below him, when they differ (set_solid) */
     /* Portals (.ttai PORT): the one in progress (-1 none), whether its fire condition has held, its next fire op and
      * when that may run; per portal whether the player has left its radius since it last captured him. */

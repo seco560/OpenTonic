@@ -249,7 +249,7 @@ static tc_vec3 ground_wanted(tc_ai_perso *p, const tc_ai_card *card, float dt) {
         p->heading += turn * dt;
         return v;
     }
-    if (st->root_count) {
+    if (st->root_count && !p->state_ended) { /* held at its end: no frame passes (tc_mec_root_motion) */
         uint32_t fr = p->state_frame > 0 ? (uint32_t)p->state_frame % st->root_count : 0;
         return tc_v3_scale(local_to_global(p->heading, p->model->root[st->root_first + fr]), (float)p->frame_rate);
     }
@@ -346,6 +346,7 @@ static bool walk_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, cons
     p->standing_on = p->report_high == TC_MEC_ON_PERSO && d->walk.carrier > 0 ? d->walk.carrier : 0;
     p->ground_material = d->walk.ground_own;
     p->wall_material = d->walk.wall_own;
+    p->ground_kind = d->walk.ground_kind, p->wall_kind = d->walk.wall_kind, p->perso_kind = d->walk.other_kind;
     d->moving = tc_v3_length_sq(d->velocity) > 0;
     return true;
 }
@@ -477,6 +478,7 @@ static bool shared_step(tc_cast *c, tc_cast_actor *a, const tc_ai_card *card, fl
     p->contacts = d->contacts;
     p->ground_material = d->walk.ground_own;
     p->wall_material = d->walk.wall_own;
+    p->ground_kind = d->walk.ground_kind, p->wall_kind = d->walk.wall_kind, p->perso_kind = d->walk.other_kind;
     d->moving = tc_v3_length_sq(d->velocity) > 0;
     return true;
 }

@@ -267,7 +267,7 @@ bool tc_collision_add(tc_collision *col, const tc_vec3 *vertices, uint32_t verte
     return true;
 }
 
-typedef struct ray_ctx { tc_vec3 o, d; float max_distance, best; const tc_tri *tri; } ray_ctx;
+typedef struct ray_ctx { tc_vec3 o, d; float max_distance, best; const tc_tri *tri; bool front; } ray_ctx;
 
 static void ray_tri(const tc_tri *t, void *user) {
     ray_ctx *r = (ray_ctx *)user;
@@ -275,6 +275,7 @@ static void ray_tri(const tc_tri *t, void *user) {
     tc_vec3 p = tc_v3_cross(r->d, e2), s, q;
     float det = tc_v3_dot(e1, p), inv, u, v, dist;
     if (!(fabsf(det) > 1e-9f)) return;
+    if (r->front && !(tc_v3_dot(r->d, t->normal) < 0)) return; /* a back face, or along it */
     inv = 1 / det;
     s = tc_v3_sub(r->o, t->a);
     u = tc_v3_dot(s, p) * inv;
@@ -286,14 +287,22 @@ static void ray_tri(const tc_tri *t, void *user) {
     if (dist >= 0 && dist <= r->max_distance && dist < r->best) { r->best = dist; r->tri = t; }
 }
 
-int tc_collision_raycast(tc_collision *col, tc_vec3 o, tc_vec3 dir, float max_distance, tc_hit *hit) {
+static int raycast(tc_collision *col, tc_vec3 o, tc_vec3 dir, float max_distance, bool front, tc_hit *hit) {
     ray_ctx r;
     tc_vec3 e = tc_v3_add(o, tc_v3_scale(dir, max_distance));
-    r.o = o; r.d = dir; r.max_distance = max_distance; r.best = INFINITY; r.tri = NULL;
+    r.o = o; r.d = dir; r.max_distance = max_distance; r.best = INFINITY; r.tri = NULL; r.front = front;
     tc_collision_query(col, tc_v3_adds(tc_v3_min(o, e), -1e-3f), tc_v3_adds(tc_v3_max(o, e), 1e-3f), ray_tri, &r);
     if (!r.tri) return 0;
     if (hit) { hit->distance = r.best; hit->normal = r.tri->normal; hit->tri = r.tri; }
     return 1;
+}
+
+int tc_collision_raycast(tc_collision *col, tc_vec3 o, tc_vec3 dir, float max_distance, tc_hit *hit) {
+    return raycast(col, o, dir, max_distance, false, hit);
+}
+
+int tc_collision_raycast_front(tc_collision *col, tc_vec3 o, tc_vec3 dir, float max_distance, tc_hit *hit) {
+    return raycast(col, o, dir, max_distance, true, hit);
 }
 
 tc_vec3 tc_closest_point_on_triangle(tc_vec3 a, tc_vec3 b, tc_vec3 c, tc_vec3 p) {

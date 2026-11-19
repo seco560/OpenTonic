@@ -87,6 +87,9 @@ void tc_collision_query(tc_collision *col, tc_vec3 lo, tc_vec3 hi, tc_tri_fn fn,
 
 /* Nearest hit of the segment o -> o + dir * max_distance (both faces count). 1 = hit. */
 int tc_collision_raycast(tc_collision *col, tc_vec3 o, tc_vec3 dir, float max_distance, tc_hit *hit);
+/* The same, front faces only (dir . normal < 0): the scripts' ray, FUNC 162 (FUN_004687a0 notes the side, FUN_00460350
+ * keeps only a front face's hit). */
+int tc_collision_raycast_front(tc_collision *col, tc_vec3 o, tc_vec3 dir, float max_distance, tc_hit *hit);
 
 /* Closest point on triangle abc to p (Ericson, Real-Time Collision Detection 5.1.5). */
 tc_vec3 tc_closest_point_on_triangle(tc_vec3 a, tc_vec3 b, tc_vec3 c, tc_vec3 p);

@@ -3,6 +3,14 @@
 
 static float camera_sight_test(tc_viewer *v, tc_vec3 from, tc_vec3 to, float *inside);
 
+/* The camera perso's collide set for its sweep (tc_cam_target.use_priority), when the export has it. */
+static void tcv_camera_collide_set(const tc_viewer *v, tc_cam_target *t) {
+    const tc_pcol *c = &v->level->pcol;
+    t->use_priority = c->has_camera;
+    t->priority = c->camera_priority;
+    t->meets = (c->camera_flags & TC_PCOL_MEETS_PERSOS) != 0;
+}
+
 /* The camera's sight test against the persos drawn last frame (tc_cam_sight_fn): their parts, both faces, not sprites,
  * water or blended ones (smoke, glass), nor Ed. The original's camera tests the persos of the sectors on its line by
  * their drawn geometry (FUN_004a3920 -> FUN_00484210); here every drawn perso, culled by its parts' bounding spheres. */
@@ -305,6 +313,7 @@ static float shot_clearance(tc_viewer *v, tc_vec3 from, tc_vec3 dir, float len) 
     if (len < 1e-4f) return len;
     memset(&t, 0, sizeof(t));
     t.world = &v->game->world;
+    tcv_camera_collide_set(v, &t);
     t.sight = camera_sight;
     t.sight_user = v;
     if (v->shot.look_perso && v->game->has_cast) {
@@ -778,6 +787,7 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         t.chase = 0;
         if (who.kind == TC_GAME_MAIN_CHARACTER) tc_main_camera_target(&p->main, &t); /* the car says where to look */
         t.world = &p->world;
+        tcv_camera_collide_set(v, &t);
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;
         p->world.solid = NULL;

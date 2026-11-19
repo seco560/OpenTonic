@@ -91,9 +91,14 @@ see below). How the exe does it:
   side, e.g. the 0x8 hang spheres on Land) are read by no condition: the CLID chunk is gone.
 - **Hanging** (card 11, `FUN_004adb4d`; forces `FUN_004c6993`): while the hand is on the ledge the grip cancels
   last frame's velocity and `FUN_004a7b71` presses the body 0.0125 into the ground every frame, so the hand touches
-  the ledge again each frame; R10 lets go 200 ms after `GroundMaterialIs(8)` fails (the ledge ends). Not ported:
-  `FUN_004c6993`'s alignment (`FUN_0043cf80` -> `FUN_00463940`, 2.3 KB, unread: it finds the ledge's edge near card
-  +0x14 and turns Ed square to it).
+  the ledge again each frame; R10 lets go 200 ms after `GroundMaterialIs(8)` fails (the ledge ends). **The alignment**
+  (`FUN_004c6993` -> `FUN_0043cf80` -> `FUN_00463940`), read and ported 2026-11-19 (tc_mec_perso.c `hang_align`; the
+  user: Ed latched at odd angles): the probe card +0x14 (Ed: (0, -0.65, 2), his hands) looks within card +0x10 (0.3)
+  for an edge of the ledge's object that is a border or a crease (normals' dot <= card +0x8, 0.01); he turns to face
+  square to it, at most card +0x30 (0.06 rad) a step, about the pivot card +0x20, and moves along his y so his origin
+  stays card +0xC (0.65) from the edge's line, x card +0x2C (0.2) a step. The exe keeps the *last* qualifying edge (its
+  nearest-edge test compares with FLT_MAX, 0x4641d4); port: the nearest, over all static triangles (no objects in the
+  port's world). north's ledge: approaches from -55..-77 deg all end square at -77.2 within ~0.2 s.
 - **Climbing up** (B43, state 153) uses **card type 8** (`FUN_004ac62b`, request `FUN_004af04e`): no forces at all
   (`FUN_004c4aa4` empties the list), the velocity is the request's (mode 12: direction x speed in world axes; the port
   takes the root motion, (0, -0.85, +2.28) over the climb), no ground projection, no gravity: Ed rises onto the ledge.
@@ -171,14 +176,14 @@ Each item is marked in the code or in docs/NOTES.md.
 2. **Depenetration** before each move (tc_mec_walk.c) stays, though not in the exe. Without it the wander test gets
    more stalls (Land, sud0) and two front-face tunnels on the ski levels, so the port still creates overlaps the exe
    does not (sphere sets swapping on state changes, the respawn and re-snap paths). Remove it once those are found.
-3. **Hang alignment**: `FUN_004c6993`'s turn towards the ledge's edge (`FUN_00463940`) is not ported.
+3. **Hang alignment**: ported 2026-11-19 (above, "Ledge hang"); port: nearest edge over the static triangles.
 4. **Perso obstacles**: done 2026-11-05 (docs/ENGINE.md "Moving collision, read"): posed where each perso is, the
    exe's who-meets-whom rules, the hand point's floor_ok (+0x37), riding. `DAT_008bcaec` is not a moving frame: a
    second collide object swept at the same translations without the rotation (`FUN_0043c410`). Who sets it is
    **open**.
 5. **Fixed tick**: done (30 Hz, third pass above). Dynamics +0x38C is open.
 6. **Root motion**: found (FUN_0042a8d0); the port's equivalent is kept.
-7. **Card 11 (hang)**: gravity in the air (x dt^2, negligible) is not applied; see 3 for the alignment.
+7. **Card 11 (hang)**: gravity in the air (x dt^2, negligible) is not applied.
 8. **Skier**: the three stopgaps (ski_unstick, slope_cos 70 deg, ski_unpin) were removed on 2026-10-28 at the user's
    request (in the original he slides on anything; with the exe's collision he does not stick: wander on Totalski and
    skymap, no stalls). The wall stumble was a misremembering (user, 2026-10-31): nothing to find.
@@ -220,7 +225,7 @@ Each item is marked in the code or in docs/NOTES.md.
 3. **Oracle the responses**: MEC_004bb904 / bbc4c / bc20a and the forces (FUN_004c41c5) are pure math too; the same
    harness can check them against tc_mec_walk.
 4. **Jump and air control** (5), read with the typed project: this has the biggest effect on how Ed feels.
-5. **Hang alignment** (`FUN_00463940`), then the depenetration (2).
+5. **Hang alignment**: done 2026-11-19. The depenetration (2) remains.
 6. **Skier** (8): the state-change trace of the original under Wine (docs/NOTES.md "Sliding stages"). Wine is not
    installed on this Mac; the user's Linux box has it.
 

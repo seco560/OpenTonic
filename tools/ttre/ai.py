@@ -680,10 +680,49 @@ def zde_block(d, perso, n_states):
                 active[st] |= 1 << k
             f, guard = lv.ptr(f), guard + 1
         a = lv.ptr(a)
-    out = struct.pack('<HH', len(zones), n_states)
-    for z in zones:
-        out += struct.pack('<HH', len(z), 0) + b''.join(struct.pack('<I3f3fHH', k, *x, *y, t, 0) for k, x, y, t in z)
+    parts = part_zones(d, perso)[:32 - len(zones)] if cs else []
+    out = struct.pack('<HH', len(zones) + len(parts), n_states)
+    for z, flag in [(z, 0) for z in zones] + [(z, 1) for z in parts]:
+        out += struct.pack('<HH', len(z), flag) + b''.join(struct.pack('<I3f3fHH', k, *x, *y, t, 0) for k, x, y, t in z)
     return out + b''.join(struct.pack('<I', m) for m in active)
+
+
+def part_zones(d, loc):
+    """The ZDE geometry of a perso's parts (2026-11-19): the hit tests' second path (FUN_0041fd00, called for each other
+    perso by GAM_CollectNearby_0041fa70 and COND 18-29) when none of that perso's own ZDE zones met: each child
+    SuperObject of type 0xB / 0x14 (its channels' objects), the physical object's collide set (+4) -> +8 (FUN_00431e20;
+    the ZDR the sweeps read is +0xC), the element whose collide material passes the mask (FUN_0041f060), tested at the
+    child's matrix. cavedoc's toast (JET_ToastMortelle) burns Ed this way: its object 0 holds a 2.5 box of material
+    0x80. Port: the objects the channels show at frame 0 of the initial animation, posed there (object -> perso,
+    the object-list scale applied; a turned box by its bounds), as zones flagged 1 in zde_block: the core lets them
+    meet only as the other perso's (tc_ai.c zde_meets). Spheres and boxes only (as zde_prims)."""
+    p = next((x for x in d.persos() + d.spawnables() if x.loc == loc), None)
+    if not p or not p.anim or d.se:
+        return []
+    out = []
+    for o, m in p.anim.pose(0):
+        po = p.physical.get(o) if o is not None else None
+        cs = d.lv.ptr(po, 4) if po else None
+        g = d.lv.ptr(cs, 8) if cs else None
+        if not g:
+            continue
+        sc = p.objects[o][1]
+        from .level import mat_mul
+        mm = mat_mul(m, sc)
+
+        def at(v):
+            return tuple(mm[4 * i] * v[0] + mm[4 * i + 1] * v[1] + mm[4 * i + 2] * v[2] + mm[4 * i + 3] for i in range(3))
+        prims = []
+        for k, a, b, t in zde_prims(d, g):
+            if k == 7:
+                s = (mm[0] ** 2 + mm[4] ** 2 + mm[8] ** 2) ** 0.5
+                prims.append((7, at(a), (b[0] * s, 0.0, 0.0), t))
+            else:
+                cs8 = [at((a[0] if i & 1 else b[0], a[1] if i & 2 else b[1], a[2] if i & 4 else b[2])) for i in range(8)]
+                prims.append((8, tuple(min(c[j] for c in cs8) for j in range(3)), tuple(max(c[j] for c in cs8) for j in range(3)), t))
+        if prims:
+            out.append(prims)
+    return out
 
 
 def perso_dsg_value(d, perso, k):

@@ -216,6 +216,11 @@ typedef struct tc_cam_target {
     bool shot_axis;
     float shot_yaw;
     tc_collision *world;  /* NULL: no collision. Its solid row is honoured as set (the caller's choice) */
+    /* The camera perso's own collide set for its sweep (tc_pcol.camera_*: StdCamer, 74, meets persos): it meets the
+     * persos of a priority up to it, itself none (FUN_0043c640). use_priority false: the world's as the last mover left it */
+    bool use_priority;
+    uint8_t priority;
+    bool meets;
     tc_cam_sight_fn sight;   /* NULL: none. The eye stays this side of what it reports too */
     void *sight_user;
 } tc_cam_target;

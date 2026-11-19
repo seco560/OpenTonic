@@ -368,6 +368,45 @@ def freeze_story_removals(a):
     return count
 
 
+def _wait_then_check(a, behaviour):
+    """cock01's SLY_CamOriente_SalleGardeArmure, B1 (the armour room's opening shot), ends: ... dsg39 := 255;
+    If (guard.dsg12 == 1 And InBehaviour(Ed, his B102)) Then ForceBehaviour(Ed, his B103); Wait(100); dsg0 := 0;
+    ChangeBehaviour(B0). The guard (SDO_GNPSauve) frees Ed after its line only if this camera is NOT in B1, and sets
+    dsg12 when its line is done. A line dismissed between the camera's check and its B0 (100 ms, + the guard's tick:
+    8 frames at 60, 13.42..13.53 s into the level) is freed by neither: Ed stays in his B102 for good (the user's
+    recording 2026-11-19_201356). The scripts' own race, in the exe too. The fix: the Wait(100) before the check, so
+    the check and the B0 are one tick: whoever comes second frees him. Returns how many were rewritten."""
+    b = next((x for x in a.behaviours if not x.reflex and x.index == behaviour), None)
+    count = 0
+
+    def walk(ns):
+        nonlocal count
+        for i in range(len(ns) - 2):
+            cond, then, wait = ns[i], ns[i + 1], ns[i + 2]
+            if cond.type == 0 and cond.param == 0 and then.type == 0 and then.param == 1 and wait.type == 5 \
+                    and wait.param == 29 and len(wait.children) == 1 and wait.children[0].type == 12 \
+                    and wait.children[0].param == 100 \
+                    and any(x.type == 1 and x.param == 56 for x in ai.walk_nodes(cond.children)) \
+                    and any(x.type == 4 and x.param == 237 for x in ai.walk_nodes(then.children)):
+                ns[i], ns[i + 1], ns[i + 2] = wait, cond, then  # siblings: their depths stay
+                count += 1
+                return
+        for n in ns:
+            walk(n.children)
+    if b and b.schedule:
+        walk(b.schedule)
+    return count
+
+
+# Workarounds in the levels' scripts for races the port runs into (port choice, for playability; not shown to happen in
+# the exe: each stays until the port's real difference is found, docs/ENGINE.md "Speech"): (level, instance)
+# -> (fix, its argument). Each checks the exact shape it rewrites and the export fails if it finds none, so a fix never
+# lands on data it was not written for.
+SCRIPT_FIXES = {
+    ('cock01', 'SLY_CamOriente_SalleGardeArmure'): (_wait_then_check, 1),
+}
+
+
 def _forces_on(a, main_loc):
     """{behaviour location} the perso's ForceBehaviour / ForceReflex (PROC 237 / 238) hand the main actor: those naming
     him by the MainActor keyword (KW 5) or by his perso node (his location). The cast listing shows them."""
@@ -545,6 +584,9 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
         names = d.perso_names(loc)
         if fix_ed_plays and names[1] in PROMPT_ANY_BUTTON:
             widen_prompt_buttons(a, main_ai)
+        fix = SCRIPT_FIXES.get((d.lv.name.lower(), names[2])) if not d.se else None
+        if fix and not fix[0](a, fix[1]):
+            raise ValueError(f'{d.lv.name}: script fix {fix[0].__name__} found nothing to rewrite in {names[2]}')
         for n in a.nodes():  # the level's own sounds (sfx.level_snd): resolved here, by the node's address
             if n.type == 34 and n.loc and not d.se:
                 n.event = sound_at(sounds, n.loc, n.param)

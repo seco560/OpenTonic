@@ -21,10 +21,102 @@ static uint32_t player_contacts(const tc_player *p) {
  * (FUN_004c1541). While grounded (the hand point on the ledge) the grip cancels last frame's velocity and
  * FUN_004a7b71 presses the body into the ground by 0.0125 every frame (a force -0.0125 m / dt^2 along its normal): the
  * hand touches the ledge again each frame, which R10 needs (it lets go 200 ms after GroundMaterialIs(8) fails).
- * Not ported: FUN_004c6993's alignment (FUN_0043cf80 -> FUN_00463940 finds the ledge's edge near card +0x14 and turns
- * Ed square to it at card +0xC from it, at rate card +0x2C); gravity, which here loses its part along the contact
- * normal and is negligible in the air (x dt^2) before R10 drops Ed. */
-static void hang(const tc_mec_perso *x, const tc_ai_sphere_set *body, float dt) {
+ * The alignment (hang_align) squares him to the ledge's edge. Not ported: gravity, which here loses its part along the
+ * contact normal and is negligible in the air (x dt^2) before R10 drops Ed. */
+
+typedef struct hang_edge { tc_vec3 a, b, n1, n2; float d2; bool shared; } hang_edge;
+typedef struct hang_find { tc_vec3 probe; float r2; hang_edge e[100]; int count; } hang_find;
+
+/* FUN_0046ac70: the squared distance from p to the segment a -> a + ab */
+static float seg_dist2(tc_vec3 p, tc_vec3 a, tc_vec3 ab) {
+    float l2 = tc_v3_dot(ab, ab), t = l2 > 0 ? tc_v3_dot(ab, tc_v3_sub(p, a)) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return tc_v3_length_sq(tc_v3_sub(tc_v3_add(a, tc_v3_scale(ab, t)), p));
+}
+
+static bool v3_same(tc_vec3 a, tc_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+/* FUN_004638a0: an edge within reach joins the list once (100 at most); the second triangle along it gives it its
+ * second normal. The exe keys edges by the object's vertex indices; the port's world is a triangle soup, so by the
+ * points (the export copies a shared vertex's position exactly). */
+static void hang_add(hang_find *f, tc_vec3 a, tc_vec3 b, tc_vec3 n) {
+    float d2 = seg_dist2(f->probe, a, tc_v3_sub(b, a));
+    int k;
+    if (d2 > f->r2) return;
+    for (k = 0; k < f->count; k++)
+        if ((v3_same(f->e[k].a, a) && v3_same(f->e[k].b, b)) || (v3_same(f->e[k].a, b) && v3_same(f->e[k].b, a))) {
+            f->e[k].n2 = n, f->e[k].shared = true;
+            return;
+        }
+    if (f->count == 100) return;
+    f->e[f->count].a = a, f->e[f->count].b = b, f->e[f->count].n1 = n, f->e[f->count].d2 = d2;
+    f->e[f->count++].shared = false;
+}
+
+static void hang_tri(const tc_tri *t, void *user) {
+    hang_find *f = user;
+    hang_add(f, t->a, t->b, t->normal);
+    hang_add(f, t->b, t->c, t->normal);
+    hang_add(f, t->c, t->a, t->normal);
+}
+
+/* FUN_004c6993's alignment (card 11, while the hand has ground; FUN_0043cf80 -> FUN_00463940), read 2026-11-19. Ed's card:
+ * +0x8 0.01, +0xC 0.65, +0x10 0.3, +0x14 (0, -0.65, 2), +0x20 (0, -0.65, 2), +0x2C 0.2, +0x30 0.06.
+ * - The probe, card +0x14 in his axes (the hands), looks for the edges of the ledge's object within card +0x10 of it: an
+ *   edge of one triangle only (the object's border), or a crease whose two faces' normals have a dot product up to
+ *   card +0x8 (a ledge's top meeting its wall: 0).
+ * - The edge's horizontal direction gives the turn that makes his front (-y) square to it, either way round, clamped to
+ *   card +0x30 a step, about his z axis; card +0xC - his origin's horizontal distance to the edge's line is the error
+ *   along his y axis. The move: that error along y, turned with him, plus what keeps the pivot card +0x20 (in his axes)
+ *   where it was through the turn, x card +0x2C / dt, added to the velocity before the collide-and-move
+ *   (FUN_004adb4d); the turn / dt is his angular speed for the step.
+ * - A vertical edge (no horizontal direction): no turn, no move. No edge in reach: nothing.
+ * Port: the exe searches only the object the ground contact belongs to (dynamics +0x134) and keeps the last edge that
+ * qualifies in its list order (its "nearest" test compares with FLT_MAX, 0x4641d4, so every edge passes it); the
+ * port's static world has no objects and another triangle order, so it searches every static triangle near the probe
+ * and keeps the nearest qualifying edge. Not searched: a perso's collision (a ledge on a moving platform). */
+static bool hang_align(const tc_mec_perso *x, const tc_ai_card *card, float dt, tc_vec3 *move, float *turn) {
+    tc_player *p = x->body;
+    hang_find f;
+    tc_vec3 probe_l = tc_v3(tc_ai_card_f32(card, 0x14), tc_ai_card_f32(card, 0x18), tc_ai_card_f32(card, 0x1C));
+    tc_vec3 pivot_l = tc_v3(tc_ai_card_f32(card, 0x20), tc_ai_card_f32(card, 0x24), tc_ai_card_f32(card, 0x28));
+    float r = tc_ai_card_f32(card, 0x10), crease = tc_ai_card_f32(card, 0x08), keep = tc_ai_card_f32(card, 0x0C);
+    float gain = tc_ai_card_f32(card, 0x2C), max_turn = tc_ai_card_f32(card, 0x30);
+    const hang_edge *best = NULL;
+    int k;
+    *move = tc_v3(0, 0, 0), *turn = 0;
+    if (!p->world || dt <= 0 || r <= 0 || x->dyn->walk.ground_tri == UINT32_MAX) return false;
+    f.probe = tc_v3_add(p->position, local_to_global(p->heading, probe_l));
+    f.r2 = r * r, f.count = 0;
+    tc_collision_query(p->world, tc_v3_adds(f.probe, -r), tc_v3_adds(f.probe, r), hang_tri, &f);
+    for (k = 0; k < f.count; k++)
+        if ((!f.e[k].shared || tc_v3_dot(f.e[k].n1, f.e[k].n2) <= crease) && (!best || f.e[k].d2 < best->d2)) best = &f.e[k];
+    if (!best) return false;
+    {
+        /* FUN_0043cf00: his origin's distance to the edge's line, in x y (a vertical edge: the card's distance) */
+        tc_vec3 a = best->a, b = best->b, o = p->position;
+        float ex = b.x - a.x, ey = b.y - a.y, l2 = ex * ex + ey * ey;
+        float dist = l2 == 0 ? keep : fabsf(ey * (o.x - a.x) - ex * (o.y - a.y)) / sqrtf(l2);
+        float err = keep - dist, ang = 0;
+        tc_vec3 yax = local_to_global(p->heading, tc_v3(0, 1, 0)), corr;
+        if (l2 > 0) {
+            /* the turn: front = -y; acos of front . edge direction, the sign by their cross product's z */
+            float il = 1.0f / sqrtf(l2), dx = -ex * il, dy = -ey * il, fx = -yax.x, fy = -yax.y;
+            float c = dx * fx + dy * fy, t = acosf(c < -1 ? -1 : c > 1 ? 1 : c);
+            ang = fx * dy - fy * dx > 0 ? t - 1.5707964f : 1.5707964f - t;
+        }
+        if (ang > max_turn) ang = max_turn;
+        if (ang < -max_turn) ang = -max_turn;
+        /* the error along y turned with him, and the pivot kept through the turn */
+        corr = local_to_global(p->heading + ang, tc_v3(0, err, 0));
+        corr = tc_v3_add(corr, tc_v3_sub(local_to_global(p->heading, pivot_l), local_to_global(p->heading + ang, pivot_l)));
+        *move = tc_v3_scale(corr, gain / dt);
+        *turn = ang;
+    }
+    return true;
+}
+
+static void hang(const tc_mec_perso *x, const tc_ai_card *card, const tc_ai_sphere_set *body, float dt) {
     tc_player *p = x->body;
     tc_ai_perso *a = x->ai;
     const tc_ai_motion *m = &a->motion;
@@ -38,8 +130,14 @@ static void hang(const tc_mec_perso *x, const tc_ai_sphere_set *body, float dt) 
     else
         v = tc_v3_scale(local_to_global(p->heading, x->root), (float)a->frame_rate);
     if (grounded) {
+        tc_vec3 move;
+        float turn;
         v = tc_v3_sub(v, tc_v3_scale(n, tc_v3_dot(v, n)));
         if (dt > 0) v = tc_v3_add(v, tc_v3_scale(n, -0.0125f / dt)); /* FUN_004a7b71 */
+        if (hang_align(x, card, dt, &move, &turn)) {
+            v = tc_v3_add(v, move);
+            p->heading += turn;
+        }
     }
     tc_mec_collide_move(&x->dyn->walk, NULL, p->world, body, p->heading, dt, &p->position, &v);
     p->velocity = v;
@@ -212,10 +310,14 @@ static void ski_move_capsule(const tc_mec_perso *x, tc_vec3 v, float dt) {
     x->dyn->contacts = player_contacts(p);
 }
 
+/* The animation's own motion this frame (FUN_004170d0: the A3D frame vectors between the last tick's frame, +0x7C, and
+ * this one's, +0x74, over the tick). Held at its end (state_ended: no repeat, no next state) no frame passes: none. Until
+ * 2026-11-20 the held frame's row kept moving the perso every tick (carota's Harry Cover walked off his ledge while his
+ * rule waited, the user's softlock). */
 tc_vec3 tc_mec_root_motion(const tc_ai_perso *a) {
     const tc_ai_state *st = &a->model->states[a->state];
     uint32_t f;
-    if (!st->root_count) return tc_v3(0, 0, 0);
+    if (!st->root_count || a->state_ended) return tc_v3(0, 0, 0);
     f = a->state_frame > 0 ? (uint32_t)a->state_frame % st->root_count : 0;
     return a->model->root[st->root_first + f];
 }
@@ -362,7 +464,7 @@ void tc_mec_perso_step(const tc_mec_perso *x, float dt) {
         return;
     }
     if (type == 11 && x->spheres) {
-        hang(x, x->spheres, dt);
+        hang(x, card, x->spheres, dt);
         d->card_type = type;
         return;
     }

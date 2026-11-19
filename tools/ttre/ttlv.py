@@ -670,7 +670,11 @@ def perso_collision(data, cast_locs, prso_index, skip_decals=False):
     mp, mf = data.collide_set_flags(player) if player else (0, 0)
     if data.se:  # the SE plays the borrowed retail Ed: his collide set (priority 127, meets persos, floor_ok)
         mp, mf = 127, 1 | 2 | 8
-    return struct.pack('<H2B', len(rows), mp, mf) + b''.join(rows)
+    # the fix camera's (family 'Camera', StdCamer: priority 74, meets persos), after the rows: its sweep meets the persos
+    # of a priority up to its own (FUN_0043c640), not up to Ed's 127 (2026-11-20). u8 priority, u8 flags, u16 0.
+    cam = next((p for p, _ in data.perso_in_fix if data.perso_names(p)[0] == 'Camera'), None) if data.perso_in_fix else None
+    cp, cf = data.collide_set_flags(cam) if cam and not data.se else (74, 1 | 8)
+    return struct.pack('<H2B', len(rows), mp, mf) + b''.join(rows) + struct.pack('<2BH', cp, cf, 0)
 
 
 def invt(data):

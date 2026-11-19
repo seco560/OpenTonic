@@ -428,7 +428,7 @@ void tc_zde_set_read(tc_zde_set *z, reader *r) {
     if (!z->prims) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
     for (i = 0; i < z->zone_count && !r->error; i++) {
         uint16_t c = rd_u16(r);
-        (void)rd_u16(r);
+        z->zones[i].part = (uint8_t)rd_u16(r);
         z->zones[i].first = z->prim_count;
         z->zones[i].count = c;
         for (k = 0; k < c; k++) {
@@ -776,6 +776,13 @@ static void read_pcol(tc_pcol *c, reader *r) {
             (void)rd_u16(r);
             rd_mat34(r, &p->pose[k].m);
         }
+    }
+    if (!r->error && r->size - r->offset >= 4) { /* the camera's collide set (2026-11-20; older files end here; not
+                                                  * have(): it marks a short read an error) */
+        c->camera_priority = rd_u8(r);
+        c->camera_flags = rd_u8(r);
+        (void)rd_u16(r);
+        c->has_camera = true;
     }
 }
 
