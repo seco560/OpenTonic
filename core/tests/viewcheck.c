@@ -422,7 +422,7 @@ static void portal_scenario(const char *dir) {
     check(o.kind == TC_VO_MASK || o.kind == TC_VO_LOGO, "bar starts with the reveal");
     for (i = 0; i < 60 * 4; i++) {
         frame(&w, 1.0f / 60);
-        if (tc_viewer_player(&w) && w.phase == TC_VP_PLAY) break;
+        if (tc_viewer_player(&w) && w.game->phase == TC_GP_PLAY) break;
     }
     for (i = 0; i < 60 * 2; i++) {
         frame(&w, 1.0f / 60);
@@ -1352,7 +1352,7 @@ static void transit_scenario(const char *dir) {
             tc_player_teleport(p, tc_v3(sheep->ai->position.x + 6, sheep->ai->position.y, z1 + 30), 0); /* over the pool */
             for (i = 0; i < 60 * 12 && !covered; i++) {
                 frame(&v, 1.0f / 60);
-                covered = v.phase != TC_VP_PLAY;
+                covered = v.game->phase != TC_GP_PLAY;
             }
             snprintf(what, sizeof(what), "Transit: four sheep hit, the pool's water goes down (%.1f -> %.1f), Ed lands and the "
                      "training ends (the cover: %d)", (double)z0, (double)z1, covered);

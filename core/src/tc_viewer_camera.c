@@ -46,10 +46,10 @@ void tcv_mesh_spheres(tc_viewer *v) {
         s[3] = sqrtf(r);
     }
     /* the parts of the cast's actors without collision of their own */
-    if ((v->mesh_ghost = (uint8_t *)tc_calloc(v->mesh_count ? v->mesh_count : 1, 1)) != NULL && v->play && v->play->has_cast) {
+    if ((v->mesh_ghost = (uint8_t *)tc_calloc(v->mesh_count ? v->mesh_count : 1, 1)) != NULL && v->game && v->game->has_cast) {
         uint32_t first = v->perso_first;
         for (i = 0; i < v->level->perso_count; first += v->level->persos[i].part_count, i++) {
-            const tc_cast_actor *a = tc_cast_actor_of(&v->play->cast, i);
+            const tc_cast_actor *a = tc_cast_actor_of(&v->game->cast, i);
             for (k = 0; a && !a->obstacle && k < v->level->persos[i].part_count && first + k < v->mesh_count; k++)
                 v->mesh_ghost[first + k] = 1;
         }
@@ -77,7 +77,7 @@ static uint32_t perso_crossings(const tc_viewer *v, bool ghosts, tc_vec3 from, t
         if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
         if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
         if ((v->mesh_ghost && v->mesh_ghost[dr->mesh]) != ghosts) continue;
-        if (v->play && tcx_sight_skips(v->play->custom, dr->mesh)) continue;
+        if (v->game && tcx_sight_skips(v->game->custom, dr->mesh)) continue;
         if (dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi) continue;
         m = v->meshes[dr->mesh];
         s = v->mesh_sphere + 4 * dr->mesh;
@@ -115,7 +115,7 @@ static float perso_clearance(const tc_viewer *v, tc_vec3 p, float within) {
         float scale;
         if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
         if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
-        if (v->play && tcx_sight_skips(v->play->custom, dr->mesh)) continue;
+        if (v->game && tcx_sight_skips(v->game->custom, dr->mesh)) continue;
         if (dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi) continue;
         m = v->meshes[dr->mesh];
         s = v->mesh_sphere + 4 * dr->mesh;
@@ -197,7 +197,7 @@ static float camera_sight_test(tc_viewer *v, tc_vec3 from, tc_vec3 to, float *in
 /* The director's shot (tc_viewer.director): camera mode 6 on a target, from the cast's scripts (tc_ai_globals). fresh:
  * Jump, Action or Shoot pressed this frame (ends it: port choice). Returns whether the shot is on. */
 static bool update_director(tc_viewer *v, bool fresh) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     const tc_ai_globals *g;
     tc_vec3 target, d;
     bool want;
@@ -237,7 +237,7 @@ static bool update_director(tc_viewer *v, bool fresh) {
 bool tc_viewer_directed(const tc_viewer *v) { return v->director; }
 
 float tc_viewer_tick_fraction(const tc_viewer *v) {
-    return v->play ? fminf(1, fmaxf(0, v->play->tick_time / TC_ED_AI_TICK)) : 1;
+    return v->game ? fminf(1, fmaxf(0, v->game->tick_time / TC_ED_AI_TICK)) : 1;
 }
 
 /* The camera's dsgvar k as Ed's copy holds it (the cast's directors and characters write it there), 0 / false none. A
@@ -254,21 +254,18 @@ static bool cam_v(const tc_ed_ai *e, uint32_t k, tc_vec3 *out) {
 
 /* Ed as the directed shots aim at him: his origin as drawn, and the aim height (the follow's record +0x24 offset, which
  * B8 keeps; B22 clears it: the rail aims at his origin). */
-static tc_vec3 ed_drawn(const tc_viewer_play *p) { return tcv_main_drawn(p); }
+static tc_vec3 ed_drawn(const tc_viewer *v) { return tcv_main_drawn(v); }
 
-tc_vec3 tcv_main_position(const tc_viewer_play *p) {
-    const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
-    return a ? a->ai->position : p->main.player.position;
-}
-
-tc_vec3 tcv_main_drawn(const tc_viewer_play *p) {
+tc_vec3 tcv_main_drawn(const tc_viewer *v) {
+    const tc_game *p = v->game;
     const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
     tc_vec3 out;
     if (a && tc_cast_drawn_position(&p->cast, a->entry->id, p->tick_time / TC_ED_AI_TICK, &out)) return out;
-    return p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->main.player.position;
+    return p->use_ai ? tc_v3(v->ed_pose.m[12], v->ed_pose.m[13], v->ed_pose.m[14]) : p->main.player.position;
 }
 
-float tcv_main_drawn_heading(const tc_viewer_play *p) {
+float tcv_main_drawn_heading(const tc_viewer *v) {
+    const tc_game *p = v->game;
     const tc_cast_actor *a = p->has_cast ? tc_cast_character(&p->cast) : NULL;
     if (a) {
         float t = fminf(1, fmaxf(0, p->tick_time / TC_ED_AI_TICK));
@@ -303,28 +300,28 @@ static float shot_clearance(tc_viewer *v, tc_vec3 from, tc_vec3 dir, float len) 
     tc_cam_target t;
     struct tc_obstacle *ob = NULL;
     bool live = false;
-    const uint8_t *solid = v->play->world.solid;
+    const uint8_t *solid = v->game->world.solid;
     uint32_t prso, first = v->perso_first;
     if (len < 1e-4f) return len;
     memset(&t, 0, sizeof(t));
-    t.world = &v->play->world;
+    t.world = &v->game->world;
     t.sight = camera_sight;
     t.sight_user = v;
-    if (v->shot.look_perso && v->play->has_cast) {
+    if (v->shot.look_perso && v->game->has_cast) {
         for (prso = 0; prso < v->level->perso_count; first += v->level->persos[prso].part_count, prso++) {
-            const tc_cast_actor *a = tc_cast_actor_of(&v->play->cast, prso);
+            const tc_cast_actor *a = tc_cast_actor_of(&v->game->cast, prso);
             if (a && a->entry->id == v->shot.look_perso) {
                 v->sight_skip_lo = first;
                 v->sight_skip_hi = first + v->level->persos[prso].part_count;
                 break;
             }
         }
-        if (v->play->world.obstacles && (ob = tc_obstacles_find(v->play->world.obstacles, (uint16_t)v->shot.look_perso)))
+        if (v->game->world.obstacles && (ob = tc_obstacles_find(v->game->world.obstacles, (uint16_t)v->shot.look_perso)))
             live = ob->live, ob->live = false;
     }
-    v->play->world.solid = NULL; /* every surface (as the follow's) */
+    v->game->world.solid = NULL; /* every surface (as the follow's) */
     reach = tc_cam_clearance(&t, from, dir, len);
-    v->play->world.solid = solid;
+    v->game->world.solid = solid;
     if (ob) ob->live = live;
     v->sight_skip_lo = v->sight_skip_hi = 0;
     return reach;
@@ -432,13 +429,13 @@ static void look_from(tc_viewer *v, tc_vec3 eye, tc_vec3 at, bool feet, float dt
  * alias), *out his drawn origin + the aim height; else the perso's origin (InPersoContext(dsg5, GetPosition)). The
  * directors point it at what they show (Land's bridge, cock01's fridge, north's flying guard) and back at Ed after. */
 static bool shot_target(const tc_viewer *v, tc_vec3 *out) {
-    const tc_viewer_play *p = v->play;
+    const tc_game *p = v->game;
     int32_t id = p->has_cast ? p->cast.globals.cam_target : 0;
     if (id != 0 && id != p->cast.main_id && !(v->level->cast.main_alias && id == (int32_t)v->level->cast.main_alias) &&
         tc_cast_drawn_position(&p->cast, id, p->tick_time / TC_ED_AI_TICK, out) && isfinite(out->x) && isfinite(out->y) &&
         isfinite(out->z))
         return false;
-    *out = tc_v3_add(ed_drawn(p), tc_v3(0, 0, TC_CAM_AIM_HEIGHT));
+    *out = tc_v3_add(ed_drawn(v), tc_v3(0, 0, TC_CAM_AIM_HEIGHT));
     return true;
 }
 
@@ -484,7 +481,7 @@ static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
     ease = cam_f(e, TC_AI_CAMERA_FIXED_EASE) == 1;
     steps = cam_f(e, TC_AI_CAMERA_FIXED_STEPS);
     if (!cam_v(e, TC_AI_CAMERA_FIXED_POINT, &point)) point = place;
-    v->shot.look_perso = at_ed && !shot_target(v, &target) ? v->play->cast.globals.cam_target : 0;
+    v->shot.look_perso = at_ed && !shot_target(v, &target) ? v->game->cast.globals.cam_target : 0;
     if (at_ed && !v->shot.look_perso) shot_target(v, &target);
     v->shot.glides = glide;
     if (!v->shot.on) { /* B8: from where the camera is, or put at the place; the look starts at its point */
@@ -509,7 +506,7 @@ static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
  * projected, held within the ends, plus dsg85 of its length), eased there by dsg84 (at most 10: (1.95 - 0.15 dsg84) / 9
  * of the way per tick; 0: at once), mode 3: looking at him. A segment of no length ends the shot (B21: dsg39 := 0). */
 static bool update_rail(tc_viewer *v, const tc_ed_ai *e, float dt) {
-    tc_vec3 a, b, ab, ed = ed_drawn(v->play), point;
+    tc_vec3 a, b, ab, ed = ed_drawn(v), point;
     float len2, s, smooth;
     if (!cam_v(e, 82, &a) || !cam_v(e, 83, &b)) return false;
     ab = tc_v3_sub(b, a);
@@ -536,7 +533,7 @@ static bool update_rail(tc_viewer *v, const tc_ed_ai *e, float dt) {
  * 8 dsg100 while Ed faces along dsg107, its mirror in dsg107 (dsg108) while he faces against it, each switch after
  * 600 ms of facing the other way (the camera's flag word 2 not read: its 600 ms default). */
 static void director_follow(tc_viewer *v, const tc_ed_ai *e, int shot, tc_cam_target *t, float dt) {
-    tc_vec3 dir, facing = tc_v3(sinf(v->play->main.player.heading), -cosf(v->play->main.player.heading), 0);
+    tc_vec3 dir, facing = tc_v3(sinf(v->game->main.player.heading), -cosf(v->game->main.player.heading), 0);
     if (shot == TC_CAM_SHOT_NEAR) {
         float lo = cam_f(e, 76), hi = cam_f(e, 77);
         if (lo + hi <= 0) return;
@@ -603,7 +600,7 @@ static void director_follow(tc_viewer *v, const tc_ed_ai *e, int shot, tc_cam_ta
  * Shoot, until the scripts pick another shot or place; with the player's hold above. Returns whether the eye is the
  * shot's (4, 6); a follow (2, 7, 8) fills t. */
 static bool scripted_shot(tc_viewer *v, int shot, tc_cam_target *t, float dt, bool fresh) {
-    const tc_viewer_play *p = v->play;
+    const tc_game *p = v->game;
     const tc_ed_ai *e = p->main.has_driver ? &p->main.driver : NULL;
     bool eye = shot == TC_CAM_SHOT_FIXED || shot == TC_CAM_SHOT_RAIL;
     bool follow = shot == TC_CAM_SHOT_NEAR || shot == TC_CAM_SHOT_AXIS || shot == TC_CAM_SHOT_MIRROR;
@@ -710,10 +707,10 @@ static void blend_begin(tc_viewer *v, const tc_camera *from) {
     bool clear = true;
     if (dist > TC_VIEW_BLEND_FAR || !(dist == dist) || turn > TC_VIEW_BLEND_TURN) return;
     if (dist > 1e-3f) {
-        const uint8_t *solid = v->play->world.solid;
-        v->play->world.solid = NULL; /* every surface, as the camera's own tests */
-        clear = !tc_collision_raycast(&v->play->world, from->position, tc_v3_scale(d, 1 / dist), dist, &hit);
-        v->play->world.solid = solid;
+        const uint8_t *solid = v->game->world.solid;
+        v->game->world.solid = NULL; /* every surface, as the camera's own tests */
+        clear = !tc_collision_raycast(&v->game->world, from->position, tc_v3_scale(d, 1 / dist), dist, &hit);
+        v->game->world.solid = solid;
     }
     if (!clear) return;
     v->shot.blending = true;
@@ -749,7 +746,7 @@ static void blend_apply(tc_viewer *v, float dt) {
 }
 
 void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     double prof = TC_PROF_BEGIN();
     /* The play camera (tc_cam.h): round Ed as drawn, turned by the player; against every surface of the level (no sector
      * row: the camera must not see through anything). */
@@ -757,12 +754,12 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         tc_cam_target t;
         const uint8_t *solid = p->world.solid;
         const tc_cast_actor *chara = p->has_cast ? tc_cast_character(&p->cast) : NULL; /* a chameleon holds the player */
-        t.position = tcv_main_drawn(p);
-        t.behind = TC_PI - tcv_main_drawn_heading(p); /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
-        if (p->use_ai && p->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
+        t.position = tcv_main_drawn(v);
+        t.behind = TC_PI - tcv_main_drawn_heading(v); /* camera forward (sin yaw, cos yaw) = Ed's front (sin h, -cos h) */
+        if (p->use_ai && v->ski_shot) /* his facing as drawn (blended between his AI's ticks, as his position is), not
                                        * the last tick's: the ski follow holds within 0.05 rad of it and stepped at 30 Hz
                                        * with it */
-            t.behind -= remainderf(atan2f(p->pose_draw.m[1], p->pose_draw.m[0]) - atan2f(p->main.pose_cur.m[1], p->main.pose_cur.m[0]),
+            t.behind -= remainderf(atan2f(v->ed_pose.m[1], v->ed_pose.m[0]) - atan2f(p->main.pose_cur.m[1], p->main.pose_cur.m[0]),
                                    2 * TC_PI); /* behind = pi - heading: a heading change counts negative */
         t.speed = v->inspecting ? 0 : tc_player_horizontal_speed(&p->main.player); /* paused he stands, whatever he was doing */
         t.velocity = v->inspecting ? tc_v3(0, 0, 0) : p->main.player.velocity;
@@ -775,7 +772,7 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         t.situation = tc_viewer_camera_situation(v);
         /* riding on a sliding stage (the skier is the player there: the cast's main alias; Ed's own slides on the walking
          * levels use the same card and keep the walking camera, his scripts setting the shot to 0): tc_viewer_camera_shot */
-        if (p->use_ai && p->main.has_driver && p->main.driver.dyn.card_type == 2 && v->level->cast.main_alias != 0) p->ski_shot = true;
+        if (p->use_ai && p->main.has_driver && p->main.driver.dyn.card_type == 2 && v->level->cast.main_alias != 0) v->ski_shot = true;
         t.shot = tc_viewer_camera_shot(v);
         t.chase = 0;
         tc_main_camera_target(&p->main, &t); /* a character in the slot (the car) says where to look */
@@ -817,7 +814,7 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
 
 void tc_viewer_paused_look(tc_viewer *v, float dt) {
     tcv_look(v, dt);
-    if (v->playing && v->play) tcv_update_camera(v, dt, false);
+    if (v->playing && v->game) tcv_update_camera(v, dt, false);
 }
 
 void tc_viewer_recenter_camera(tc_viewer *v) {
@@ -838,16 +835,16 @@ void tc_viewer_toggle_closeup(tc_viewer *v) {
 
 void tc_viewer_toggle_first_person(tc_viewer *v) {
     REC_DOOR(TC_RD_FIRST_PERSON, 0, 0);
-    if (!v->playing || !v->play) return;
+    if (!v->playing || !v->game) return;
     tcv_camera_settle(v);
     v->cam.first_person = !v->cam.first_person;
-    v->camera.yaw = TC_PI - v->play->main.player.heading; /* entering: looking the way he faces; leaving: behind him */
+    v->camera.yaw = TC_PI - v->game->main.player.heading; /* entering: looking the way he faces; leaving: behind him */
     v->camera.pitch = v->cam.first_person ? 0 : -TC_CAM_ELEVATION;
     v->cam.placed = false;
 }
 
 int tc_viewer_camera_shot(const tc_viewer *v) {
-    const tc_viewer_play *p = v->play;
+    const tc_game *p = v->game;
     int shot;
     if (!p || !p->use_ai || !p->main.has_driver || p->main.driver.camera < 0) return -1;
     shot = (int)tc_ai_other_dsgvar_float(&p->main.driver.ai, (uint32_t)p->main.driver.camera, TC_AI_CAMERA_SHOT_DSG);
@@ -855,12 +852,12 @@ int tc_viewer_camera_shot(const tc_viewer *v) {
      * camera's dsg39 := 5, then it removes itself) is not in the cast: the converter reduces it to the port's ski start
      * (PROC 6, tools/ttre/cast.py). Its write stands here: once he has ridden (his skiing card, type 2), the ski follow,
      * unless the scripts pick a shot of their own (5 or 6). Only there: the skier is the player (the cast's main alias). */
-    if (p->ski_shot && shot != TC_CAM_SHOT_SKI && shot != TC_CAM_SHOT_FIXED) shot = TC_CAM_SHOT_SKI;
+    if (v->ski_shot && shot != TC_CAM_SHOT_SKI && shot != TC_CAM_SHOT_FIXED) shot = TC_CAM_SHOT_SKI;
     return shot;
 }
 
 int tc_viewer_camera_situation(const tc_viewer *v) {
-    const tc_viewer_play *p = v->play;
+    const tc_game *p = v->game;
     if (!p || !p->use_ai || !p->main.has_driver || p->main.driver.camera < 0) return -1;
     return (int)tc_ai_other_dsgvar_float(&p->main.driver.ai, (uint32_t)p->main.driver.camera, 40);
 }

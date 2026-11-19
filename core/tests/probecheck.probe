@@ -1,12 +1,12 @@
 # The probe's smoke run (make probecheck, in the gate): every command once on sud0, so the tool can't rot between the
 # sessions that need it. It checks only that each command runs (exit 0); what it prints is for reading.
 sud0
-watch game  watch ed  every 1
+watch game  watch ed  watch camera  every 1
 run 0.5  frames 2  until ed 87 2
-list  portals  info HEG_TomateKamikaze1  skipped  skipped 64
+list  portals  cars  info HEG_TomateKamikaze1  skipped  skipped 64
 power 0x1ff  value 0 20  hp ed 5  setdsg 64 0 1  dsg 64 0  dsg ed 0
 near HEG_TomateKamikaze1 3  watch 64  aim 64  pulse shoot 0.66  run 1.5
 aim off  face 64  heading 0  at 64 0 3 0.5  place -115.33 62.52 -2.7
 hold fast  stick 0 1  run 0.5  release fast  tap jump  tap action  hold lateral  free
-show 64  show game  unwatch 64  unwatch all
+show 64  show game  unwatch 64  unwatch camera  unwatch all
 portal 2  run 1

@@ -29,7 +29,7 @@ extern "C" {
 /* A frame of the player's, for a character in the slot (it moves on the host's frames). */
 typedef struct tc_character_input {
     tc_player *ed;               /* Ed's physics: where he rides; placed by it when he gets out */
-    uint32_t held;               /* 1 << tc_view_action (tc_viewer.h) */
+    uint32_t held;               /* 1 << tc_view_action (tc_game.h) */
     float move_x, move_y;        /* the left stick */
     bool paused;
     bool held_back;              /* the game holds the player (a line, the director's shot, the pause's look round) */

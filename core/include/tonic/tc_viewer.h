@@ -17,18 +17,13 @@
 #include "tc_speech.h"
 #include "tc_debug.h"
 #include "tc_hud.h"
+#include "tc_game.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* What the frontend's key bindings map to. Defaults: WASD move, R/F up/down, arrow keys look, Shift fast (in play
- * mode with Ed's AI: SpeedUp, he walks), Space jump, E Action, Q Shoot, C Lateral. */
-typedef enum tc_view_action {
-    TC_VA_FORWARD, TC_VA_BACK, TC_VA_LEFT, TC_VA_RIGHT, TC_VA_UP, TC_VA_DOWN,
-    TC_VA_LOOK_LEFT, TC_VA_LOOK_RIGHT, TC_VA_LOOK_UP, TC_VA_LOOK_DOWN, TC_VA_FAST, TC_VA_JUMP,
-    TC_VA_ACTION, TC_VA_SHOOT, TC_VA_LATERAL, TC_VA_COUNT
-} tc_view_action;
+/* What the frontend's key bindings map to: tc_view_action (tc_game.h, the game's inputs). */
 
 typedef struct tc_view_stats { uint32_t meshes, persos, parts, triangles; } tc_view_stats;
 
@@ -118,9 +113,8 @@ typedef struct tc_view_frame {
 } tc_view_frame;
 
 /* What to draw over the frame (docs/PORTALS.md): a screen transition, black, or the loading screen. */
-/* How long the loading screen shows its bar filling (it is not tied to real loading: the frontends also show it
- * after the intro, before Totalski). */
-#define TC_VIEWER_LOADING_SECONDS 3
+/* How long the loading screen shows its bar filling (tc_game.h). */
+#define TC_VIEWER_LOADING_SECONDS TC_GAME_LOADING_SECONDS
 /* PICTURE: a picture the level's scripts show (PROC 210 DisplayVignetteDuring: the SE outro's credits), the game held
  * meanwhile, over black; laid out as the loading screen's vignette (4:3, centred), without the bar. */
 /* SPRITE: the texture's own colours and alpha on the quad (corners, uv): the gunsight (tc_viewer_crosshair). */
@@ -147,37 +141,10 @@ typedef struct tc_view_speech_panel {
     float rect[4];
 } tc_view_speech_panel;
 
-/* A level change through a portal: what the next level's viewer needs (tc_viewer_desc.carry). Ed lives in the fix,
- * so his dsgvars survive (B63's arrival branch reads them: dsg134 = 2 -> heading dsg136, the step-out). */
-#define TC_VIEWER_CARRY_DSG 4096
-#define TC_VIEWER_CARRY_FIX_DSG 1024
-typedef struct tc_viewer_carry {
-    char level[64];           /* the level to load, lowercase (match the .ttlv case-insensitively) */
-    char place[64];           /* PROC_29: Ed arrives at the level perso of this instance name; "" = his start */
-    char camera_place[64];
-    uint32_t dsg_size;        /* 0: no dsgvars carried */
-    uint8_t dsg[TC_VIEWER_CARRY_DSG];
-    float vertical_fov;       /* the camera's field of view (, .) kept across the change, radians; 0 = the default */
-    float orbit_distance;     /* the play camera's zoom on arrival (a portal: TC_CAM_PORTAL_DISTANCE); 0 = the default */
-    uint8_t closeup;          /* the play camera's close-up (5) kept across the change */
-    /* The game's progress (tc_ai_globals: the exe keeps these in its save block, beyond any one level), from a level
-     * with a cast into the next. Kept at the end: a recording files this struct's tail by its size, so one made before
-     * these were here reads as has_progress 0, and its levels start as they did (tc_rec.c read_segment). */
-    uint8_t has_progress;
-    uint8_t lives;
-    uint16_t powers;
-    int16_t values[31];
-    /* A saved game's (tc_save.h; a portal's carry has none): Ed comes back where its last save point left him (and that
-     * is the level's checkpoint again), with his life as it was; hit_points_max 0: as the level starts him. */
-    uint8_t has_checkpoint;
-    float checkpoint[3], checkpoint_heading;
-    int32_t hit_points, hit_points_max; /* since 2026-11-17 a portal's carry has them too: Ed's std game lives in the fix */
-    /* The cheat-code reader's dsgvars (a fix perso: tc_cast_fix_dsg role 2; its dsg26 is the thermometers' next reward,
-     * HEG_Inventaire), from a level with a cast into the next and into a saved game; fix_dsg_size 0: as the level has
-     * them. Kept at the end (a recording's older carry reads as 0). */
-    uint32_t fix_dsg_size;
-    uint8_t fix_dsg[TC_VIEWER_CARRY_FIX_DSG];
-} tc_viewer_carry;
+/* A level change through a portal: what the next level's viewer needs (tc_viewer_desc.carry): the game's carry. */
+typedef tc_game_carry tc_viewer_carry;
+#define TC_VIEWER_CARRY_DSG TC_GAME_CARRY_DSG
+#define TC_VIEWER_CARRY_FIX_DSG TC_GAME_CARRY_FIX_DSG
 
 typedef struct tc_recorder tc_recorder; /* tc_rec.h */
 
@@ -190,10 +157,6 @@ typedef struct tc_viewer_desc {
     uint32_t seed;            /* random effects of the screen transitions */
     tc_recorder *recorder;    /* records this viewer as a segment of its session (tc_rec.h), or NULL; outlives it */
 } tc_viewer_desc;
-
-typedef enum tc_viewer_phase {
-    TC_VP_PLAY, TC_VP_COVER, TC_VP_BLACK, TC_VP_LOADING, TC_VP_PENDING, TC_VP_REVEAL
-} tc_viewer_phase;
 
 /* The scripted shot in progress (the camera's shots 2, 4, 6, 7, 8 as the cast picks them; docs/CAMERA.md "The fixed
  * shot", "The directors' shots"). Port (the user, 2026-11-13: "make it possible to move around the custom camera"): the
@@ -242,7 +205,6 @@ typedef struct tc_viewer_shot {
     tc_vec3 cur_eye;
 } tc_viewer_shot;
 
-typedef struct tc_viewer_play tc_viewer_play;  /* private: collision, Ed's controller and AI at stable addresses */
 typedef struct tc_viewer_light tc_viewer_light; /* private: the light persos' AI */
 typedef struct tc_viewer_tape tc_viewer_tape;   /* private: an original demo tape in progress (tc_viewer_play_tape) */
 
@@ -251,7 +213,7 @@ typedef struct tc_viewer {
     const tc_level *level;
     tc_camera camera;
     tc_view_stats stats;      /* drawable statics, animated persos and their parts, their triangles */
-    tc_result ai_result;      /* loading desc->ai_data: TC_OK, or why Ed has no AI (worth a log line) */
+    tc_result ai_result;      /* loading desc->ai_data: TC_OK, or why Ed has no AI (worth a log line): tc_game.ai_result */
 
     /* Settings. */
     bool paused;              /* animation clock and Ed's AI stopped */
@@ -305,7 +267,7 @@ typedef struct tc_viewer {
     bool invert_x, invert_y;  /* look input reversed: x turns the other way, y looks down for up */
 
     /* Play mode: the default when the level has Ed, collision and an idle clip. */
-    tc_viewer_play *play;     /* NULL: free-fly only */
+    tc_game *game;            /* the game session (tc_game.h); NULL: free-fly only */
     bool playing;
     tc_cam cam;               /* the play camera's state (tc_cam.h) */
     float orbit_distance;     /* the play camera's distance behind Ed (TC_CAM_DISTANCE; the wheel zooms it) */
@@ -315,46 +277,29 @@ typedef struct tc_viewer {
     int ed_state;             /* simple controller: tc_anim_state of ed_clip, -1 = restart the clip */
     float ed_phase;           /* samples into ed_clip */
     bool ed_loop;
+    tc_mat4 ed_pose;          /* Ed's model matrix this frame, between the game's main.pose_prev and main.pose_cur */
+    /* The skier has ridden: the camera's shot is the ski follow (stands for the start trigger, tc_viewer_camera_shot);
+     * until a mode zone hands Ed back to walking (tc_game.walk_serial, last seen: walk_seen). */
+    bool ski_shot;
+    uint32_t walk_seen;
+    uint32_t rng;             /* without a game: the light persos' seeds (tc_game.rng with one) */
 
-    /* Portals and screen transitions. */
-    tc_viewer_phase phase;
-    tc_transition transition;
-    float loading_time;       /* seconds into the loading screen */
-    uint32_t rng;
-    uint32_t sound_rng;       /* the random sound picks' (.ttlv SPIK), apart from the transitions' */
+    /* Portals and screen transitions: the game's (tc_game.phase); their textures. */
     const char **effects;     /* distinct effect texture paths (relative to the level folder) */
     uint32_t effect_count;
     int32_t crosshair_effect; /* the gunsight's index among the effects (TC_VIEWER_CROSSHAIR_TEXTURE), -1 none */
     uint8_t *spawn_prso;      /* per level perso: 1 = a spawnable template's (TC_CAST_SPAWN): drawn only as an instance */
-    tc_viewer_carry *carry;   /* the level change in progress (LOADING / PENDING) */
     int walk_in;              /* simple controller at a portal: 1 the step-in clip, 2 the cover and the portal firing */
     int walk_clip;            /* the step-in clip (state 228's animation), -1 none */
-    uint16_t sounds[TC_AI_MAX_SOUNDS]; /* sound events started by the last update */
-    tc_sound_source sound_sources[TC_AI_MAX_SOUNDS]; /* where each sounds from (tc_sound.h) */
     uint32_t ed_draw_count;   /* Ed's parts in the last tc_viewer_draws (0: hidden, e.g. stepped into a portal) */
-    uint32_t sound_count;
 
-    /* The level's scripted pictures and shots (the cast's tc_ai_globals; docs/SE.md "The outro"). A picture holds the
-     * game (Ed, the cast, the clock) for its time, as the original's main loop waits on it; port: a fresh Jump, Action
-     * or Shoot skips it. The director's shot: camera mode 6 on a target (the outro's POC_Actor1): the eye stays put
-     * (at the camera perso's place in the level data when it has one), turned to the target, the scripts' focal as the
+    /* The level's scripted shots (the cast's tc_ai_globals; docs/SE.md "The outro"; its pictures are the game's,
+     * tc_game.picture). The director's shot: camera mode 6 on a target (the outro's POC_Actor1): the eye stays put (at
+     * the camera perso's place in the level data when it has one), turned to the target, the scripts' focal as the
      * field of view; Ed's inputs are held back while it lasts (the SE parks its Ed: B21). Port: a fresh Jump, Action or
      * Shoot ends it (the follow camera again, the player's field of view), until the scripts set the mode again. */
-    char picture[64];
-    float picture_left;       /* seconds; 0: none */
-    uint32_t picture_serial, director_serial;
-    uint32_t skip_held;       /* last frame's Jump / Action / Shoot, for the fresh presses above */
-    /* What a character is saying (docs/ENGINE.md "Speech"). Port: Ed's inputs are held back meanwhile, until the keys that
-     * ended it are let go: the scripts' own hold (ForceBehaviour(Ed, ...)) is refused for most characters. */
-    tc_speech speech;
-    uint32_t speech_event;    /* its dialogue's next event */
-    bool speech_held;
-    bool talk_press;          /* a fresh Action since the last tick (TC_CAST_TALK) */
-    bool talk_held;           /* that Action talked to a speaker: kept from Ed's scripts until it is let go */
-    bool scene_said;          /* a hint scene's line is over */
-    bool scene_leaving;       /* its speaker was left waiting for the scene's Ed: the port covers and goes on */
-    int scene_exit;           /* the way out Ed walks now (tc_speech_data.exits), -1 none */
-    uint32_t scene_exits_done; /* bit k: exits[k] started */
+    uint32_t director_serial;
+    uint32_t skip_held;       /* last frame's Jump / Action / Shoot, for the fresh presses (TC_GAME_SKIP_MASK) */
     bool director;            /* the shot is on */
     bool director_released;   /* the player ended it (until the next camera write) */
     tc_vec3 director_eye;
@@ -431,18 +376,11 @@ typedef struct tc_viewer {
     uint32_t occluder_tris;   /* triangles it drew into its depth picture */
 
     /* The debug menu (tc_debug.h; F4). While it is open the game holds, as under a scripted picture, and the held
-     * actions move the menu instead (tc_viewer_toggle_debug). */
+     * actions move the menu instead (tc_viewer_toggle_debug). The HUD is the game's (tc_game.hud). */
     tc_debug debug;
-    /* The game's HUD (tc_hud.h): the scripts' text slots and the standard elements, stepped each game tick. */
-    tc_hud hud;
-    bool hud_waits;               /* tc_viewer_hud_waits */
 
     tc_recorder *rec;             /* tc_viewer_desc.recorder */
     tc_viewer_tape *tape;         /* an original demo playing (tc_viewer_play_tape), NULL none */
-
-    /* What a save of the game needs (tc_save.h): the level's name (tc_viewer_desc.level_name) and where Ed came in (the
-     * carry's place and camera place; "": his start). */
-    char level_name[64], arrival_place[64], arrival_camera_place[64];
 
     /* The game menu is over the game (tc_viewer_set_game_menu): paused, the camera drifting round Ed from the view
      * it was paused on, turning game_menu_turn (+-1) a way, rising and falling (game_menu_phase); through the play camera, so

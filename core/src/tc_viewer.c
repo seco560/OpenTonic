@@ -1,6 +1,7 @@
 /* The viewer module (tc_viewer.h): init / free, the frame, settings, the title readout. Its other parts:
  * tc_viewer_internal.h. */
 #include "tc_viewer_internal.h"
+#include "tonic/tc_save.h"
 
 tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     const tc_level *l = desc->level;
@@ -122,7 +123,19 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         }
     }
 
-    v->play = tcv_play_create(v, desc);
+    {
+        tc_game_desc gd;
+        memset(&gd, 0, sizeof(gd));
+        gd.level = l;
+        gd.ai_data = desc->ai_data;
+        gd.ai_size = desc->ai_size;
+        gd.level_name = desc->level_name;
+        gd.carry = desc->carry;
+        gd.seed = desc->seed;
+        gd.perso_first = v->perso_first;
+        v->game = tc_game_create(&gd);
+        if (v->game) v->ai_result = v->game->ai_result;
+    }
     if (v->sectors && v->mesh_ranges && l->mesh_count) {
         /* Water materials: static meshes (the .ttlv groups them by material) holding some of a water surface's
          * triangles (a range of a water group: the geometry the sectors list as their surfaces). The renderers add the
@@ -144,11 +157,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
         }
     }
     v->ed_clip = tcv_ed_anim(l, "idle");
-    v->rng = desc->seed ? desc->seed : 0x7417u;
-    v->sound_rng = v->rng ^ 0x50D5u;
-    v->scene_exit = -1;
-    tc_speech_init(&v->speech, &l->speech);
-    tc_hud_init(&v->hud);
+    v->rng = desc->seed ? desc->seed : 0x7417u; /* the light persos' seeds without a game (tc_game.rng with one) */
     {
         bool oom;
         v->light = tcv_light_create(v, l, &oom);
@@ -180,15 +189,13 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     v->camera.far_z = fmaxf(2000, size * 3);
     v->fly_speed = fmaxf(2, size / 40);
     /* Start as Ed when the level has him (Tab still switches to free-fly). */
-    if (v->play) tcv_toggle_play(v);
+    if (v->game) tcv_toggle_play(v);
     if (desc->carry && desc->carry->vertical_fov > 0) v->camera.vertical_fov = desc->carry->vertical_fov;
     if (desc->carry && desc->carry->orbit_distance > 0) v->orbit_distance = desc->carry->orbit_distance;
     if (desc->carry) v->cam.closeup = desc->carry->closeup != 0;
-    if (desc->carry && v->play) tcv_arrive(v, desc->carry);
-    tcv_copy_text(v->level_name, sizeof(v->level_name), desc->level_name);
-    if (desc->carry) {
-        tcv_copy_text(v->arrival_place, sizeof(v->arrival_place), desc->carry->place);
-        tcv_copy_text(v->arrival_camera_place, sizeof(v->arrival_camera_place), desc->carry->camera_place);
+    if (desc->carry && v->game) { /* the game takes the carry; the camera turns as it asks */
+        tc_game_arrive(v->game, desc->carry);
+        tcv_take_camera_requests(v);
     }
     /* Port (the user, 2026-11-15): every fresh start keeps the powers all on (TC_AI_POWERS_ALL: Tonic Viewer, Totalski
      * too); a new game (the main menu's NEW GAME) comes with its own carry (tc_save_start_new_game: no powers, a new game's
@@ -209,14 +216,11 @@ void tc_viewer_free(tc_viewer *v) {
     uint32_t i;
     if (v->rec) tc_rec_end(v->rec, v);
     tcv_tape_free(v);
-    tc_speech_free(&v->speech);
     tc_debug_free(&v->debug);
-    tc_hud_free(&v->hud);
-    tcv_play_destroy(v->play);
+    tc_game_free(v->game);
     tcv_light_destroy(v->light);
     tc_free((void *)v->effects);
     tc_free(v->spawn_prso);
-    tc_free(v->carry);
     tc_free((void *)v->meshes);
     tc_free(v->mesh_water);
     tc_free(v->mesh_surface);
@@ -255,11 +259,15 @@ void tc_viewer_free(tc_viewer *v) {
 }
 
 uint32_t tc_viewer_sounds(const tc_viewer *v, const uint16_t **events) {
-    *events = v->sounds;
-    return v->sound_count;
+    static const uint16_t none[1] = {0};
+    *events = v->game ? v->game->sounds : none;
+    return v->game ? v->game->sound_count : 0;
 }
 
-const tc_sound_source *tc_viewer_sound_sources(const tc_viewer *v) { return v->sound_sources; }
+const tc_sound_source *tc_viewer_sound_sources(const tc_viewer *v) {
+    static const tc_sound_source none[1];
+    return v->game ? v->game->sound_sources : none;
+}
 
 tc_sound_listener tcv_listener(const tc_viewer *v) {
     tc_sound_listener l;
@@ -275,18 +283,18 @@ bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float eve
     int vol = 127, pan = 64, rear = 0;
     if (s->kind != TC_SOUND_FLAT) {
         tc_sound_listener l = tcv_listener(v);
-        if (s->emitter == TC_SOUND_EMITTER_POINT || !v->play || !v->play->has_cast || v->tape) {
+        if (s->emitter == TC_SOUND_EMITTER_POINT || !v->game || !v->game->has_cast || v->tape) {
             /* a place, or the main actor without a cast (at his own rolloff: the default one, Ed has none) */
             tc_vec3 at = s->emitter == TC_SOUND_EMITTER_POINT ? s->at
-                       : v->play ? v->play->main.player.position : l.position;
+                       : v->game ? v->game->main.player.position : l.position;
             tc_vec3 off = tc_v3_sub(at, l.position);
             vol = tc_sound_volume(tc_sound_distance(off), NULL);
             pan = tc_sound_pan(off, l.right);
             rear = tc_sound_dolby(off, l.front);
-        } else if (tc_cast_sound_lost(&v->play->cast, s))
+        } else if (tc_cast_sound_lost(&v->game->cast, s))
             vol = -1; /* never to be heard: no voice for it */
         else
-            vol = tc_cast_sound_place(&v->play->cast, s, &l, &pan, &rear);
+            vol = tc_cast_sound_place(&v->game->cast, s, &l, &pan, &rear);
     }
     if (vol < 0) {
         out->left = out->right = out->rear = 0;
@@ -296,16 +304,9 @@ bool tc_viewer_sound_mix(const tc_viewer *v, const tc_sound_source *s, float eve
     return true;
 }
 
-void tcv_push_sound(tc_viewer *v, uint16_t event, const tc_sound_source *s) {
-    if (v->sound_count >= TC_AI_MAX_SOUNDS) return;
-    if (s) v->sound_sources[v->sound_count] = *s;
-    else memset(&v->sound_sources[v->sound_count], 0, sizeof(v->sound_sources[0])); /* flat */
-    v->sounds[v->sound_count++] = event;
-}
-
 /* Ed's sector after this frame's moves: his AI's, else tracked here for the simple controller. */
 static void update_sectors(tc_viewer *v) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     if (!v->sectors || !p) return;
     if (p->main.has_driver) tc_ed_ai_track_sector(&p->main.driver);
     else tc_sector_follow(&v->ed_sector, v->sectors, p->main.player.position, p->main.player.placed);
@@ -313,30 +314,28 @@ static void update_sectors(tc_viewer *v) {
 
 uint16_t tc_viewer_ed_sector(const tc_viewer *v) {
     const tc_cast_actor *a;
-    if (!v->sectors || !v->play) return TC_SECTOR_NONE;
-    if (v->play->has_cast && (a = tc_cast_character(&v->play->cast)) != NULL && a->sector.sector != TC_SECTOR_NONE)
+    if (!v->sectors || !v->game) return TC_SECTOR_NONE;
+    if (v->game->has_cast && (a = tc_cast_character(&v->game->cast)) != NULL && a->sector.sector != TC_SECTOR_NONE)
         return a->sector.sector; /* a chameleon holds the player: its sector is drawn, lit, heard */
-    return v->play->main.has_driver ? v->play->main.driver.sector.sector : v->ed_sector.sector;
+    return v->game->main.has_driver ? v->game->main.driver.sector.sector : v->ed_sector.sector;
 }
 
 static void update_frame(tc_viewer *v, float dt) {
     const uint32_t skip_mask = SKIP_MASK;
-    bool fresh;
+    tc_game *g = v->game;
+    bool fresh, action_fresh;
     double prof;
-    v->sound_count = 0;
+    if (g) tc_game_begin_frame(g, false);
     if (v->debug.open) { /* the game holds behind the menu */
         tcv_debug_frame(v, dt);
         if (v->debug.open) return;
     }
     fresh = (v->held & skip_mask & ~v->skip_held) != 0;
-    if (v->held & (1u << TC_VA_ACTION) & ~v->skip_held) v->talk_press = true;
+    action_fresh = (v->held & (1u << TC_VA_ACTION) & ~v->skip_held) != 0;
     v->skip_held = v->held & skip_mask;
-    v->sound_count = 0;
-    if (v->picture_left > 0) { /* a scripted picture: the game holds (port: a fresh press skips it) */
-        v->picture_left = fresh ? 0 : fmaxf(0, v->picture_left - dt);
-        return;
-    }
-    if (v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) tcv_look(v, 0); /* the level is about to change: Ed waits */
+    if (g) tc_game_begin_frame(g, action_fresh);
+    if (g && tc_game_picture_hold(g, dt, fresh)) return; /* a scripted picture: the game holds (port: a fresh press skips it) */
+    if (g && (g->phase == TC_GP_LOADING || g->phase == TC_GP_PENDING)) tcv_look(v, 0); /* the level is about to change: Ed waits */
     else if (v->playing) tcv_update_play(v, dt, fresh);
     else tcv_fly(v, dt);
     prof = TC_PROF_BEGIN();
@@ -350,27 +349,11 @@ static void update_frame(tc_viewer *v, float dt) {
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
 
-/* The events that play one of their clips at random (.ttlv SPIK: Ed's cries and cheers, the swamp's animals): the
- * clip this time, or nothing (the exe's sound module picks as it plays the event; its own random numbers are not read:
- * the viewer's own stream, seeded with the level, so a replay hears the same). */
-static void pick_sounds(tc_viewer *v) {
-    uint32_t i, n = 0;
-    if (!v->level->pick_count) return;
-    for (i = 0; i < v->sound_count; i++) {
-        int32_t e = tc_level_pick_sound(v->level, v->sounds[i], &v->sound_rng);
-        if (e < 0) continue;
-        v->sounds[n] = (uint16_t)e;
-        v->sound_sources[n] = v->sound_sources[i];
-        n++;
-    }
-    v->sound_count = n;
-}
-
 void tc_viewer_update(tc_viewer *v, float dt) {
     double prof = TC_PROF_BEGIN();
     if (v->rec) tc_rec_frame_in(v->rec, v, dt);
     update_frame(v, dt);
-    pick_sounds(v);
+    if (v->game) tc_game_pick_sounds(v->game); /* the events that play one of their clips at random (.ttlv SPIK) */
     if (v->rec) tc_rec_frame_out(v->rec, v, dt);
     TC_PROF_END(TC_PZ_UPDATE, prof);
 }
@@ -439,7 +422,15 @@ void tc_viewer_set_view(tc_viewer *v, float gamma, float animation_speed, bool f
 }
 
 uint32_t tc_viewer_save_serial(const tc_viewer *v) {
-    return v->play && v->play->has_cast ? v->play->cast.globals.save_serial : 0;
+    return v->game && v->game->has_cast ? v->game->cast.globals.save_serial : 0;
+}
+
+uint8_t *tc_save_make(tc_viewer *v, const char *name, uint64_t time, size_t *size) {
+    tc_game_view view;
+    *size = 0;
+    if (!v->game || v->tape) return NULL; /* nothing to save, or not a game: a demo tape */
+    view = tcv_game_view(v);
+    return tc_game_save_make(v->game, &view, name, time, size);
 }
 
 void tc_viewer_step_fov(tc_viewer *v, int dir) {
@@ -511,18 +502,18 @@ size_t tc_viewer_status(const tc_viewer *v, const char *extra, char *out, size_t
         APPEND(", sector %s%s", tc_sectors_name(v->sectors, tc_viewer_ed_sector(v)),
                v->sector_mode == TC_VS_ALONE ? " alone" : "");
     if (!v->playing && tc_viewer_can_play(v)) APPEND("%s", ", free-fly");
-    if (v->playing && tc_viewer_has_ai(v) && !v->play->use_ai) APPEND("%s", ", simple controller");
+    if (v->playing && tc_viewer_has_ai(v) && !v->game->use_ai) APPEND("%s", ", simple controller");
     if (v->playing && v->cam.closeup) APPEND("%s", ", close-up");
     if (v->playing && v->cam.first_person) APPEND("%s", ", first person");
     if (v->playing && v->director) APPEND("%s", ", scripted camera");
     {
         char custom[64];
-        if (v->playing && v->play && tc_main_status(&v->play->main, custom, sizeof custom)) APPEND("%s", custom);
+        if (v->playing && v->game && tc_main_status(&v->game->main, custom, sizeof custom)) APPEND("%s", custom);
     }
     if (v->paused) APPEND("%s", ", paused");
-    if (v->playing && v->play && v->play->has_cast && v->play->use_ai)
-        APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->play->cast.awake, (unsigned)v->play->cast.count,
-               (unsigned)v->play->cast.globals.lives, (int)v->play->main.driver.ai.hit_points);
+    if (v->playing && v->game && v->game->has_cast && v->game->use_ai)
+        APPEND(", cast %u/%u awake, lives %u, HP %d", (unsigned)v->game->cast.awake, (unsigned)v->game->cast.count,
+               (unsigned)v->game->cast.globals.lives, (int)v->game->main.driver.ai.hit_points);
 #undef APPEND
     return n;
 }

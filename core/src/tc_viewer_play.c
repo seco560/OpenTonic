@@ -1,4 +1,5 @@
-/* The viewer's play session: input, Ed's ticks (his AI and the cast), the simple controller, custom gameplay. */
+/* The viewer's play mode: input, the game's frame (tc_game.h: Ed's ticks, his AI and the cast, custom gameplay) and
+ * Ed's drawing between its ticks, the simple controller. */
 #include "tc_viewer_internal.h"
 
 /* Ed's animation by .ttlv name with at least one sample, or -1. */
@@ -7,67 +8,8 @@ int tcv_ed_anim(const tc_level *l, const char *name) {
     return i >= 0 && l->ed.anims[i].sample_count > 0 ? i : -1;
 }
 
-/* NULL when the level has no Ed, no collision or no idle clip (or out of memory). */
-tc_viewer_play *tcv_play_create(tc_viewer *v, const tc_viewer_desc *desc) {
-    const tc_level *l = desc->level;
-    tc_viewer_play *p;
-    if (!level_has_ed(l) || tcv_ed_anim(l, "idle") < 0) return NULL;
-    p = (tc_viewer_play *)tc_calloc(1, sizeof(*p));
-    if (!p) return NULL;
-    if (tc_collision_init(&p->world, l->collision, 3 * l->collision_triangle_count, l->collision_floors) != 0) {
-        tc_free(p);
-        return NULL;
-    }
-    tc_collision_set_sectors(&p->world, l->sectors.collision_sector, l->sectors.collision_count, l->sectors.count);
-    tc_main_init(&p->main, l, &p->world, desc->ai_data, desc->ai_size, desc->level_name, &v->ai_result);
-    if (p->main.has_driver && l->cast.count) {
-        tc_result r;
-        /* Not through a portal: a new run, and no level has been visited in it (the level's saved values, tc_cast.h) */
-        if (!desc->carry) tc_cast_level_saves_clear();
-        r = tc_cast_init(&p->cast, l, &p->main.driver.ai);
-        p->has_cast = r == TC_OK;
-        if (r != TC_OK) v->ai_result = r;
-        p->cast.globals.speech_host = l->speech.dialogue_count != 0; /* update_speech */
-        if (l->speech.has_arrival) { /* a hint scene: where its own Ed would stand, turned to its speaker */
-            uint32_t i;
-            float h = p->main.player.heading;
-            for (i = 0; i < p->cast.count; i++)
-                if (p->cast.actors[i].entry->flags & TC_CAST_TALK) {
-                    tc_vec3 to = tc_v3_sub(p->cast.actors[i].ai->position, l->speech.arrival);
-                    h = atan2f(to.x, -to.y);
-                }
-            tc_player_teleport(&p->main.player, tc_v3_add(l->speech.arrival, tc_v3(0, 0, 0.3f)), h);
-            p->main.player.start_position = l->speech.arrival; /* and back here after a death */
-            p->main.player.start_heading = h;
-        }
-    }
-    /* The persos' own collision (docs/ENGINE.md "Moving collision, read"): Ed's sweeps meet it where each perso is now
-     * (the cast poses its actors' every tick), as his collide set says (the player's +0x34 / +0x35) */
-    if (tc_obstacles_init(&p->obstacles, l) == TC_OK && p->obstacles.count) {
-        p->world.obstacles = &p->obstacles;
-        p->world.self_priority = l->pcol.main_priority;
-        p->world.self_meets = (l->pcol.main_flags & TC_PCOL_MEETS_PERSOS) != 0;
-        if (p->has_cast) tc_cast_set_obstacles(&p->cast, &p->obstacles);
-    }
-    if (p->has_cast) p->cast.world = &p->world;
-    p->use_ai = p->main.has_driver;
-    p->custom = tcx_play_create(l, desc->ai_data, desc->ai_size, &p->world, &p->obstacles, v->perso_first);
-    p->main.custom = p->custom;
-    return p;
-}
-
-void tcv_play_destroy(tc_viewer_play *p) {
-    if (!p) return;
-    if (p->has_cast) tc_cast_free(&p->cast);
-    tc_main_free(&p->main);
-    tcx_play_free(p->custom);
-    tc_collision_free(&p->world);
-    tc_obstacles_free(&p->obstacles);
-    tc_free(p);
-}
-
 /* Distance to the nearest hit along the segment, or -1. */
-static float raycast(tc_viewer_play *p, tc_vec3 origin, tc_vec3 dir, float max_distance) {
+static float raycast(tc_game *p, tc_vec3 origin, tc_vec3 dir, float max_distance) {
     tc_hit hit;
     return tc_collision_raycast(&p->world, origin, dir, max_distance, &hit) ? hit.distance : -1;
 }
@@ -113,7 +55,7 @@ static float axis(const tc_viewer *v, tc_view_action pos, tc_view_action neg) {
  * they turn the play camera round Ed and raise or lower it (tc_cam_look). */
 void tcv_look(tc_viewer *v, float dt) {
     tc_camera *c = &v->camera;
-    if (v->game_menu && v->playing && v->play) { /* port (the user): behind the game menu, the camera drifts round Ed */
+    if (v->game_menu && v->playing && v->game) { /* port (the user): behind the game menu, the camera drifts round Ed */
         float t = v->game_menu_time += dt;
         float u = fminf(1, t / 1.5f), ease = u * u * (3 - 2 * u); /* from rest: the first frame is the paused view */
         v->mouse_dx = v->mouse_dy = 0;
@@ -129,7 +71,7 @@ void tcv_look(tc_viewer *v, float dt) {
     if (yaw == 0 && pitch == 0) return;
     if (v->invert_x) yaw = -yaw;
     if (v->invert_y) pitch = -pitch;
-    if (v->playing && v->play) {
+    if (v->playing && v->game) {
         v->looked = true; /* a scripted shot's camera turns with it (tc_viewer.shot.look_*) */
         v->look_yaw_frame += yaw;
         v->look_rise_frame += -pitch;
@@ -183,7 +125,8 @@ static tc_vec2 move_direction(const tc_viewer *v) {
 }
 
 /* Ed's AI: the game's own inputs (1 << TC_AI_IN_*). The direction keys (the scripts make them camera-relative),
- * Fast = SpeedUp (on a keyboard Ed runs; SpeedUp makes him walk), Jump, Action (stick), Shoot, Lateral. */
+ * Fast = SpeedUp (on a keyboard Ed runs; SpeedUp makes him walk), Jump, Action (stick), Shoot, Lateral. The game takes
+ * out the presses something else had (tc_game_step: custom gameplay's, a speaker's). */
 static uint32_t ai_inputs(const tc_viewer *v) {
     static const struct { tc_view_action a; int bit; } map[] = {
         {TC_VA_FORWARD, TC_AI_IN_UP}, {TC_VA_BACK, TC_AI_IN_DOWN}, {TC_VA_LEFT, TC_AI_IN_LEFT},
@@ -195,77 +138,47 @@ static uint32_t ai_inputs(const tc_viewer *v) {
     for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
         if (held(v, map[i].a)) r |= 1u << map[i].bit;
     if (v->cam.first_person) r &= (1u << TC_AI_IN_ACTION) | (1u << TC_AI_IN_SHOOT); /* he stands while looking */
-    if (v->play && tcx_holds_action(v->play->custom)) r &= ~(1u << TC_AI_IN_ACTION); /* that press was custom gameplay's */
-    if (v->play && tcx_holds_shoot(v->play->custom)) r &= ~(1u << TC_AI_IN_SHOOT);   /* ... and this one */
-    if (v->talk_held) r &= ~(1u << TC_AI_IN_ACTION); /* that press was the speaker's (step_ai) */
     return r;
 }
 
-/* Before Ed's step: custom gameplay's frame (the cars move; Action gets him in or out). True while it holds him: he is not
- * stepped, and drawn as it says. */
-static bool update_custom(tc_viewer *v, float dt) {
-    tc_viewer_play *p = v->play;
-    tcx_host h;
-    tcx_events out;
-    tc_character_input in;
-    double prof;
-    bool held;
-    if (!p->custom) return false;
-    prof = TC_PROF_BEGIN();
-    h.player = &p->main.player;
-    h.held = v->held;
-    h.move_x = v->move_x, h.move_y = v->move_y;
-    h.paused = v->paused;
-    h.held_back = v->director || v->speech_held || v->inspecting || v->phase != TC_VP_PLAY;
-    h.may_start = !v->cam.first_person;
-    h.at_start = false;
-    h.covered = false;
-    if (p->main.has_driver) {
-        const tc_ed_ai *e = &p->main.driver;
-        /* waiting behind the start text the custom layer shows (.ttai AUTO 2; tc_main sets wait_start) */
-        h.at_start = p->use_ai && e->auto_start && e->wait_start && e->ai.model->auto_start == TC_AI_AUTO_UNLESS_TEXT;
-        h.covered = e->screen_covered;
-        h.may_start = h.may_start && v->phase == TC_VP_PLAY;
+/* This frame's player and camera, as the game reads them (after the look input turned the camera). */
+static void game_input(const tc_viewer *v, tc_game_input *in) {
+    memset(in, 0, sizeof(*in));
+    in->held = v->held;
+    in->move_x = v->move_x, in->move_y = v->move_y;
+    in->ai_inputs = ai_inputs(v);
+    in->director = v->director;
+    in->first_person = v->cam.first_person;
+    in->paused = v->paused;
+    in->inspecting = v->inspecting;
+    in->eye = v->camera.position;
+    in->yaw = v->camera.yaw;
+    in->pitch = v->camera.pitch;
+    in->listener = tcv_listener(v);
+    in->animation_speed = v->animation_speed;
+    in->ed_clip = v->ed_clip;
+    in->ed_phase = v->ed_phase;
+}
+
+/* Before Ed's step: custom gameplay's frame (tc_game_custom_frame: the cars move; Action gets him in or out). True while
+ * it holds him: he is not stepped, and drawn as it says. */
+static bool update_custom(tc_viewer *v, const tc_game_input *in, float dt) {
+    tc_game *g = v->game;
+    int r = tc_game_custom_frame(g, in, dt);
+    if (r == TC_GAME_CUSTOM_GIVEN_BACK) { /* back on his feet, main again: his drawing starts over */
+        v->ed_state = -1;
+        v->ed_phase = 0;
     }
-    /* the cars; Ed getting into one hands it the main character's slot (tc_main.h) */
-    if (tcx_update(p->custom, &h, dt, &out)) tc_main_take(&p->main, tcx_character(), p->custom);
-    if (p->main.has_driver && out.cover) { /* a course's finish: its way back, as a portal's (tcv_update_portals) */
-        p->main.driver.events.cover = true;
-        p->main.driver.screen_covered = false;
-    }
-    if (p->main.has_driver && out.level) {
-        p->main.driver.events.level = out.level;
-        p->main.driver.events.place = out.place;
-        p->main.driver.events.camera_place = out.camera_place;
-    }
-    held = false;
-    if (!tc_main_is_ed(&p->main)) {
-        in.ed = &p->main.player;
-        in.held = h.held;
-        in.move_x = h.move_x, in.move_y = h.move_y;
-        in.paused = h.paused;
-        in.held_back = h.held_back;
-        in.animation_speed = v->animation_speed;
-        in.ed_clip = v->ed_clip, in.ed_phase = v->ed_phase;
-        held = tc_main_frame(&p->main, &in, dt);
-        if (!held) { /* back on his feet, main again: his AI's tick blending starts over there */
-            p->main.have_pose = false;
-            p->tick_time = 0;
-            v->ed_state = -1;
-            v->ed_phase = 0;
-        }
-    }
-    TC_PROF_END(TC_PZ_CUSTOM, prof);
-    if (!held) return false;
-    v->ed_clip = p->main.rider.clip;
-    v->ed_phase = p->main.rider.phase;
-    v->ed_loop = p->main.rider.loop;
+    if (r != TC_GAME_CUSTOM_HELD) return false;
+    v->ed_clip = g->main.rider.clip;
+    v->ed_phase = g->main.rider.phase;
+    v->ed_loop = g->main.rider.loop;
     v->ed_state = -1;
     return true;
 }
 
 void tcv_toggle_play(tc_viewer *v) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     if (!p) return;
     v->playing = !v->playing;
     if (!v->playing) {
@@ -295,41 +208,41 @@ void tc_viewer_toggle_play(tc_viewer *v) {
 void tc_viewer_toggle_ai(tc_viewer *v) {
     REC_DOOR(TC_RD_TOGGLE_AI, 0, 0);
     if (!tc_viewer_has_ai(v)) return;
-    v->play->use_ai = !v->play->use_ai;
-    v->play->main.have_pose = false; /* the tick blending starts over from where Ed is */
-    v->play->tick_time = 0;
+    v->game->use_ai = !v->game->use_ai;
+    v->game->main.have_pose = false; /* the tick blending starts over from where Ed is */
+    v->game->tick_time = 0;
     v->ed_state = -1;
     v->ed_phase = 0;
 }
 
-bool tc_viewer_can_play(const tc_viewer *v) { return v->play != NULL; }
+bool tc_viewer_can_play(const tc_viewer *v) { return v->game != NULL; }
 
-const struct tcx_play *tc_viewer_custom(const tc_viewer *v) { return v->play ? v->play->custom : NULL; }
+const struct tcx_play *tc_viewer_custom(const tc_viewer *v) { return v->game ? v->game->custom : NULL; }
 
-bool tc_viewer_has_ai(const tc_viewer *v) { return v->play && v->play->main.has_driver; }
+bool tc_viewer_has_ai(const tc_viewer *v) { return v->game && v->game->main.has_driver; }
 
-bool tc_viewer_ai_active(const tc_viewer *v) { return v->playing && tc_viewer_has_ai(v) && v->play->use_ai; }
+bool tc_viewer_ai_active(const tc_viewer *v) { return v->playing && tc_viewer_has_ai(v) && v->game->use_ai; }
 
 bool tc_viewer_status_live(const tc_viewer *v) {
     return tc_viewer_ai_active(v) || (v->light && v->light_scripted) || v->sector_mode != TC_VS_ALL;
 }
 
-const tc_player *tc_viewer_player(const tc_viewer *v) { return v->play ? &v->play->main.player : NULL; }
+const tc_player *tc_viewer_player(const tc_viewer *v) { return v->game ? &v->game->main.player : NULL; }
 
-const tc_cast *tc_viewer_cast(const tc_viewer *v) { return v->play && v->play->has_cast ? &v->play->cast : NULL; }
+const tc_cast *tc_viewer_cast(const tc_viewer *v) { return v->game && v->game->has_cast ? &v->game->cast : NULL; }
 
 /* The simple controller at a portal (the ski levels' finish, or I pressed anywhere): when one captures, Ed faces it and
  * plays the step-in (state 228's animation, as the AI's walk-in does), then the cover; once the screen is covered the
  * portal fires as with the AI (its dsgvar condition set as Ed's B106 would). Capture-only portals (the holes) need the
  * player's scripts and are left alone. */
 static void simple_portals(tc_viewer *v, float dt) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     tc_ed_ai *e = &p->main.driver;
     const tc_ai_model *m = e->ai.model;
     if (v->walk_in == 0) {
         const tc_ai_portal *g;
         char name[16];
-        if (v->phase != TC_VP_PLAY) return;
+        if (p->phase != TC_GP_PLAY) return;
         tc_ed_ai_run_portals(e, dt);
         e->events.cover = false; /* the step-in comes first */
         if (e->portal < 0) return;
@@ -341,11 +254,11 @@ static void simple_portals(tc_viewer *v, float dt) {
         v->walk_in = 1;
         if (v->walk_clip < 0) {
             v->walk_in = 2;
-            tcv_start_transition(v, false);
+            tc_game_start_transition(p, false);
         }
         return;
     }
-    if (v->walk_in == 2 && v->phase == TC_VP_BLACK && e->portal >= 0) {
+    if (v->walk_in == 2 && p->phase == TC_GP_BLACK && e->portal >= 0) {
         const tc_ai_portal *g = &m->portals[e->portal];
         if (g->fire == 0) tc_ai_dsgvar_set_int(&e->ai, g->fire_dsg, g->fire_value);
         e->screen_covered = true;
@@ -400,151 +313,23 @@ static tc_mat4 pose_lerp(const tc_mat4 *a, const tc_mat4 *b, float t) {
  * the new driver starts in its model's start behaviour (the skier's waits for Jump, which tc_ed_ai's auto start
  * presses on Totalski). Port choice: the SE's own triggers force SE Ed's ski behaviour; retail Ed has none, so the
  * retail skier takes over. One zone per tick. */
-unsigned tc_viewer_play_mode(const tc_viewer *v) { return v->play ? v->play->main.mode : TC_AI_MODE_WALK; }
+unsigned tc_viewer_play_mode(const tc_viewer *v) { return v->game ? v->game->main.mode : TC_AI_MODE_WALK; }
 
-const tc_ed_ai *tc_viewer_driver(const tc_viewer *v) { return v->play && v->play->main.has_driver ? &v->play->main.driver : NULL; }
+const tc_ed_ai *tc_viewer_driver(const tc_viewer *v) { return v->game && v->game->main.has_driver ? &v->game->main.driver : NULL; }
 
-/* Ed's AI and mechanics in ticks of TC_ED_AI_TICK (the game's 30 per second), then this frame's pose between the
- * last two ticks. The scripts see last frame's camera eye (it makes the direction keys camera-relative). */
-/* A picture the cast's scripts asked for since the last look (tc_ai_globals.vignette): taken as tc_viewer.picture
- * ("Credits\\Credit06.bmp" -> "Credits/Credit06"), shown for its time. */
-static bool take_picture(tc_viewer *v) {
-    const tc_ai_globals *g = &v->play->cast.globals;
-    char *dot, *slash;
-    size_t k;
-    if (g->vignette_serial == v->picture_serial) return false;
-    v->picture_serial = g->vignette_serial;
-    if (!g->vignette[0] || !g->vignette_ms) return false;
-    for (k = 0; g->vignette[k] && k + 1 < sizeof(v->picture); k++) v->picture[k] = g->vignette[k] == '\\' ? '/' : g->vignette[k];
-    v->picture[k] = 0;
-    dot = strrchr(v->picture, '.');
-    slash = strrchr(v->picture, '/');
-    if (dot && (!slash || dot > slash)) *dot = 0;
-    v->picture_left = (float)g->vignette_ms / 1000;
-    return true;
-}
-
-/* Port (the user, 2026-11-13): no HUD over a covered screen or the loading screen (the frontends draw it last, over
- * the overlay); it comes back, sliding in, with the reveal. */
-bool tcv_hud_covered(const tc_viewer *v) {
-    return v->phase == TC_VP_BLACK || v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING;
-}
-
-/* The HUD's tick (tc_hud.h), after the cast's: what the standard elements show comes from Ed and the save values. The
- * level's bonuses count on the World perso's save value and the one after it (FUN_0043bc00, GAM_00419490: the exe
- * reads them through perso 0x8c1744's inventory object). */
-static void hud_tick(tc_viewer *v) {
-    tc_viewer_play *p = v->play;
-    tc_ai_globals *g = &p->cast.globals;
-    tc_hud_values now;
-    uint16_t k;
-    memset(&now, 0, sizeof(now));
-    now.hit_points = p->main.driver.ai.hit_points;
-    now.hit_points_max = p->main.driver.ai.hit_points_max;
-    if (!p->has_cast) { /* an imported level (tc_hud.left_only): his life, and the lives it arrived with (tcv_arrive) */
-        now.lives = v->carry && v->carry->has_progress ? v->carry->lives : 0;
-        now.bees = now.tings = now.spade = -1;
-        now.show_all = !v->hud.auto_hide;
-        tc_hud_tick(&v->hud, NULL, &now);
-        if (tcv_hud_covered(v)) tc_hud_away(&v->hud);
-        return;
-    }
-    now.lives = g->lives;
-    /* Port (the user, 2026-11-13: no ammunition counter before Ed has the peashooter): the bees show with power 8,
-     * which Ed's own scripts test before Action takes the blowgun out (B86 / B87: Cond_TestPower(8) -> B72) and which
-     * sud0's Doc gives. The exe's HUD has no such test (GAM_0041a720 only leaves the counter out at -1): there it comes
-     * when the count changes, or always under two of the four display options (GAM_00411c50: masks 0x5b, 0xdf). */
-    now.bees = (g->powers & 8) == 8 ? g->values[0] : -1;
-    now.tings = now.spade = -1;
-    for (k = 0; k < g->inv_count; k++)
-        if (g->inv[k].id == v->level->cast.world && g->inv[k].slot >= 0 && g->inv[k].slot < 31) {
-            now.tings = g->values[g->inv[k].slot] & 0xFF;
-            now.spade = g->inv[k].slot + 1 < 31 ? g->values[g->inv[k].slot + 1] & 0xFF : -1;
-        }
-    now.doc_slot = g->hud_doc;
-    now.doc_count = g->hud_doc >= 1 && g->hud_doc <= 6 ? g->values[g->hud_doc] : 0;
-    now.doc_serial = g->hud_doc_serial;
-    now.show_all = !v->hud.auto_hide;
-    tc_hud_tick(&v->hud, g, &now);
-    if (tcv_hud_covered(v)) tc_hud_away(&v->hud); /* they slide in again once the screen opens */
-}
-
-/* Port: a hint scene's way out (.ttlv SCNX; docs/ENGINE.md "Walkable scenes"). The speaker sends its scene's own Ed off
- * to a waypoint after the line (his GoToWaypoint walk, state 9); the real Ed plays the scene, so he walks there by his
- * own scripts, steered as a stick held towards it (relative to the camera as his scripts read it: from the eye to him),
- * the player's input held. Arrived (within TC_VIEW_SCENE_EXIT_NEAR), he stands; the speaker's cover and level change
- * follow as its scripts time them. */
-#define TC_VIEW_SCENE_EXIT_NEAR 0.8f
-#define TC_VIEW_SCENE_EXIT_STICK 0.6f /* a walk, not a run */
-static void scene_walk(tc_viewer *v, tc_main_input *in) {
-    const tc_viewer_play *p = v->play;
-    tc_vec3 ed = p->main.player.position, to = v->level->speech.exits[v->scene_exit].point, f;
-    float dx = to.x - ed.x, dy = to.y - ed.y, d = sqrtf(dx * dx + dy * dy), fl;
-    in->inputs = 0;
-    in->face = false;
-    in->stick_x = in->stick_y = 0;
-    if (d < TC_VIEW_SCENE_EXIT_NEAR) { v->scene_exit = -1; return; }
-    f = tc_v3(ed.x - in->eye.x, ed.y - in->eye.y, 0);
-    fl = sqrtf(f.x * f.x + f.y * f.y);
-    if (fl < 0.5f) f = tc_v3(sinf(v->camera.yaw), cosf(v->camera.yaw), 0), fl = 1; /* the eye above him: its facing */
-    f.x /= fl, f.y /= fl;
-    dx /= d, dy /= d;
-    in->stick_y = TC_VIEW_SCENE_EXIT_STICK * (dx * f.x + dy * f.y);  /* forward: away from the eye */
-    in->stick_x = TC_VIEW_SCENE_EXIT_STICK * (dx * f.y - dy * f.x);  /* right of forward (fy, -fx) */
-}
-
-static void step_ai(tc_viewer *v, float dt) {
-    tc_viewer_play *p = v->play;
-    tc_main *m = &p->main;
+/* The game's ticks this frame (tc_game_step: Ed's AI and mechanics, the cast, at TC_ED_AI_TICK), then this frame's pose
+ * of Ed between the last two ticks. */
+static void step_ai(tc_viewer *v, float dt, const tc_game_input *in) {
+    tc_game *p = v->game;
     float t;
-    int ticks = 0;
-    double prof = TC_PROF_BEGIN();
-    if (!m->have_pose) tc_main_capture(m);
-    v->sound_count = 0;
-    if (p->has_cast) p->cast.listener = tcv_listener(v); /* last frame's camera, as the exe's micro at the frame's start */
-    p->tick_time += dt;
-    /* Port: a fresh Action within reach of a waiting speaker talks to it, and only that. Ed's own scripts take the same
-     * press as the blowgun's (B86 / B87: ButtonJustPressed(action) -> B72) in the tick the speaker wakes, so they do not
-     * get it; nor while it stays held, or its first tick back would be a fresh press to them (tc_ai update_buttons). */
-    if (!held(v, TC_VA_ACTION)) v->talk_held = false;
-    else if (v->talk_press && tc_viewer_talk_prompt(v)) v->talk_held = true;
-    while (p->tick_time >= TC_ED_AI_TICK) {
-        tc_main_input in;
-        int mode_switch;
-        bool ran;
-        p->tick_time -= TC_ED_AI_TICK;
-        if (++ticks > 8) { p->tick_time = 0; break; } /* a long stall: drop the backlog */
-        bool held_back = v->director || v->speech_held;
-        bool still = v->cam.first_person || held_back; /* the director's shot: Ed waits, as the SE parks its Ed */
-        in.inputs = held_back ? 0 : ai_inputs(v);
-        in.stick_x = still ? 0 : v->move_x;
-        in.stick_y = still ? 0 : v->move_y;
-        in.eye = v->camera.position;
-        in.face = v->cam.first_person && !v->director;
-        in.heading = TC_PI - v->camera.yaw;
-        if (v->scene_exit >= 0) scene_walk(v, &in); /* a hint scene's way out: he walks off by himself */
-        in.aim_pitch = in.face ? v->camera.pitch : 0; /* first person: shots go where the gunsight is, up and down too */
-        in.talk_press = v->talk_press;
-        in.hud_waits = v->hud_waits;
-        /* the game's tick (tc_main.h): the run-first persos, Ed, the rest */
-        ran = tc_main_tick(m, p->has_cast ? &p->cast : NULL, &in, v->sounds, v->sound_sources, &v->sound_count,
-                           TC_AI_MAX_SOUNDS, &mode_switch);
-        if (mode_switch < 0) p->use_ai = false;
-        if (mode_switch > 0 && m->mode == TC_AI_MODE_WALK) p->ski_shot = false;
-        if (!ran) break;
-        if (p->has_cast) {
-            v->talk_press = false; /* the cast had it */
-            hud_tick(v);
-        } else if (v->hud.left_only) hud_tick(v); /* an imported level's stripped-down HUD */
-        if (p->has_cast && take_picture(v)) { /* the game holds while it shows (0x40fa20 waits in the main loop) */
-            p->tick_time = 0;
-            break;
-        }
+    tc_game_step(p, dt, in);
+    if (p->walk_serial != v->walk_seen) { /* a mode zone handed Ed back to walking: no ski follow */
+        v->walk_seen = p->walk_serial;
+        v->ski_shot = false;
     }
-    TC_PROF_END(TC_PZ_TICKS, prof);
-    if (!tc_main_is_ed(m)) return; /* Ed is drawn as the character in the slot says (update_custom) */
+    if (!tc_main_is_ed(&p->main)) return; /* Ed is drawn as the character in the slot says (update_custom) */
     t = p->tick_time / TC_ED_AI_TICK;
-    p->pose_draw = pose_lerp(&p->main.pose_prev, &p->main.pose_cur, t);
+    v->ed_pose = pose_lerp(&p->main.pose_prev, &p->main.pose_cur, t);
     v->ed_clip = p->main.clip_cur;
     v->ed_state = -1;
     v->ed_loop = p->main.loop_cur;
@@ -563,9 +348,10 @@ static void step_ai(tc_viewer *v, float dt) {
 }
 
 void tcv_update_play(tc_viewer *v, float dt, bool fresh) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     const tc_level *l = v->level;
     const tc_ed_anim *a;
+    tc_game_input gi;
     float rate;
     int i;
     if (v->tape) {
@@ -573,22 +359,23 @@ void tcv_update_play(tc_viewer *v, float dt, bool fresh) {
         return;
     }
     tcv_look(v, dt);
-    if (update_custom(v, dt)) { /* a car holds the main character's slot: the game goes on round Ed riding it */
+    game_input(v, &gi);
+    if (update_custom(v, &gi, dt)) { /* a car holds the main character's slot: the game goes on round Ed riding it */
         if (p->use_ai) {
-            step_ai(v, v->paused ? 0 : dt);
+            step_ai(v, v->paused ? 0 : dt, &gi);
             if (!v->paused) {
-                tcv_update_speech(v, dt, fresh);
-                tcv_update_scene(v);
+                tc_game_update_speech(p, dt, v->held, fresh);
+                tc_game_update_scene(p);
             }
         }
         tcv_update_camera(v, dt, fresh); /* the camera follows what it says */
         return;
     }
     if (p->use_ai) {
-        step_ai(v, v->paused ? 0 : dt); /* Ed's own scripts, at the game's tick */
+        step_ai(v, v->paused ? 0 : dt, &gi); /* Ed's own scripts, at the game's tick */
         if (!v->paused) {
-            tcv_update_speech(v, dt, fresh);
-            tcv_update_scene(v);
+            tc_game_update_speech(p, dt, v->held, fresh);
+            tc_game_update_scene(p);
         }
     } else {
         tc_player_input in;
@@ -614,7 +401,7 @@ void tcv_update_play(tc_viewer *v, float dt, bool fresh) {
                                        a->sample_count, false);
         if (v->ed_phase >= (float)a->sample_count - 1) {
             v->walk_in = 2;
-            tcv_start_transition(v, false);
+            tc_game_start_transition(p, false);
         }
         return;
     }

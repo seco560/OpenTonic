@@ -284,7 +284,7 @@ static int in_game_at(const char *dir, const char *name, int op, const char *lev
     tc_vec3 front, start, last;
     const tc_ai_portal *g;
     const tc_ed_ai *e;
-    tc_viewer_phase phase = TC_VP_PLAY;
+    tc_game_phase phase = TC_GP_PLAY;
     int i, k, last_beh = -1, last_state = -1, flags = 0;
     int32_t first_forced;
     memset(res, 0, sizeof(*res));
@@ -386,12 +386,12 @@ static int in_game_at(const char *dir, const char *name, int op, const char *lev
             printf("  %5.2f  B%d state %d  (%.1f, %.1f, %.1f)\n", (double)t, last_beh, last_state, (double)now.x,
                    (double)now.y, (double)now.z);
         }
-        if (v.phase != phase) {
-            if (v.phase == TC_VP_COVER || (v.phase == TC_VP_BLACK && phase == TC_VP_PLAY)) {
+        if (v.game->phase != phase) {
+            if (v.game->phase == TC_GP_COVER || (v.game->phase == TC_GP_BLACK && phase == TC_GP_PLAY)) {
                 res->covers++;
                 printf("  %5.2f  cover\n", (double)t);
             }
-            phase = v.phase;
+            phase = v.game->phase;
         }
         if (tc_v3_distance(now, last) > 5 && res->teleport_at < 0) {
             res->teleport_at = t;

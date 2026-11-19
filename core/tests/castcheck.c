@@ -292,13 +292,13 @@ static void level(const char *dir, const char *name) {
     { /* a scripted picture or the director's shot holds Ed (tc_viewer.picture_left / director): the player taps Jump to
        * get past them (port choice), as many times as it takes, at most 20 */
         int taps = 0;
-        while ((v.picture_left > 0 || tc_viewer_directed(&v)) && taps < 20) {
+        while ((v.game->picture_left > 0 || tc_viewer_directed(&v)) && taps < 20) {
             run(&v, 0.1f, 1u << TC_VA_JUMP);
             run(&v, 0.1f, 0);
             taps++;
         }
         if (taps) printf("  scripted pictures / camera: %d Jump taps to get past them%s\n", taps,
-                         v.picture_left > 0 || tc_viewer_directed(&v) ? " (still held)" : "");
+                         v.game->picture_left > 0 || tc_viewer_directed(&v) ? " (still held)" : "");
         for (k = 0; taps && k < 120; k++) frame(&v); /* landed again */
     }
     start = tc_viewer_player(&v)->position;
@@ -315,7 +315,7 @@ static void level(const char *dir, const char *name) {
             skier dies by crashing with no hit points (B9 -> B16 -> B15) */
         for (f2 = 0; f2 < 60 * 15 && !back; f2++) {
             frame(&v);
-            if (f2 > 60 && v.phase == TC_VP_PLAY && c->main->hit_points > 0) back = f2;
+            if (f2 > 60 && v.game->phase == TC_GP_PLAY && c->main->hit_points > 0) back = f2;
         }
         run(&v, 2, 0);
         moved = best_run(&v);
@@ -514,9 +514,9 @@ static void level(const char *dir, const char *name) {
         for (f = 0; f < 60 * 12 && !back_at; f++) {
             frame(&v);
             if (!fell_at && c->main->normal.behaviour == 60) fell_at = f + 1;
-            if (fell_at && !covered_at && v.phase != TC_VP_PLAY) covered_at = f + 1;
+            if (fell_at && !covered_at && v.game->phase != TC_GP_PLAY) covered_at = f + 1;
             if (fell_at && !covered_at && (c->main->contacts & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE))) landed++;
-            if (covered_at && v.phase == TC_VP_PLAY && c->main->hit_points > 0) back_at = f + 1;
+            if (covered_at && v.game->phase == TC_GP_PLAY && c->main->hit_points > 0) back_at = f + 1;
         }
         printf("  pit %s %u at (%.1f, %.1f, %.1f): falling death after %.2f s, covered %.2f s later, on ground %u "
                "frames before it, back playing after %.1f s\n", a ? "marker" : "World", a ? (unsigned)a->entry->id : 0,

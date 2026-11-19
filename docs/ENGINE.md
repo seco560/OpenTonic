@@ -774,7 +774,7 @@ acted on by forces, and the real Ed is switched off (the "double Ed"); NBD_Appui
   (2) **Read:** every speaker sends its scene's Ed walking with a force (ForceReflex R2 + ForceBehaviour B8 before the
   line: up to it; R3 + B9 / B10 after it: off to a waypoint), waits, covers, changes level. Exported as SCNX (speech.py
   Table.exits: the speaker behaviour and the waypoint its forced behaviour's GoToWaypoint heads for); when the speaker
-  enters it, the host walks Ed there (tc_viewer_play.c scene_walk: the stick towards it, the player held). (3) After the
+  enters it, the host walks Ed there (tc_game.c scene_walk: the stick towards it, the player held). (3) After the
   line the speaker's waits run at full length (`brisk` off), so its shots and Ed's walk play before the cover.
   viewcheck checks all six: the prompt at the arrival, the line, Ed walking off (6-16 units), the right next level.
 - **Open:** the scenes' camera
@@ -1204,8 +1204,9 @@ level change. The player's save holds Ed's dsgvars with flag 0x200 only.
   checkpoint; Ed's hit points and their maximum; the camera's field of view, zoom and close-up), LSAV (the whole table
   of level-saved values: level hash, perso id, dsgvar index, bytes).
 - A save is a `tc_viewer_carry`: loading opens the level as a portal's arrival does, then puts Ed at the checkpoint
-  (the carry's new tail: has_checkpoint, checkpoint, hit points; `tcv_arrive`), so a recording of a loaded game replays
-  it. Ed's dsgvars: the player-saved ones (0x200) as they are, the rest the model's initial values (a portal carries
+  (the carry's new tail: has_checkpoint, checkpoint, hit points; `tc_game_arrive`). A recording keeps the carry but not
+  the LSAV table loading installs, so a recording of a loaded game does not replay exact yet (docs/BUGS.md "Flaky
+  Replays"). Ed's dsgvars: the player-saved ones (0x200) as they are, the rest the model's initial values (a portal carries
   them all, mid-behaviour state included). While a level change is under way, the save is the next level's arrival.
 - When: a game's arrival in a level (its start after the intro, each portal, a load), PROC 118 SaveGame and the save
   points (`tc_ai_globals.save_serial`, `tc_viewer_save_serial`; 118 was skipped before), the way back to the menu, and

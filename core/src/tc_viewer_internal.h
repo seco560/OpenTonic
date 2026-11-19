@@ -2,10 +2,12 @@
  * include/tonic/tc_viewer.h. Here: the session's private structs, the helpers every part uses, and the functions one
  * part lends another (tcv_*: not static, so not bare names in the library's symbol table).
  *   tc_viewer.c          init / free, the frame (tc_viewer_update), settings, the title readout
- *   tc_viewer_play.c     the play session: input, Ed's ticks (his AI and the cast), the simple controller, custom gameplay
+ *   tc_viewer_play.c     play mode: input, the game's frame (tc_game.h) and Ed's drawing between its ticks, the simple
+ *                        controller, custom gameplay's rider
  *   tc_viewer_camera.c   the play camera, its sight test against the drawn persos, the director's shot
- *   tc_viewer_speech.c   speech and hint scenes
- *   tc_viewer_portals.c  portals, level changes, screen transitions and overlays, the gunsight
+ *   tc_viewer_speech.c   the text window and the prompts (the lines and hint scenes are the game's: tc_game_speech.c)
+ *   tc_viewer_portals.c  the transitions' overlays, the game's camera requests, the gunsight (the level changes are the
+ *                        game's: tc_game_portals.c)
  *   tc_viewer_light.c    baked light sets and the light persos, the game's lighting (sectors' lights and fog)
  *   tc_viewer_draw.c     the mesh table, transparent pieces, sector ranges, the draw list, the frame's shading values
  *   tc_viewer_occlusion.c  occlusion culling: what is in view but behind something solid (levels without sectors)
@@ -25,30 +27,13 @@
 #include "tonic/tc_obstacle.h"
 #include "tonic/tc_tape.h"
 #include "tonic/tc_main.h"
+#include "tonic/tc_game.h"
 #include "tonic/custom/tcx.h"
 #include "tc_rec_hooks.h"
 #include "tc_prof_hooks.h"
 
 /* A settings door, for the recording: only the public functions, so one that calls another isn't written twice. */
 #define REC_DOOR(door, a, x) do { if (v->rec) tc_rec_door(v->rec, door, a, x, 0); } while (0)
-
-/* The tc_player points at its world and the AI driver at the player, so the session stays at one address. */
-struct tc_viewer_play {
-    tc_collision world;
-    tc_obstacles obstacles;      /* the persos' own collision (.ttlv PCOL), met by Ed's sweeps (world.obstacles) */
-    tc_main main;                /* the main character: Ed, his physics and his scripts (tc_main.h) */
-    tc_cast cast;                /* the level persos that run their own AI (.ttlv CAST), with Ed as the main actor */
-    bool has_cast;
-    bool use_ai;                 /* his scripts drive him (else the simple controller) */
-    /* The game steps in fixed ticks of TC_ED_AI_TICK; drawing interpolates between the last two. */
-    float tick_time;             /* seconds not yet stepped */
-    bool ski_shot;          /* the skier has ridden: the camera's shot is the ski follow (stands for the start trigger,
-                               tc_viewer_camera_shot) */
-    tc_mat4 pose_draw;           /* Ed's model matrix this frame, between main.pose_prev and main.pose_cur */
-    /* Custom gameplay, not the game's (core/src/custom, tcx.h; NULL: none). Its car takes main's slot while Ed is in it:
-     * his AI and mechanics (and the cast, which steps on his clock) hold, and he is drawn at main.rider. */
-    struct tcx_play *custom;
-};
 
 static inline bool level_has_ed(const tc_level *l) { return l->has_ed && l->collision_triangle_count > 0; }
 
@@ -89,46 +74,36 @@ struct tc_viewer_tape {
     int clip;
 };
 
-#define SKIP_MASK ((1u << TC_VA_JUMP) | (1u << TC_VA_ACTION) | (1u << TC_VA_SHOOT))
+#define SKIP_MASK TC_GAME_SKIP_MASK
 
 /* tc_viewer_play.c */
 int tcv_ed_anim(const tc_level *l, const char *name);
-tc_viewer_play *tcv_play_create(tc_viewer *v, const tc_viewer_desc *desc);
-void tcv_play_destroy(tc_viewer_play *p);
 void tcv_look(tc_viewer *v, float dt);
 int16_t tcv_mesh_surface(const tc_viewer *v, const tc_mesh *m); /* tc_viewer_draw.c: the water surface a mesh lies on */
 /* Ends a camera transition in progress: the view as shown becomes the camera's own (before setting it outright). */
 void tcv_camera_settle(tc_viewer *v);
-void tcv_carry_fix(const tc_viewer *v, tc_viewer_carry *c); /* tc_viewer_portals.c */
-/* Sounds (tc_sound.h): the camera's micro now; a started sound with where it sounds from (NULL: flat). */
+/* Sounds (tc_sound.h): the camera's micro now. */
 tc_sound_listener tcv_listener(const tc_viewer *v);
-void tcv_push_sound(tc_viewer *v, uint16_t event, const tc_sound_source *s);
 void tcv_fly(tc_viewer *v, float dt);
 void tcv_set_inspecting(tc_viewer *v, bool on);
 void tcv_toggle_play(tc_viewer *v);
-bool tcv_hud_covered(const tc_viewer *v);
-/* The main character (tc_main.h; a chameleon while one holds the player, tc_cast_character): where it is after the last
- * tick, and as drawn this frame (between the ticks); its heading as drawn. */
-tc_vec3 tcv_main_position(const tc_viewer_play *p);
-tc_vec3 tcv_main_drawn(const tc_viewer_play *p);
-float tcv_main_drawn_heading(const tc_viewer_play *p);
+/* The main character (tc_main.h; a chameleon while one holds the player, tc_cast_character) as drawn this frame
+ * (between the ticks), its heading as drawn; where it is after the last tick: tc_game_main_position. */
+tc_vec3 tcv_main_drawn(const tc_viewer *v);
+float tcv_main_drawn_heading(const tc_viewer *v);
 void tcv_update_play(tc_viewer *v, float dt, bool fresh);
 
 /* tc_viewer_camera.c */
 void tcv_mesh_spheres(tc_viewer *v);
 void tcv_update_camera(tc_viewer *v, float dt, bool fresh);
 
-/* tc_viewer_speech.c */
-void tcv_update_speech(tc_viewer *v, float dt, bool fresh);
-void tcv_update_scene(tc_viewer *v);
-
 /* tc_viewer_portals.c */
-int tcv_same_text(const char *a, const char *b);
-void tcv_copy_text(char *dst, size_t n, const char *src);
 bool tcv_collect_effects(tc_viewer *v, const tc_ai_model *m);
 const tc_ai_model *tcv_ai_model(const tc_viewer *v);
-void tcv_start_transition(tc_viewer *v, bool reveal);
-void tcv_arrive(tc_viewer *v, const tc_viewer_carry *c);
+/* The host camera's settings the game keeps in a carry (tc_game_view). */
+tc_game_view tcv_game_view(const tc_viewer *v);
+/* The camera moves the game asked for (tc_game_camera_request), in order. */
+void tcv_take_camera_requests(tc_viewer *v);
 void tcv_update_portals(tc_viewer *v, float dt);
 
 /* tc_viewer_light.c */

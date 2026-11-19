@@ -354,7 +354,7 @@ static void add_mesh(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     const tc_sector_range *r;
     float z = NAN, rz;
     /* the sectors the scripts have moved (tc_cast_sector_matrix): each of their ranges a draw of its own, at its matrix */
-    const tc_cast *cast = v->play && v->play->has_cast && v->play->cast.moving_sector_count && v->sectors ? &v->play->cast : NULL;
+    const tc_cast *cast = v->game && v->game->has_cast && v->game->cast.moving_sector_count && v->sectors ? &v->game->cast : NULL;
     if ((!shown && !water && !cast) || n == 0) {
         add_draw(v, dl, mesh, model, 0, v->meshes[mesh]->index_count, NAN);
         return;
@@ -507,7 +507,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
          * sector a cast actor is in now (GAM_0042c810 carries a moving perso through the portals it crosses), not its
          * snapshot's: until 2026-11-16 cavedoc's guide vanished halfway, riding from sector 61 into 90 */
         sec = v->sectors && v->sectors->perso_count == l->perso_count ? tcv_perso_light_sector(v, i) : TC_SECTOR_NONE;
-        if (!(v->tape && v->play->has_cast && tc_cast_actor_of(&v->play->cast, i)) &&
+        if (!(v->tape && v->game->has_cast && tc_cast_actor_of(&v->game->cast, i)) &&
             perso_sectors && sec != TC_SECTOR_NONE && sec < v->sectors->count && !(shown[sec] & TC_SHOWN_SECTOR))
             continue;
         /* Baked samples loop; blend each channel between neighbouring samples so motion is smooth at any display
@@ -518,9 +518,9 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
             v->draw_lit = ls < v->sectors->count ? &v->sector_lit[ls] : NULL;
         }
         z = water && sec < v->sectors->count ? v->sector_water[sec] : NAN; /* drawn in its sector's pass */
-        actor = v->playing && v->play && v->play->has_cast && v->play->use_ai ? tc_cast_actor_of(&v->play->cast, i) : NULL;
+        actor = v->playing && v->game && v->game->has_cast && v->game->use_ai ? tc_cast_actor_of(&v->game->cast, i) : NULL;
         if (!actor && v->spawn_prso && v->spawn_prso[i]) continue;
-        if (!actor && v->play && tcx_perso_pose(v->play->custom, i, &w34)) { /* moved by custom gameplay (a car) */
+        if (!actor && v->game && tcx_perso_pose(v->game->custom, i, &w34)) { /* moved by custom gameplay (a car) */
             world = tc_mat4_from34(&w34);
             if (v->camera.position.z - world.m[14] > TC_VIEW_CAR_HIDE_HEIGHT) continue; /* seen from high above: not drawn */
             {   /* far off: its far model (TCX_PART_FAR), when it has one */
@@ -536,7 +536,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
                 tc_mat34 c34;
                 tc_mat4 m, model;
                 if (part->channel >= nch || (uint16_t)(p->shown[part->channel] | far) != part->object) continue;
-                c34 = tcx_perso_channel(v->play->custom, i, part->channel);
+                c34 = tcx_perso_channel(v->game->custom, i, part->channel);
                 m = tc_mat4_from34(&c34);
                 model = tc_mat4_mul(&world, &m);
                 add_draw(v, &dl, first + k, &model, 0, part->mesh.index_count, z);
@@ -548,7 +548,7 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
             tc_mat34 w34;
             uint32_t ch;
             if (v->tape ? !tcv_tape_actor_pose(v, actor, &w34, &an, &s)
-                        : !tc_cast_pose(&v->play->cast, actor, v->play->tick_time / TC_ED_AI_TICK, &w34, &an, &s))
+                        : !tc_cast_pose(&v->game->cast, actor, v->game->tick_time / TC_ED_AI_TICK, &w34, &an, &s))
                 continue;
             world = tc_mat4_from34(&w34);
             nch = an->channel_count;
@@ -591,19 +591,19 @@ static const tc_view_draw *build_draws(tc_viewer *v, uint32_t *count, uint32_t *
     /* first person, or the camera pushed into him by a wall (tc_cam.hide_target): not drawn. Nor made wholly see-through
      * by his scripts (SetTransparency 0: sud0's walk-in passages, HEG_GenTransitionFade, while they move him); partly:
      * blended (tc_view_draw.alpha) */
-    const tc_ai_perso *ed_ai = v->playing && v->play && v->play->use_ai && v->play->main.has_driver && tc_main_is_ed(&v->play->main)
-                                   ? &v->play->main.driver.ai : NULL;
+    const tc_ai_perso *ed_ai = v->playing && v->game && v->game->use_ai && v->game->main.has_driver && tc_main_is_ed(&v->game->main)
+                                   ? &v->game->main.driver.ai : NULL;
     float ed_alpha = ed_ai && !ed_ai->display_flag8 ? ed_ai->transparency / 255.0f : 1; /* his scripts' fades too (the
                                     hurt blink at 127; the passages' 0) */
     bool see_through = ed_alpha <= 0 || (ed_ai && !ed_ai->active); /* out of the world: a chameleon holds the player */
-    if (v->playing && v->play && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target && !see_through) {
+    if (v->playing && v->game && v->ed_clip >= 0 && !v->cam.first_person && !v->cam.hide_target && !see_through) {
         const tc_ed_anim *a = &l->ed.anims[v->ed_clip];
         tc_sample s = tc_sample_at_phase(v->ed_phase, a->sample_count, v->ed_loop);
         uint32_t nch = a->channel_count, ch;
         /* The skier's board tilts with the slope; custom gameplay (a car) may pose him. */
-        tc_mat4 model = !tc_main_is_ed(&v->play->main)              ? v->play->main.rider.model
-                        : v->play->use_ai && v->play->main.has_driver ? v->play->pose_draw
-                                                                 : tc_player_model_matrix(&v->play->main.player);
+        tc_mat4 model = !tc_main_is_ed(&v->game->main)              ? v->game->main.rider.model
+                        : v->game->use_ai && v->game->main.has_driver ? v->ed_pose
+                                                                 : tc_player_model_matrix(&v->game->main.player);
         sec = tc_viewer_ed_sector(v);
         v->draw_alpha = ed_alpha;
         z = water && sec != TC_SECTOR_NONE && sec < v->sectors->count ? v->sector_water[sec] : NAN;
@@ -964,7 +964,7 @@ void tc_viewer_frame(const tc_viewer *v, float aspect, tc_view_frame *out) {
 }
 
 bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     tc_vec3 o;
     tc_hit hit;
     float h, k, s;
@@ -973,7 +973,7 @@ bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out) {
     if (p->use_ai && p->main.has_driver && (p->main.driver.dyn.card_type == 1 || p->main.driver.dyn.card_type == 7)) return false; /* swimming */
     /* Where he is drawn (between the AI's ticks), as the camera's target */
     o = !tc_main_is_ed(&p->main) ? p->main.player.position /* where the character in the slot puts him */
-        : p->use_ai ? tc_v3(p->pose_draw.m[12], p->pose_draw.m[13], p->pose_draw.m[14]) : p->main.player.position;
+        : p->use_ai ? tc_v3(v->ed_pose.m[12], v->ed_pose.m[13], v->ed_pose.m[14]) : p->main.player.position;
     if (!tc_collision_raycast(&p->world, tc_v3_add(o, tc_v3(0, 0, 0.5f)), tc_v3(0, 0, -1), TC_VIEW_SHADOW_REACH + 0.5f, &hit))
         return false;
     out->normal = hit.normal.z < 0 ? tc_v3_scale(hit.normal, -1) : hit.normal; /* the raycast is two-sided */

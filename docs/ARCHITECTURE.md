@@ -11,12 +11,13 @@ frontend (Swift/Metal or SDL3)
   held actions, sticks, dt  ->  tc_viewer_update(v, dt)                        core/src/tc_viewer.c
                                   update_frame
                                     debug menu open?            -> tcv_debug_frame          (game held)
-                                    scripted picture?           -> count down               (game held)
+                                    tc_game_begin_frame (sounds cleared, a fresh Action noted)  tc_game.c
+                                    tc_game_picture_hold?       -> count down               (game held)
                                     level loading / pending?    -> tcv_look only
                                     playing                     -> tcv_update_play          tc_viewer_play.c
-                                       tcv_look (camera input)
-                                       custom slot (the car)?   -> update_custom, ride_tick
-                                       step_ai: while tick_time >= 1/30 s:
+                                       tcv_look (camera input), game_input (tc_game_input: player, camera, listener)
+                                       tc_game_custom_frame (the car holds the slot?)       tc_game.c
+                                       step_ai -> tc_game_step: while tick_time >= 1/30 s:  tc_game.c
                                           build tc_main_input (held back by speech / director / scene walk)
                                           tc_main_tick                                       tc_main.c
                                             tc_cast_tick                                     tc_cast.c
@@ -26,11 +27,14 @@ frontend (Swift/Metal or SDL3)
                                               moving sectors, water surfaces
                                             take_requests (cover, level change, camera place)
                                           HUD tick, scripted pictures
-                                       tcv_update_speech, tcv_update_scene (lines, hint scenes)
+                                       ... then Ed's pose between the ticks (viewer: ed_pose, ed_clip)
+                                       tc_game_update_speech, tc_game_update_scene          tc_game_speech.c
                                        tcv_update_camera (follow / director / scripted shots) tc_viewer_camera.c
                                     else free-fly
-                                  update_sectors, lighting, portals + transitions, light persos
-                                pick_sounds (random clips), recording
+                                  update_sectors, lighting,
+                                  tcv_update_portals -> tc_game_update_portals, camera requests  tc_game_portals.c
+                                  light persos
+                                tc_game_pick_sounds (random clips), recording
   draw list, lights, HUD, speech panel, sounds  <-  tc_viewer_draws / _sounds / _speech_panel ...
 ```
 
@@ -127,6 +131,18 @@ recordings with frame hashes (docs/RECORDING.md); stages 1-3 change nothing a pl
    changes, saves, sound picks) that tc_viewer *uses*; tc_viewer keeps camera, drawing, menus, debug, tapes. No
    behaviour change; the 115 reaches into the driver go through a handful of tc_game calls. tc_save stops including the
    viewer's internals.
+   *Done 2026-11-19:* `core/include/tonic/tc_game.h`, `core/src/tc_game.c`, `_speech.c`, `_portals.c`. The game
+   session holds the world, Ed, the cast, the tick, the lines and hint scenes, the pictures, the HUD's state, the
+   transitions and level changes (phase, carry, rng), the sounds and their picks, what a save needs; tc_viewer holds a
+   `tc_game *game` and calls it once or twice a frame (§1's order kept). What the game needs of the viewer comes in
+   as `tc_game_input` (the player, the camera, the listener) and `tc_game_view` (the camera settings a carry keeps);
+   what it asks of the camera goes out as `tc_game_camera_request` (PROC 8 / 29 aims, a save's yaw). Moved to the
+   viewer: Ed's pose between ticks (`ed_pose`) and the ski camera flag. tc_save.c includes tc_game.h only. The
+   viewer's presentation files (camera, draw, light, tape) still *read* the session's fields (`v->game->main`,
+   `->cast`); they no longer write its rules. Proof of no change: the gate and CUSTOM=0; the user's clean recordings
+   exact (four segments, ~70,000 frames); nine probe scripts (hint scenes in bar, spycarota, spynorth with their level
+   changes, the SE outro's director, Totalski, a tomato fight and sud0's arches, the car, two saved games) and the
+   demo tapes print the same lines, every 0.1 s, on the build before and after.
 3. **One main character.** `tc_cast` owns "the main character = a perso id" (today's main_character). Ed becomes a cast
    actor whose brain is his driver (his mechanics already go through the cast's integrators); the skier's alias folds
    in; the car becomes a cast actor with a native brain (its tc_character_ops become a brain vtable). Camera, sector,

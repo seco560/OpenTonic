@@ -3,7 +3,7 @@
 
 /* The game's state the menu shows and sets: the cast's (Ed's scripts share it), else Ed's own, else none. */
 static tc_ai_globals *debug_globals(tc_viewer *v) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     if (!p || !p->main.has_driver) return NULL;
     if (p->has_cast) return &p->cast.globals;
     return p->main.driver.ai.globals ? p->main.driver.ai.globals : &p->main.driver.ai.own_globals;
@@ -30,32 +30,38 @@ void tc_viewer_toggle_debug(tc_viewer *v) {
 
 bool tc_viewer_debug_open(const tc_viewer *v) { return v->debug.open; }
 
+/* The HUD is the game's (tc_game.hud): a level that can't be played has none. */
 void tc_viewer_hud_waits(tc_viewer *v, bool on) {
     if (on) REC_DOOR(TC_RD_HUD, 0, 0);
-    v->hud_waits = on;
+    if (v->game) v->game->hud_waits = on;
 }
 
 tc_result tc_viewer_set_hud(tc_viewer *v, const void *data, size_t size) {
-    tc_result r = tc_hud_load(&v->hud, data, size);
+    tc_hud *h = v->game ? &v->game->hud : NULL;
+    tc_result r;
+    if (!h) return TC_OK; /* nothing to show it over */
+    r = tc_hud_load(h, data, size);
     if (r == TC_OK && v->level && v->level->edition == 0) tc_viewer_hud_waits(v, true);
     /* outside the retail game (the Special Edition's levels; the imported ones, which have no cast): its extensions */
-    v->hud.left_only = v->level && (v->level->edition != 0 || !(v->play && v->play->has_cast));
+    h->left_only = v->level && (v->level->edition != 0 || !v->game->has_cast);
     return r;
 }
 
-void tc_viewer_set_hud_auto_hide(tc_viewer *v, bool on) { v->hud.auto_hide = on; }
+void tc_viewer_set_hud_auto_hide(tc_viewer *v, bool on) { if (v->game) v->game->hud.auto_hide = on; }
 
-bool tc_viewer_hud_auto_hide(const tc_viewer *v) { return v->hud.auto_hide; }
+bool tc_viewer_hud_auto_hide(const tc_viewer *v) { return v->game && v->game->hud.auto_hide; }
 
 bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
+    tc_hud *hud;
     uint8_t points[TC_AI_HUD_SLOTS] = {0}, max[TC_AI_HUD_SLOTS] = {0};
     const tc_ai_globals *g;
     uint32_t k;
-    if (!v->hud.loaded || !v->playing || !p || !p->main.has_driver || !(p->has_cast || v->hud.left_only) || !p->use_ai ||
-        v->tape)
+    if (!p) return false;
+    hud = &p->hud;
+    if (!hud->loaded || !v->playing || !p->main.has_driver || !(p->has_cast || hud->left_only) || !p->use_ai || v->tape)
         return false;
-    if (tcv_hud_covered(v)) return false;
+    if (tc_game_hud_covered(p)) return false;
     /* Port (the user, 2026-11-13, a stand-in for a photo mode): no HUD while paused, live (P) or in a paused playback
      * (tc_replay_pause): both set the pause's look round. It comes back as it was. */
     if (v->paused || v->inspecting) return false;
@@ -68,21 +74,21 @@ bool tc_viewer_hud(tc_viewer *v, float aspect, tc_view_hud *out) {
         points[k] = (uint8_t)(hp < 0 ? 0 : hp > 255 ? 255 : hp);
         max[k] = (uint8_t)(top < 0 ? 0 : top > 255 ? 255 : top);
     }
-    tc_hud_build(&v->hud, g, points, max, true, aspect > 0 ? aspect : 4.0f / 3);
+    tc_hud_build(hud, g, points, max, true, aspect > 0 ? aspect : 4.0f / 3);
     { /* custom gameplay's start text (tcx.h: the SSX courses have no scripts to show the game's), in FontLips as
        * Totalski's scripts show it */
         tc_ai_hud_slot extra;
         if (tcx_hud_slot(p->custom, &extra)) {
-            extra.font = tc_hud_font_rank(&v->hud, "FontLips");
-            tc_hud_add_slot(&v->hud, &extra, aspect > 0 ? aspect : 4.0f / 3);
+            extra.font = tc_hud_font_rank(hud, "FontLips");
+            tc_hud_add_slot(hud, &extra, aspect > 0 ? aspect : 4.0f / 3);
         }
     }
-    if (!v->hud.quad_count) return false;
-    out->rgba = v->hud.data.atlas;
-    out->width = v->hud.data.atlas_width;
-    out->height = v->hud.data.atlas_height;
-    out->quads = v->hud.quads;
-    out->count = v->hud.quad_count;
+    if (!hud->quad_count) return false;
+    out->rgba = hud->data.atlas;
+    out->width = hud->data.atlas_width;
+    out->height = hud->data.atlas_height;
+    out->quads = hud->quads;
+    out->count = hud->quad_count;
     return true;
 }
 
@@ -91,29 +97,12 @@ tc_result tc_viewer_set_survey(tc_viewer *v, const void *data, size_t size) {
 }
 
 /* "Reload the level": a level change into this level, at Ed's start, with the progress as the menu left it (the
- * portals' way out: tc_viewer_pending_level; arrive() hands the progress to the new viewer's cast). */
+ * portals' way out: tc_viewer_pending_level; tc_game_arrive hands the progress to the new viewer's cast). */
 static void debug_reload(tc_viewer *v) {
-    tc_viewer_play *p = v->play;
-    tc_viewer_carry *c;
-    const tc_ai_globals *g = debug_globals(v);
-    if (!p || !p->main.level_name[0] || v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) return;
-    c = v->carry ? v->carry : (tc_viewer_carry *)tc_calloc(1, sizeof(*c));
-    if (!c) return;
-    memset(c, 0, sizeof(*c));
-    if (p->has_cast) tc_cast_level_save(&p->cast); /* as on any way out of the level */
-    tcv_copy_text(c->level, sizeof(c->level), p->main.level_name);
-    c->vertical_fov = v->camera.vertical_fov;
-    c->orbit_distance = v->orbit_distance;
-    c->closeup = v->cam.closeup;
-    if (g) {
-        c->has_progress = 1;
-        c->lives = g->lives;
-        c->powers = g->powers;
-        memcpy(c->values, g->values, sizeof c->values);
-    }
-    v->carry = c;
-    v->loading_time = 0;
-    v->phase = p->main.has_driver ? TC_VP_LOADING : TC_VP_PENDING; /* update_portals runs the loading screen's time */
+    tc_game_view view;
+    if (!v->game) return;
+    view = tcv_game_view(v);
+    tc_game_reload(v->game, &view);
 }
 
 void tcv_debug_frame(tc_viewer *v, float dt) {
@@ -131,7 +120,7 @@ void tcv_debug_frame(tc_viewer *v, float dt) {
 bool tc_viewer_debug_panel(tc_viewer *v, float aspect, tc_view_speech_panel *out) {
     const float shape = (float)TC_DEBUG_PANEL_W / (float)TC_DEBUG_PANEL_H;
     float h = 0.92f, w;
-    if (!v->debug.open || !tc_debug_render(&v->debug, debug_globals(v), v->play ? v->play->main.level_name : "")) return false;
+    if (!v->debug.open || !tc_debug_render(&v->debug, debug_globals(v), v->game ? v->game->main.level_name : "")) return false;
     if (aspect <= 0) aspect = 4.0f / 3;
     w = h * shape / aspect;
     if (w > 0.96f) w = 0.96f, h = w * aspect / shape; /* a narrow window: fit the width, keep the shape */

@@ -79,13 +79,14 @@ static void read_sample(const tc_viewer *v, uint32_t frame, tc_rec_sample *s) {
     const tc_player *pl = tc_viewer_player(v);
     const tc_ed_ai *d = tc_viewer_driver(v);
     const tc_cast *c = tc_viewer_cast(v);
+    const tc_game *g = v->game;
     uint32_t i;
     memset(s, 0, sizeof *s);
     s->frame = frame;
     s->flags = (v->playing ? TC_RS_PLAYING : 0) | (v->paused ? TC_RS_PAUSED : 0) |
                (tc_viewer_ai_active(v) ? TC_RS_AI : 0) | (v->director ? TC_RS_DIRECTOR : 0) |
                (v->cam.first_person ? TC_RS_FIRST_PERSON : 0) | (v->cam.closeup ? TC_RS_CLOSEUP : 0) |
-               (v->picture_left > 0 ? TC_RS_PICTURE : 0);
+               (g && g->picture_left > 0 ? TC_RS_PICTURE : 0);
     if (pl) {
         s->position[0] = pl->position.x, s->position[1] = pl->position.y, s->position[2] = pl->position.z;
         s->velocity[0] = pl->velocity.x, s->velocity[1] = pl->velocity.y, s->velocity[2] = pl->velocity.z;
@@ -115,11 +116,11 @@ static void read_sample(const tc_viewer *v, uint32_t frame, tc_rec_sample *s) {
     }
     s->sector = tc_viewer_ed_sector(v);
     s->camera_sector = v->light_sector;
-    s->viewer_phase = (uint32_t)v->phase;
+    s->viewer_phase = g ? (uint32_t)g->phase : 0;
     s->light_set = v->light_set;
-    s->rng = v->rng;
-    s->picture_left = v->picture_left;
-    s->loading_time = v->loading_time;
+    s->rng = g ? g->rng : v->rng;
+    s->picture_left = g ? g->picture_left : 0;
+    s->loading_time = g ? g->loading_time : 0;
     if (c) {
         uint64_t h = 1;
         s->lives = c->globals.lives;

@@ -13,7 +13,7 @@ extern "C" {
 
 typedef enum tc_prof_zone {
     TC_PZ_UPDATE,         /* tc_viewer_update, whole */
-    TC_PZ_TICKS,          /* Ed's AI and the cast, every 30 Hz tick of the frame (step_ai) */
+    TC_PZ_TICKS,          /* Ed's AI and the cast, every 30 Hz tick of the frame (tc_game_step) */
     TC_PZ_CAST_FIRST,     /*   the run-first persos (lifts, platforms) */
     TC_PZ_ED,             /*   Ed's scripts and physics */
     TC_PZ_CAST_REST,      /*   every other perso */

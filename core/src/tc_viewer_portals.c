@@ -1,17 +1,6 @@
-/* The viewer's portals, level changes, screen transitions and overlays, the gunsight (docs/PORTALS.md). */
+/* The viewer's side of portals and level changes (docs/PORTALS.md; the game's: tc_game_portals.c): the screen
+ * transitions' overlays and textures, the camera moves the game asks for, the gunsight. */
 #include "tc_viewer_internal.h"
-
-int tcv_same_text(const char *a, const char *b) {
-    for (; *a && *b; a++, b++)
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
-    return *a == *b;
-}
-
-void tcv_copy_text(char *dst, size_t n, const char *src) {
-    size_t i;
-    for (i = 0; src && src[i] && i + 1 < n; i++) dst[i] = src[i];
-    dst[i] = 0;
-}
 
 /* The distinct effect textures of the model's transitions, then the gunsight (tc_viewer_crosshair). */
 bool tcv_collect_effects(tc_viewer *v, const tc_ai_model *m) {
@@ -49,10 +38,10 @@ bool tc_viewer_crosshair(const tc_viewer *v, float aspect, tc_view_overlay *out)
     float h = TC_VIEWER_CROSSHAIR_SIZE * 0.5f, w = aspect > 0 ? h / aspect : h;
     memset(out, 0, sizeof(*out));
     out->texture = -1;
-    if (!v->playing || !v->play || !v->play->main.has_driver || !v->cam.first_person || v->crosshair_effect < 0 ||
-        v->phase != TC_VP_PLAY)
+    if (!v->playing || !v->game || !v->game->main.has_driver || !v->cam.first_person || v->crosshair_effect < 0 ||
+        v->game->phase != TC_GP_PLAY)
         return false;
-    a = &v->play->main.driver.ai;
+    a = &v->game->main.driver.ai;
     if (a->normal.behaviour == 0xFFFF || !behaviour_shoots(a->model, a->normal.behaviour)) return false;
     out->kind = TC_VO_SPRITE;
     out->texture = v->crosshair_effect;
@@ -66,24 +55,21 @@ bool tc_viewer_crosshair(const tc_viewer *v, float aspect, tc_view_overlay *out)
 }
 
 const tc_ai_model *tcv_ai_model(const tc_viewer *v) {
-    return v->play && v->play->main.has_driver ? v->play->main.driver.ai.model : NULL;
+    return v->game && v->game->main.has_driver ? v->game->main.driver.ai.model : NULL;
 }
 
-/* Starts the cover or the reveal; without transition data, it is done at once. */
-void tcv_start_transition(tc_viewer *v, bool reveal) {
-    const tc_ai_model *m = tcv_ai_model(v);
-    if (m && m->has_transitions && tc_transition_start(&v->transition, &m->transitions, reveal, &v->rng)) {
-        v->phase = reveal ? TC_VP_REVEAL : TC_VP_COVER;
-        return;
-    }
-    memset(&v->transition, 0, sizeof(v->transition));
-    v->phase = reveal ? TC_VP_PLAY : TC_VP_BLACK;
-    if (!reveal && v->play) v->play->main.driver.screen_covered = true;
+tc_game_view tcv_game_view(const tc_viewer *v) {
+    tc_game_view w;
+    w.vertical_fov = v->camera.vertical_fov;
+    w.orbit_distance = v->orbit_distance;
+    w.closeup = v->cam.closeup;
+    return w;
 }
 
-/* The orbit camera looking at Ed from `eye` (PROC_8's camera position, PROC_29's camera place). */
-static void aim_camera(tc_viewer *v, tc_vec3 eye) {
-    tc_vec3 d = tc_v3_sub(tc_v3_add(v->play->main.player.position, tc_v3(0, 0, 1.1f)), eye);
+/* The orbit camera looking at `at` (Ed's place when the game asked, 1.1 up) from `eye` (PROC_8's camera position,
+ * PROC_29's camera place). */
+static void aim_camera(tc_viewer *v, tc_vec3 eye, tc_vec3 at) {
+    tc_vec3 d = tc_v3_sub(at, eye);
     float h = sqrtf(d.x * d.x + d.y * d.y);
     if (h < 1e-3f) return;
     tcv_camera_settle(v);
@@ -91,162 +77,56 @@ static void aim_camera(tc_viewer *v, tc_vec3 eye) {
     v->camera.pitch = fmaxf(-1.5f, fminf(1.5f, atan2f(d.z, h)));
 }
 
-/* Arriving through a portal: Ed's dsgvars from the last level, the arrival place, then the reveal. */
-void tcv_arrive(tc_viewer *v, const tc_viewer_carry *c) {
-    tc_viewer_play *p = v->play;
-    const tc_ai_model *m = tcv_ai_model(v);
-    uint16_t i;
-    if (!m) return;
-    if (c->dsg_size && c->dsg_size == m->dsg.size && p->main.driver.ai.dsg) memcpy(p->main.driver.ai.dsg, c->dsg, c->dsg_size);
-    if (c->has_progress && p->has_cast) { /* before the cast's first tick: its scripts' first tests see them */
-        tc_ai_globals *g = &p->cast.globals;
-        g->lives = c->lives;
-        g->powers = c->powers;
-        memcpy(g->values, c->values, sizeof g->values);
-    } else if (c->has_progress && !v->carry) { /* a level without a cast (an imported one: the SSX courses): nothing here
-                                                * holds the progress, so it is kept for the way out (custom.py's arches) */
-        tc_viewer_carry *keep = (tc_viewer_carry *)tc_calloc(1, sizeof(*keep));
-        if (keep) {
-            keep->has_progress = true;
-            keep->lives = c->lives;
-            keep->powers = c->powers;
-            memcpy(keep->values, c->values, sizeof keep->values);
-            v->carry = keep;
+void tcv_take_camera_requests(tc_viewer *v) {
+    tc_game *g = v->game;
+    uint32_t k;
+    if (!g) return;
+    for (k = 0; k < g->camera_request_count; k++) {
+        const tc_game_camera_request *r = &g->camera_requests[k];
+        if (r->kind == TC_GAME_CAMERA_AIM) aim_camera(v, r->eye, r->at);
+        else if (r->kind == TC_GAME_CAMERA_YAW) {
+            tcv_camera_settle(v);
+            v->camera.yaw = r->yaw;
         }
     }
-    for (i = 0; c->place[0] && i < m->place_count; i++)
-        if (m->places[i].name && tcv_same_text(m->places[i].name, c->place))
-            tc_player_teleport(&p->main.player, m->places[i].position, m->places[i].heading);
-    for (i = 0; c->camera_place[0] && i < m->place_count; i++)
-        if (m->places[i].name && tcv_same_text(m->places[i].name, c->camera_place)) aim_camera(v, m->places[i].position);
-    if (c->has_checkpoint) { /* a saved game: back where its save point left him (tc_save.h) */
-        tc_vec3 at = tc_v3(c->checkpoint[0], c->checkpoint[1], c->checkpoint[2]);
-        tc_player_teleport(&p->main.player, at, c->checkpoint_heading);
-        if (p->has_cast) {
-            p->cast.globals.has_checkpoint = true;
-            p->cast.globals.checkpoint = at;
-            p->cast.globals.checkpoint_heading = c->checkpoint_heading;
-        }
-        tcv_camera_settle(v);
-        v->camera.yaw = c->checkpoint_heading; /* behind him (the follow camera's yaw is his heading) */
-    }
-    if (c->fix_dsg_size && p->has_cast) { /* the fix persos' dsgvars as the last level left them */
-        uint32_t size;
-        uint8_t *dsg = tc_cast_fix_dsg(&p->cast, 2, &size);
-        if (dsg && size == c->fix_dsg_size) memcpy(dsg, c->fix_dsg, size);
-    }
-    if (c->hit_points_max > 0) {
-        tc_ai_perso *a = &p->main.driver.ai;
-        a->hit_points_max = c->hit_points_max;
-        a->hit_points = c->hit_points > 0 && c->hit_points <= c->hit_points_max ? c->hit_points : c->hit_points_max;
-    }
-    tcv_start_transition(v, true);
+    g->camera_request_count = 0;
 }
 
-/* Into a carry: the fix persos' dsgvars (the cheat-code reader's, role 2) as this level's cast holds them; else what
- * this level arrived with. */
-void tcv_carry_fix(const tc_viewer *v, tc_viewer_carry *c) {
-    uint32_t size = 0;
-    uint8_t *dsg = v->play && v->play->has_cast ? tc_cast_fix_dsg(&v->play->cast, 2, &size) : NULL;
-    if (dsg && size <= TC_VIEWER_CARRY_FIX_DSG) {
-        c->fix_dsg_size = size;
-        memcpy(c->fix_dsg, dsg, size);
-    } else if (v->carry && v->carry->fix_dsg_size) {
-        if (v->carry != c) {
-            c->fix_dsg_size = v->carry->fix_dsg_size;
-            memcpy(c->fix_dsg, v->carry->fix_dsg, c->fix_dsg_size);
-        }
-    } else c->fix_dsg_size = 0;
-}
-
-/* After Ed's step: his portal events drive the phases (docs/PORTALS.md). */
+/* After Ed's step: the game's portals and transitions (tc_game_update_portals), then the camera moves they asked for. */
 void tcv_update_portals(tc_viewer *v, float dt) {
-    tc_ed_ai *e;
-    tc_ed_ai_events *ev;
-    if (!v->play || !v->play->main.has_driver) return;
-    e = &v->play->main.driver;
-    ev = &e->events;
-    if (ev->cover) {
-        ev->cover = false;
-        tcv_start_transition(v, false);
-    }
-    if (v->phase == TC_VP_COVER && tc_transition_step(&v->transition, dt)) {
-        v->phase = TC_VP_BLACK;
-        e->screen_covered = true;
-    }
-    if (ev->teleported) {
-        ev->teleported = false;
-        if (ev->camera_set) aim_camera(v, ev->camera);
-        ev->camera_set = false;
-        if (v->phase == TC_VP_BLACK) { /* a teleport behind the cover: reveal; one in plain view just happens */
-            e->screen_covered = false;
-            tcv_start_transition(v, true);
-        }
-    }
-    if (ev->level) {
-        tc_viewer_carry *c = v->carry ? v->carry : (tc_viewer_carry *)tc_calloc(1, sizeof(*c));
-        if (c) {
-            const tc_ai_model *m = e->ai.model;
-            /* A hint scene (docs/ENGINE.md "Walkable scenes"): Ed walks in himself, at his start there; its speaker's script
-             * hands over to the main level. Without SPCH (an old export) it is passed by, as before. */
-            const char *after = v->level->speech.dialogue_count ? NULL : tc_level_after_cutscene(ev->level);
-            bool scene = tc_level_after_cutscene(ev->level) != NULL;
-            tcv_copy_text(c->level, sizeof(c->level), after ? after : ev->level);
-            tcv_copy_text(c->place, sizeof(c->place), scene ? NULL : ev->place);
-            tcv_copy_text(c->camera_place, sizeof(c->camera_place), scene ? NULL : ev->camera_place);
-            c->dsg_size = m->dsg.size <= TC_VIEWER_CARRY_DSG && e->ai.dsg ? m->dsg.size : 0;
-            if (c->dsg_size) memcpy(c->dsg, e->ai.dsg, c->dsg_size);
-            c->vertical_fov = v->camera.vertical_fov;
-            c->orbit_distance = TC_CAM_PORTAL_DISTANCE; /* not the wheel's zoom: a fixed close start (tc_cam.h) */
-            c->closeup = v->cam.closeup;
-            /* without a cast: the progress it arrived with, if any (kept by tcv_arrive) */
-            if (v->play->has_cast) c->has_progress = true;
-            if (v->play->has_cast) tc_cast_level_save(&v->play->cast); /* the way out: the level's saved values */
-            if (v->play->has_cast) {
-                const tc_ai_globals *g = &v->play->cast.globals;
-                c->lives = g->lives;
-                c->powers = g->powers;
-                memcpy(c->values, g->values, sizeof c->values);
-            }
-            c->has_checkpoint = 0; /* a saved game's arrival only (tc_save.h) */
-            /* Ed's hit points and their maximum go on (his std game is the fix's: the exe fills them only at a new game,
-             * GAM_StdGame_004237e0 with DAT_008c1767), and so do the fix persos' dsgvars (tcv_carry_fix) */
-            c->hit_points = e->ai.hit_points;
-            c->hit_points_max = e->ai.hit_points_max;
-            tcv_carry_fix(v, c);
-            v->carry = c;
-            v->phase = TC_VP_LOADING;
-            v->loading_time = 0;
-        }
-        ev->level = ev->place = ev->camera_place = NULL;
-    }
-    if (v->phase == TC_VP_LOADING && (v->loading_time += dt) >= TC_VIEWER_LOADING_SECONDS) v->phase = TC_VP_PENDING;
-    if (v->phase == TC_VP_REVEAL && tc_transition_step(&v->transition, dt)) v->phase = TC_VP_PLAY;
+    tc_game_view view;
+    if (!v->game) return;
+    view = tcv_game_view(v);
+    tc_game_update_portals(v->game, dt, &view);
+    tcv_take_camera_requests(v);
 }
 
 uint32_t tc_viewer_effect_count(const tc_viewer *v) { return v->effect_count; }
 
 const char *tc_viewer_effect_texture(const tc_viewer *v, uint32_t i) { return i < v->effect_count ? v->effects[i] : NULL; }
 
-const tc_viewer_carry *tc_viewer_pending_level(const tc_viewer *v) { return v->phase == TC_VP_PENDING ? v->carry : NULL; }
+const tc_viewer_carry *tc_viewer_pending_level(const tc_viewer *v) { return v->game ? tc_game_pending_level(v->game) : NULL; }
 
 void tc_viewer_overlay(const tc_viewer *v, tc_view_overlay *out) {
-    const tc_transition *t = &v->transition;
+    const tc_game *g = v->game;
+    const tc_transition *t;
     memset(out, 0, sizeof(*out));
     out->texture = -1;
-    if (v->picture_left > 0 && v->phase == TC_VP_PLAY) {
+    if (!g) return;
+    t = &g->transition;
+    if (g->picture_left > 0 && g->phase == TC_GP_PLAY) {
         out->kind = TC_VO_PICTURE;
-        out->picture = v->picture;
+        out->picture = g->picture;
         return;
     }
-    switch (v->phase) {
-    case TC_VP_BLACK: out->kind = TC_VO_BLACK; return;
-    case TC_VP_LOADING: case TC_VP_PENDING:
+    switch (g->phase) {
+    case TC_GP_BLACK: out->kind = TC_VO_BLACK; return;
+    case TC_GP_LOADING: case TC_GP_PENDING:
         out->kind = TC_VO_LOADING;
-        out->progress = fminf(1, v->loading_time / TC_VIEWER_LOADING_SECONDS);
-        out->level = v->carry ? v->carry->level : NULL;
+        out->progress = fminf(1, g->loading_time / TC_GAME_LOADING_SECONDS);
+        out->level = g->carry ? g->carry->level : NULL;
         return;
-    case TC_VP_COVER: case TC_VP_REVEAL: {
+    case TC_GP_COVER: case TC_GP_REVEAL: {
         const char *name = t->effect && t->variant < t->effect->variant_count ? t->effect->variants[t->variant] : NULL;
         uint32_t i;
         for (i = 0; name && i < v->effect_count; i++)

@@ -105,6 +105,18 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
   * **Fixed 2026-11-18 (Claude); needs the install (the sound step re-runs).** His cries, cheers and Super Ed's shout
     were random picks the exporter did not read (docs/ENGINE.md "Random sound picks"). Not heard here.
 
+* Flaky Replays (the user, 2026-11-19: "the replays are flaky from what I've noticed, we'll have to address it at some
+  point").
+  * **Found, not fixed (Claude, 2026-11-19).** Of the three recordings made that day on build b3235e6, two replay exact
+    (`replay check`: four segments, about 70,000 frames). The third (2026-11-19_124302) drifts from frame 0 (the cast's
+    hash). It starts in sud0 at heg_positionedtotalski with no powers, which is where the saved game GTA6.ttsv
+    starts, so it was very likely opened from that save. A recording keeps the save's carry but not its table of
+    level-saved values (LSAV, tc_cast_level_saves_*), which loading a save installs; replayed, the cast starts without
+    them. Installing GTA6.ttsv's table before replaying brings Ed's largest error down from 29.7 to 12.2 units but
+    doesn't make it exact (the save was likely written again later in that run), so this is the likely cause, not a
+    proven one. A fix: record the level-saved table with each segment, and replay with it. Other causes of the flakiness
+    the user noticed are not looked into yet.
+
 ## Bigger Areas of Improvement
 
 These might not necessarily be called bugs, but rather more overarching issues with certain parts of the game. Also not including obvious ones, like implementing actual game mechanics, story progression, item collection etc. There's a lot to go still.

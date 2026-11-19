@@ -318,6 +318,6 @@ whose edits all went away is restored from `.custom-base`):
   of the town, facing in. Pair `crazy`; both a Special Edition level's, so the names are plain.
 - **Loading screens:** Vignette/Level/SSX_<course>.png (the badge over the darkened orange swirl); an imported level
   without one gets a map of its collision from above (LibertyCity2001, SSX_Trick, the next glTF imports).
-- The progress (lives, powers, story values) passes through a level without a cast (tcv_arrive keeps the carry's).
+- The progress (lives, powers, story values) passes through a level without a cast (tc_game_arrive keeps the carry's).
 - portalcheck "custom layer's portals": the arch to SSX_Alaska, SSX_Trick's end back to sud0 in front of its arch, both
   LibertyCity2001 arches, both Crazy Town arches and the arrivals each way; skipped when their files are not there.

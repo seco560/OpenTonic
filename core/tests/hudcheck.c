@@ -195,7 +195,7 @@ static void totalski(const char *dir) {
             const tc_ai_hud_slot *s = &c->globals.hud[k];
             if (!s->active || s->kind != TC_AI_HUD_STRING) continue;
             if (s->font != 0xFF) has_fonts = true;
-            if (s->text == 0x250 && tc_hud_slot_text(&g.v.hud, s, 0, 0, text, sizeof text)) {
+            if (s->text == 0x250 && tc_hud_slot_text(&g.v.game->hud, s, 0, 0, text, sizeof text)) {
                 if (!start_text) picture(&g.v, "totalski_start_4x3", 640, 480), picture(&g.v, "totalski_start_16x9", 1280, 720);
                 start_text = true;
             }
@@ -208,7 +208,7 @@ static void totalski(const char *dir) {
         return;
     }
     check(start_text && empty_text, "the start text blinks in a slot: \"Press 'Jump' to start\", then the empty text");
-    if (!g.v.hud.data.has_head) { /* hud.tthd without Ed's head: a conversion from before the start gate's zone was exported */
+    if (!g.v.game->hud.data.has_head) { /* hud.tthd without Ed's head: a conversion from before the start gate's zone was exported */
         printf("  info  converted before the race's start gate was exported (cast.py named_zones: reinstall); the clock is not checked\n");
         stop(&g);
         return;
@@ -226,7 +226,7 @@ static void totalski(const char *dir) {
         }
     }
     text[0] = 0;
-    if (clock_slot >= 0) tc_hud_slot_text(&g.v.hud, &c->globals.hud[clock_slot], 0, 0, text, sizeof text);
+    if (clock_slot >= 0) tc_hud_slot_text(&g.v.game->hud, &c->globals.hud[clock_slot], 0, 0, text, sizeof text);
     snprintf(what, sizeof what, "after Jump the race clock runs in slot %d: %d ms -> %d ms in ten seconds, shown \"%s\"",
              clock_slot, first_ms, last_ms, text);
     check(clock_slot >= 0 && last_ms > first_ms + 1000 && strlen(text) == 8, what);
@@ -259,9 +259,9 @@ static void sud0(const char *dir) {
     wide = bounds(&g.v, 16.0f / 9, b169);
     narrow = bounds(&g.v, 5.0f / 4, b54);
     snprintf(what, sizeof what, "the standard HUD is in after a second: life %d of %d, lives %d, the level's counters %d and %d",
-             (int)g.v.hud.now.hit_points, (int)g.v.hud.now.hit_points_max, (int)g.v.hud.now.lives, (int)g.v.hud.now.tings,
-             (int)g.v.hud.now.spade);
-    check(on && g.v.hud.out_life < 0.05f && g.v.hud.now.hit_points > 0 && g.v.hud.now.tings >= 0, what);
+             (int)g.v.game->hud.now.hit_points, (int)g.v.game->hud.now.hit_points_max, (int)g.v.game->hud.now.lives, (int)g.v.game->hud.now.tings,
+             (int)g.v.game->hud.now.spade);
+    check(on && g.v.game->hud.out_life < 0.05f && g.v.game->hud.now.hit_points > 0 && g.v.game->hud.now.tings >= 0, what);
     picture(&g.v, "sud0_4x3", 640, 480);
     picture(&g.v, "sud0_16x9", 1280, 720);
     snprintf(what, sizeof what, "its quads at 4:3 span x %.3f..%.3f, y %.3f..%.3f; at 16:9 x %.3f..%.3f; at 5:4 x %.3f..%.3f", b43[0],
@@ -273,14 +273,14 @@ static void sud0(const char *dir) {
              (1 - b169[2]) * 853.33f);
     check(on && wide && fabsf(b43[0] * 640 - b169[0] * 853.33f) < 1 && fabsf((1 - b43[2]) * 640 - (1 - b169[2]) * 853.33f) < 1, what);
     frames(&g.v, 60 * 7);
-    check(g.v.hud.out_life == 0 && bounds(&g.v, 4.0f / 3, b43), "seven seconds on it is still there: the HUD stays, as the game's does by default");
-    g.v.hud.auto_hide = true; /* the game's other mode (a setting for later): an element leaves five seconds after its last change */
-    for (i = 0; i < 60 * 15 && (g.v.hud.asked || g.v.hud.out_life < 2.0f || g.v.hud.out_lives < 2.0f ||
-                                g.v.hud.out_tings < 2.0f || g.v.hud.out_spade < 2.0f || g.v.hud.out_bees < 2.0f); i++) frames(&g.v, 1);
+    check(g.v.game->hud.out_life == 0 && bounds(&g.v, 4.0f / 3, b43), "seven seconds on it is still there: the HUD stays, as the game's does by default");
+    g.v.game->hud.auto_hide = true; /* the game's other mode (a setting for later): an element leaves five seconds after its last change */
+    for (i = 0; i < 60 * 15 && (g.v.game->hud.asked || g.v.game->hud.out_life < 2.0f || g.v.game->hud.out_lives < 2.0f ||
+                                g.v.game->hud.out_tings < 2.0f || g.v.game->hud.out_spade < 2.0f || g.v.game->hud.out_bees < 2.0f); i++) frames(&g.v, 1);
     snprintf(what, sizeof what, "set to hide, it leaves once nothing has changed for five seconds (after %.1f s; life slid %.2f of 2 out)",
-             i / 60.0, g.v.hud.out_life);
-    check(g.v.hud.out_life >= 2.0f && g.v.hud.out_lives >= 2.0f && !bounds(&g.v, 4.0f / 3, b43), what);
-    g.v.hud.auto_hide = false;
+             i / 60.0, g.v.game->hud.out_life);
+    check(g.v.game->hud.out_life >= 2.0f && g.v.game->hud.out_lives >= 2.0f && !bounds(&g.v, 4.0f / 3, b43), what);
+    g.v.game->hud.auto_hide = false;
 
     /* the inventory: Ed onto the level's bonuses (the persos whose object shares the World's save value) */
     for (i = 0; i < g.level.cast.inv_count; i++)
@@ -300,8 +300,8 @@ static void sud0(const char *dir) {
         after = c->globals.values[slot];
     }
     snprintf(what, sizeof what, "a bonus picked up raises save value %d (the World's): %d -> %d, after %u bonuses tried; the HUD "
-             "asks for its counter (%#x)", (int)slot, before, after, (unsigned)tried, (unsigned)g.v.hud.asked);
-    check(slot >= 0 && after > before && (g.v.hud.asked & 0x14), what);
+             "asks for its counter (%#x)", (int)slot, before, after, (unsigned)tried, (unsigned)g.v.game->hud.asked);
+    check(slot >= 0 && after > before && (g.v.game->hud.asked & 0x14), what);
     picture(&g.v, "sud0_bonus_16x9", 1280, 720);
 
     /* Ed's shots take bees (FUNC 96 on the bee's object, save value 0): none, none leaves; with three, three at most */
@@ -347,7 +347,7 @@ static void extension(const char *dir, const char *name, const char *what) {
         tc_vec3 at = tc_viewer_player(&g.v)->position;
         bool still, text_ok;
         while (!tcx_hud_slot(tc_viewer_custom(&g.v), &slot)) frames(&g.v, 1);
-        text_ok = tc_hud_slot_text(&g.v.hud, &slot, 0, 0, text, sizeof text) && strcmp(text, "Press 'Jump' to start") == 0;
+        text_ok = tc_hud_slot_text(&g.v.game->hud, &slot, 0, 0, text, sizeof text) && strcmp(text, "Press 'Jump' to start") == 0;
         picture(&g.v, "ssx_start_4x3", 640, 480);
         frames(&g.v, 30);
         still = tc_v3_distance(at, tc_viewer_player(&g.v)->position) < 0.01f;
@@ -366,7 +366,7 @@ static void extension(const char *dir, const char *name, const char *what) {
     on = bounds(&g.v, 4.0f / 3, b);
     snprintf(text, sizeof text, "%s: Ed's life and lives only, on the left (the HUD's quads %.2f..%.2f of the width)", what,
              on ? (double)b[0] : -1.0, on ? (double)b[2] : -1.0);
-    check(g.v.hud.left_only && on && b[2] < 0.3f, text);
+    check(g.v.game->hud.left_only && on && b[2] < 0.3f, text);
     picture(&g.v, name, 640, 480);
     stop(&g);
 }

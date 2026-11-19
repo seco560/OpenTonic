@@ -1,8 +1,10 @@
 /* Saved games: tc_save.h, docs/ENGINE.md "Saved games". */
+#include "tc_internal.h"
 #include "tonic/tc_save.h"
+#include "tonic/tc_game.h"
 #include "tonic/tc_cast.h"
+#include "tonic/tc_alloc.h"
 #include "tc_reader.h"
-#include "tc_viewer_internal.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -62,35 +64,34 @@ static void split_level(const char *level, uint8_t edition, char *name, size_t s
         *out_edition = strncmp(level, "se:", 3) == 0 ? 1 : 0;
         level = colon + 1;
     }
-    tcv_copy_text(name, size, level);
+    tc_copy_text(name, size, level);
 }
 
-uint8_t *tc_save_make(tc_viewer *v, const char *name, uint64_t time, size_t *size) {
-    tc_viewer_play *p = v->play;
+uint8_t *tc_game_save_make(tc_game *g, const tc_game_view *view, const char *name, uint64_t time, size_t *size) {
     tc_save_game s;
     out o = {0};
     size_t c;
     uint32_t i, n;
     *size = 0;
-    if (!p || !p->main.has_driver || v->tape || !name || !name[0]) return NULL;
+    if (!g->main.has_driver || !name || !name[0]) return NULL;
     memset(&s, 0, sizeof(s));
-    tcv_copy_text(s.info.name, sizeof(s.info.name), name);
+    tc_copy_text(s.info.name, sizeof(s.info.name), name);
     s.info.time = time;
-    if ((v->phase == TC_VP_LOADING || v->phase == TC_VP_PENDING) && v->carry) {
+    if ((g->phase == TC_GP_LOADING || g->phase == TC_GP_PENDING) && g->carry) {
         /* on the way to the next level: its arrival, as the portal made it (the level's saved values went to the table
          * on the way out) */
-        s.carry = *v->carry;
-        split_level(v->carry->level, v->level->edition, s.info.level, sizeof(s.info.level), &s.info.edition);
+        s.carry = *g->carry;
+        split_level(g->carry->level, g->level->edition, s.info.level, sizeof(s.info.level), &s.info.edition);
     } else {
-        const tc_ed_ai *e = &p->main.driver;
+        const tc_ed_ai *e = &g->main.driver;
         const tc_ai_model *m = e->ai.model;
-        tcv_copy_text(s.info.level, sizeof(s.info.level), v->level_name[0] ? v->level_name : p->main.level_name);
-        s.info.edition = (uint8_t)v->level->edition;
-        tcv_copy_text(s.carry.place, sizeof(s.carry.place), v->arrival_place);
-        tcv_copy_text(s.carry.camera_place, sizeof(s.carry.camera_place), v->arrival_camera_place);
+        tc_copy_text(s.info.level, sizeof(s.info.level), g->level_name[0] ? g->level_name : g->main.level_name);
+        s.info.edition = (uint8_t)g->level->edition;
+        tc_copy_text(s.carry.place, sizeof(s.carry.place), g->arrival_place);
+        tc_copy_text(s.carry.camera_place, sizeof(s.carry.camera_place), g->arrival_camera_place);
         /* Ed's variables: the player-saved ones as they are now, the rest as a level starts them (the exe's player
          * save holds those alone: dsgvar flag 0x200) */
-        if (m && e->ai.dsg && m->dsg.size <= TC_VIEWER_CARRY_DSG) {
+        if (m && e->ai.dsg && m->dsg.size <= TC_GAME_CARRY_DSG) {
             s.carry.dsg_size = m->dsg.size;
             if (m->dsg.initial) memcpy(s.carry.dsg, m->dsg.initial, m->dsg.size);
             for (i = 0; m->dsg.vars && i < m->dsg.count; i++) {
@@ -100,34 +101,34 @@ uint8_t *tc_save_make(tc_viewer *v, const char *name, uint64_t time, size_t *siz
                     memcpy(s.carry.dsg + d->offset, e->ai.dsg + d->offset, (size_t)w);
             }
         }
-        if (p->has_cast) {
-            const tc_ai_globals *g = &p->cast.globals;
+        if (g->has_cast) {
+            const tc_ai_globals *gl = &g->cast.globals;
             s.carry.has_progress = 1;
-            s.carry.lives = g->lives;
-            s.carry.powers = g->powers;
-            memcpy(s.carry.values, g->values, sizeof(s.carry.values));
-            if (g->has_checkpoint) {
+            s.carry.lives = gl->lives;
+            s.carry.powers = gl->powers;
+            memcpy(s.carry.values, gl->values, sizeof(s.carry.values));
+            if (gl->has_checkpoint) {
                 s.carry.has_checkpoint = 1;
-                s.carry.checkpoint[0] = g->checkpoint.x;
-                s.carry.checkpoint[1] = g->checkpoint.y;
-                s.carry.checkpoint[2] = g->checkpoint.z;
-                s.carry.checkpoint_heading = g->checkpoint_heading;
+                s.carry.checkpoint[0] = gl->checkpoint.x;
+                s.carry.checkpoint[1] = gl->checkpoint.y;
+                s.carry.checkpoint[2] = gl->checkpoint.z;
+                s.carry.checkpoint_heading = gl->checkpoint_heading;
             }
-            tc_cast_level_save(&p->cast); /* this level's saved values, as they are now */
-        } else if (v->carry && v->carry->has_progress) { /* a level without a cast: what it arrived with */
+            tc_cast_level_save(&g->cast); /* this level's saved values, as they are now */
+        } else if (g->carry && g->carry->has_progress) { /* a level without a cast: what it arrived with */
             s.carry.has_progress = 1;
-            s.carry.lives = v->carry->lives;
-            s.carry.powers = v->carry->powers;
-            memcpy(s.carry.values, v->carry->values, sizeof(s.carry.values));
+            s.carry.lives = g->carry->lives;
+            s.carry.powers = g->carry->powers;
+            memcpy(s.carry.values, g->carry->values, sizeof(s.carry.values));
         }
         s.carry.hit_points = e->ai.hit_points;
         s.carry.hit_points_max = e->ai.hit_points_max;
-        tcv_carry_fix(v, &s.carry); /* the cheat-code reader's dsgvars (the thermometers' next reward) */
-        s.carry.vertical_fov = v->camera.vertical_fov;
-        s.carry.orbit_distance = v->orbit_distance;
-        s.carry.closeup = v->cam.closeup;
+        tc_game_carry_fix(g, &s.carry); /* the cheat-code reader's dsgvars (the thermometers' next reward) */
+        s.carry.vertical_fov = view->vertical_fov;
+        s.carry.orbit_distance = view->orbit_distance;
+        s.carry.closeup = view->closeup;
     }
-    tcv_copy_text(s.carry.level, sizeof(s.carry.level), s.info.level);
+    tc_copy_text(s.carry.level, sizeof(s.carry.level), s.info.level);
     s.info.lives = s.carry.lives;
     s.info.powers = s.carry.powers;
 
@@ -176,7 +177,7 @@ uint8_t *tc_save_make(tc_viewer *v, const char *name, uint64_t time, size_t *siz
     }
     chunk_finish(&o, c);
 
-    if (s.carry.fix_dsg_size) { /* optional (2026-11-17): the cheat-code reader's dsgvars (tc_viewer_carry.fix_dsg) */
+    if (s.carry.fix_dsg_size) { /* optional (2026-11-17): the cheat-code reader's dsgvars (tc_game_carry.fix_dsg) */
         c = chunk_begin(&o, "FIXD");
         put_u32(&o, s.carry.fix_dsg_size);
         put(&o, s.carry.fix_dsg, s.carry.fix_dsg_size);
@@ -229,18 +230,18 @@ tc_result tc_save_read(const void *data, size_t size, tc_save_game *out) {
     reader r;
     tc_result res;
     uint32_t i, n;
-    tc_viewer_carry *k = &out->carry;
+    tc_game_carry *k = &out->carry;
     memset(out, 0, sizeof(*out));
     if ((res = chunks_open(&c, (const uint8_t *)data, size, "TTSV")) != TC_OK) return res;
     if ((res = read_info(&c, &out->info)) != TC_OK) return res;
     if (!out->info.level[0]) return TC_ERR_STALE;
-    tcv_copy_text(k->level, sizeof(k->level), out->info.level);
+    tc_copy_text(k->level, sizeof(k->level), out->info.level);
 
     chunk_need(&c, "CARY", &r);
     rd_name(&r, k->place, sizeof(k->place));
     rd_name(&r, k->camera_place, sizeof(k->camera_place));
     k->dsg_size = rd_u32(&r);
-    if (k->dsg_size > TC_VIEWER_CARRY_DSG) r.error = TC_ERR_STALE;
+    if (k->dsg_size > TC_GAME_CARRY_DSG) r.error = TC_ERR_STALE;
     else if (have(&r, k->dsg_size)) {
         memcpy(k->dsg, r.data + r.offset, k->dsg_size);
         r.offset += k->dsg_size;
@@ -280,7 +281,7 @@ tc_result tc_save_read(const void *data, size_t size, tc_save_game *out) {
     k->fix_dsg_size = 0;
     if (chunk_need(&c, "FIXD", &r)) { /* optional: saves from before 2026-11-17 have none */
         uint32_t n2 = rd_u32(&r);
-        if (n2 > TC_VIEWER_CARRY_FIX_DSG || !have(&r, n2)) return TC_ERR_STALE;
+        if (n2 > TC_GAME_CARRY_FIX_DSG || !have(&r, n2)) return TC_ERR_STALE;
         memcpy(k->fix_dsg, r.data + r.offset, n2);
         r.offset += n2;
         k->fix_dsg_size = n2;
@@ -289,12 +290,12 @@ tc_result tc_save_read(const void *data, size_t size, tc_save_game *out) {
     return TC_OK;
 }
 
-void tc_save_start_new_game(tc_viewer_carry *out, const char *level) {
+void tc_save_start_new_game(tc_game_carry *out, const char *level) {
     tc_ai_globals g;
     memset(out, 0, sizeof(*out));
     memset(&g, 0, sizeof(g));
     tc_ai_globals_new_game(&g);
-    tcv_copy_text(out->level, sizeof(out->level), level);
+    tc_copy_text(out->level, sizeof(out->level), level);
     out->has_progress = 1;
     out->lives = 3; /* as a cast starts them (tc_cast.c: the user's, 2026-11-12) */
     out->powers = g.powers;
@@ -309,8 +310,8 @@ void tc_save_menu_games(tc_menu *m, const tc_save_info *infos, int count) {
     if (count < 0) count = 0;
     memset(games, 0, sizeof(games));
     for (k = 0; k < count; k++) {
-        tcv_copy_text(games[k].name, sizeof(games[k].name), infos[k].name);
-        tcv_copy_text(games[k].level, sizeof(games[k].level), infos[k].level);
+        tc_copy_text(games[k].name, sizeof(games[k].name), infos[k].name);
+        tc_copy_text(games[k].level, sizeof(games[k].level), infos[k].level);
         games[k].edition = infos[k].edition;
     }
     tc_menu_set_games(m, games, count);

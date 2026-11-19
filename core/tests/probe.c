@@ -5,6 +5,7 @@
  *   probe [-d DIR] LEVEL COMMAND...                 DIR: the converted levels (default ../files/out/ttlv)
  *   probe [-d DIR] -r FILE.ttrec SECONDS COMMAND... a recording played to SECONDS of its session, then the commands
  *   probe [-d DIR] -f SCRIPT [COMMAND...]           the words from a file first ('#' to the line's end: a comment)
+ *   probe [-d DIR] -s FILE.ttsv COMMAND...          a saved game (tc_save.h) opened as the menus open it, then the commands
  *
  * A perso (P below) is an id, an instance name (PAT_Barman_Astuce01) or a family name (barman: its first perso), both
  * from LEVEL_cast.txt beside the level, any case; `ed` is Ed (his driver's AI). Time runs as a frontend's at 60 frames
@@ -17,14 +18,16 @@
  *              near P [D]         D (1.5) in front of P, facing it              at P DX DY DZ      P's place + that
  *              face P             turned to P once           aim P | aim off    turned to P every frame
  *              portal K           into Ed's PORT portal K (half its radius in, facing in)
+ *              car K              beside custom gameplay's car K, facing it
  *   input      hold A | release A held from now (A: jump action shoot lateral fast forward back left right)
  *              tap A              held 6 frames, run         pulse A S          6 frames every S seconds (0: off)
  *              stick X Y          the move stick (-1..1, y forward)             free               all of the above off
- *   print      watch W | unwatch W   W: P, ed or game: a line whenever its behaviours, state, hit points ... change
+ *   print      watch W | unwatch W   W: P, ed, game or camera: a line whenever its behaviours, state, hit points ... change
  *              every S            the watched lines every S seconds too (0: changes only)
  *              show W             one line now               info P             its static data (family, states, cards)
  *              list               every cast perso           skipped [P]        primitives the scripts skipped
  *              portals            Ed's PORT portals: where, and the level they lead to
+ *              cars               custom gameplay's cars (tcx.h): where
  *   state      power MASK         the game's powers (0x... ok)                  value K V          save value K
  *              hp P N             hit points                 dsg P K            dsgvar K, as a float
  *              setdsg P K V       dsgvar K = V (float)
@@ -44,6 +47,7 @@
 #define MAX_NAMES 1024
 #define ED (-1)
 #define GAME (-2)
+#define CAMERA (-3)
 
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
@@ -201,6 +205,7 @@ static int32_t resolve(const char *w, bool allow_game) {
     uint32_t i;
     if (!strcmp(w, "ed")) return ED;
     if (allow_game && !strcmp(w, "game")) return GAME;
+    if (allow_game && !strcmp(w, "camera")) return CAMERA;
     if (*w && !*end) return actor((int32_t)n) ? (int32_t)n : 0;
     for (i = 0; i < S.name_count; i++) if (same_name(S.names[i].instance, w) && actor(S.names[i].id)) return S.names[i].id;
     for (i = 0; i < S.name_count; i++) if (same_name(S.names[i].family, w) && actor(S.names[i].id)) return S.names[i].id;
@@ -217,7 +222,7 @@ static tc_ai_perso *ai_of(int32_t id) {
 
 static const char *phase_name(int p) {
     static const char *n[] = {"play", "cover", "black", "loading", "pending", "reveal"};
-    return p >= 0 && p <= TC_VP_REVEAL ? n[p] : "?";
+    return p >= 0 && p <= TC_GP_REVEAL ? n[p] : "?";
 }
 
 /* A behaviour index, "-" for none (0xFFFF: no reflex). */
@@ -232,9 +237,17 @@ static void describe(int32_t w, char *state, size_t n, char *where, size_t m) {
     tc_cast *c = cast();
     const tc_player *p = player();
     *where = 0;
+    if (w == CAMERA) {
+        const tc_camera *c = &S.v.camera;
+        snprintf(state, n, "eye (%.3f %.3f %.3f) yaw %.4f pitch %.4f fov %.4f orbit %.3f%s%s%s%s", (double)c->position.x,
+                 (double)c->position.y, (double)c->position.z, (double)c->yaw, (double)c->pitch, (double)c->vertical_fov,
+                 (double)S.v.orbit_distance, S.v.director ? " director" : "", S.v.shot.on ? " shot" : "",
+                 S.v.cam.closeup ? " close-up" : "", S.v.cam.first_person ? " first-person" : "");
+        return;
+    }
     if (w == GAME) {
         snprintf(state, n, "speech %u cam_target %d main %d phase %s%s%s%s powers %#x value0 %d", c ? c->globals.speech : 0,
-                 c ? c->globals.cam_target : 0, c ? c->globals.main_character : 0, phase_name((int)S.v.phase),
+                 c ? c->globals.cam_target : 0, c ? c->globals.main_character : 0, phase_name((int)S.v.game->phase),
                  tc_viewer_directed(&S.v) ? " directed" : "", tc_viewer_fixed_shot(&S.v) ? " fixed-shot" : "",
                  tc_viewer_talk_prompt(&S.v) ? " talk-prompt" : "", c ? (unsigned)c->globals.powers : 0u, c ? c->globals.values[0] : 0);
     } else if (w == ED) {
@@ -265,6 +278,7 @@ static void describe(int32_t w, char *state, size_t n, char *where, size_t m) {
 
 static void label(int32_t w, char *out, size_t n) {
     if (w == GAME) snprintf(out, n, "game");
+    else if (w == CAMERA) snprintf(out, n, "camera");
     else if (w == ED) snprintf(out, n, "ed");
     else snprintf(out, n, "%d %s", w, instance_of(w));
 }
@@ -366,6 +380,30 @@ static void portals(void) {
     }
 }
 
+/* Custom gameplay's cars (tcx.h; core/src/custom): where each is. Nothing in a CUSTOM=0 build. */
+static uint32_t car_count(void) { return S.v.game ? tcx_play_vehicle_count(S.v.game->custom) : 0; }
+static bool car_at(uint32_t k, tc_vec3 *at, float *heading) {
+#ifndef TC_NO_CUSTOM
+    const tcx_vehicle *c = k < car_count() ? tcx_play_vehicle(S.v.game->custom, k) : NULL;
+    if (!c) return false;
+    *at = c->position;
+    *heading = c->heading;
+    return true;
+#else
+    (void)k, (void)at, (void)heading;
+    return false;
+#endif
+}
+
+static void cars(void) {
+    uint32_t k;
+    tc_vec3 at;
+    float h;
+    if (!car_count()) { printf("no cars on %s\n", S.level_name); return; }
+    for (k = 0; k < car_count(); k++)
+        if (car_at(k, &at, &h)) printf("  car %u at (%.2f %.2f %.2f) heading %.2f\n", k, (double)at.x, (double)at.y, (double)at.z, (double)h);
+}
+
 /* ---- Running ---- */
 
 static float heading_to(tc_vec3 from, tc_vec3 to) { return atan2f(to.x - from.x, -(to.y - from.y)); }
@@ -441,6 +479,7 @@ static int perso_word(const char *cmd, bool allow_ed, bool allow_game, int32_t *
         printf("probe: %s: no such perso here: %s\n", cmd, w);
         return 0;
     }
+    if ((*out == GAME || *out == CAMERA) && !S.v.game) return fail("no game on", S.level_name);
     if (*out == ED && !ed_ai() && strcmp(cmd, "watch") && strcmp(cmd, "show") && strcmp(cmd, "unwatch")) return fail("Ed has no AI on", S.level_name);
     return 1;
 }
@@ -450,7 +489,7 @@ static int command(const char *cmd) {
         {"run", 1}, {"frames", 1}, {"until", 3}, {"place", 3}, {"heading", 1}, {"near", 1}, {"at", 4}, {"face", 1}, {"aim", 1},
         {"hold", 1}, {"release", 1}, {"tap", 1}, {"pulse", 2}, {"stick", 2}, {"free", 0}, {"watch", 1}, {"unwatch", 1},
         {"every", 1}, {"show", 1}, {"info", 1}, {"list", 0}, {"skipped", 0}, {"power", 1}, {"value", 2}, {"hp", 2},
-        {"dsg", 2}, {"setdsg", 3}, {"portals", 0}, {"portal", 1}};
+        {"dsg", 2}, {"setdsg", 3}, {"portals", 0}, {"portal", 1}, {"cars", 0}, {"car", 1}};
     uint32_t i;
     int32_t id;
     tc_player *p = player();
@@ -550,6 +589,15 @@ static int command(const char *cmd) {
     if (!strcmp(cmd, "info")) { if (!perso_word(cmd, false, false, &id)) return 0; info(id); return 1; }
     if (!strcmp(cmd, "list")) { list(); return 1; }
     if (!strcmp(cmd, "portals")) { portals(); return 1; }
+    if (!strcmp(cmd, "cars")) { cars(); return 1; }
+    if (!strcmp(cmd, "car")) { /* beside custom gameplay's car K, on its left, facing it (Action gets in) */
+        tc_vec3 at, to;
+        float h;
+        if (!car_at((uint32_t)atoi(next()), &at, &h)) return fail("no such car (see cars)", words[at_word - 1]);
+        to = tc_v3_add(at, tc_v3(-cosf(h) * 2.0f, -sinf(h) * 2.0f, 0.5f));
+        place_ed(to, heading_to(to, at));
+        return 1;
+    }
     if (!strcmp(cmd, "portal")) { /* half its radius in on its way in, facing in (replaycheck's placing) */
         const tc_ai_model *m = ed_model();
         uint32_t k = (uint32_t)atoi(next());
@@ -628,9 +676,23 @@ static int start_from_recording(const char *path, float seconds) {
     return 1;
 }
 
+/* A saved game opened as the frontends open it: its level-saved table installed, its level with its carry. */
+static int start_from_save(const char *path) {
+    static tc_save_game game;
+    size_t size;
+    uint8_t *data = read_file(path, &size);
+    char folder[600];
+    if (!data) return fail("can't read", path);
+    if (tc_save_read(data, size, &game) != TC_OK) { free(data); return fail("not a saved game this build reads", path); }
+    free(data);
+    if (game.info.edition) snprintf(folder, sizeof folder, "%s/../se/ttlv", S.dir);
+    else snprintf(folder, sizeof folder, "%s", S.dir);
+    return load_level(folder, game.info.level, &game.carry, 0);
+}
+
 int main(int argc, char **argv) {
     int i = 1, ok = 1;
-    const char *recording = NULL, *script = NULL;
+    const char *recording = NULL, *script = NULL, *save = NULL;
     float rec_seconds = 0;
     setvbuf(stdout, NULL, _IONBF, 0);
     S.dir = "../files/out/ttlv";
@@ -638,16 +700,19 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[i], "-d") && i + 1 < argc) { S.dir = argv[i + 1]; i += 2; }
         else if (!strcmp(argv[i], "-r") && i + 2 < argc) { recording = argv[i + 1]; rec_seconds = (float)atof(argv[i + 2]); i += 3; }
         else if (!strcmp(argv[i], "-f") && i + 1 < argc) { script = argv[i + 1]; i += 2; }
+        else if (!strcmp(argv[i], "-s") && i + 1 < argc) { save = argv[i + 1]; i += 2; }
         else break;
     }
     if (script && !read_script(script)) return 1;
     for (; i < argc && word_count < MAX_WORDS; i++) words[word_count++] = argv[i];
-    if (!recording && word_count == 0) {
-        printf("usage: probe [-d DIR] LEVEL COMMAND... | probe [-d DIR] -r FILE.ttrec SECONDS COMMAND... | probe -f SCRIPT\n"
+    if (!recording && !save && word_count == 0) {
+        printf("usage: probe [-d DIR] LEVEL COMMAND... | probe [-d DIR] -r FILE.ttrec SECONDS COMMAND... | probe -s FILE.ttsv\n"
+               "       COMMAND... | probe -f SCRIPT\n"
                "       (the commands: the head of core/tests/probe.c, or docs/OVERVIEW.md \"The probe\")\n");
         return 1;
     }
     if (recording) ok = start_from_recording(recording, rec_seconds);
+    else if (save) ok = start_from_save(save);
     else ok = load_level(S.dir, next(), NULL, 0);
     while (ok && at_word < word_count) ok = command(next());
     unload_level();

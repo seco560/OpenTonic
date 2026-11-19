@@ -17,6 +17,7 @@ void tcv_light_destroy(tc_viewer_light *l) {
  * are left out. Each gets its own random stream from the viewer's. */
 tc_viewer_light *tcv_light_create(tc_viewer *v, const tc_level *l, bool *oom) {
     tc_viewer_light *lt;
+    uint32_t *rng = v->game ? &v->game->rng : &v->rng; /* the session's stream: its seeds before any transition's */
     uint32_t i;
     *oom = false;
     if (!l->light_perso_count || v->light_set_count < 2) return NULL;
@@ -32,8 +33,8 @@ tc_viewer_light *tcv_light_create(tc_viewer *v, const tc_level *l, bool *oom) {
             tc_ai_model_free(&lt->models[lt->count]);
         if (e == TC_ERR_OUT_OF_MEMORY) { tcv_light_destroy(lt); *oom = true; return NULL; }
         if (e != TC_OK) continue;
-        v->rng = v->rng * 1103515245u + 12345u;
-        lt->persos[lt->count].rng = v->rng;
+        *rng = *rng * 1103515245u + 12345u;
+        lt->persos[lt->count].rng = *rng;
         lt->count++;
     }
     if (!lt->count) { tcv_light_destroy(lt); return NULL; }
@@ -138,9 +139,9 @@ void tcv_measure_sky(tc_viewer *v) {
  * a jump by the floor below it (FUN_00451240, tc_sectors_find), so the reveal's is found that way (2026-11-17). */
 static uint16_t camera_sector(const tc_viewer *v) {
     uint16_t s = tc_viewer_ed_sector(v), r;
-    if (s == TC_SECTOR_NONE || !v->play) return s;
+    if (s == TC_SECTOR_NONE || !v->game) return s;
     if (v->shot.on && v->shot.reveal && (r = tc_sectors_find(v->sectors, v->camera.position)) != TC_SECTOR_NONE) return r;
-    return tc_sectors_cross(v->sectors, s, tc_v3_add(tcv_main_position(v->play), tc_v3(0, 0, 1.1f)), v->camera.position);
+    return tc_sectors_cross(v->sectors, s, tc_v3_add(tc_game_main_position(v->game), tc_v3(0, 0, 1.1f)), v->camera.position);
 }
 
 void tcv_view_light(tc_view_light *o, const tc_light *L, float w) {
@@ -175,8 +176,8 @@ static void gather_char_lights(tc_viewer *v, uint16_t s) {
 
 /* The sector a perso's lights come from: where it is now, for those that move. */
 uint16_t tcv_perso_light_sector(const tc_viewer *v, uint32_t i) {
-    const tc_cast_actor *a = v->playing && v->play && v->play->has_cast && v->play->use_ai
-                                 ? tc_cast_actor_of(&v->play->cast, i) : NULL;
+    const tc_cast_actor *a = v->playing && v->game && v->game->has_cast && v->game->use_ai
+                                 ? tc_cast_actor_of(&v->game->cast, i) : NULL;
     if (a && a->sector.sector < v->sectors->count) return a->sector.sector;
     return v->sectors->perso_count == v->level->perso_count ? v->sectors->perso_sector[i] : TC_SECTOR_NONE;
 }

@@ -61,21 +61,22 @@ for all levels, `progress.ttpg`, shown by the debug menu).
 | `tc_rec.c`, `tc_tape.c` | our recordings and replays; the original game's demo tapes |
 | `tc_debug.c` | the debug menu (F4): the powers and save values, who uses them, switches |
 | `tc_player.c` | the old "simple Ed": a plain walker with no scripts, kept as a fallback |
-| `tc_viewer*.c` | everything else, tied together (the public side is `tc_viewer.h`). One module in nine files since 2026-11-13, sharing the private `tc_viewer_internal.h`: `tc_viewer.c` (init, the frame, settings), `_play` (input, Ed's ticks, the cast, custom gameplay), `_camera`, `_speech`, `_portals`, `_light`, `_draw` (the draw list), `_tape`, `_debug`. What one part lends another is `tcv_*` |
+| `tc_game*.c` | the game session (`tc_game.h`, since 2026-11-19): one level being played, its rules apart from how it is shown. The world, Ed and the cast, the game's ticks, custom gameplay's frame, the HUD's state, the scripts' pictures, the sounds and their random picks (`tc_game.c`); the lines and hint scenes (`_speech`); screen transitions, level changes, arrivals (`_portals`); a save of it (`tc_save.c`). The host gives it the player's input and the camera (`tc_game_input`) and takes what to show, and the camera moves it asks for |
+| `tc_viewer*.c` | the presentation, using a `tc_game` (the public side is `tc_viewer.h`). One module in nine files, sharing the private `tc_viewer_internal.h`: `tc_viewer.c` (init, the frame, settings), `_play` (input mapping, the game's frame, Ed's drawing between its ticks, the simple controller), `_camera`, `_speech` (the text window), `_portals` (overlays, the game's camera requests), `_light`, `_draw` (the draw list), `_tape`, `_debug`. What one part lends another is `tcv_*` |
 | `tc_prof.c` | the profiling hook: where a frame's time goes, zone by zone, when the host lends it a clock (`tc_prof.h`; off by default) |
 | `custom/tcx_*.c` | custom gameplay, ours and not the game's (the toy car and Ed's ride: docs/ENGINE.md "Custom gameplay"), reached only through `custom/tcx.h`; `make CUSTOM=0` builds the core without it |
 
 ## One frame
 
-`tc_viewer_update(dt)`, then the frontend draws:
+`tc_viewer_update(dt)`, then the frontend draws (the steps marked "game" are `tc_game`'s; docs/ARCHITECTURE.md §1):
 
 1. Input is read (and written to the recording, if one runs).
-2. The game steps in **ticks of 1/30 s**, as the original, however fast the screen is. In each tick:
+2. (game) The game steps in **ticks of 1/30 s**, as the original, however fast the screen is. In each tick:
    the characters others stand on (lifts, platforms) move first; then Ed (his scripts decide, his physics move him); then
    everyone else. This is the exe's order (docs/ENGINE.md).
 3. What is drawn between ticks is blended from the last two, so the picture is smooth at any frame rate.
-4. Speech and hint scenes, then the camera.
-5. Ed's sector, the lighting, the portals and level changes.
+4. (game) Speech and hint scenes; then the camera.
+5. Ed's sector, the lighting; (game) the portals and level changes, then the camera moves they ask for.
 6. The core builds the draw list: the sectors Ed's sector sees, the characters, the water, sorted for blending.
 
 A character is awake when its sector is Ed's or on his sector's list; it thinks only while Ed is inside its radius; its
@@ -110,16 +111,19 @@ session used to write and throw away. `make -C core probe`, run from `core/`:
 build/probe sud0 near HEG_TomateKamikaze1 3 watch 64 watch ed aim 64 pulse shoot 0.66 run 5 skipped 64
 build/probe sud0 watch game portal 2 run 14             # through the arch into bar: the level change is followed
 build/probe -r ~/Library/.../Recordings/FILE.ttrec 90 watch ed run 5   # a recording up to 90 s, then the commands
+build/probe -s ~/Library/.../Saves/NAME.ttsv watch ed run 5   # a saved game, opened as the menus open it
 build/probe -f my.probe                                 # words from a file, '#' comments (tests/probecheck.probe)
 ```
 
 Persos are named by id, instance name or family name (from `LEVEL_cast.txt`), or `ed`; `game` watches speech, the
-camera's target, the main character, the transition phase, the powers. The commands: place Ed (`place`, `near`, `at`,
-`portal`, `face`, `aim`), drive him (`hold`, `tap`, `pulse`, `stick`, `free`), run (`run`, `frames`, `until P B S`),
-print (`watch`, `every`, `show`, `info`, `list`, `portals`, `skipped`), set (`power`, `value`, `hp`, `setdsg`, `dsg`
+camera's target, the main character, the transition phase, the powers; `camera` the eye, its angles, field of view
+and shots. The commands: place Ed (`place`, `near`, `at`, `portal`, `car` beside custom gameplay's car, `face`, `aim`), drive him (`hold`, `tap`, `pulse`, `stick`, `free`), run (`run`, `frames`, `until P B S`),
+print (`watch`, `every`, `show`, `info`, `list`, `portals`, `cars`, `skipped`), set (`power`, `value`, `hp`, `setdsg`, `dsg`
 to read). The full list is the head of probe.c. It drives the viewer as a frontend does (60 frames a second, a draw
 each frame, the HUD, a 16:9 window), so what it shows is what a play session does with those inputs; it bypasses
 nothing but the window. `make -C core probecheck` (in the gate) runs every command once on sud0, so it keeps working.
+Its first big use (2026-11-19, docs/ARCHITECTURE.md stage 2): the same scripts on the build before a change and after,
+the outputs compared line by line.
 
 `make -C core perfcheck` is not in the gate: it times the core's own work per frame (`tc_prof.h`), headless, on sud0,
 LibertyCity2001 (walking and free-fly) and the biggest SSX course, and prints the draws and triangles handed to the GPU.

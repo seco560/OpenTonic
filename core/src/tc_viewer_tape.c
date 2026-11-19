@@ -82,17 +82,17 @@ static void tape_sounds(tc_viewer *v, const tc_ai_model *m, const tc_tape_object
     if (!m || o->state >= m->state_count) return;
     st = &m->states[o->state];
     from = o->state != o->state_prev || o->frame < o->frame_before ? -1.0f : o->frame_before;
-    for (k = 0; k < st->sound_count && v->sound_count < TC_AI_MAX_SOUNDS; k++) {
+    for (k = 0; k < st->sound_count && v->game->sound_count < TC_AI_MAX_SOUNDS; k++) {
         const tc_ai_sound *e = &m->sounds[st->sound_first + k];
         if (e->first != 0xFF && e->event < TC_AI_LAUNCH_EVENT && (float)e->frame > from && (float)e->frame <= o->frame)
-            tcv_push_sound(v, e->event, src);
+            tc_game_push_sound(v->game, e->event, src);
     }
 }
 
 /* What a frame just read brought: the sounds, the actors' sectors. */
 static void tape_frame_read(tc_viewer *v) {
     tc_viewer_tape *t = v->tape;
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     const tc_tape_object *ed = &t->tape.objects[t->ed];
     uint32_t i;
     tc_sound_source src;
@@ -113,7 +113,7 @@ static void tape_frame_read(tc_viewer *v) {
 
 void tcv_tape_update(tc_viewer *v, float dt, bool fresh) {
     tc_viewer_tape *t = v->tape;
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     const tc_tape_object *ed = &t->tape.objects[t->ed];
     float a, r[9];
     tc_vec3 at;
@@ -138,7 +138,7 @@ void tcv_tape_update(tc_viewer *v, float dt, bool fresh) {
     p->main.player.heading = atan2f(-r[1], r[4]); /* local -Y = the front, along (sin h, -cos h) */
     {
         tc_mat34 m = tape_matrix(ed, a);
-        p->pose_draw = p->main.pose_prev = p->main.pose_cur = tc_mat4_from34(&m);
+        v->ed_pose = p->main.pose_prev = p->main.pose_cur = tc_mat4_from34(&m);
     }
     if (!ed->shown || ed->state >= p->main.model.state_count) {
         v->ed_clip = -1;
@@ -172,7 +172,7 @@ void tcv_tape_update(tc_viewer *v, float dt, bool fresh) {
 }
 
 bool tc_viewer_play_tape(tc_viewer *v, const void *data, size_t size) {
-    tc_viewer_play *p = v->play;
+    tc_game *p = v->game;
     const tc_level *l = v->level;
     tc_viewer_tape *t;
     tc_tape scan;
