@@ -1322,3 +1322,13 @@ void tc_cast_unknown(const tc_cast *c, uint32_t *out) {
         if (c->actors[i].ai->unknown)
             for (k = 0; k < 10 * TC_AI_UNKNOWN_STRIDE; k++) out[k] += c->actors[i].ai->unknown[k];
 }
+
+void tc_cast_set_camera_position(tc_cast *c, tc_vec3 at) {
+    uint32_t i;
+    for (i = 0; i < c->ghost_count; i++) {
+        tc_cast_ghost_perso *g = &c->ghosts[i];
+        if (!g->ai.read_only_for_cast) continue;
+        g->ai.position = at;
+        if (c->main && g->main_other >= 0 && c->main->other_positions) c->main->other_positions[g->main_other] = at;
+    }
+}

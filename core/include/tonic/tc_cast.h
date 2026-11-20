@@ -231,6 +231,9 @@ bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *
  * fix persos for the whole game: the host carries them from level to level (tc_viewer_carry.fix_dsg) and saves them. */
 uint8_t *tc_cast_fix_dsg(tc_cast *c, uint16_t role, uint32_t *size);
 bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out);
+/* The camera perso (the fix camera, read-only for the cast) is where the host's camera is: its ghost and the main
+ * actor's copy of it. */
+void tc_cast_set_camera_position(tc_cast *c, tc_vec3 at);
 /* The matrix of a sector the scripts have moved (the identity: where the export has it), NULL for one they have not.
  * The static world's triangles follow it (c->world); the host draws the sector's geometry with it. */
 const tc_mat34 *tc_cast_sector_matrix(const tc_cast *c, uint16_t sector);
