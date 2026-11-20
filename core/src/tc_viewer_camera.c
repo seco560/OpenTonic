@@ -820,13 +820,6 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         tcx_camera_obstacles(p->custom, true);
         p->world.solid = solid;
     }
-    /* The camera perso's place as the scripts read it (InPersoContext(camera, GetPosition)): where the shot put the eye.
-     * Until 2026-11-20 it stayed where the data had it: cock01's SDO_GNPSActive (B15: "the camera within 0.2 of the
-     * waypoint it was sent to", dsg92) never went on and Ed was held for good after the first room (the user's
-     * recording 2026-11-20_014853). */
-    /* port: during the scripts' shots only, and their own eye (the glide to dsg92, which the player's turning leaves
-     * alone): the follow's eye is the player's (look, pause-look, zoom) and stays out of the game's state (replaycheck) */
-    if (p->has_cast && !v->paused && v->shot.on) tc_cast_set_camera_position(&p->cast, v->shot.eye);
     TC_PROF_END(TC_PZ_CAMERA, prof);
 }
 
