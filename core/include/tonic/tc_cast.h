@@ -140,6 +140,8 @@ typedef struct tc_cast {
     struct tc_collision *sight;  /* host-fed: FUNC 162's geometry (tc_game.sight), NULL: world */
     const tc_sectors *sectors;   /* the step's (tc_cast_step*): an actor sweeps its own sector's collide list */
     int32_t main_carrier;        /* host-fed: the perso the main actor rides (tc_mec_walk.carrier), -1 none */
+    bool has_scripts_eye;        /* host-fed (tc_cast_set_scripts_eye): where the cast sees the camera perso */
+    tc_vec3 scripts_eye;
     uint16_t main_sector;        /* the main actor's sector, as the last step got it (a spawn by him starts there) */
     uint32_t spawned;            /* diagnostics: META 11's instances */
     uint32_t placed;             /* diagnostics: SetPositionFrom placements of actors (PROC 27 / 8) */
@@ -231,9 +233,12 @@ bool tc_cast_hit_points(const tc_cast *c, int32_t id, int32_t *points, int32_t *
  * fix persos for the whole game: the host carries them from level to level (tc_viewer_carry.fix_dsg) and saves them. */
 uint8_t *tc_cast_fix_dsg(tc_cast *c, uint16_t role, uint32_t *size);
 bool tc_cast_placed_position(const tc_cast *c, int32_t id, tc_vec3 *out);
-/* The camera perso (the fix camera, read-only for the cast) is where the host's camera is: its ghost and the main
- * actor's copy of it. */
-void tc_cast_set_camera_position(tc_cast *c, tc_vec3 at);
+/* Where the cast's persos see the camera perso (its ghost: InPersoContext(camera, GetPosition)) from the next step on:
+ * the eye the scripts' fixed shot put it at, while the player's own turn of the shown camera or his taking it back
+ * keeps the shown eye elsewhere (tc_viewer_shot.scripts_eye). on false: the shown eye again, as the main actor's copy
+ * has it (his driver feeds it the shown eye, left as it was: writing the shot's eye there broke the camera's tracking,
+ * commit 5bd89b5). */
+void tc_cast_set_scripts_eye(tc_cast *c, bool on, tc_vec3 at);
 /* The matrix of a sector the scripts have moved (the identity: where the export has it), NULL for one they have not.
  * The static world's triangles follow it (c->world); the host draws the sector's geometry with it. */
 const tc_mat34 *tc_cast_sector_matrix(const tc_cast *c, uint16_t sector);

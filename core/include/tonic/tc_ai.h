@@ -604,6 +604,9 @@ struct tc_ai_perso {
     bool read_only_for_cast;     /* port: the cast does not write this perso's dsgvars (the camera's copy, which the main
                                     actor's scripts read: the cutscene triggers' camera modes would hold him), except
                                     TC_AI_CAMERA_SHOT_DSG */
+    tc_vec3 shown_position;      /* host-fed, the camera's ghost (tc_cast begin_step): the eye on screen, where `position`
+                                    is the scripts' (tc_cast_set_scripts_eye). The player character's reads of its place
+                                    (perso_position: FUNC 2, by which Ed's scripts turn the stick) get this one */
     bool keep_off_main;          /* port: this perso's PROC 237 / 238 and dsgvar writes leave the main actor alone (the
                                     cast, unless allowed: tools/ttre/cast.py MAY_FORCE_MAIN) */
     uint32_t forces_blocked;     /* diagnostics: how many times */

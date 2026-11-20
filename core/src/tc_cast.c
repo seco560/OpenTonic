@@ -833,7 +833,7 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
     uint32_t k;
     {
         tc_ai_perso *p = a->ai;
-        bool think, animate, was_active, holding;
+        bool think, animate, was_active, holding, moves;
         float d2;
         a->state_prev = p->state;
         a->frame_prev = p->state_frame;
@@ -879,7 +879,12 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         }
         animate = p->run_mechanics || p->run_animation;
         was_active = p->active && !p->frozen;
-        if (p->run_mechanics && p->model->state_count) root_to_proposal(p);
+        /* a prop (the removal guard's stand-in for a perso the exe deactivated or removed) does not move: the exe steps
+         * neither. cock01's skaters (PAT_FrigoPatineur*) deactivate themselves in their first schedule, after which it set
+         * them going (GoToWaypoint, GoOverWay): kept as props, their mechanics carried them along that move for good,
+         * through the walls (the user's recording 2026-11-20_023738); the tape shows them only once activated (29 s) */
+        moves = p->run_mechanics && !p->frozen;
+        if (moves && p->model->state_count) root_to_proposal(p);
         tc_ai_step_parts(p, dt, think, animate);
         if (p->launch_channel >= 0) launch(c, a, (uint32_t)p->launch_channel); /* its animation's launch event */
         /* saved: here (it took itself out, or the removal guard kept it: a save point's radius may exceed TC_CAST_NEAR) */
@@ -904,7 +909,8 @@ static void step_actor(tc_cast *c, tc_cast_actor *a, float dt, const tc_sectors 
         if (p->motion.teleport_set) place_actor(c, a, p->motion.teleport, s); /* its own SetPositionFrom */
         a->thought = think;
         c->thinking += think;
-        if (p->run_mechanics && !tc_cast_mechanics(c, a, dt)) { /* port: turning in place stands in for the others */
+        if (moves && !p->frozen && !tc_cast_mechanics(c, a, dt)) { /* (frozen by this very step: from now on); port: turning
+                                                                  * in place stands in for the others */
             if (p->motion.heading_set) p->heading = p->motion.heading;
             else if (p->motion.turning) p->heading += p->motion.turn_speed * dt;
         }
@@ -944,9 +950,13 @@ static void begin_step(tc_cast *c) {
     for (i = 0; i < c->count; i++) /* the zones each hit test sees this tick: the states the tick began in (tc_ai.h) */
         c->actors[i].ai->zone_state = (uint16_t)(c->actors[i].ai->state + 1u);
     if (c->main) c->main->zone_state = (uint16_t)(c->main->state + 1u);
-    for (i = 0; i < c->ghost_count; i++) /* the shared ones: where the main actor's host says they are (the camera's eye) */
-        if (c->ghosts[i].main_other >= 0 && c->main && c->main->other_positions)
-            c->ghosts[i].ai.position = c->main->other_positions[c->ghosts[i].main_other];
+    for (i = 0; i < c->ghost_count; i++) { /* the shared ones: where the main actor's host says they are (the camera's
+                                              * eye), the camera where the scripts' shot put it (tc_cast_set_scripts_eye) */
+        tc_cast_ghost_perso *g = &c->ghosts[i];
+        if (g->main_other >= 0 && c->main && c->main->other_positions)
+            g->ai.position = g->ai.shown_position = c->main->other_positions[g->main_other];
+        if (g->ai.read_only_for_cast && c->has_scripts_eye) g->ai.position = c->scripts_eye;
+    }
 }
 
 static void step_pass(tc_cast *c, bool first, float dt, const tc_sectors *s, uint16_t main_sector) {
@@ -1323,12 +1333,7 @@ void tc_cast_unknown(const tc_cast *c, uint32_t *out) {
             for (k = 0; k < 10 * TC_AI_UNKNOWN_STRIDE; k++) out[k] += c->actors[i].ai->unknown[k];
 }
 
-void tc_cast_set_camera_position(tc_cast *c, tc_vec3 at) {
-    uint32_t i;
-    for (i = 0; i < c->ghost_count; i++) {
-        tc_cast_ghost_perso *g = &c->ghosts[i];
-        if (!g->ai.read_only_for_cast) continue;
-        g->ai.position = at;
-        if (c->main && g->main_other >= 0 && c->main->other_positions) c->main->other_positions[g->main_other] = at;
-    }
+void tc_cast_set_scripts_eye(tc_cast *c, bool on, tc_vec3 at) {
+    c->has_scripts_eye = on;
+    c->scripts_eye = on ? at : tc_v3(0, 0, 0);
 }

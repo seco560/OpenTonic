@@ -203,6 +203,14 @@ typedef struct tc_viewer_shot {
     float pull;               /* what walls take off a turned or zoomed fixed or rail eye's distance (look_from) */
     bool has_cur;             /* the eye shown last frame (cur_eye): a turned eye moves from it */
     tc_vec3 cur_eye;
+    /* The camera where the scripts' fixed shot puts it, as the cast's persos read it (tc_cast_set_scripts_eye): the
+     * shot's own eye while it is shown (without the player's turn), else (he took the camera back, or held it when the
+     * shot began) a glide of its own to the place, as the exe's camera goes there whatever the player does. cock01's
+     * SDO_GNPSActive waits for the camera within 0.2 of its place (B15, B16) before it lets Ed go: the player looking
+     * round in that shot held Ed for good (the user's recording 2026-11-20_023738). */
+    bool scripts_on;
+    tc_vec3 scripts_eye, scripts_from, scripts_place;
+    float scripts_t, scripts_time;
 } tc_viewer_shot;
 
 typedef struct tc_viewer_light tc_viewer_light; /* private: the light persos' AI */

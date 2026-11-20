@@ -863,10 +863,15 @@ static bool perso_point(const tc_ai_perso *p, int32_t perso, tc_vec3 off, tc_vec
     return true;
 }
 
+static int32_t main_character(const tc_ai_perso *p);
+
 static tc_vec3 perso_position(const tc_ai_perso *p, int32_t perso) {
     int o = perso == 0 ? -1 : other_index(p, perso);
     tc_ai_perso *q = live(p, perso);
     if (perso == 0) return p->position;
+    /* the camera: the player character steers by the eye on screen, the rest of the cast waits for the scripts' (port:
+     * the two differ while the player turns or dismissed a fixed shot; tc_cast_set_scripts_eye) */
+    if (q && q->read_only_for_cast && (main_character(p) == 0 || main_character(p) == p->self_id)) return q->shown_position;
     if (q) return q->position;
     return o >= 0 && p->other_positions ? p->other_positions[o] : p->position;
 }

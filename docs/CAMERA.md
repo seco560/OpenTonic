@@ -756,6 +756,22 @@ calls, nearly all non-Ed targets come with shot 6. No level perso calls SetCamer
   the two eyes are within 25 units, look within 2 rad of the same way and no surface is between them; otherwise it
   stays a cut (a swoop through a wall, across the level or round to face the other way reads worse). The follow's own
   yaw runs on underneath (tc_viewer_shot.live_yaw); teleports, first person, a pause, a portal's camera settle it.
+- **The scripts' eye (2026-11-20).** The cast reads the camera perso's place (InPersoContext(camera, GetPosition)):
+  cock01's guards' scenes (SDO_GNPSActive / ArreteED / BasFrigo / HautFrigo / HautFrigo2, B15 and B16) wait for the camera
+  within 0.2 of the place they sent it to before they let Ed go. The port fed them the shown eye, which the player's
+  turn of a shot, or his taking it back, keeps elsewhere: in the user's recording 2026-11-20_023738 the mouse moved as
+  B15 began and Ed stayed held (the exe's camera goes there whatever the player does). Now (tc_viewer_shot.scripts_eye,
+  tc_cast_set_scripts_eye; port): while the scripts' shot is the fixed one, the cast's copy of the camera is the shot's
+  own eye when shown (without the player's turn), else a glide of its own to the place (the same timing, a straight
+  line); otherwise the shown eye, as before. **The player steers by the shown eye**: Ed's scripts turn the stick by
+  FUNC 2, the angle from him to the camera perso (dsg68 = 180 + it, every tick); the camera's ghost now holds both eyes
+  (tc_ai_perso.shown_position beside position) and the player character's reads of its place (perso_position: Ed, a
+  chameleon, the skier) get the shown one. The attempt of 2026-11-20 (commit e1c8642, removed in 5bd89b5) wrote the
+  shot's eye for everyone during every scripted shot, follows included (where that eye is stale): his steering went by
+  it, the likely cause of the broken tracking. Checked: the recording to 25 s (Ed walking in camera 119's fixed shot),
+  then the shot turned, or dismissed with Jump, and the stick held 3 s: Ed's place, heading, dsg68 and the camera the
+  same on both builds. Left alone, the two eyes are the same: from the recording's 56.5 s with no input, both builds
+  print the same 60 s. Not covered: a chameleon or skier reading the camera other than through FUNC 2.
 - **The fixed shot's glide** (dsg89 1, B7's GoToPosition; the camera's mechanics' speed not read): was an exponential
   ease of the eye's position (0.35 s, full speed at once, and a straight line that swung the view round Ed when it
   passed near him); now a smoothstep round the look point (direction, height angle and distance eased together),

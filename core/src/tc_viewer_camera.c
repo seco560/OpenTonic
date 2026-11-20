@@ -511,6 +511,47 @@ static bool update_fixed(tc_viewer *v, const tc_ed_ai *e, float dt) {
     return true;
 }
 
+/* The camera where the scripts' fixed shot puts it, for the cast (tc_viewer_shot.scripts_eye; after the shown camera's
+ * update). Port: the shown camera may be the player's (his turn, or his taking it back: scripted_shot), the exe's never
+ * is, and the cast's persos wait for it at its place. Ed's own copy stays the shown eye (tc_cast_set_scripts_eye). */
+static void update_scripts_eye(tc_viewer *v, int shot, float dt) {
+    tc_game *p = v->game;
+    tc_viewer_shot *s = &v->shot;
+    const tc_ed_ai *e = p->main.has_driver ? &p->main.driver : NULL;
+    tc_vec3 place;
+    bool glide;
+    if (!p->has_cast) return;
+    if (!p->use_ai || !e || e->camera < 0 || v->director || shot != TC_CAM_SHOT_FIXED ||
+        !cam_v(e, TC_AI_CAMERA_FIXED_PLACE, &place)) {
+        s->scripts_on = false;
+        tc_cast_set_scripts_eye(&p->cast, false, tc_v3(0, 0, 0));
+        return;
+    }
+    glide = cam_f(e, TC_AI_CAMERA_FIXED_GLIDE) == 1;
+    if (!s->scripts_on || tc_v3_distance(place, s->scripts_place) > 1e-3f) { /* a new place: from where it was */
+        s->scripts_from = s->scripts_on ? s->scripts_eye : v->camera.position;
+        s->scripts_place = place;
+        s->scripts_t = 0;
+        s->scripts_time = fmaxf(TC_VIEW_GLIDE_MIN, fminf(TC_VIEW_GLIDE_MAX,
+                                                         tc_v3_distance(place, s->scripts_from) / TC_VIEW_GLIDE_SPEED));
+        s->scripts_on = true;
+    }
+    if (s->on) { /* shown (update_fixed): its own eye; were it taken back now, the rest of the way from here */
+        s->scripts_eye = s->scripts_from = s->eye;
+        s->scripts_t = 0;
+        s->scripts_time = fmaxf(TC_VIEW_GLIDE_MIN, fminf(TC_VIEW_GLIDE_MAX,
+                                                         tc_v3_distance(place, s->eye) / TC_VIEW_GLIDE_SPEED));
+    } else if (!glide) s->scripts_eye = place;
+    else { /* the glide's timing and smoothstep (update_fixed), along the straight line */
+        float u, k;
+        if (!v->paused) s->scripts_t += dt;
+        u = s->scripts_time > 0 ? fminf(1, s->scripts_t / s->scripts_time) : 1;
+        k = u * u * (3 - 2 * u);
+        s->scripts_eye = tc_v3_add(s->scripts_from, tc_v3_scale(tc_v3_sub(place, s->scripts_from), k));
+    }
+    tc_cast_set_scripts_eye(&p->cast, true, s->scripts_eye);
+}
+
 /* The rail: shot 4 (camera B22 -> B21). The eye on the segment dsg82 -> dsg83 at Ed's place along it (his origin
  * projected, held within the ends, plus dsg85 of its length), eased there by dsg84 (at most 10: (1.95 - 0.15 dsg84) / 9
  * of the way per tick; 0: at once), mode 3: looking at him. A segment of no length ends the shot (B21: dsg39 := 0). */
@@ -808,6 +849,7 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
             }
             blend_apply(v, dt);
         }
+        update_scripts_eye(v, t.shot, dt);
         if (p->has_cast) { /* the current record, as the scripts' FUNC 59-66 read it: the follow's (camera B28's bands) */
             tc_ai_globals *g = &p->cast.globals;
             float d = v->cam.distance;

@@ -19,7 +19,8 @@
  *              face P             turned to P once           aim P | aim off    turned to P every frame
  *              portal K           into Ed's PORT portal K (half its radius in, facing in)
  *              car K              beside custom gameplay's car K, facing it
- *   input      hold A | release A held from now (A: jump action shoot lateral fast forward back left right)
+ *   input      hold A | release A held from now (A: jump action shoot lateral fast forward back left right, and the
+ *                                 camera's lookleft lookright lookup lookdown: the arrow keys)
  *              tap A              held 6 frames, run         pulse A S          6 frames every S seconds (0: off)
  *              stick X Y          the move stick (-1..1, y forward)             free               all of the above off
  *   print      watch W | unwatch W   W: P, ed, game or camera: a line whenever its behaviours, state, hit points ... change
@@ -465,7 +466,8 @@ static int run_frames(uint32_t n) {
 static int action_of(const char *w) {
     static const struct { const char *name; tc_view_action a; } t[] = {
         {"jump", TC_VA_JUMP}, {"action", TC_VA_ACTION}, {"shoot", TC_VA_SHOOT}, {"lateral", TC_VA_LATERAL}, {"fast", TC_VA_FAST},
-        {"forward", TC_VA_FORWARD}, {"back", TC_VA_BACK}, {"left", TC_VA_LEFT}, {"right", TC_VA_RIGHT}};
+        {"forward", TC_VA_FORWARD}, {"back", TC_VA_BACK}, {"left", TC_VA_LEFT}, {"right", TC_VA_RIGHT},
+        {"lookleft", TC_VA_LOOK_LEFT}, {"lookright", TC_VA_LOOK_RIGHT}, {"lookup", TC_VA_LOOK_UP}, {"lookdown", TC_VA_LOOK_DOWN}};
     uint32_t i;
     for (i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(w, t[i].name)) return (int)t[i].a;
     return -1;

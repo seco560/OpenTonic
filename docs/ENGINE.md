@@ -735,6 +735,15 @@ keeps one instance per spawnable template (the exe takes a free slot of the leve
 - **The removal guard** (`kept_as_prop`) no longer keeps a perso that made itself wholly transparent before
   deactivating itself (the crumbling rubies' B3: hidden until an ActivatePerso fades them in): as a prop it was an
   invisible platform Ed could stand on.
+- **A prop does not move (2026-11-20; port).** The guard's frozen prop stands in for a perso the exe has deactivated or
+  removed, which the exe steps not at all; the cast still ran its mechanics (tc_cast.c step_actor: no root motion, no
+  tc_cast_mechanics while frozen, checked again after the AI step that froze it). cock01's skaters
+  (PAT_FrigoPatineur01-03) deactivate themselves in their first schedule, after which it sets them going (GoToWaypoint,
+  B0's GoOverWay): kept as props, they slid along that move through the walls for good (y -890 by the end of the user's
+  recording 2026-11-20_023738), so when the fridge opened (JEZ_GenFrig: ActivatePerso 2 s, 1.5 s, 1.5 s apart) nobody
+  came out. Now they wait at their placement and skate out as the cock01 demo tape shows (first on show at those very
+  places, 29.1 / 31.1 / 32.7 s of it). Also changed: sud0's HEG_MushQuiSeSauve (frozen by a story check on the first
+  tick) glided some 75 units while drawn; it stands. The props are still drawn (the exe draws neither).
 - **Drawn by the sector it is in now** (tc_viewer_draw.c): cast actors are culled, lit and water-tested by their live
   sector (`tc_sector_move` carries them through the portals they cross, GAM_0042c810), not the snapshot's. cavedoc's
   guide vanished 40 s into its ride, crossing from sector 61 into 90 (the user's "disappears halfway through").
