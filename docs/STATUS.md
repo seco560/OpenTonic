@@ -61,7 +61,7 @@ These are not bugs: they are parts of the game that are faked or missing.
 
 | what | today |
 |---|---|
-| Story progress | powers all on; removals under a story test are turned into frozen props at export; four of sud0's five gates are left out at export |
+| Story progress | a level from the level select: powers all on, removals under a story test turned into frozen props at export, the removal guard's props, four of sud0's five gates left out at export. NEW GAME and what follows from it (its saves, its portals' levels; tc_ai_globals.real_story, the user's choice 2026-11-21): no props, the removals as the scripts make them; the gates are still left out (the export) |
 | Inventory | real since 2026-11-12 (docs/ENGINE.md "The HUD"): pickups count on the save values, Ed's shots take bees, and he starts with none |
 | Saving | 2026-11-15 (docs/ENGINE.md "Saved games"): one file per game, saved on arrival, SaveGame, save points, the way to the menu, quitting; loads into the level with the progress, checkpoint and level-saved values. Checked headless (menucheck); not seen in the app |
 | Main menu | 2026-11-15 (docs/ENGINE.md "The menus"): the original's fonts, backgrounds and layout, our organisation; checked headless (menucheck, pictures); not seen in the app. EdMenu persos, credits, in-game menu not done |

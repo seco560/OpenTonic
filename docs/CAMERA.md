@@ -243,7 +243,8 @@ flight, jumps, landings) get the original's presets, then E2 for shooting. A2 an
   back behind him (a 0.15 s lag: about 0.75 s from the tolerance's edge) and follows again. Recentring is the only way out of free view (the user's
   choice); entering play (Tab), a new level and the demo start in follow mode. The title shows ", free camera".
 - **D1, collision.** The camera perso's own sphere (r 0.37) swept from the pivot out towards the wanted spot with the
-  exe's sphere sweep (`tc_mec_sweep`, FUN_0043bff0's port), against every surface of the level (no sector row).
+  exe's sphere sweep (`tc_mec_sweep`, FUN_0043bff0's port), against every surface of the level (no sector row; since
+  2026-11-21 not the sectors nothing collides with: "What the camera collides with" below).
   Blocked: in at once, the same frame; clear again: back out with a 0.6 s lag. Minimum 0.5 from the pivot.
 - **E1, settings.** `tc_viewer_set_look` (sensitivity 0.25-4 for mouse, keys and stick alike; invert X, invert Y);
   keys `;` / `'` (x1.25 steps) and Y (invert up / down); the title shows ", look 125 %" and ", invert Y" when not the
@@ -831,3 +832,76 @@ than 11.05 to him (the scripts' 11.15), the eye above his feet; before, 0.03 fro
   all walked levels; what is left are cutscene reveals while Ed walks off (north's flying guard, cock01's armour room:
   docs/BUGS.md "Linux playtest up to Glacier Cocktail") and sud0's mummy waiting for its dialogue to be passed (a test
   artefact: the walk presses no Jump). Check: viewcheck `platforms_scenario` (north's fall).
+
+### What the camera collides with: not the foliage (2026-11-21; the user: "the camera goes all haywire when Ed clips through something")
+- **Found** (the user's recording 2026-11-21_133144, sud0's start, replayed exactly; a scratch build logging
+  `clear_distance_r`): the eye was put on Ed's head six times in 14 s and Ed hidden, then eased back out, and the
+  watchdog, every side "blocked", swung the view round (0.8 rad between 4.0 and 4.9 s, no input). Every one of those
+  pull-ins was the sweep and the ray meeting sud0's **sctfeuille3**, a bush about 1 unit across that Ed was standing
+  in. It is a virtual sector on no sector's collide list: nothing collides with it, so Ed walks through it, as in the
+  exe. The camera did not: it tested every surface of the level (no sector row).
+- **Read** (earlier, not re-read: docs/NOTES.md "The other two sector lists", "Fifth pass" above): the exe's camera
+  perso sweeps its own sector and that sector's collide list, its can-see ray the camera's and the target's sectors; it
+  never meets a sector on no list.
+- **Port:** the camera's tests (the follow's sweep, ray and watchdog search; the shots' turning and zooming,
+  `shot_clearance`; the blend-or-cut ray, `blend_begin`) take `tc_sectors_camera_solid`: every sector that is solid for
+  anyone (not virtual, or on a collide list). That leaves out the skies, foliage, sud0's falls and the like. Still no row
+  of its own: the camera must not see through anything Ed could not walk through. Retail only: the Special Edition's
+  sectors have no virtual flag (docs/SE.md "Sectors"), so there it still tests everything.
+- **Checked** (headless): no portal leads into a left-out sector and no perso is placed in one (two of Totalski's are in
+  Univers, which has no triangles). Ed placed in the bush with the camera turned once round him: the eye within 0.9 of
+  him in 243 and 191 samples of 421 at two spots before, 0 after (never nearer than 6.3). A static scan (the follow's
+  line, 7 units up 0.45 rad, 8 ways from floor points of every sector) finds the lines that now go on past a left-out
+  sector rare (0 to 2.7 %), almost all through skies, foliage, falls and gates. The most is carota's ceiling
+  **sctplafond01** over the sctrepair01* rooms (139 of 5840 lines): one-sided, facing down, so from above it is not
+  drawn and the camera looks down into the room through it (not looked at on screen). camcheck's walk audits use the same
+  set; their numbers and the jitter's are unchanged.
+- **Not this:** at the recording's 9.79 s Ed stood inside HEG_SuzieTotalski (no collision of her own), and the sight
+  test against the drawn persos put the eye on his head the same way (docs/BUGS.md "Camera Inside Persos").
+
+### Persos at Ed (2026-11-21; the user's recording 2026-11-21_140656: "the bug on both Suzie and the thermometer", and "free-cam when he's talking to other characters")
+- **Found** (headless, a scratch build logging the camera's tests): in the recording the eye went onto Ed's head at the
+  thermometer HEG_PiqueArgentTomate (4.98 s; Ed's head 0.07 from it) and at HEG_SuzieTotalski (10.76 s; his head inside
+  her), then sat with its near plane in them (115 and 136 frames). Both are cast actors without collision, which Ed
+  walks into. The sight test against the drawn persos stopped the eye at the first perso surface on the line from his
+  head; its test for "inside one" counted crossings over all persos at once, and Suzy's open parts gave an even count.
+  The same rule took the eye into his head beside anyone he talks to: Ed 0.8 in front of seven sud0 characters, the
+  camera turned once round him, the eye was within 0.9 of his head in 21 to 199 of 421 samples.
+- **Port** (`camera_sight_test`, tc_viewer_camera.c): the crossings are taken per perso (its parts as one: where it starts
+  and ends along a 30-unit ray). A perso is **passed** (the eye goes beyond it) when stopping in front of it would leave
+  the eye nearer than `SIGHT_PASS` (1.2) to his head, when his head is inside it (an odd count, two more rays agreeing),
+  or when the eye cannot sit clear of it (its radius off every perso surface) anywhere outside 1.2. Without room beyond
+  (`SIGHT_ROOM`) before the next thing, the passed persos are left out: Ed stands in them and they may hide him, but the
+  eye does not go into him. The near-plane nudge (in towards Ed while a surface is within its radius) stops at 1.2, and
+  when no clear spot is found the eye stays where it was. What the camera's sweep meets (persos of collide priority
+  74 or less, by the exe's rule) still stops it as a wall does. tc_viewer.mesh_ghost (the actors without collision) is
+  gone, replaced by mesh_perso (which perso a part is).
+- **Measured:** the talking orbit above: 0 samples in Ed beside all seven but Doc in his cell (157 -> 56: the cell's
+  walls). Ed placed where the recording had him at the thermometer and in Suzy, the camera turned round: 163 and 161
+  samples in Ed before, 0 after. The recording itself replays exactly up to 4.98 s and drifts from there (Ed's controls
+  follow the camera), with no pull-in at 4.98. camcheck (the jitter and shaking numbers unchanged): the eye in Ed walking
+  into Suzy and the tomato 1090 -> 493 frames (the rest: walls and the bonus rock HEG_PierreQuiBloqueLesBonus1 right
+  behind him, the camera's sweep), cavedoc's walk 151 -> 36, bar's 499 -> 473; the near plane in a perso 2 -> 13 on the
+  walk into Suzy and the tomato (10 of them one wedge: a wall 2.6 behind Ed, the tomato between, no clear spot at all),
+  1 -> 0 in bar; a perso between Ed's head and the eye more often (61 -> 204: the eye beyond the one he stands in).
+  camcheck's walk into them starts afresh when a portal takes Ed (backing from Suzy now reaches ZOR_ArcheTotalSki), and
+  counts the frames with the eye in him (they were left out, as Ed is not drawn then).
+
+### Walls right behind Ed: the climb and the search (2026-11-21, late; the user: "make it proper for all cases", "trace and fix all spots")
+**Port** (tc_cam.c, tc_cam.h `TC_CAM_CLIMB_*`, `TC_CAM_SWING_FAST`, `TC_CAM_RELEASE_OUT`, `TC_CAM_URGENT_WATCH`):
+- **The climb:** the follow's line blocked within 1.6 of Ed's head: the nearest elevation step (0.2 rad) up or down (up
+  first; down as far as -0.35 under a low ceiling, up to 1.35) whose line clears 1.6, eased in (0.25 s) and back (0.8 s).
+- **The watchdog's search, two-dimensional:** turns of k pi / 8 either way from the view and climbs / dips together, the
+  cheapest first (turn + climb, a dip 1.5 x); the first open to 3 wins, else the most open. With the eye in Ed it looks
+  at once, rest or not, every 0.1 s while nothing is found; any spot taking the eye out of him (1.2) counts; its swing is
+  fast (0.15 s); the eye eases out of him in 0.12 s instead of 0.6; the climb its spot needs is held while it swings.
+- **Measured** (core/tests/wallrig.c, a scratch rig kept for next time: `cc -O2 -Iinclude tests/wallrig.c
+  build/libtoniccore.a -lm -o build/wallrig && build/wallrig ../files/out/ttlv sud0 pyramide cock01 ...`; Ed put on 80
+  floor spots per level with a wall within 1 behind his head, no input, frames with the eye in him over 0.5 .. 2.5 s;
+  `PER_SPOT=1`, `TRACE_SPOT=n`, `SURVEY=1` for detail): before all of this / now: sud0 18.6 % -> 1.2 %, pyramide 25.0 ->
+  6.0, cock01 13.8 -> 4.4, north 7.0 -> 0.9, carota 7.0 -> 1.0, bar 37.8 -> 1.9, Land 2.1, LeCanyon 0.4, marmite 0.1,
+  cavedoc and Transit 0 (with a 0.12 s swing the numbers were a little lower, but its steps broke camcheck's 0.1 rad a
+  frame limit in bar: 0.15 s now, 0.081). Still stuck at the end: pyramide #12 (Ed dying in a pit: the dying shot) and cock01 #10 (Ed
+  falling in a shaft, one thin opening). camcheck: no failures; viewcheck's recentre passes.
+- **Next:** pyramide's and cock01's remaining 4 % (not traced yet: run the rig with PER_SPOT=1, then TRACE_SPOT); the rig
+  places Ed on non-standing spots too (water, falls): filter or keep as is; a look at the climb on screen.

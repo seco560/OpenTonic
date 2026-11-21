@@ -95,6 +95,8 @@ typedef struct tc_sectors {
     uint16_t *collision_sector;   /* per collision triangle (tc_level.collision): TC_SECTOR_NONE always solid */
     uint8_t *solid;               /* count x count: row i, byte j = 1 when a perso in sector i collides with sector j's
                                    * triangles (j == i, or j on i's collide list); NULL when not built */
+    uint8_t *camera_solid;        /* count: byte j = 1 when sector j's triangles are solid for anyone (some row of solid
+                                   * has it: j not virtual, or on a collide list); NULL when not built */
 } tc_sectors;
 
 /* FUN_00451240: the non-virtual sector with a floor face nearest straight below p (the faces its normal turns up),
@@ -123,6 +125,12 @@ const char *tc_sectors_name(const tc_sectors *s, uint16_t sector); /* "" for non
 /* MEC_SweepPass_0043c830: the sectors whose triangles a perso in `sector` collides with, one byte per sector (for
  * tc_collision.solid), or NULL (unknown sector, or none built): everything is solid. */
 const uint8_t *tc_sectors_solid(const tc_sectors *s, uint16_t sector);
+/* What the play camera collides with and sees through (for tc_collision.solid; port, 2026-11-21): the sectors some perso
+ * collides with, the union of the rows of tc_sectors_solid. Left out: the virtual sectors on no collide list (skies,
+ * foliage, sud0's falls), which nothing collides with: Ed walks into a bush, and the camera tested it from his head and
+ * sat on it. The exe's camera sweeps its own sector and that sector's list, and its can-see ray the camera's and the
+ * target's sectors (docs/CAMERA.md), so it never meets them either. NULL (none built): everything is solid. */
+const uint8_t *tc_sectors_camera_solid(const tc_sectors *s);
 /* GAM_00428490, each frame: whether a perso in `sector` runs its AI while the main character is in `main`: the same
  * sector, or one on main's activity list (+0x64). Either unknown (TC_SECTOR_NONE): true. */
 bool tc_sectors_active(const tc_sectors *s, uint16_t main, uint16_t sector);

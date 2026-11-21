@@ -6,6 +6,7 @@
  *   probe [-d DIR] -r FILE.ttrec SECONDS COMMAND... a recording played to SECONDS of its session, then the commands
  *   probe [-d DIR] -f SCRIPT [COMMAND...]           the words from a file first ('#' to the line's end: a comment)
  *   probe [-d DIR] -s FILE.ttsv COMMAND...          a saved game (tc_save.h) opened as the menus open it, then the commands
+ *   probe [-d DIR] -n LEVEL COMMAND...              the level as the main menu's NEW GAME starts it (tc_save_start_new_game)
  *
  * A perso (P below) is an id, an instance name (PAT_Barman_Astuce01) or a family name (barman: its first perso), both
  * from LEVEL_cast.txt beside the level, any case; `ed` is Ed (his driver's AI). Time runs as a frontend's at 60 frames
@@ -834,8 +835,16 @@ static int start_from_save(const char *path) {
     return load_level(folder, game.info.level, &game.carry, 0);
 }
 
+/* A level as the main menu's NEW GAME starts it: a new game's progress as its carry. */
+static int start_new_game(const char *level) {
+    static tc_viewer_carry carry;
+    tc_save_start_new_game(&carry, level);
+    return load_level(S.dir, level, &carry, 0);
+}
+
 int main(int argc, char **argv) {
     int i = 1, ok = 1;
+    bool new_game = false;
     const char *recording = NULL, *script = NULL, *save = NULL;
     float rec_seconds = 0;
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -845,18 +854,20 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "-r") && i + 2 < argc) { recording = argv[i + 1]; rec_seconds = (float)atof(argv[i + 2]); i += 3; }
         else if (!strcmp(argv[i], "-f") && i + 1 < argc) { script = argv[i + 1]; i += 2; }
         else if (!strcmp(argv[i], "-s") && i + 1 < argc) { save = argv[i + 1]; i += 2; }
+        else if (!strcmp(argv[i], "-n")) { new_game = true; i++; }
         else break;
     }
     if (script && !read_script(script)) return 1;
     for (; i < argc && word_count < MAX_WORDS; i++) words[word_count++] = argv[i];
     if (!recording && !save && word_count == 0) {
-        printf("usage: probe [-d DIR] LEVEL COMMAND... | probe [-d DIR] -r FILE.ttrec SECONDS COMMAND... | probe -s FILE.ttsv\n"
-               "       COMMAND... | probe -f SCRIPT\n"
+        printf("usage: probe [-d DIR] [-n] LEVEL COMMAND... | probe [-d DIR] -r FILE.ttrec SECONDS COMMAND... | probe -s FILE.ttsv\n"
+               "       COMMAND... | probe -f SCRIPT   (-n: as NEW GAME starts it)\n"
                "       (the commands: the head of core/tests/probe.c, or docs/OVERVIEW.md \"The probe\")\n");
         return 1;
     }
     if (recording) ok = start_from_recording(recording, rec_seconds);
     else if (save) ok = start_from_save(save);
+    else if (new_game) ok = start_new_game(next());
     else ok = load_level(S.dir, next(), NULL, 0);
     while (ok && at_word < word_count) ok = command(next());
     unload_level();

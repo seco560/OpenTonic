@@ -429,7 +429,9 @@ void tc_zde_set_read(tc_zde_set *z, reader *r) {
     if (!z->prims) { r->error = TC_ERR_OUT_OF_MEMORY; return; }
     for (i = 0; i < z->zone_count && !r->error; i++) {
         uint16_t c = rd_u16(r);
-        z->zones[i].part = (uint8_t)rd_u16(r);
+        uint16_t part = rd_u16(r); /* 0 its own; 1 + the object of a part zone */
+        z->zones[i].part = part != 0;
+        z->zones[i].object = part ? (uint16_t)(part - 1) : 0;
         z->zones[i].first = z->prim_count;
         z->zones[i].count = c;
         for (k = 0; k < c; k++) {

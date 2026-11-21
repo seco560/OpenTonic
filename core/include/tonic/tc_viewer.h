@@ -343,8 +343,8 @@ typedef struct tc_viewer {
     uint32_t draw_cap, blended_cap;
     uint32_t draw_count;          /* the last tc_viewer_draws' count (the camera's sight test reads its persos) */
     float *mesh_sphere;           /* per mesh: centre xyz and radius of its vertex bounds (mesh space); lazily made */
-    uint8_t *mesh_ghost;          /* per mesh, with mesh_sphere: 1 = a cast actor's part that Ed does not collide with (no
-                                   * obstacle of its own): it can stand in him, and the camera's sight allows for that */
+    uint16_t *mesh_perso;         /* per mesh, with mesh_sphere: the perso a part belongs to (its index + 1; 0: not a
+                                   * perso's): the camera's sight takes a perso's parts as one */
     uint32_t sight_skip_lo, sight_skip_hi; /* the camera's perso tests leave out these meshes (a scripted shot's own look
                                     perso, its pivot inside it while a turned eye is placed; lo == hi: none) */
     /* Transparent statics drawn as pieces (TC_VIEW_PIECE_SIZE cells), so they sort back to front: the pieces follow

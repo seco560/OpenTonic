@@ -943,12 +943,13 @@ static int way_back(const tc_way *w, uint8_t *c, int go_on) {
 
 /* ---- ZDE zones: the hits (COND 18-29, CollectNearby; docs/ENGINE.md "Shooting") ---- */
 
-/* Zone k of q, when active in its playing state (GAM_PersoActiveZones_0041f280); with parts, its part zones too. */
+/* Zone k of q, when active in its playing state (GAM_PersoActiveZones_0041f280); with parts, its part zones too, while a
+ * channel shows their object (tc_ai_perso.part_shown). */
 static const tc_zde_zone *zde_zone_of(const tc_ai_perso *q, int32_t k, bool parts) {
     const tc_zde_set *z = q && q->model ? &q->model->zde : NULL;
     uint32_t st = q && q->zone_state ? q->zone_state - 1u : q ? q->state : 0; /* the tick's (zone_state), else now */
     if (!z || k < 0 || k >= (int32_t)z->zone_count || k >= 32) return NULL;
-    if (z->zones[k].part) return parts ? &z->zones[k] : NULL;
+    if (z->zones[k].part) return parts && q->part_pose && (q->part_shown >> k & 1u) ? &z->zones[k] : NULL;
     if (st >= z->state_count) return NULL;
     return (z->active[st] >> k) & 1u ? &z->zones[k] : NULL;
 }
@@ -963,22 +964,43 @@ static bool zde_has(const tc_ai_perso *q, const tc_zde_zone *zn, uint16_t mask) 
     return false;
 }
 
-static tc_vec3 zde_to_world(const tc_ai_perso *q, tc_vec3 v) {
-    float c = cosf(q->heading), s = sinf(q->heading);
-    return tc_v3_add(q->position, tc_v3(c * v.x - s * v.y, s * v.x + c * v.y, v.z));
+/* The axes a zone's primitives are in: its perso's (position, heading), or a part zone's object as posed now. */
+typedef struct zde_frame { const tc_ai_perso *q; const tc_mat34 *m; } zde_frame;
+
+static zde_frame zde_frame_of(const tc_ai_perso *q, const tc_zde_zone *zn) {
+    zde_frame f = {q, NULL};
+    if (zn->part && q->part_pose) f.m = &q->part_pose[zn - q->model->zde.zones];
+    return f;
 }
-static tc_vec3 zde_to_local(const tc_ai_perso *q, tc_vec3 w) {
-    float c = cosf(q->heading), s = sinf(q->heading);
-    tc_vec3 d = tc_v3_sub(w, q->position);
+
+static tc_vec3 zde_to_world(zde_frame f, tc_vec3 v) {
+    float c, s;
+    if (f.m) return tc_m34_point(f.m, v);
+    c = cosf(f.q->heading), s = sinf(f.q->heading);
+    return tc_v3_add(f.q->position, tc_v3(c * v.x - s * v.y, s * v.x + c * v.y, v.z));
+}
+static tc_vec3 zde_to_local(zde_frame f, tc_vec3 w) {
+    float c, s;
+    tc_vec3 d;
+    if (f.m) { /* a rigid pose with a uniform scale (as tc_obstacle_part's): (R s)^-1 = R^T / s */
+        const float *m = f.m->m;
+        float s2 = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
+        if (!(s2 > 1e-20f)) s2 = 1;
+        d = tc_v3(w.x - m[3], w.y - m[7], w.z - m[11]);
+        return tc_v3_scale(tc_v3(m[0] * d.x + m[4] * d.y + m[8] * d.z, m[1] * d.x + m[5] * d.y + m[9] * d.z,
+                                 m[2] * d.x + m[6] * d.y + m[10] * d.z), 1 / s2);
+    }
+    c = cosf(f.q->heading), s = sinf(f.q->heading);
+    d = tc_v3_sub(w, f.q->position);
     return tc_v3(c * d.x + s * d.y, -s * d.x + c * d.y, d.z);
 }
 
-/* Box b (in qb's axes) against the box a in qa's axes: a's corners taken into qb's axes, their bounds against b. */
-static bool zde_box_in(const tc_ai_perso *qa, const tc_zde_prim *a, const tc_ai_perso *qb, const tc_zde_prim *b) {
+/* Box b (in fb's axes) against the box a in fa's axes: a's corners taken into fb's axes, their bounds against b. */
+static bool zde_box_in(zde_frame fa, const tc_zde_prim *a, zde_frame fb, const tc_zde_prim *b) {
     tc_vec3 lo = tc_v3(INFINITY, INFINITY, INFINITY), hi = tc_v3(-INFINITY, -INFINITY, -INFINITY);
     int k;
     for (k = 0; k < 8; k++) {
-        tc_vec3 c = zde_to_local(qb, zde_to_world(qa, tc_v3(k & 1 ? a->b.x : a->a.x, k & 2 ? a->b.y : a->a.y,
+        tc_vec3 c = zde_to_local(fb, zde_to_world(fa, tc_v3(k & 1 ? a->b.x : a->a.x, k & 2 ? a->b.y : a->a.y,
                                                               k & 4 ? a->b.z : a->a.z)));
         lo = tc_v3_min(lo, c), hi = tc_v3_max(hi, c);
     }
@@ -987,27 +1009,29 @@ static bool zde_box_in(const tc_ai_perso *qa, const tc_zde_prim *a, const tc_ai_
 
 /* FUN_004631c0 for two elements (port: spheres exact; a box against a box by their bounds in each other's axes; the
  * exe's own tests are not read). */
-static bool zde_prims_meet(const tc_ai_perso *qa, const tc_zde_prim *a, const tc_ai_perso *qb, const tc_zde_prim *b) {
-    if (a->kind == 8 && b->kind == 7) { const tc_ai_perso *t = qa; const tc_zde_prim *u = a; qa = qb, a = b, qb = t, b = u; }
+static bool zde_prims_meet(zde_frame fa, const tc_zde_prim *a, zde_frame fb, const tc_zde_prim *b) {
+    if (a->kind == 8 && b->kind == 7) { zde_frame t = fa; const tc_zde_prim *u = a; fa = fb, a = b, fb = t, b = u; }
     if (a->kind == 7 && b->kind == 7) {
         float r = a->b.x + b->b.x;
-        return tc_v3_length_sq(tc_v3_sub(zde_to_world(qa, a->a), zde_to_world(qb, b->a))) <= r * r;
+        return tc_v3_length_sq(tc_v3_sub(zde_to_world(fa, a->a), zde_to_world(fb, b->a))) <= r * r;
     }
     if (a->kind == 7 && b->kind == 8) { /* the sphere's centre into the box's axes, the nearest point of the box */
-        tc_vec3 c = zde_to_local(qb, zde_to_world(qa, a->a)), n = tc_v3_max(b->a, tc_v3_min(b->b, c));
+        tc_vec3 c = zde_to_local(fb, zde_to_world(fa, a->a)), n = tc_v3_max(b->a, tc_v3_min(b->b, c));
         return tc_v3_length_sq(tc_v3_sub(c, n)) <= a->b.x * a->b.x;
     }
-    if (a->kind == 8 && b->kind == 8) return zde_box_in(qa, a, qb, b) && zde_box_in(qb, b, qa, a);
+    if (a->kind == 8 && b->kind == 8) return zde_box_in(fa, a, fb, b) && zde_box_in(fb, b, fa, a);
     return false;
 }
 
 /* Whether zone za of qa meets zone zb of qb (any of their elements; mask_b: only zb's elements of that type). */
 static bool zde_zones_meet(const tc_ai_perso *qa, const tc_zde_zone *za, const tc_ai_perso *qb, const tc_zde_zone *zb) {
+    zde_frame fa, fb;
     uint32_t i, k;
     if (!qa || !qb || qa == qb || !za || !zb) return false;
+    fa = zde_frame_of(qa, za), fb = zde_frame_of(qb, zb);
     for (i = 0; i < za->count; i++)
         for (k = 0; k < zb->count; k++)
-            if (zde_prims_meet(qa, &qa->model->zde.prims[za->first + i], qb, &qb->model->zde.prims[zb->first + k]))
+            if (zde_prims_meet(fa, &qa->model->zde.prims[za->first + i], fb, &qb->model->zde.prims[zb->first + k]))
                 return true;
     return false;
 }
@@ -1439,6 +1463,7 @@ static void doc_note(tc_ai_globals *g, int32_t slot) {
 void tc_ai_globals_new_game(tc_ai_globals *g) {
     int k;
     g->powers = 0;
+    g->real_story = true; /* the game's own story from here (tc_ai_globals.real_story) */
     memset(g->values, 0, sizeof(g->values));
     for (k = 1; k <= 6; k++) g->values[k] = -1;
 }
@@ -1955,9 +1980,12 @@ static value eval(run *r, uint32_t i) {
 
 /* ---- statements ---- */
 
+/* Whether the game plays its own story (tc_ai_globals.real_story), not the port's stand-ins for it. */
+static bool real_story(const tc_ai_perso *p) { return (p->globals ? p->globals : &p->own_globals)->real_story; }
+
 /* The removal guard (tc_ai_perso.removal_guard): q stays, frozen, unless the main actor was near it lately. */
 static bool kept_as_prop(tc_ai_perso *p, tc_ai_perso *q) {
-    if (!p->removal_guard || q->main_actor == 0) return false;
+    if (!p->removal_guard || q->main_actor == 0 || real_story(p)) return false; /* the game's own story: as the exe */
     if (q == p && p->level_restored) return false; /* its own saved state: a pickup taken on an earlier visit */
     /* made wholly see-through first (SetTransparency 0 in its transparent display): hidden to wait for an ActivatePerso
      * (cavedoc's BEM_PFQuiSeDesagrege chain, faded back in one by one), not a story removal. As a prop it was an
@@ -1975,6 +2003,19 @@ static bool kept_as_prop(tc_ai_perso *p, tc_ai_perso *q) {
 static tc_ai_perso *target(run *r, value who) {
     if (who.type != V_PERSO) return NULL;
     return who.i == 0 ? r->p : live(r->p, who.i);
+}
+
+/* PROC 257 RemovePerso (PROC_4Etc_00488580 case 0x101 -> GAM_Objinit_00419b60): q out of the world (inactive);
+ * re-initialised when std game +0x20 is 1 (GAM_Objinit_00419a80), else dead; its own AI stops at once. */
+static uint32_t remove_perso(run *r, tc_ai_perso *q) {
+    tc_ai_perso *p = r->p;
+    if (!q || (q != p && q->main_actor == 0)) return 0;
+    if (kept_as_prop(p, q)) return q == p ? F_STOP : 0;
+    q->active = false;
+    q->sound_serial++;
+    if (q->reinit) q->reinit_requested = true;
+    else q->dead = true;
+    return q == p ? F_STOP : 0;
 }
 
 /* AI_00488010 SetPositionFrom on `who`: this perso through its own mechanics (motion.teleport), another through its host
@@ -2364,25 +2405,17 @@ static uint32_t procedure(run *r, uint32_t i) {
         q->radius2 = radius == -1 ? -1 : radius * radius;
         return 0;
     }
-    case TC_AI_PROC_FREEZE: { /* port: a story-checked RemovePerso (cast.py): it stays, a prop */
+    case TC_AI_PROC_FREEZE: { /* port: a story-checked RemovePerso (cast.py): it stays, a prop; in the game's own story
+                               * (tc_ai_globals.real_story) the RemovePerso it was */
         tc_ai_perso *q = target(r, arg(r, i, 0));
+        if (real_story(p)) return remove_perso(r, q);
         if (!q || q->main_actor == 0) return 0;
         q->frozen = true;
         q->sound_serial++; /* removed in the exe: its own sounds stop (as kept_as_prop) */
         p->removals_kept++;
         return q == p ? F_STOP : 0;
     }
-    case 257: { /* PROC_4Etc_00488580 case 0x101 -> GAM_Objinit_00419b60: out of the world (inactive); re-initialised
-                 * when std game +0x20 is 1 (GAM_Objinit_00419a80), else dead; its own AI stops at once */
-        tc_ai_perso *q = target(r, arg(r, i, 0));
-        if (!q || (q != p && q->main_actor == 0)) return 0;
-        if (kept_as_prop(p, q)) return q == p ? F_STOP : 0;
-        q->active = false;
-        q->sound_serial++;
-        if (q->reinit) q->reinit_requested = true;
-        else q->dead = true;
-        return q == p ? F_STOP : 0;
-    }
+    case 257: return remove_perso(r, target(r, arg(r, i, 0)));
     case 237: case 238: { /* ForceBehaviour / ForceReflex (0x48b730 / 0x48b800): another perso's (its model's index) */
         tc_ai_perso *q = target(r, arg(r, i, 0));
         uint32_t b = arg_param(r, i, 1);
@@ -3020,6 +3053,9 @@ tc_result tc_ai_init(tc_ai_perso *p, const tc_ai_model *m) {
     p->dsg = (uint8_t *)tc_calloc(m->dsg.size ? m->dsg.size : 1, 1);
     p->other_dsg = (uint8_t **)tc_calloc(m->other_count ? m->other_count : 1, sizeof(uint8_t *));
     p->other_positions = (tc_vec3 *)tc_calloc(m->other_count ? m->other_count : 1, sizeof(tc_vec3));
+    for (i = 0; i < m->zde.zone_count && !m->zde.zones[i].part; i++) {}
+    if (i < m->zde.zone_count && !(p->part_pose = (tc_mat34 *)tc_calloc(m->zde.zone_count, sizeof(tc_mat34))))
+        return TC_ERR_OUT_OF_MEMORY; /* its part zones' poses, fed by the host (tc_ai_perso.part_pose) */
     p->button_counter = (int32_t *)tc_calloc(m->button_count ? m->button_count : 1, sizeof(int32_t));
     p->unknown = (uint32_t *)tc_calloc(10 * TC_AI_UNKNOWN_STRIDE, sizeof(uint32_t));
     p->normal.slots = (tc_ai_slot *)tc_calloc((size_t)m->max_rules + 1, sizeof(tc_ai_slot));
@@ -3080,6 +3116,8 @@ void tc_ai_free(tc_ai_perso *p) {
     p->button_counter = NULL;
     p->unknown = NULL;
     p->normal.slots = p->reflex.slots = NULL;
+    tc_free(p->part_pose);
+    p->part_pose = NULL;
 }
 
 static void update_buttons(tc_ai_perso *p) {

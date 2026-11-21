@@ -50,6 +50,7 @@ void tc_game_arrive(tc_game *g, const tc_game_carry *c) {
         tc_ai_globals *gl = &g->cast.globals;
         gl->lives = c->lives;
         gl->powers = c->powers;
+        gl->real_story = c->real_story != 0;
         memcpy(gl->values, c->values, sizeof gl->values);
     } else if (c->has_progress && !g->carry) { /* a level without a cast (an imported one: the SSX courses): nothing here
                                                 * holds the progress, so it is kept for the way out (custom.py's arches) */
@@ -58,6 +59,7 @@ void tc_game_arrive(tc_game *g, const tc_game_carry *c) {
             keep->has_progress = true;
             keep->lives = c->lives;
             keep->powers = c->powers;
+            keep->real_story = c->real_story;
             memcpy(keep->values, c->values, sizeof keep->values);
             g->carry = keep;
         }
@@ -151,6 +153,7 @@ void tc_game_update_portals(tc_game *g, float dt, const tc_game_view *view) {
                 const tc_ai_globals *gl = &g->cast.globals;
                 c->lives = gl->lives;
                 c->powers = gl->powers;
+                c->real_story = gl->real_story;
                 memcpy(c->values, gl->values, sizeof c->values);
             }
             c->has_checkpoint = 0; /* a saved game's arrival only (tc_save.h) */
@@ -192,6 +195,7 @@ void tc_game_reload(tc_game *g, const tc_game_view *view) {
         c->has_progress = 1;
         c->lives = gl->lives;
         c->powers = gl->powers;
+        c->real_story = gl->real_story;
         memcpy(c->values, gl->values, sizeof c->values);
     }
     g->carry = c;

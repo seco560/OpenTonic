@@ -190,30 +190,84 @@ static void hold_height(tc_cam *c, const tc_cam_target *t) {
         c->holding = false;
 }
 
-/* The watchdog's search (FUN_004a5400 / 004a4f20): the wanted offset behind Ed turned by k pi / 4. The most open one
- * (the camera's sphere reaching furthest from the pivot) wins, and among the fully open ones the nearest round to where
- * the camera is; it must beat the eye's reach now by 1. The port's choice: the exe sorts by a score not decoded yet
- * (FUN_004a4660) and validates by its can-go / can-see rays (FUN_004a4bb0), then cuts. */
-static void search(tc_cam *c, const tc_camera *view, const tc_cam_target *t, tc_vec3 base, float distance,
+/* The watchdog's search (FUN_004a5400 / 004a4f20): the exe turns the wanted offset behind Ed by k pi / 4 and sorts the
+ * spots by a score not decoded yet (FUN_004a4660), validates them by its can-go / can-see rays (FUN_004a4bb0), then cuts.
+ * Port (2026-11-21, the user: "make it proper for all cases"): spots turned by k pi / 8 either way from the view now and
+ * climbed or lowered by TC_CAM_CLIMB_STEP steps (a bank or a wall at Ed's head: open only higher up, lower down under a
+ * low ceiling, or round to one side), within TC_CAM_CLIMB_MIN .. TC_CAM_CLIMB_MAX, tried
+ * the cheapest first (the turn, plus the climb, 1.5 x a step down); the first whose line is open to TC_CAM_SWING_NEAR + 1 (or its whole
+ * length) wins, else the most open, if it beats the eye's reach now by 1 (with the eye in Ed: if it takes it out of
+ * him, TC_CAM_HIDE_DISTANCE + 0.3). Returns whether it found one. (Until then: the
+ * 8 spots round behind Ed at the follow's elevation, the most open first.) */
+#define SEARCH_TURNS 16
+#define SEARCH_CLIMBS 8                   /* steps up; down: as far as TC_CAM_CLIMB_MIN */
+static bool search(tc_cam *c, const tc_camera *view, const tc_cam_target *t, tc_vec3 base, float distance,
                    float elevation) {
-    float best_turn = 1e9f, best_clear = c->reach + 1, best_yaw = 0;
+    struct { float cost, yaw, climb; } spot[SEARCH_TURNS * SEARCH_CLIMBS * 2], key;
+    /* with the eye in Ed any spot that takes it out of him with room (his model's reach + 0.3) is better than none */
+    float open = fminf(distance, TC_CAM_SWING_NEAR + 1), best_yaw = 0, best_climb = 0,
+          best_clear = c->hide_target ? fmaxf(c->reach, TC_CAM_HIDE_DISTANCE + 0.3f) : c->reach + 1;
+    int n = 0, k, j, i;
     bool found = false;
-    int k;
-    for (k = 0; k < 8; k++) {
-        float yaw = wrap(t->behind + k * TC_CAM_SEARCH_STEP), turn = fabsf(wrap(yaw - view->yaw)), clear;
-        tc_vec3 off = offset_of(yaw, elevation, distance);
-        if (turn < 0.05f) continue; /* not where it already is */
-        clear = fminf(distance, clear_distance(t, base, tc_v3_scale(off, 1 / distance), distance) + 0.01f);
-        /* the most open; among the fully open ones, the nearest round */
-        if (clear > best_clear + 0.01f || (clear >= best_clear - 0.01f && turn < best_turn))
-            best_clear = clear, best_turn = turn, best_yaw = yaw, found = true;
+    for (k = 0; k < SEARCH_TURNS; k++) { /* 0, -1, +1, -2, +2 ... eighths of a turn round, then the turn round */
+        int step = (k + 1) / 2 * (k & 1 ? -1 : 1);
+        for (j = -(int)((elevation - TC_CAM_CLIMB_MIN) / TC_CAM_CLIMB_STEP + 1e-3f); j < SEARCH_CLIMBS; j++) {
+            float climb = j * TC_CAM_CLIMB_STEP;
+            if ((k == 0 && j == 0) || n >= SEARCH_TURNS * SEARCH_CLIMBS * 2) continue; /* where it is */
+            if (elevation + climb > TC_CAM_CLIMB_MAX + 1e-4f || elevation + climb < TC_CAM_CLIMB_MIN - 1e-4f) continue;
+            spot[n].yaw = wrap(view->yaw + step * TC_CAM_SEARCH_STEP / 2);
+            spot[n].climb = climb;
+            spot[n].cost = fabsf((float)step) * TC_CAM_SEARCH_STEP / 2 + (climb < 0 ? -1.5f * climb : climb); /* up
+                                                                    before down: looking up from below reads worse */
+            n++;
+        }
     }
-    if (found) {
-        c->swinging = true;
-        c->swing_yaw = best_yaw;
-        c->swing_time = 0;
-        c->swing_rate = c->turn_rate; /* from the way it turns now (the rope's drift): no jolt */
+    for (i = 1; i < n; i++) { /* cheapest first (stable) */
+        key = spot[i];
+        for (k = i; k > 0 && spot[k - 1].cost > key.cost; k--) spot[k] = spot[k - 1];
+        spot[k] = key;
     }
+    for (i = 0; i < n; i++) {
+        tc_vec3 off = offset_of(spot[i].yaw, elevation + spot[i].climb, distance);
+        float clear = fminf(distance, clear_distance(t, base, tc_v3_scale(off, 1 / distance), distance) + 0.01f);
+        if (clear >= open) { best_clear = clear, best_yaw = spot[i].yaw, best_climb = spot[i].climb, found = true; break; }
+        if (clear > best_clear + 0.01f) best_clear = clear, best_yaw = spot[i].yaw, best_climb = spot[i].climb, found = true;
+    }
+    if (!found) return false;
+    c->swing_climb = best_climb;
+    if (fabsf(wrap(best_yaw - view->yaw)) < 0.05f) return true; /* up only: the climb takes it (climb_wanted) */
+    c->swinging = true;
+    c->swing_yaw = best_yaw;
+    c->swing_time = 0;
+    c->swing_rate = c->turn_rate; /* from the way it turns now (the rope's drift): no jolt */
+    c->swing_fast = c->hide_target;
+    return true;
+}
+
+/* The climb wanted (TC_CAM_CLIMB_*, rad from the follow's elevation `elevation`), from the lines out of base at the
+ * rig's distance and yaw: none while the follow's own line is clear to TC_CAM_CLIMB_NEAR (by the margin, once
+ * climbing); else the nearest step, up or down, whose line is open to TC_CAM_SWING_NEAR + 1 (up first); else the most
+ * open one, if it beats the follow's line by 0.5. */
+static float climb_wanted(const tc_cam *c, const tc_camera *view, const tc_cam_target *t, tc_vec3 base, float distance,
+                          float elevation) {
+    /* it starts within TC_CAM_CLIMB_NEAR; the step it takes is one open as far as the watchdog's (its search agrees) */
+    float best = 0, best_clear, near = fminf(distance, TC_CAM_CLIMB_NEAR), open = fminf(distance, TC_CAM_SWING_NEAR + 1), k;
+    tc_vec3 dir;
+    int side;
+    if (distance <= 0) return 0;
+    dir = tc_v3_scale(offset_of(view->yaw, elevation, distance), 1 / distance);
+    best_clear = clear_distance(t, base, dir, distance);
+    if (best_clear >= fminf(distance, near + (c->climb != 0 ? TC_CAM_CLIMB_MARGIN : 0))) return 0;
+    for (k = TC_CAM_CLIMB_STEP; k < TC_CAM_CLIMB_MAX - TC_CAM_CLIMB_MIN + 1e-4f; k += TC_CAM_CLIMB_STEP)
+        for (side = 1; side >= -1; side -= 2) {
+            float e = elevation + side * k, clear;
+            if (e > TC_CAM_CLIMB_MAX + 1e-4f || e < TC_CAM_CLIMB_MIN - 1e-4f) continue;
+            dir = tc_v3_scale(offset_of(view->yaw, e, distance), 1 / distance);
+            clear = clear_distance(t, base, dir, distance);
+            if (clear >= open) return side * k;
+            if (clear > best_clear + 0.5f) best_clear = clear, best = side * k;
+        }
+    return best;
 }
 
 /* The orbit's direction this frame: placed, recentring, the watchdog's swing, or the rope (Ed's speed across the view
@@ -236,7 +290,8 @@ static void turn(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt, b
         return;
     }
     if (c->swinging) { /* critically damped: speeds up and slows down smoothly (a lag would start at full speed) */
-        float d = wrap(c->swing_yaw - view->yaw), w = 1 / TC_CAM_SWING_TIME, h = fminf(dt, 1.0f / 30);
+        float d = wrap(c->swing_yaw - view->yaw), w = 1 / (c->swing_fast ? TC_CAM_SWING_FAST : TC_CAM_SWING_TIME);
+        float h = fminf(dt, 1.0f / 30);
         c->swing_time += dt;
         c->swing_rate += (w * w * d - 2 * w * c->swing_rate) * h;
         view->yaw = wrap(view->yaw + c->swing_rate * h);
@@ -296,7 +351,8 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
     if (c->placed && tc_v3_distance(pivot, c->pivot) > TC_CAM_TELEPORT) c->placed = false; /* a respawn, a portal */
     /* never kept: a value that is not a number (it would stay in the eased state for good) */
     if (c->placed && !(isfinite(c->distance) && isfinite(c->elevation) && isfinite(c->rise) && isfinite(view->yaw) &&
-                       isfinite(c->height1) && isfinite(c->height2) && isfinite(c->stretch) && isfinite(c->pull)))
+                       isfinite(c->height1) && isfinite(c->height2) && isfinite(c->stretch) && isfinite(c->pull) &&
+                       isfinite(c->climb)))
         c->placed = false;
     if (!isfinite(view->yaw)) view->yaw = t->behind;
     if (!isfinite(c->rise)) c->rise = 0;
@@ -313,6 +369,7 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
         c->holding = c->swinging = false;
         c->swing_rate = c->swing_rest = 0;
         c->hold_offset = c->hold_rate = 0;
+        c->climb = 0;
         c->watch = TC_CAM_WATCH_TIME;
         c->placed = true;
     } else {
@@ -343,7 +400,7 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
             c->stretch1 += (stretch - c->stretch1) * k;
             c->stretch += (c->stretch1 - c->stretch) * k;
         }
-        c->rig = tc_v3_add(base, offset_of(view->yaw, fmaxf(-1.4f, fminf(1.4f, c->elevation + c->rise)),
+        c->rig = tc_v3_add(base, offset_of(view->yaw, fmaxf(-1.4f, fminf(1.4f, c->elevation + c->rise + c->climb)),
                                            c->distance * c->stretch));
         hold_height(c, t);
         if (c->holding || held) { /* held (and letting go): from where it is, the rate the rig moves under it */
@@ -368,25 +425,40 @@ void tc_cam_update(tc_cam *c, tc_camera *view, const tc_cam_target *t, float dt)
     allowed = fminf(length, clear_distance_r(t, base, dir, length, TC_CAM_RADIUS, &least));
     pull = length - allowed;
     if (first || pull > c->pull) c->pull = pull;                       /* blocked: in at once */
-    else c->pull += (pull - c->pull) * ease(dt, TC_CAM_RELEASE_TIME);  /* clear: back out, gently */
+    else c->pull += (pull - c->pull) * ease(dt, c->hide_target ? TC_CAM_RELEASE_OUT : TC_CAM_RELEASE_TIME); /* clear: back
+                                                                    out, gently (out of him at once: TC_CAM_RELEASE_OUT) */
     /* never more than there is (Ed walking at the camera shortens the distance under an older, larger pull: until
      * 2026-11-01 that put the camera through him) */
     c->pull = fminf(c->pull, length);
     if (least > 0) c->pull = fminf(c->pull, length - fminf(least, allowed)); /* port: out of a perso at once, not eased */
     c->reach = length - c->pull;
     c->hide_target = c->reach < TC_CAM_HIDE_DISTANCE;
+    /* the climb over a wall right behind him, for the next frame (not on the slides: the run's own camera) */
+    if (first || t->shot == TC_CAM_SHOT_SKI || !t->world) c->climb = 0;
+    else {
+        /* not while the watchdog swings: its spot is open at the follow's elevation, and a climb meant for the line it
+         * leaves met the ceiling there */
+        float want = c->swinging ? c->swing_climb : climb_wanted(c, view, t, base, c->distance * c->stretch, c->elevation + c->rise);
+        c->climb += (want - c->climb) * ease(dt, want > c->climb ? TC_CAM_CLIMB_TIME : TC_CAM_CLIMB_RELEASE);
+    }
     view->position = tc_v3_add(base, tc_v3_scale(dir, c->reach));
     view->pitch = fmaxf(-TC_CAM_PITCH_LIMIT, fminf(TC_CAM_PITCH_LIMIT, asinf(fmaxf(-1, fminf(1, -dir.z)))));
 
     /* the watchdog: pulled in close by a wall, the player not turning it, look for an open side round him */
     c->swing_rest -= dt;
     c->watch -= dt;
-    if (c->watch <= 0) {
-        c->watch += TC_CAM_WATCH_TIME;
-        if (c->watch <= 0) c->watch = TC_CAM_WATCH_TIME; /* a long stall */
-        /* not on the slides: at his speed the swing turned the view three times as much and hid him no less */
-        if (t->shot != TC_CAM_SHOT_SKI && t->world && c->pull > 1e-3f && c->reach < fminf(TC_CAM_SWING_NEAR, c->distance - TC_CAM_NEAR_RANGE) &&
-            !c->recentering && !c->swinging && c->swing_rest <= 0 && c->since_look >= TC_CAM_GRACE)
-            search(c, view, t, base, c->distance * c->stretch, c->elevation + c->rise);
+    { /* port: with the eye in Ed (hide_target) it looks at once, rest or not, and again every TC_CAM_URGENT_WATCH while
+       * nothing is found: the way out of the wall */
+        bool urgent = c->hide_target;
+        if (urgent && c->watch > TC_CAM_URGENT_WATCH) c->watch = 0;
+        if (c->watch <= 0) {
+            c->watch += TC_CAM_WATCH_TIME;
+            if (c->watch <= 0) c->watch = TC_CAM_WATCH_TIME; /* a long stall */
+            /* not on the slides: at his speed the swing turned the view three times as much and hid him no less */
+            if (t->shot != TC_CAM_SHOT_SKI && t->world && c->pull > 1e-3f && c->reach < fminf(TC_CAM_SWING_NEAR, c->distance - TC_CAM_NEAR_RANGE) &&
+                !c->recentering && !c->swinging && (c->swing_rest <= 0 || urgent) && c->since_look >= TC_CAM_GRACE &&
+                !search(c, view, t, base, c->distance * c->stretch, c->elevation + c->rise) && urgent)
+                c->watch = TC_CAM_URGENT_WATCH;
+        }
     }
 }

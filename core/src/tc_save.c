@@ -106,6 +106,7 @@ uint8_t *tc_game_save_make(tc_game *g, const tc_game_view *view, const char *nam
             s.carry.has_progress = 1;
             s.carry.lives = gl->lives;
             s.carry.powers = gl->powers;
+            s.carry.real_story = gl->real_story;
             memcpy(s.carry.values, gl->values, sizeof(s.carry.values));
             if (gl->has_checkpoint) {
                 s.carry.has_checkpoint = 1;
@@ -119,6 +120,7 @@ uint8_t *tc_game_save_make(tc_game *g, const tc_game_view *view, const char *nam
             s.carry.has_progress = 1;
             s.carry.lives = g->carry->lives;
             s.carry.powers = g->carry->powers;
+            s.carry.real_story = g->carry->real_story;
             memcpy(s.carry.values, g->carry->values, sizeof(s.carry.values));
         }
         s.carry.hit_points = e->ai.hit_points;
@@ -161,6 +163,7 @@ uint8_t *tc_game_save_make(tc_game *g, const tc_game_view *view, const char *nam
     put_f32(&o, s.carry.vertical_fov);
     put_f32(&o, s.carry.orbit_distance);
     put_u8(&o, s.carry.closeup);
+    put_u8(&o, s.carry.real_story); /* 2026-11-21; a save made before it ends here: the stand-ins, as it was played */
     chunk_finish(&o, c);
 
     c = chunk_begin(&o, "LSAV");
@@ -258,6 +261,7 @@ tc_result tc_save_read(const void *data, size_t size, tc_save_game *out) {
     k->vertical_fov = rd_f32(&r);
     k->orbit_distance = rd_f32(&r);
     k->closeup = rd_u8(&r);
+    if (r.offset < r.size) k->real_story = rd_u8(&r);
     if ((res = chunk_end(&r)) != TC_OK) return res;
 
     chunk_need(&c, "LSAV", &r);
@@ -299,6 +303,7 @@ void tc_save_start_new_game(tc_game_carry *out, const char *level) {
     out->has_progress = 1;
     out->lives = 3; /* as a cast starts them (tc_cast.c: the user's, 2026-11-12) */
     out->powers = g.powers;
+    out->real_story = g.real_story;
     memcpy(out->values, g.values, sizeof(out->values));
     tc_cast_level_saves_clear();
 }

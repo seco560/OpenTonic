@@ -169,7 +169,9 @@ typedef struct tc_ai_sphere_set { uint16_t count; tc_ai_sphere spheres[TC_AI_MAX
  * mask), and per state which zones are active (bit k: zone k, the scripts' zone k + 1). */
 typedef struct tc_zde_prim { uint8_t kind; uint16_t type; tc_vec3 a, b; } tc_zde_prim;
 /* prims[first .. first + count); part: a part object's ZDE geometry (ai.py part_zones), met only as the other perso's */
-typedef struct tc_zde_zone { uint32_t first; uint16_t count; uint8_t part; } tc_zde_zone;
+/* A ZDE zone: its primitives; part: one of the perso's channel objects' (FUN_0041fd00's second path), object its
+ * object-list index, the primitives in that object's axes (posed by the channel showing it: tc_ai_perso.part_pose). */
+typedef struct tc_zde_zone { uint32_t first; uint16_t count; uint8_t part; uint16_t object; } tc_zde_zone;
 typedef struct tc_zde_set {
     uint16_t zone_count, state_count;
     tc_zde_zone *zones;

@@ -371,6 +371,12 @@ typedef struct tc_ai_globals {
      * Proc_AddPower adds m (0x419650). Port: they start all on (TC_AI_POWERS_ALL: every ability, every story test
      * passes), as the port has run so far; the save data's start value is not read. Not in the recordings' hash yet. */
     uint16_t powers;
+    /* Port (the user, 2026-11-21): the game's own story, not the port's stand-ins for it. Set by a new game (NEW GAME,
+     * and the saved games and levels that follow from one: tc_game_carry.real_story). Then nothing is kept as a frozen
+     * prop: the removal guard is off (tc_ai_perso.removal_guard) and a story-checked removal the export froze
+     * (TC_AI_PROC_FREEZE) is the RemovePerso it was. Off (a level opened from the level select, every power on): the
+     * stand-ins stay, as the scripts would otherwise read every power as the end of the game. */
+    bool real_story;
     tc_ai_sector_order sector_orders[TC_AI_MAX_SECTOR_ORDERS]; /* this tick's, in order: the host takes them */
     uint8_t sector_order_count;
     tc_ai_surface_order surface_orders[TC_AI_MAX_SURFACE_ORDERS]; /* this tick's, in order: the host takes them */
@@ -508,6 +514,11 @@ struct tc_ai_perso {
      * as in the exe (Totalski's race: dsg148 the stage, dsg149 the best time, dsg150): Dot(alias, k) goes there. */
     int32_t alias_id;
     struct tc_ai_perso *alias_dsg;
+    /* host-fed (the cast, as it poses its obstacle): per ZDE zone k, where a part zone's object is now (object axes ->
+     * world), and bit k of part_shown while a channel shows it (FUN_0041fd00 tests the channel objects present, at
+     * their matrices). NULL: none fed, and its part zones meet nothing. */
+    tc_mat34 *part_pose;
+    uint32_t part_shown;
     uint16_t zone_state;         /* host-fed (the cast, each tick before any AI runs): 1 + the state whose ZDE zones the
                                     hit tests see this tick; 0: `state`. The exe applies a script's state change after
                                     every AI of the frame has run (the animation player), so each perso tests the zones of

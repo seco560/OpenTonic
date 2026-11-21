@@ -527,6 +527,15 @@ static uint8_t *read_file(const char *path, size_t *size) {
     return data;
 }
 
+/* The level's collision as the play camera sees it: the triangles of the sectors solid for anyone
+ * (tc_sectors_camera_solid; not the skies and foliage nothing collides with). */
+static int camera_world(tc_collision *col, const tc_level *level) {
+    if (tc_collision_init(col, level->collision, 3 * level->collision_triangle_count, level->collision_floors) != 0) return -1;
+    tc_collision_set_sectors(col, level->sectors.collision_sector, level->sectors.collision_count, level->sectors.count);
+    col->solid = tc_sectors_camera_solid(&level->sectors);
+    return 0;
+}
+
 /* The collision the viewer's play session uses is private: a second copy of the level's, to look with. */
 static void level_sight(const char *dir, const char *name) {
     char path[1024];
@@ -544,7 +553,7 @@ static void level_sight(const char *dir, const char *name) {
         return;
     }
     free(data);
-    if (tc_collision_init(&col, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) {
+    if (camera_world(&col, &level) != 0) {
         tc_level_free(&level);
         return;
     }
@@ -636,7 +645,9 @@ static bool collision_near(const tc_collision *col, tc_vec3 p, float r) {
     uint32_t i;
     for (i = 0; i < col->tri_count; i++) {
         const tc_tri *t = &col->tris[i];
-        tc_vec3 q = tc_closest_point_on_triangle(t->a, t->b, t->c, p);
+        tc_vec3 q;
+        if (col->solid && t->sector < col->solid_count && !col->solid[t->sector]) continue; /* not the camera's */
+        q = tc_closest_point_on_triangle(t->a, t->b, t->c, p);
         if (tc_v3_length(tc_v3_sub(q, p)) < r) return true;
     }
     return false;
@@ -739,7 +750,7 @@ static void level_clip(const char *dir, const char *name) {
         return;
     }
     free(data);
-    if (tc_collision_init(&col, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) {
+    if (camera_world(&col, &level) != 0) {
         tc_level_free(&level);
         return;
     }
@@ -856,7 +867,8 @@ static void level_jitter(const char *dir, const char *name) {
  * their insides): Ed starts 4 from each, from 8 sides, facing it, the camera behind him, and walks into it for 3 s; then
  * the same walking away from the camera towards it (the character behind the camera). Counted as level_clip does: a
  * perso's drawn triangle within the near plane, or between Ed's head and the eye. */
-static void walk_into(const char *dir, const char *name, const uint32_t *ids, int n, clip_stats *st, int *passed) {
+static void walk_into(const char *dir, const char *name, const uint32_t *ids, int n, clip_stats *st, int *passed,
+                      int *captured) {
     char path[1024];
     size_t size, ai_size = 0;
     uint8_t *data, *ai;
@@ -865,11 +877,11 @@ static void walk_into(const char *dir, const char *name, const uint32_t *ids, in
     tc_viewer_desc desc;
     tc_collision col;
     int i, k, f;
-    *passed = 0;
+    *passed = *captured = 0;
     snprintf(path, sizeof(path), "%s/%s.ttlv", dir, name);
     if (!(data = read_file(path, &size)) || tc_level_load(&level, data, size) != TC_OK) { free(data); return; }
     free(data);
-    if (tc_collision_init(&col, level.collision, 3 * level.collision_triangle_count, level.collision_floors) != 0) {
+    if (camera_world(&col, &level) != 0) {
         tc_level_free(&level);
         return;
     }
@@ -907,10 +919,22 @@ static void walk_into(const char *dir, const char *name, const uint32_t *ids, in
                 tc_viewer_set_action(&v, away ? TC_VA_BACK : TC_VA_FORWARD, true);
                 tc_viewer_update(&v, 1.0f / 60);
                 { uint32_t cn, co; tc_viewer_draws(&v, &cn, &co); }
+                if (v.game->phase != TC_GP_PLAY) break; /* a portal took him (an arch behind the character) */
+                st->hidden += v.cam.hide_target; /* the eye in him: not drawn, so not counted below */
                 if (v.ed_draw_count == 0) continue;
                 clip_frame(&v, &col, pivot_of(tc_viewer_player(&v)->position), st);
             }
             tc_viewer_release_all(&v);
+            if (v.game->phase != TC_GP_PLAY) { /* the rest of the walks on the level as it starts */
+                (*captured)++;
+                tc_viewer_free(&v);
+                if (tc_viewer_init(&v, &desc) != TC_OK) { free(ai); tc_collision_free(&col); tc_level_free(&level); return; }
+                c = tc_viewer_cast(&v);
+                for (a = NULL, j = 0; c && j < c->count; j++)
+                    if (c->actors[j].entry->id == ids[i]) a = &c->actors[j];
+                if (!a) break;
+                continue;
+            }
             ed1 = tc_viewer_player(&v)->position;
             /* went through it: from one side of it to the other */
             if (tc_v3_dot(tc_v3_sub(ed0, a->ai->position), tc_v3_sub(ed1, a->ai->position)) < 0) (*passed)++;
@@ -1258,12 +1282,12 @@ int main(int argc, char **argv) {
         {
             static const uint32_t sud0_chars[] = {89, 185, 186, 187, 251}; /* the tomato, Suzy (as she stands in sud0) */
             clip_stats st;
-            int passed;
+            int passed, captured;
             memset(&st, 0, sizeof(st));
             st.nearest = 1e9f;
-            walk_into(argv[1], "sud0", sud0_chars, 5, &st, &passed);
+            walk_into(argv[1], "sud0", sud0_chars, 5, &st, &passed, &captured);
             clip_report("sud0", "walking into Suzy and the tomato (follow camera)", &st);
-            printf("  info  sud0: Ed went through them %d times\n", passed);
+            printf("  info  sud0: Ed went through them %d times; %d walks cut short by a portal\n", passed, captured);
         }
         {
             int shot7, bad;

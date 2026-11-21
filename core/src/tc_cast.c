@@ -942,6 +942,36 @@ static void pose_obstacle(tc_cast *c, tc_cast_actor *a) {
                      an->channel_count);
 }
 
+/* Its part zones (tc_ai_perso.part_pose) where its state animation's current frame shows their objects, as its obstacle
+ * is posed; none while it is out or not drawn. */
+static void pose_part_zones(const tc_cast *c, tc_cast_actor *a) {
+    tc_ai_perso *p = a->ai;
+    const tc_zde_set *z;
+    const tc_cast_anim *an;
+    tc_mat34 w;
+    tc_sample sm;
+    uint32_t ch;
+    uint16_t k;
+    if (!p->part_pose) return;
+    p->part_shown = 0;
+    if (!tc_cast_pose(c, a, 1, &w, &an, &sm)) return;
+    z = &p->model->zde;
+    for (k = 0; k < z->zone_count && k < 32; k++)
+        for (ch = 0; z->zones[k].part && ch < an->channel_count; ch++) {
+            size_t at = (size_t)sm.s0 * an->channel_count + ch;
+            if (an->shown[at] != z->zones[k].object) continue;
+            p->part_pose[k] = tc_m34_mul(&w, &an->transforms[at]);
+            p->part_shown |= 1u << k;
+            break;
+        }
+}
+
+/* Where its collision is now: its obstacle and its part zones. */
+static void pose_actor(tc_cast *c, tc_cast_actor *a) {
+    pose_obstacle(c, a);
+    pose_part_zones(c, a);
+}
+
 static void begin_step(tc_cast *c) {
     uint32_t i;
     c->sounds_out_count = 0;
@@ -967,7 +997,7 @@ static void step_pass(tc_cast *c, bool first, float dt, const tc_sectors *s, uin
     for (i = 0; i < c->count; i++)
         if (((c->actors[i].entry->flags & TC_CAST_RUN_FIRST) != 0) == first) {
             step_actor(c, &c->actors[i], dt, s, main_sector, main_pos);
-            pose_obstacle(c, &c->actors[i]);
+            pose_actor(c, &c->actors[i]);
         }
 }
 
@@ -1152,7 +1182,7 @@ void tc_cast_tick(tc_cast *c, float dt, const tc_sectors *s) {
             main_pos = main_place(c, &sector);
         }
         step_actor(c, a, dt, s, sector, main_pos);
-        pose_obstacle(c, a);
+        pose_actor(c, a);
     }
     TC_PROF_END(TC_PZ_CAST_REST, prof);
     if (!stepped) main_brain_tick(c, dt); /* the last of the walk */
@@ -1172,7 +1202,7 @@ void tc_cast_set_obstacles(tc_cast *c, struct tc_obstacles *o) {
         tc_cast_actor *a = &c->actors[i];
         a->obstacle = o ? tc_obstacles_find(o, a->entry->id) : NULL;
         if (a->obstacle && !(a->obstacle->flags & TC_PCOL_CAST)) a->obstacle = NULL; /* posed once, by the export */
-        pose_obstacle(c, a);
+        pose_actor(c, a);
     }
 }
 

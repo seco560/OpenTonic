@@ -120,6 +120,7 @@ build/probe sud0 near HEG_TomateKamikaze1 3 watch 64 watch ed aim 64 pulse shoot
 build/probe sud0 watch game portal 2 run 14             # through the arch into bar: the level change is followed
 build/probe -r ~/Library/.../Recordings/FILE.ttrec 90 watch ed run 5   # a recording up to 90 s, then the commands
 build/probe -s ~/Library/.../Saves/NAME.ttsv watch ed run 5   # a saved game, opened as the menus open it
+build/probe -n sud0 show HEG_SuzieTotalski run 3              # the level as NEW GAME starts it (a new game's progress)
 build/probe -f my.probe                                 # words from a file, '#' comments (tests/probecheck.probe)
 ```
 

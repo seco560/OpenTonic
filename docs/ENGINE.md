@@ -517,6 +517,28 @@ floating mercury heals. Nearly all of it is Ed's own scripts and the level's; th
   fall state, so its `OnGround` may never hold (its drop is checked only by forcing the contact). The game over screen
   (the 'death' level) is still the port's restart. Seen only headless.
 
+**carota's corridor jaw and its guided platform (2026-11-21; the user: "Ed just dies when he passes through it").**
+Headless: the guided platform IVP_plate_forme1 takes Ed down (button YAS_InterrupteurDebut1), on through a lightning
+gate and up to the jaw JFR_Machoire_corridor, which starts its open / shut cycle (B0) once he stands on the platform; the
+second button YAS_interrupteurDebut2 opens it for good (states 3, 7, 6) and sends the platform on (B3 -> B4). Two port
+faults, both fixed:
+- **The platform never knew Ed was on it** (its B2 / B3 wait for `InPersoContext(Ed, StandingOnPerso) == Me`): on its
+  deck the only sphere of his that touches is a body sphere (collide flag 2, zone type 4), and MEC_004bd689 mounts a
+  rider by his feet (zone type 1 or 2). The exe takes every contact of a move (up to 5) where the port takes the
+  earliest only. **Port:** a body contact on a carrier's top (within the ground slope) rides too (tc_mec_walk.c
+  `respond_perso`). Before, in the user's runs it moved only from where it stood (B1, started by the button).
+- **The jaw's teeth killed him wide open:** its own ZDE zone is active in no state; the deadly box (type 0x4) is part
+  geometry (FUN_0041fd00's second path), which the export posed once, at frame 0 of the initial animation (the jaw
+  shut), and the core kept live in every state. **Now** each part zone is exported in its object's axes with its object
+  (ai.py `part_zones`, ZDES's zone word: 1 + the object), and the cast poses it each tick where the channel showing that
+  object is, and not at all while none does (tc_cast.c `pose_part_zones`, tc_ai_perso.part_pose / part_shown). Checked:
+  the probe's ride with both buttons pressed: Ed passes the open jaw at 4 of 5 points (the lightning's hit), where he
+  died before.
+- **Read, not changed:** the platform's dsg5 is level-saved (0x800): an earlier visit's ride leaves it at its arrival
+  (its B0 puts it there when dsg5 is 1). The exe writes `<level>.sav` on every level change (GAM_Engine_0040f200 ->
+  GAM_00421500, unless DAT_004ec728 is 1 or 2: a demo tape playing or recording) and reads it as the next level loads
+  (GAM_Initeng_0040de70 -> GAM_004219e0). So the original keeps it too.
+
 ## The chameleons (2026-11-18; **read** unless marked)
 The user's report: "the tomatoes and beans, Ed currently can't interact with them". Some of sud0's tomatoes are the
 **chameleon disguise**, an Ed behaviour the port never had: with power 512, Action at a generator turns Ed into a
@@ -1197,6 +1219,15 @@ not in the recordings' hash. The inventory is a stub. Since 2026-11-15 (the user
 starts with every power, Totalski too (until then a run starting at retail Totalski was a new game whatever opened it);
 the main menu's NEW GAME brings a new game's progress as its own carry (`tc_save_start_new_game`, recorded with the
 run), so the game's flow and Tonic Viewer's are apart.
+**The game's own story (2026-11-21, the user: "can we get rid of the show persos in their final animation rule?";
+asked which start the level select should have, they chose to keep its stand-ins).** A new game sets
+`tc_ai_globals.real_story`, and the carry takes it through portals, reloads and saved games (`tc_game_carry.real_story`,
+the last byte of a save's CARY; older saves end before it and play as before). With it the removal guard is off
+(DeactivatePerso and RemovePerso take a perso out as in the exe, wherever Ed is) and the export's PORT_FREEZE is the
+RemovePerso it replaced (tc_ai.c `remove_perso`). Without it (the level select, every power on) nothing changes. Seen
+headless (`probe -n sud0`): sud0's thermometer HEG_PiqueArgentTomate is inactive, hidden until the tomato drops it, where
+the level select draws it frozen; HEG_SuzieTotalski thinks instead of standing as a prop. Not done: the gate sectors
+(level.py `GATES_OPEN`) are still left out of the export for both, as their opening scripts are not seen working.
 
 **Odd in the data (2026-11-11, from the survey below):** LeCanyon's YAS_GestionDuChrono and NBD_TransRetry call
 IncSaveValue(33), past the 31 values the port keeps (it ignores the call; FUNC 93 gives -1 out of range, as read). What the

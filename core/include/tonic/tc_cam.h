@@ -149,6 +149,24 @@ tc_mat4 tc_camera_view_projection(const tc_camera *c, float aspect);
 #define TC_CAM_PITCH_LIMIT 1.5f     /* rad up or down: the view (free-fly too) */
 #define TC_CAM_RISE_MIN -0.8f       /* the player's height change, rad of elevation: the camera as low as 0.45 - 0.8 */
 #define TC_CAM_RISE_MAX 0.85f       /* (looking up at Ed) .. as high as 0.45 + 0.85 (1.3 rad, looking down on him) */
+/* Port (2026-11-21; the user: "the camera still clips at certain points"): a wall right behind Ed (the line from his
+ * head to the rig blocked within TC_CAM_CLIMB_NEAR) took the eye into his head until the watchdog swung round. The
+ * camera climbs instead: the first elevation TC_CAM_CLIMB_STEP above another whose line is clear that far, up to
+ * TC_CAM_CLIMB_MAX, eased in; back down once the follow's own line is clear by TC_CAM_CLIMB_MARGIN more. A step down
+ * is tried with each step up (a low ceiling right above him: open only along the passage), as far as TC_CAM_CLIMB_MIN. */
+#define TC_CAM_CLIMB_NEAR 1.6f
+#define TC_CAM_CLIMB_MARGIN 0.4f
+#define TC_CAM_CLIMB_STEP 0.2f
+#define TC_CAM_CLIMB_MAX 1.35f
+#define TC_CAM_CLIMB_MIN -0.35f     /* ... and down as far as this (a low ceiling at his head: along the passage) */
+#define TC_CAM_CLIMB_TIME 0.25f     /* s, the climb easing in ... */
+#define TC_CAM_CLIMB_RELEASE 0.8f   /* ... and back down */
+/* Port (2026-11-21): with the eye in Ed (TC_CAM_HIDE_DISTANCE) the way out is quicker: the watchdog's swing at this
+ * time instead of TC_CAM_SWING_TIME, and the eye easing back out from a wall at TC_CAM_RELEASE_OUT instead of
+ * TC_CAM_RELEASE_TIME, until it is out of him (a 1.5 rad swing took 1.6 s, the eye stayed in him 0.6 s after). */
+#define TC_CAM_SWING_FAST 0.15f    /* (camcheck: no swing step over 0.1 rad a frame) */
+#define TC_CAM_URGENT_WATCH 0.1f    /* s between the watchdog's looks while the eye is in Ed and nothing was found */
+#define TC_CAM_RELEASE_OUT 0.12f
 
 typedef struct tc_cam {
     float since_look;     /* seconds since the player last turned it (tc_cam_look) */
@@ -185,6 +203,10 @@ typedef struct tc_cam {
     float turn_rate;      /* how fast the orbit turned last frame (rad/s): a swing starts from it, no jolt */
     float swing_rest;     /* seconds before the watchdog may swing again (TC_CAM_SWING_REST) */
     float chase_rate;     /* the chase's turning speed (rad/s, tc_cam_target.chase): critically damped, from 0 */
+    float climb;          /* port: the elevation climbed over a wall right behind Ed, or down under a low ceiling (rad,
+                             TC_CAM_CLIMB_*), eased */
+    bool swing_fast;      /* the swing began with the eye in Ed: TC_CAM_SWING_FAST */
+    float swing_climb;    /* the climb its spot needs (the search tries turns and climbs together), held while it swings */
 } tc_cam;
 
 /* What else stands in the camera's view, beside the level's collision: the share (0..1) of the segment from -> to that

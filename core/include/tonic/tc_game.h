@@ -82,6 +82,9 @@ typedef struct tc_game_carry {
      * left his blink (and its invulnerability) on for as long as the last level had run: cavedoc's opening showed him
      * see-through to XYZ. Kept at the end (a recording's older carry reads as 0). */
     uint32_t clock_ms;
+    /* The game's own story (tc_ai_globals.real_story), with the progress: a new game's, and so its saved games' and the
+     * levels its portals lead to. 0: the port's stand-ins (a level opened from the level select). */
+    uint8_t real_story;
 } tc_game_carry;
 
 /* Where the game is between levels and screen transitions (docs/PORTALS.md): playing, covering the screen, covered,

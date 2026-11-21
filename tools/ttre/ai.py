@@ -660,8 +660,9 @@ def zde_prims(d, g):
 def zde_block(d, perso, n_states):
     """A perso's ZDE zones (collide set +4, the exe's list 2) and which are active per state (activation list +0x14:
     {.., +0xC zone entries {.., +0xC zone index}, +0x10 state}): u16 n_zones, u16 n_states, n_zones x { u16 n_prims,
-    u16 0, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3], u16 type,
-    u16 0 } }, n_states x u32 mask of its active zones (zone k = bit k; the scripts' zone N is k = N - 1). At most 32
+    u16 part, n_prims x { u32 kind (7 sphere: a centre, b.x radius; 8 box: a min, b max), f32 a[3], f32 b[3], u16 type,
+    u16 0 } }, n_states x u32 mask of its active zones (zone k = bit k; the scripts' zone N is k = N - 1). part: 0 its own
+    zone (in its axes), else 1 + the object-list index of a part zone (part_zones: in that object's axes). At most 32
     zones (Ed has 18). Core: tc_level.h tc_zde_set."""
     lv, un = d.lv, d.un
     cs = lv.ptr(perso, 0x14) if perso and not d.se else None  # the Special Edition's collide sets: not read (no zones)
@@ -682,7 +683,7 @@ def zde_block(d, perso, n_states):
         a = lv.ptr(a)
     parts = part_zones(d, perso)[:32 - len(zones)] if cs else []
     out = struct.pack('<HH', len(zones) + len(parts), n_states)
-    for z, flag in [(z, 0) for z in zones] + [(z, 1) for z in parts]:
+    for z, flag in [(z, 0) for z in zones] + [(z, 1 + o) for o, z in parts]:
         out += struct.pack('<HH', len(z), flag) + b''.join(struct.pack('<I3f3fHH', k, *x, *y, t, 0) for k, x, y, t in z)
     return out + b''.join(struct.pack('<I', m) for m in active)
 
@@ -693,22 +694,22 @@ def part_zones(d, loc):
     SuperObject of type 0xB / 0x14 (its channels' objects), the physical object's collide set (+4) -> +8 (FUN_00431e20;
     the ZDR the sweeps read is +0xC), the element whose collide material passes the mask (FUN_0041f060), tested at the
     child's matrix. cavedoc's toast (JET_ToastMortelle) burns Ed this way: its object 0 holds a 2.5 box of material
-    0x80. Port: the objects the channels show at frame 0 of the initial animation, posed there (object -> perso,
-    the object-list scale applied; a turned box by its bounds), as zones flagged 1 in zde_block: the core lets them
-    meet only as the other perso's (tc_ai.c zde_meets). Spheres and boxes only (as zde_prims)."""
+    0x80. Returns [(object-list index, prims)]: every object of the perso with such geometry, in the object's own axes
+    (its object-list scale applied; a turned box by its bounds). The core poses each where the channel showing the
+    object is, and not at all while none shows it (2026-11-21: until then they were posed once, at frame 0 of the
+    initial animation, so carota's corridor jaw JFR_Machoire_corridor killed Ed passing it wide open). Spheres and
+    boxes only (as zde_prims)."""
     p = next((x for x in d.persos() + d.spawnables() if x.loc == loc), None)
     if not p or not p.anim or d.se:
         return []
     out = []
-    for o, m in p.anim.pose(0):
-        po = p.physical.get(o) if o is not None else None
+    for o in sorted(p.physical):
+        po = p.physical.get(o)
         cs = d.lv.ptr(po, 4) if po else None
         g = d.lv.ptr(cs, 8) if cs else None
-        if not g:
+        if not g or o not in p.objects:
             continue
-        sc = p.objects[o][1]
-        from .level import mat_mul
-        mm = mat_mul(m, sc)
+        mm = p.objects[o][1]
 
         def at(v):
             return tuple(mm[4 * i] * v[0] + mm[4 * i + 1] * v[1] + mm[4 * i + 2] * v[2] + mm[4 * i + 3] for i in range(3))
@@ -721,7 +722,7 @@ def part_zones(d, loc):
                 cs8 = [at((a[0] if i & 1 else b[0], a[1] if i & 2 else b[1], a[2] if i & 4 else b[2])) for i in range(8)]
                 prims.append((8, tuple(min(c[j] for c in cs8) for j in range(3)), tuple(max(c[j] for c in cs8) for j in range(3)), t))
         if prims:
-            out.append(prims)
+            out.append((o, prims))
     return out
 
 

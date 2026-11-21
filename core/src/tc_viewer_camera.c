@@ -53,61 +53,106 @@ void tcv_mesh_spheres(tc_viewer *v) {
         }
         s[3] = sqrtf(r);
     }
-    /* the parts of the cast's actors without collision of their own */
-    if ((v->mesh_ghost = (uint8_t *)tc_calloc(v->mesh_count ? v->mesh_count : 1, 1)) != NULL && v->game && v->game->has_cast) {
+    /* which perso each part belongs to (its index + 1; 0: not a perso's): the sight test takes a perso's parts as one */
+    if ((v->mesh_perso = (uint16_t *)tc_calloc(v->mesh_count ? v->mesh_count : 1, sizeof(uint16_t))) != NULL) {
         uint32_t first = v->perso_first;
-        for (i = 0; i < v->level->perso_count; first += v->level->persos[i].part_count, i++) {
-            const tc_cast_actor *a = tc_cast_actor_of(&v->game->cast, i);
-            for (k = 0; a && !a->obstacle && k < v->level->persos[i].part_count && first + k < v->mesh_count; k++)
-                v->mesh_ghost[first + k] = 1;
-        }
+        for (i = 0; i < v->level->perso_count && i < 0xFFFFu; first += v->level->persos[i].part_count, i++)
+            for (k = 0; k < v->level->persos[i].part_count && first + k < v->mesh_count; k++)
+                v->mesh_perso[first + k] = (uint16_t)(i + 1);
     }
 }
 
-#define SIGHT_FAR 30.0f      /* how long the rays are that count crossings (in or out of the persos) */
+#define SIGHT_FAR 30.0f      /* how long the rays are that find where a perso ends (Ed inside it, or beside it) */
 
-#define SIGHT_CROSSINGS 64
+#define SIGHT_SPANS 32       /* persos on one ray, at most (more: the nearest are not sure to be among them) */
 
 #define SIGHT_ROOM 0.85f     /* a gap between two solids the eye fits in: twice the camera's radius and a little */
 
-/* The drawn persos' crossings of the ray from + d x t, t in 0..1: up to cap of them into ts (unordered), the count (of
- * all of them) returned. Persos only (not Ed, statics, pieces), and nothing see-through. ghosts: those of the cast's
- * actors Ed does not collide with (tc_viewer.mesh_ghost), else those of all the others. */
-static uint32_t perso_crossings(const tc_viewer *v, bool ghosts, tc_vec3 from, tc_vec3 d, float *ts, uint32_t cap) {
+/* Port (2026-11-21, docs/CAMERA.md "Persos at Ed"): the eye stopped in front of a perso this near Ed's head (the
+ * camera's radius in) would be in Ed (TC_CAM_HIDE_DISTANCE): the camera went into his head and the watchdog spun round
+ * whenever he talked to someone, walked into a perso without collision or stood beside a pickup. Such a perso is passed
+ * instead (the eye goes beyond it), and the eye is never brought in nearer than this for one. */
+#define SIGHT_PASS 1.2f
+
+/* Whether a draw is one the camera's perso tests see: a perso's part (not Ed, statics, pieces), nothing see-through
+ * (sprites, water, blended ones: smoke, glass), not one they are told to leave out. */
+static bool sight_draw(const tc_viewer *v, const tc_view_draw *dr) {
+    if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) return false;
+    if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) return false;
+    if (v->game && tcx_sight_skips(v->game->custom, dr->mesh)) return false;
+    return !(dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi);
+}
+
+/* A drawn part's bounding sphere in the world: centre, radius. */
+static float draw_sphere(const tc_viewer *v, const tc_view_draw *dr, tc_vec3 *centre) {
+    const float *s = v->mesh_sphere + 4 * dr->mesh;
+    float scale = fmaxf(tc_v3_length(tc_v3(dr->model.m[0], dr->model.m[1], dr->model.m[2])),
+                        fmaxf(tc_v3_length(tc_v3(dr->model.m[4], dr->model.m[5], dr->model.m[6])),
+                              tc_v3_length(tc_v3(dr->model.m[8], dr->model.m[9], dr->model.m[10]))));
+    *centre = model_point(&dr->model, s);
+    return s[3] * scale;
+}
+
+/* Where one drawn perso meets a ray: its first and last crossing (shares of the ray) and how many there are. A perso's
+ * parts are open shells that close together, so they are counted as one. */
+typedef struct sight_span { uint32_t perso, count; float first, last; } sight_span;
+
+/* The span of `perso` among the *n in spans: a new one while there is room (*n grows), else NULL. */
+static sight_span *span_of(sight_span *spans, uint32_t *n, uint32_t cap, uint32_t perso, float t) {
+    uint32_t j;
+    for (j = 0; j < *n; j++)
+        if (spans[j].perso == perso) return &spans[j];
+    if (*n == cap) return NULL;
+    spans[*n].perso = perso;
+    spans[*n].count = 0;
+    spans[*n].first = spans[*n].last = t;
+    return &spans[(*n)++];
+}
+
+/* The drawn persos' crossings of the ray from + d x t, t in 0..1, one span per perso (at most cap; only: that perso
+ * alone, its index + 1, or 0 for all). Returns the spans filled. */
+static uint32_t perso_spans(const tc_viewer *v, tc_vec3 from, tc_vec3 d, uint32_t only, sight_span *spans, uint32_t cap) {
     float len2 = tc_v3_dot(d, d);
     uint32_t i, k, n = 0;
     for (i = 0; i < v->draw_count; i++) {
         const tc_view_draw *dr = &v->draws[i];
         const tc_mesh *m;
-        const float *s;
+        sight_span *sp;
+        uint32_t perso;
         tc_vec3 c, rel;
-        float scale, r, along;
-        if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
-        if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
-        if ((v->mesh_ghost && v->mesh_ghost[dr->mesh]) != ghosts) continue;
-        if (v->game && tcx_sight_skips(v->game->custom, dr->mesh)) continue;
-        if (dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi) continue;
-        m = v->meshes[dr->mesh];
-        s = v->mesh_sphere + 4 * dr->mesh;
-        c = model_point(&dr->model, s);
-        scale = fmaxf(tc_v3_length(tc_v3(dr->model.m[0], dr->model.m[1], dr->model.m[2])),
-                      fmaxf(tc_v3_length(tc_v3(dr->model.m[4], dr->model.m[5], dr->model.m[6])),
-                            tc_v3_length(tc_v3(dr->model.m[8], dr->model.m[9], dr->model.m[10]))));
-        r = s[3] * scale;
+        float r, along;
+        if (!sight_draw(v, dr) || !(perso = v->mesh_perso[dr->mesh]) || (only && perso != only)) continue;
+        r = draw_sphere(v, dr, &c);
         rel = tc_v3_sub(c, from);
         along = fmaxf(0, fminf(1, tc_v3_dot(rel, d) / len2));
         if (tc_v3_length(tc_v3_sub(rel, tc_v3_scale(d, along))) > r) continue; /* the ray misses its sphere */
+        m = v->meshes[dr->mesh];
         TC_PROF_COUNT(TC_PC_SIGHT_TRIS, dr->index_count / 3);
         for (k = dr->first_index; k + 2 < dr->first_index + dr->index_count && k + 2 < m->index_count; k += 3) {
             float t = segment_tri_t(from, d, model_point(&dr->model, m->vertices[m->indices[k]].position),
                                     model_point(&dr->model, m->vertices[m->indices[k + 1]].position),
                                     model_point(&dr->model, m->vertices[m->indices[k + 2]].position));
-            if (t > 1) continue;
-            if (n < cap) ts[n] = t;
-            n++;
+            if (t > 1 || !(sp = span_of(spans, &n, cap, perso, t))) continue;
+            sp->count++;
+            sp->first = fminf(sp->first, t);
+            sp->last = fmaxf(sp->last, t);
         }
     }
     return n;
+}
+
+/* Whether `from` is inside the perso of span s (crossed an odd number of times along the ray): two more rays from it must
+ * agree, as a sheet is crossed once too. */
+static bool sight_inside(const tc_viewer *v, tc_vec3 from, const sight_span *s) {
+    static const float other[2][3] = {{0.9f, -0.37f, 0.22f}, {-0.41f, 0.88f, -0.24f}};
+    int r;
+    if (!(s->count & 1)) return false;
+    for (r = 0; r < 2; r++) {
+        sight_span o;
+        tc_vec3 d = tc_v3(other[r][0] * SIGHT_FAR, other[r][1] * SIGHT_FAR, other[r][2] * SIGHT_FAR);
+        if (perso_spans(v, from, d, s->perso, &o, 1) == 0 || !(o.count & 1)) return false;
+    }
+    return true;
 }
 
 /* How near the drawn persos' surfaces come to point p (Ed's excluded), up to `within`: the camera's near plane needs its
@@ -118,20 +163,12 @@ static float perso_clearance(const tc_viewer *v, tc_vec3 p, float within) {
     for (i = 0; i < v->draw_count; i++) {
         const tc_view_draw *dr = &v->draws[i];
         const tc_mesh *m;
-        const float *s;
         tc_vec3 c;
-        float scale;
-        if (dr->mesh < v->perso_first || dr->mesh >= v->ed_first) continue;
-        if (dr->flags & (TC_FLAG_BILLBOARD | TC_FLAG_WATER | TC_FLAG_TRANSPARENT)) continue;
-        if (v->game && tcx_sight_skips(v->game->custom, dr->mesh)) continue;
-        if (dr->mesh >= v->sight_skip_lo && dr->mesh < v->sight_skip_hi) continue;
+        float r;
+        if (!sight_draw(v, dr)) continue;
+        r = draw_sphere(v, dr, &c);
+        if (tc_v3_distance(c, p) > r + best) continue;
         m = v->meshes[dr->mesh];
-        s = v->mesh_sphere + 4 * dr->mesh;
-        c = model_point(&dr->model, s);
-        scale = fmaxf(tc_v3_length(tc_v3(dr->model.m[0], dr->model.m[1], dr->model.m[2])),
-                      fmaxf(tc_v3_length(tc_v3(dr->model.m[4], dr->model.m[5], dr->model.m[6])),
-                            tc_v3_length(tc_v3(dr->model.m[8], dr->model.m[9], dr->model.m[10]))));
-        if (tc_v3_distance(c, p) > s[3] * scale + best) continue;
         for (k = dr->first_index; k + 2 < dr->first_index + dr->index_count && k + 2 < m->index_count; k += 3) {
             tc_vec3 a = model_point(&dr->model, m->vertices[m->indices[k]].position);
             tc_vec3 b = model_point(&dr->model, m->vertices[m->indices[k + 1]].position);
@@ -145,11 +182,14 @@ static float perso_clearance(const tc_viewer *v, tc_vec3 p, float within) {
 
 #define SIGHT_STEP 0.1f      /* how far in at a time the eye comes while a perso's surface is within its radius */
 
-/* tc_cam_sight_fn over the persos as drawn last frame: the nearest crossing, as the exe's ray. Port, for the cast's
- * actors Ed does not collide with (they can stand in him, and the eye was put inside them): the crossings of a long ray,
- * in order, are where it goes into and out of them (a perso's parts are open shells that close together, so they are
- * counted as one). An odd count says `from` is inside one, which two more rays from it must agree with (a sheet crosses
- * once too). Then *inside is where that solid ends, and the share returned is up to the next thing after it. */
+/* Whether the eye at p has its radius clear of the drawn persos (its near plane in none of them). */
+static bool eye_clear(const tc_viewer *v, tc_vec3 p) { return perso_clearance(v, p, TC_CAM_RADIUS) >= TC_CAM_RADIUS * 0.9f; }
+
+/* tc_cam_sight_fn over the persos as drawn last frame: the nearest one met, as the exe's ray (FUN_004a3920), but each
+ * perso as a whole along a long ray (where it starts and ends). Port (docs/CAMERA.md "Persos at Ed"): one at Ed
+ * (SIGHT_PASS), round his head (inside it: a cast actor he does not collide with, which he can walk into), or one the eye
+ * cannot sit clear of before SIGHT_PASS, is passed: *inside where the last of those ends, when the eye has room beyond
+ * it before the next; without the room they are left out (Ed in them hides; the eye does not go into him). */
 static float camera_sight(void *user, tc_vec3 from, tc_vec3 to, float *inside) {
     double prof = TC_PROF_BEGIN();
     float r = camera_sight_test((tc_viewer *)user, from, to, inside);
@@ -158,48 +198,49 @@ static float camera_sight(void *user, tc_vec3 from, tc_vec3 to, float *inside) {
 }
 
 static float camera_sight_test(tc_viewer *v, tc_vec3 from, tc_vec3 to, float *inside) {
-    static const float other[2][3] = {{0.9f, -0.37f, 0.22f}, {-0.41f, 0.88f, -0.24f}};
-    tc_vec3 d = tc_v3_sub(to, from);
-    float len2 = tc_v3_dot(d, d), len, far_len, ts[SIGHT_CROSSINGS], skip[1], end = 0, block = INFINITY, solid = INFINITY;
-    uint32_t n, k, j;
+    tc_vec3 d = tc_v3_sub(to, from), dir;
+    float len2 = tc_v3_dot(d, d), len, far_len;
+    sight_span spans[SIGHT_SPANS];
+    bool passed[SIGHT_SPANS];
+    uint32_t n, k;
     *inside = 0;
     if (len2 < 1e-10f || !v->draws) return 1;
     tcv_mesh_spheres(v);
-    if (!v->mesh_sphere) return 1;
+    if (!v->mesh_sphere || !v->mesh_perso) return 1;
     len = sqrtf(len2);
-    n = perso_crossings(v, false, from, d, ts, SIGHT_CROSSINGS);
-    for (k = 0; k < n && k < SIGHT_CROSSINGS; k++) solid = fminf(solid, ts[k] * len);
+    dir = tc_v3_scale(d, 1 / len);
     far_len = fmaxf(len, SIGHT_FAR);
-    n = perso_crossings(v, true, from, tc_v3_scale(d, far_len / len), ts, SIGHT_CROSSINGS);
-    if (n > SIGHT_CROSSINGS) n = SIGHT_CROSSINGS - ((n ^ SIGHT_CROSSINGS) & 1); /* too many: the nearest, the parity kept */
-    for (k = 1; k < n; k++) { /* in order */
-        float t = ts[k];
-        for (j = k; j > 0 && ts[j - 1] > t; j--) ts[j] = ts[j - 1];
-        ts[j] = t;
+    n = perso_spans(v, from, tc_v3_scale(d, far_len / len), 0, spans, SIGHT_SPANS);
+    for (k = 0; k < n; k++) {
+        float first = spans[k].first * far_len;
+        passed[k] = first < len && (first - TC_CAM_RADIUS < SIGHT_PASS || sight_inside(v, from, &spans[k]));
     }
-    for (k = 0; k < n; k++) ts[k] *= far_len;
-    k = 0;
-    if ((n & 1) &&
-        (perso_crossings(v, true, from, tc_v3(other[0][0] * SIGHT_FAR, other[0][1] * SIGHT_FAR, other[0][2] * SIGHT_FAR), skip, 0) & 1) &&
-        (perso_crossings(v, true, from, tc_v3(other[1][0] * SIGHT_FAR, other[1][1] * SIGHT_FAR, other[1][2] * SIGHT_FAR), skip, 0) & 1)) {
-        /* inside: out at ts[0], then on through whatever follows too closely for the eye to fit between */
-        end = ts[0];
-        for (k = 1; k + 1 < n && ts[k] < end + SIGHT_ROOM; k += 2) end = ts[k + 1];
-        if (end > len || solid < end + SIGHT_ROOM) end = 0, k = 0; /* no room beyond it within reach: as the exe's ray */
-    }
-    if (k < n) block = ts[k];
-    *inside = end;
-    block = fminf(block, solid);
-    { /* port (docs/BUGS.md "Camera Inside Persos"): where the eye would be (its radius short of what the ray met), a
-       * surface beside it within the radius: in towards the pivot until clear (a slanted shoulder, a sleeve) */
-        float at = fminf(block, len), dist = len > 0 ? at : 0;
-        tc_vec3 dir = tc_v3_scale(d, 1 / len);
-        while (dist - TC_CAM_RADIUS > end + SIGHT_STEP &&
-               perso_clearance(v, tc_v3_add(from, tc_v3_scale(dir, dist - TC_CAM_RADIUS)), TC_CAM_RADIUS) < TC_CAM_RADIUS * 0.9f)
+    for (;;) { /* each round passes one more perso, at most */
+        float block = INFINITY, end = 0, at, dist, low;
+        int blocker = -1;
+        for (k = 0; k < n; k++) {
+            float first = spans[k].first * far_len;
+            if (first >= len) continue; /* beyond the eye */
+            if (passed[k]) end = fmaxf(end, spans[k].last * far_len);
+            else if (first < block) block = first, blocker = (int)k;
+        }
+        if (end > 0 && end + SIGHT_ROOM > fminf(block, len)) end = 0; /* no room beyond them within reach: left out */
+        /* where the eye would be (its radius short of what the ray met), a surface beside it within the radius: in
+         * towards the pivot until clear (a slanted shoulder, a sleeve; docs/BUGS.md "Camera Inside Persos"), never nearer
+         * than a passed perso's end or SIGHT_PASS */
+        at = fminf(block, len), low = fmaxf(end + SIGHT_STEP, SIGHT_PASS);
+        for (dist = at; dist - TC_CAM_RADIUS > low && !eye_clear(v, tc_v3_add(from, tc_v3_scale(dir, dist - TC_CAM_RADIUS)));)
             dist -= SIGHT_STEP;
-        if (dist < at) block = dist;
+        if (dist - TC_CAM_RADIUS <= low) { /* nowhere clear before the floor */
+            if (blocker >= 0) {
+                passed[blocker] = true; /* the perso in the way is as near as one at Ed: passed too */
+                continue;
+            }
+            dist = at; /* only persos beside the line: the eye where it was, not in towards Ed */
+        }
+        *inside = end;
+        return dist < len ? dist / len : 1;
     }
-    return block < len ? block / len : 1;
 }
 
 /* The director's shot (tc_viewer.director): camera mode 6 on a target, from the cast's scripts (tc_ai_globals). fresh:
@@ -328,7 +369,7 @@ static float shot_clearance(tc_viewer *v, tc_vec3 from, tc_vec3 dir, float len) 
         if (v->game->world.obstacles && (ob = tc_obstacles_find(v->game->world.obstacles, (uint16_t)v->shot.look_perso)))
             live = ob->live, ob->live = false;
     }
-    v->game->world.solid = NULL; /* every surface (as the follow's) */
+    v->game->world.solid = tc_sectors_camera_solid(&v->level->sectors); /* the camera's (as the follow's) */
     reach = tc_cam_clearance(&t, from, dir, len);
     v->game->world.solid = solid;
     if (ob) ob->live = live;
@@ -758,7 +799,7 @@ static void blend_begin(tc_viewer *v, const tc_camera *from) {
     if (dist > TC_VIEW_BLEND_FAR || !(dist == dist) || turn > TC_VIEW_BLEND_TURN) return;
     if (dist > 1e-3f) {
         const uint8_t *solid = v->game->world.solid;
-        v->game->world.solid = NULL; /* every surface, as the camera's own tests */
+        v->game->world.solid = tc_sectors_camera_solid(&v->level->sectors); /* as the camera's own tests */
         clear = !tc_collision_raycast(&v->game->world, from->position, tc_v3_scale(d, 1 / dist), dist, &hit);
         v->game->world.solid = solid;
     }
@@ -798,8 +839,8 @@ static void blend_apply(tc_viewer *v, float dt) {
 void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
     tc_game *p = v->game;
     double prof = TC_PROF_BEGIN();
-    /* The play camera (tc_cam.h): round Ed as drawn, turned by the player; against every surface of the level (no sector
-     * row: the camera must not see through anything). */
+    /* The play camera (tc_cam.h): round Ed as drawn, turned by the player; against every surface of the level that is
+     * solid for anyone (no sector row of its own: the camera must not see through anything Ed could not walk through). */
     {
         tc_cam_target t;
         const uint8_t *solid = p->world.solid;
@@ -831,7 +872,9 @@ void tcv_update_camera(tc_viewer *v, float dt, bool fresh) {
         tcv_camera_collide_set(v, &t);
         t.sight = camera_sight; /* the persos as drawn last frame */
         t.sight_user = v;
-        p->world.solid = NULL;
+        /* every surface solid for anyone (tc_sectors_camera_solid): not the skies and foliage nothing collides with
+         * (2026-11-21: Ed in a bush of sud0's sctfeuille3, the eye sat on his head and the watchdog spun round) */
+        p->world.solid = tc_sectors_camera_solid(&v->level->sectors);
         tcx_camera_obstacles(p->custom, false); /* custom gameplay's cars don't stop the camera */
         t.shot_distance = t.shot_elevation = t.shot_yaw = 0;
         t.shot_axis = false;

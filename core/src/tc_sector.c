@@ -136,6 +136,8 @@ const uint8_t *tc_sectors_solid(const tc_sectors *s, uint16_t sector) {
     return s && s->solid && sector < s->count ? s->solid + (size_t)sector * s->count : NULL;
 }
 
+const uint8_t *tc_sectors_camera_solid(const tc_sectors *s) { return s && s->count ? s->camera_solid : NULL; }
+
 bool tc_sectors_active(const tc_sectors *s, uint16_t main, uint16_t sector) {
     uint16_t k;
     if (!s || main >= s->count || sector >= s->count || main == sector) return true;
@@ -205,6 +207,7 @@ void tc_sectors_free(tc_sectors *s) {
     tc_free(s->perso_sector);
     tc_free(s->collision_sector);
     tc_free(s->solid);
+    tc_free(s->camera_solid);
     memset(s, 0, sizeof(*s));
 }
 
@@ -362,6 +365,14 @@ tc_result tc_sectors_read(tc_sectors *s, reader *r, const tc_mesh *meshes, uint3
             row[i] = 1;
             for (k = 0; k < s->sectors[i].collide_count; k++)
                 if (s->sectors[i].collide[k] < s->count) row[s->sectors[i].collide[k]] = 1;
+        }
+        /* solid for anyone: a perso's sector is never a virtual one (tc_sectors_find), so a virtual sector is solid only
+         * when listed */
+        if (!r->error && !(s->camera_solid = (uint8_t *)tc_calloc(s->count, 1))) r->error = TC_ERR_OUT_OF_MEMORY;
+        for (i = 0; s->camera_solid && i < s->count; i++) {
+            if (!s->sectors[i].is_virtual) s->camera_solid[i] = 1;
+            for (k = 0; k < s->sectors[i].collide_count; k++)
+                if (s->sectors[i].collide[k] < s->count) s->camera_solid[s->sectors[i].collide[k]] = 1;
         }
     }
     if (r->error) return r->error;

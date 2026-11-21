@@ -581,6 +581,13 @@ static void keep_other(collide_ctx *x, const tc_mec_hit *h) {
  * classification (a step-up onto a carrier adds 0x30000). The exe hands MEC_RespondGround_004bb904 the steep flag the
  * other way round from MEC_Classify_004bc477 here (on a perso's ground the steep slope's softening applies, on its
  * steep slope not): kept as read. */
+/* Whether the contact is a mover's feet (zone type 1 or 2), as MEC_004bd689 asks before a perso carries it. */
+static bool on_feet(const tc_mec_hit *h) { return h->zone_type == 1 || h->zone_type == 2; }
+
+/* Port (2026-11-21): the exe takes every contact of a move (up to 5); the port the earliest only. Standing on carota's
+ * guided platform IVP_plate_forme1, Ed's body sphere (zone type 4, collide flag 2) is the only one on its deck, so the
+ * feet's contact the exe would also see never came and the platform never knew him on it (its B2 waits for
+ * StandingOnPerso): it stayed where it was. A body contact on the carrier's top (within the ground slope) rides too. */
 static uint32_t respond_perso(collide_ctx *x, const tc_mec_hit *h) {
     const tc_obstacle *ob = tc_obstacles_find(x->world->obstacles, h->obstacle);
     float c = fminf(fmaxf(tc_v3_dot(h->normal, UP), -1), 1), ground = card_f(x->card, 0x1C, 0.70710677f);
@@ -591,7 +598,7 @@ static uint32_t respond_perso(collide_ctx *x, const tc_mec_hit *h) {
         keep_other(x, h);
         return classify(x, h) | TC_MEC_ON_PERSO;
     }
-    if (ride && c >= card_f(x->card, 0x20, 0.5f) && (h->zone_type == 1 || h->zone_type == 2)) {
+    if (ride && c >= card_f(x->card, 0x20, 0.5f) && (on_feet(h) || (h->zone_type == 4 && c >= ground))) {
         respond_ground(x, h, c >= ground && x->card != NULL);
         bits = TC_MEC_ON_PERSO | (c < ground ? TC_AI_CONTACT_SLOPE : TC_AI_CONTACT_GROUND);
         keep_other(x, h);

@@ -116,6 +116,26 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     arrival); after the line the speakers' scripts play at their own pace and send Ed off to the scene's exit waypoint
     before the cover (docs/ENGINE.md "Walkable scenes"). viewcheck walks all six.
 
+* Camera Goes Haywire when Ed Clips through Something (the user, 2026-11-21, recording 2026-11-21_133144 with two
+  marks: "possibly the worst bug Open Tonic currently has"; also "free-cam when he's talking to other characters").
+  * **Fixed 2026-11-21 (Claude), headless; not seen in an app.** In sud0, Ed walked into a bush (sctfeuille3: a
+    virtual sector nothing collides with, so he walks through it, as in the exe). The camera tested every surface from
+    his head, so the eye sat on his head and the watchdog swung the view round. The camera now leaves out the sectors
+    nothing collides with (`tc_sectors_camera_solid`; docs/CAMERA.md "What the camera collides with"). The eye in the
+    bush, the camera turned round him: within 0.9 of his head in 243 of 421 samples before, 0 after. The recording
+    drifts on this build from 2.2 s (Ed's controls follow the camera), so it can't replay the later moments.
+  * **Left:** (1) its 9.79 s pull-in is a different cause: Ed stood inside HEG_SuzieTotalski, who has no collision, and
+    the sight test against the drawn persos put the eye on his head (fixed later the same day, below). (2) Special
+    Edition levels: unchanged (no virtual flag there). (3) Carota's sctrepair rooms: the camera can now rise through
+    their ceiling and look down into the room (one-sided, so it doesn't hide Ed); not seen on screen.
+  * **Persos at Ed: fixed 2026-11-21 (Claude), headless; not seen in an app.** The user's recording 2026-11-21_140656
+    ("the bug on both Suzie and the thermometer"; and the talking case): the sight test stopped the eye at the first
+    perso surface on its line, so a perso at Ed's head (one he talks to, walks into, or a pickup he stands at) put the
+    eye in his head. Now such a perso is passed (docs/CAMERA.md "Persos at Ed"). Measured: at the recording's two
+    spots, the eye in Ed 163 and 161 of 421 samples -> 0; beside seven sud0 characters 0 but Doc's cell (its walls).
+    **Left:** a wall or a solid perso (the bonus rock) right behind Ed still takes the eye into him (the camera's sweep:
+    no room there at all), until the watchdog swings round; the near plane in a perso in a wedge with no clear spot.
+
 * Camera Stuck in Walls after Moving it during Portal Transitions and Interactive Cutscenes (the user, 2026-11-18).
   * **Not done (Claude, 2026-11-18).** Seen in the code only: while a level loads the look input turns the view without
     the follow's update; nothing found that explains "stuck in the wall" without a recording. A recording with an F9

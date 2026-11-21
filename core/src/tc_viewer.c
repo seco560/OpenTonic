@@ -229,7 +229,7 @@ void tc_viewer_free(tc_viewer *v) {
     tc_free(v->surface_z0);
     tc_free(v->draws);
     tc_free(v->mesh_sphere);
-    tc_free(v->mesh_ghost);
+    tc_free(v->mesh_perso);
     tc_free(v->blended);
     tc_free(v->culled);
     tcv_occ_free(v);
