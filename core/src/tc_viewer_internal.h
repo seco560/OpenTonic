@@ -136,4 +136,8 @@ void tcv_tape_free(tc_viewer *v);
 /* tc_viewer_debug.c */
 void tcv_debug_frame(tc_viewer *v, float dt);
 
+/* tc_viewer_particles.c: the particles' ticks (after the frame's update), and their memory. */
+void tcv_update_particles(tc_viewer *v);
+void tcv_free_particles(tc_viewer *v);
+
 #endif

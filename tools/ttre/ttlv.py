@@ -49,6 +49,9 @@ Chunks, in file order (* = only when the level has one; every other chunk is req
         layout; retail only)
   WAYS* the level's waypoints and the persos' ways (ai.ways_chunk has the layout; retail only): script nodes of type 29
         and waypoint dsgvars (in the .ttlv's CAST and in the .ttai) hold their 1-based numbers.
+  PRTC* the particle sources the scripts set (PROC 214; ai.particles_chunk has the layout; retail only): script nodes
+        of type 37 (in the .ttlv's CAST and in the .ttai) hold their 0-based numbers. Totalski's snow, Land's rain,
+        marmite's spray, Ed's bubbles.
   CAST* the level persos whose own AI the core runs, their families' states and state animations (cast.py has the
         layout). Their PRSO entries hold a part for every object those animations show (channel 0xFFFF: not in the
         initial animation).
@@ -135,6 +138,7 @@ TRANSPARENT = 1 << 1  # TC_FLAG_TRANSPARENT: alpha blended (texture flag 0x8, se
 BILLBOARD = 1 << 2  # TC_FLAG_BILLBOARD: sprite quads, expanded towards the camera by the vertex shader
 WRAP_U = 1 << 4  # TC_FLAG_WRAP_U / _V: the texture repeats along u / v, else it is clamped (see tiling())
 WRAP_V = 1 << 5
+ONE_SIDED = 1 << 6  # TC_FLAG_ONE_SIDED: the material culls back faces (Material flag 0x400, raymap's backfaceCulling)
 # Empirical: the user compared against the original running in Wine and 0.25x matched.
 # The exe's formula (frame += dt_ms/1000 * state FrameRate @0x3B, FUN_00415fb0) gives 1x, so some
 # unit is still unexplained (open question in NOTES). Applied to persos only, not textures.
@@ -377,6 +381,8 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
             flags = ALPHA_TEST if t.flags & 0x12 else TRANSPARENT if t.flags & 0x8 else 0
         if t:
             flags |= tiling(t.name)
+        if mat and mat.flags & 0x400:  # back faces culled (2026-11-20; the sky, water, shadows, paintings are two-sided)
+            flags |= ONE_SIDED
         su, sv = (s * level.SCROLL_RATE for s in mat.scroll) if mat else (0, 0)
         frames = [(texture_id(t)[0], d / level.SCROLL_RATE / texture_time_scale(t)) for t, d in mat.frames] if mat else []
         return dict(surface=struct.pack('<iI2f2H', tid, flags, su, -sv, len(frames), 0)
@@ -525,6 +531,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
         with open(os.path.splitext(path)[0] + '_cast.txt', 'w', encoding='utf-8') as f:
             f.write(f'{len(cast_list)} persos run their AI; left out: {cast_skipped}\n' + '\n'.join(listing) + '\n')
     spch = data.speech().chunk() if persos else None
+    prtc = ai.particles_chunk(data, lambda t: texture_id(t)[0]) if persos and not data.se and ai.particle_sources(data) else None
     scnx = data.speech().exits_chunk() if spch else None
     fog = data.fog() or (0.0, 0.0, (0.0, 0.0, 0.0))
     texs = struct.pack('<I', len(tex_paths)) + b''.join(struct.pack('<H', len(tp.encode())) + tp.encode() for tp in tex_paths)
@@ -541,6 +548,7 @@ def write(data, path, tex_root='files/out/Textures', persos=True, ed_donor=None,
            ('PCOL', pcol) if pcol else None,
            ('PZDR', pzdr) if pzdr else None,
            ('WAYS', ai.ways_chunk(data)) if persos and not data.se else None,
+           ('PRTC', prtc) if prtc else None,
            ('SPCH', spch) if spch else None,
            ('SCNX', scnx) if scnx else None,
            ('EDIT', struct.pack('<I', 1)) if data.se else None,

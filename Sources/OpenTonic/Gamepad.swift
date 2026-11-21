@@ -51,7 +51,7 @@ struct PadPressReader {
     /// controls, R3 = play / free-fly, L2 = recentre the camera, the touchpad = mark this moment in the recording (F9),
     /// Cross = pause a playback, Triangle = the close-up camera (5); press: one of the face buttons went down. The debug
     /// menu is the keyboard's (F4). The HUD's auto-hide (D-pad right before) is the game menu's OPTIONS now.
-    enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, closeup, press, mark, pausePlayback }
+    enum Command { case levelSelect, controls, togglePlay, recenter, firstPerson, closeup, press, mark, pausePlayback, photo }
 
     private var pressed: [ObjectIdentifier: Bool] = [:]
     private var presses = PadPressReader()
@@ -59,7 +59,8 @@ struct PadPressReader {
 
     /// Applies the current controller to the viewer; returns the commands pressed since the last call. watching: a
     /// playback runs, whose inputs are the recording's: only the commands (Start goes back to the list).
-    func poll(_ v: UnsafeMutablePointer<tc_viewer>, dt: Float, watching: Bool = false) -> [Command] {
+    /// photo: photo mode is on, where Cross / A takes a photo (Command.photo) and holds no action.
+    func poll(_ v: UnsafeMutablePointer<tc_viewer>, dt: Float, watching: Bool = false, photo: Bool = false) -> [Command] {
         guard let pad = GCController.current?.extendedGamepad else { return [] }
         // Both sticks y up, as the core expects.
         tc_viewer_set_move_stick(v, pad.leftThumbstick.xAxis.value, pad.leftThumbstick.yAxis.value)
@@ -79,15 +80,21 @@ struct PadPressReader {
             (pad.buttonA, [TC_VA_JUMP]), (pad.buttonX, [TC_VA_ACTION]), (pad.buttonB, [TC_VA_SHOOT]),
             (pad.rightShoulder, [TC_VA_LATERAL, TC_VA_UP]), (pad.leftShoulder, [TC_VA_DOWN]),  // R1 also up, L1 down in free-fly
         ]
-        var anyDown = false, cross = false
+        var anyDown = false, cross = false, snap = false
         for (button, actions) in bindings {
             if let down = changed(button) {
+                if photo && button === pad.buttonA {  // photo mode: Cross takes a photo
+                    snap = snap || down
+                    if !down { tc_viewer_set_action(v, TC_VA_JUMP, false) }
+                    continue
+                }
                 for a in actions { tc_viewer_set_action(v, a, down) }
                 anyDown = anyDown || down
                 cross = cross || (down && button === pad.buttonA)
             }
         }
         var commands: [Command] = cross ? [.pausePlayback] : []
+        if snap { commands.append(.photo) }
         if presses.pressed(pad.buttonMenu) { commands.append(.levelSelect) }
         if let select = pad.buttonOptions, presses.pressed(select) { commands.append(.controls) }
         if let r3 = pad.rightThumbstickButton, changed(r3) == true { commands.append(.togglePlay) }

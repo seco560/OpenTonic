@@ -3,13 +3,16 @@
  * order, when the frame was drawn; and what came of it, so a later build can say where and how far it left the run: a
  * trail of Ed, the camera and the game's state about 30 times a second, the cast now and then, sounds, story values,
  * hashes of what the core hands a frontend. The player's marks (tc_recorder_mark) and the frontend's notes ride along.
+ * Each segment also holds everything its level starts from: the seed, the carry and the level-saved table (global, so
+ * a playback puts it back first: tc_replay_prepare), so a segment replays the same wherever and whenever it is run.
  *
  * A run is one file and one recorder: from a level opened from a menu, through the portals it goes on by, back to a menu.
  * The frontend makes a new recorder for each. A file is a header, then records, one segment per viewer (a portal builds a
  * new viewer). The
  * records are only ever appended and each frame's input goes out before the frame runs, so a crash leaves a file that
  * replays up to and into the crash. The core does no file I/O: the frontend's sink stores the bytes. The file holds
- * inputs and numbers, nothing of the game's data. Little-endian (every target is). */
+ * inputs and numbers, nothing of the game's data. Little-endian (every target is). The format is this build's: a file
+ * of another TC_REC_VERSION is refused, not converted (the game is in development; nothing keeps old runs). */
 #ifndef TONIC_TC_REC_H
 #define TONIC_TC_REC_H
 #include <stdbool.h>
@@ -21,7 +24,7 @@
 extern "C" {
 #endif
 
-#define TC_REC_VERSION 1u
+#define TC_REC_VERSION 2u
 #define TC_REC_EXTENSION "ttrec"
 #define TC_REC_SAMPLE_SECONDS (1.0f / 30) /* the trail, as the game's ticks */
 #define TC_REC_CAST_SECONDS 2.0f          /* the cast's states */
@@ -44,12 +47,12 @@ uint32_t tc_recorder_mark(tc_recorder *r, const char *text);
 
 /* tc_rec_sample.flags */
 enum {
-    TC_RS_PLAYING = 1 << 0, TC_RS_PAUSED = 1 << 1, /* 1 << 2: the autopilot, removed */ TC_RS_AI = 1 << 3, TC_RS_GROUNDED = 1 << 4,
-    TC_RS_DIRECTOR = 1 << 5, TC_RS_FIRST_PERSON = 1 << 6, TC_RS_CLOSEUP = 1 << 7, TC_RS_REFLEX = 1 << 8,
-    TC_RS_PICTURE = 1 << 9
+    TC_RS_PLAYING = 1 << 0, TC_RS_PAUSED = 1 << 1, TC_RS_AI = 1 << 2, TC_RS_GROUNDED = 1 << 3,
+    TC_RS_DIRECTOR = 1 << 4, TC_RS_FIRST_PERSON = 1 << 5, TC_RS_CLOSEUP = 1 << 6, TC_RS_REFLEX = 1 << 7,
+    TC_RS_PICTURE = 1 << 8
 };
 
-/* One point of the trail. Fields only ever get added at the end: a reader takes what the file has. */
+/* One point of the trail. */
 typedef struct tc_rec_sample {
     uint32_t frame;              /* frames of this segment run */
     uint32_t flags;              /* TC_RS_* */
@@ -94,8 +97,10 @@ typedef struct tc_replay_segment {
     char level[64];              /* as the frontend named it ("sud0") */
     uint32_t edition;            /* tc_level.edition */
     uint32_t seed;               /* tc_viewer_desc.seed */
-    bool has_carry;              /* arrived through a portal */
+    bool has_carry;              /* arrived through a portal (or a new or loaded game's carry) */
     tc_viewer_carry carry;
+    const uint8_t *saves;        /* the level-saved table it started from: save_count entries in the file (tc_replay_prepare) */
+    uint32_t save_count;
     char level_stamp[16], ai_stamp[16]; /* the converter's stamps: any exporter edit changes them */
     uint64_t level_hash, ai_hash;       /* the data itself, without the stamp and paths (tc_level.data_hash) */
     uint32_t frames, draws, marks;
@@ -145,6 +150,22 @@ typedef struct tc_replay_drift {
     bool carry_checked, carry_differs; /* the level change the run ended with, against the next segment's */
 } tc_replay_drift;
 
+/* A paused replay's camera turns round Ed: what it was, and what the camera tells the game, held for the resume. */
+typedef struct tc_replay_held_view {
+    bool inspecting;
+    tc_camera camera;
+    tc_cam cam;
+    tc_viewer_shot shot;         /* the scripted shot as it was (the player may turn its camera while paused) */
+    float orbit_distance;
+    bool director, director_released, ski_shot, looked;
+    uint32_t director_serial, sight_skip_lo, sight_skip_hi;
+    tc_vec3 director_eye;
+    float director_saved_fov, look_yaw_frame, look_rise_frame, game_menu_time;
+    bool has_scripts_eye, has_cam_now; /* the cast's: where its scripts see the camera, the follow's record (cam_now) */
+    tc_vec3 scripts_eye;
+    float cam_now[8];
+} tc_replay_held_view;
+
 typedef struct tc_replay {
     const uint8_t *data;         /* not owned: outlives the replay */
     size_t size;
@@ -152,8 +173,6 @@ typedef struct tc_replay {
     tc_replay_segment *segments;
     uint32_t segment_count;
     bool truncated;              /* the last record is cut short (the file ends mid-write) */
-    bool autopilot;              /* made with Ed's autopilot, since removed: its inputs came from code that is gone, so
-                                    it can't be replayed */
     bool closed;                 /* the last segment was closed */
     /* Running one segment (tc_replay_begin, tc_replay_step). */
     tc_viewer *viewer;
@@ -165,12 +184,14 @@ typedef struct tc_replay {
     uint32_t held;
     float move[2], look[2];
     bool drawn;                  /* the last frame was drawn in the recording */
+    /* The camera's sight reads the last draw list. A frontend draws every frame it shows, the recording maybe not (a
+     * minimised window), and a paused replay draws from the player's camera: the run's list is kept here meanwhile and
+     * put back before the next frame runs. */
+    tc_view_draw *sight;
+    uint32_t sight_count, sight_room;
+    bool sight_kept;
     bool paused;                 /* tc_replay_pause */
-    bool was_inspecting;         /* the viewer's own, before it: a recorded pause */
-    tc_camera saved_camera;      /* what a resume puts back */
-    tc_cam saved_cam;
-    tc_viewer_shot saved_shot;   /* the scripted shot as it was (the player may turn its camera while paused) */
-    float saved_orbit;
+    tc_replay_held_view resume;  /* what a resume puts back */
     tc_replay_drift drift;
 } tc_replay;
 
@@ -191,15 +212,22 @@ void tc_replay_close(tc_replay *r);
 /* Every record in file order: *at from 0 until false. */
 bool tc_replay_walk(const tc_replay *r, size_t *at, tc_replay_record *out);
 
-/* Runs segment `segment` on v, a viewer just made from its level, tc_replay_segment.seed and .carry, with no recorder.
+/* Puts back the global state segment `segment` started from (the level-saved table): call it just before making its
+ * viewer, as tc_save_read is called before a loaded game's. */
+void tc_replay_prepare(const tc_replay *r, uint32_t segment);
+/* Runs segment `segment` on v, a viewer just made (after tc_replay_prepare) from its level, tc_replay_segment.seed and
+ * .carry, with no recorder.
  * verify: compare what comes of it with what was recorded (tc_replay.drift). The frontend's own tc_viewer_draws in
  * between don't matter: the replay draws where the run drew, because the camera's sight reads the last draw list. */
 void tc_replay_begin(tc_replay *r, uint32_t segment, tc_viewer *v, bool verify);
-/* One recorded frame: its doors, its inputs, tc_viewer_update, its draw. false at the segment's end. *dt: the frame's;
- * tc_viewer_sounds holds its sounds. */
+/* One recorded frame: the doors before it, its inputs, tc_viewer_update, its draw; it stops short of the next door or
+ * frame, so the frontend's own draw comes where the run's did. false at the segment's end: the frontend then opens the
+ * next segment's level itself (tc_viewer_pending_level is the recording's to answer, never the frontend's). *dt: the
+ * frame's; tc_viewer_sounds holds its sounds. */
 bool tc_replay_step(tc_replay *r, float *dt);
 /* Pauses or resumes a running replay. Paused, don't step: call tc_viewer_paused_look each frame, with the player's look
- * inputs let through to the viewer. Resuming puts the camera back, so the run goes on exact. */
+ * inputs let through to the viewer. Resuming puts the camera back, and what the camera tells the game (the scripts'
+ * eye, its record for the scripts), so the run goes on exact. */
 void tc_replay_pause(tc_replay *r, bool on);
 
 #ifdef __cplusplus

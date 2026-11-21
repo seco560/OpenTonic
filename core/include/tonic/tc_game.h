@@ -149,6 +149,7 @@ typedef struct tc_game {
     bool has_cast;
     bool use_ai;                 /* his scripts drive him (else the host's simple controller) */
     float tick_time;             /* seconds not yet stepped: the host draws between the last two ticks by it */
+    uint32_t tick_serial;        /* + 1 each tick run (the viewer's particles step with it) */
     /* Custom gameplay, not the game's (core/src/custom, tcx.h; NULL: none). Its car takes main's slot while Ed is in it:
      * his AI and mechanics (and the cast, which steps on his clock) hold, and he is drawn at main.rider. */
     struct tcx_play *custom;

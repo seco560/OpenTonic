@@ -1364,6 +1364,107 @@ def waypoints(d):
     return table
 
 
+def particle_sources(d):
+    """The level's particle sources (the .ttlv PRTC chunk: particles_chunk), numbered from 0 in a fixed order so the
+    .ttlv and the .ttai, written by separate runs, agree: the type 37 script nodes (Proc_SetParticleGenerator, PROC
+    214's argument) of the level's persos, then the player and the fix persos, each model once. Returns {location:
+    index}. Cached on d. docs/ENGINE.md "Particles"."""
+    if getattr(d, '_particles', None) is not None:
+        return d._particles
+    table, models = {}, set()
+    owners = [p.loc for p in d.persos()]
+    for loc in [d.player()] + [p for p, _ in d.perso_in_fix]:
+        if loc and loc not in owners:
+            owners.append(loc)
+    for loc in owners:
+        try:
+            a = AI(d, loc)
+        except Exception:
+            continue
+        if a.model in models:
+            continue
+        models.add(a.model)
+        for n in a.nodes():
+            if n.type == 37 and n.ref and n.ref not in table and d.lv.ptr(n.ref) and d.lv.ptr(n.ref, 4):
+                table[n.ref] = len(table)
+    d._particles = table
+    return table
+
+
+PRTC_SPRITES, PRTC_LINES, PRTC_POINTS = 4, 3, 2  # the particle system's type (S +0xC): FUN_0047f200's three kinds
+
+
+def particles_chunk(d, texture_id):
+    """PRTC (core tc_level.c read_particles; docs/ENGINE.md "Particles"): u16 n, u16 0, n x 252-byte records, one per
+    particle source (REF37, particle_sources). A source (MSPrtSrc, read 2026-11-20) is {+0 generator G, +4 particle
+    system S, +8 field E, +0xC environment mask, +0x10 / +0x1C the field's offsets from its perso, +0x28 offsets set,
+    +0x29 the field follows the perso, +0x2A the ceiling test, +0x2C its distance}. Record:
+      u8 type (S +0xC: 2 points, 3 lines, 4 sprites), emit (G +0: 0 never, 1 always, 2 by chance, 3 counted), count mode
+         (G +0xE: 0 fixed, 1 random), position mode (G +0x16: 0 a point, 1 a parallelogram, 2 a parallelepiped),
+         transform (G +0x17: 0 rotated, 1 translated, 2 both), life mode (G +0x5C: 0 forever, 1 fixed, 2 random),
+         spread (G +0x68: sprites start up to 30 lower), shape (E +0: 0 box, else sphere)
+      u8 follow (+0x29), ceiling (+0x2A), deflector (E +0x3C), blend (0 alpha, 1 additive: texture flag 0x20, "_AD")
+      u16 max (S +0), i16 count (G +0x10), i16 count lo, hi (G +0x12, +0x14), i16 counter every, modulo (G +8, +0xA)
+      u32 environment mask (+0xC: 0xFFFFFFFF none; bit 0 water allowed, bit 1 air allowed)
+      i32 texture (.ttlv TEXS; -1 none: lines)
+      f32 chance (G +4), corner[4][3] (G +0x18, +0x24, +0x30, +0x48), direction[3] (G +0x3C), speed (G +0x54),
+          jitter (G +0x58), life, life max (G +0x60, +0x64)
+      f32 box min[3], max[3] (E +4, +0x10), centre[3] (E +0x1C), radius (E +0x28), acceleration[3] (E +0x2C),
+          jitter (E +0x38), deflector a[3], b[3] (E +0x40, +0x4C)
+      f32 offset min[3], max[3] (+0x10, +0x1C: as GAM_0042e1a0 sets them at the first PROC 214 when +0x28 is 0: the
+          field's box, or its centre, copied), ceiling distance (+0x2C)
+      f32 half size[2] (sprites: the element's sprite x its info's scale), ambient[3], diffuse[3] (the material's)"""
+    lv, un = d.lv, d.un
+    table = particle_sources(d)
+    out = bytearray(struct.pack('<HH', len(table), 0))
+    for R in sorted(table, key=table.get):
+        G, S, E = lv.ptr(R, 0), lv.ptr(R, 4), lv.ptr(R, 8)
+        b = lambda loc, o: un('B', loc, o)[0] if loc else 0
+        h = lambda loc, o: un('h', loc, o)[0] if loc else 0
+        f = lambda loc, o, n=1: un(f'{n}f', loc, o) if loc else (0.0,) * n
+        typ = h(S, 0xC)
+        shape = un('I', E)[0] if E else 0
+        off_min, off_max = f(R, 0x10, 3), f(R, 0x1C, 3)
+        if E and b(R, 0x29) and not b(R, 0x28):  # GAM_0042de80 -> GAM_0042e1a0
+            if shape == 0:
+                off_min, off_max = f(E, 4, 3), f(E, 0x10, 3)
+            else:
+                off_min = f(E, 0x1C, 3)
+        tex, blend, half, amb, dif = -1, 0, (0.0, 0.0), (1.0, 1.0, 1.0), (0.0, 0.0, 0.0)
+        geo = lv.ptr(S, 8) if S else None
+        ne = un('I', geo, 20)[0] if geo else 0
+        types = un(f'{ne}H', lv.ptr(geo, 24)) if ne else ()
+        el = lv.ptr(lv.ptr(geo, 28), 0) if types else None
+        mat = None
+        if types and types[0] == 3 and el:  # sprites (level.read_sprites)
+            sp = lv.ptr(el, 4)
+            info = lv.ptr(sp, 4) if sp else None
+            sx, sy = un('2f', sp, 8) if sp else (1.0, 1.0)
+            scale = lv.ptr(info, 0xC) if info else None
+            hx, hy = un('2f', scale) if scale else (0.5, 0.5)
+            half = (abs(hx * sx), abs(hy * sy))
+            mp = lv.ptr(info, 0x14) if info else None
+            mat = d.material(lv.ptr(mp)) if mp else None
+        elif types and types[0] == 6 and el:  # lines (FUN_00448bf0): the element's material list, entry 0
+            ml = lv.ptr(el, 0xC)
+            mat = d.material(lv.ptr(ml)) if ml else None
+        if mat is not None:
+            amb, dif = tuple(mat.ambient[:3]), tuple(mat.diffuse[:3])
+            if mat.texture is not None:
+                tex = texture_id(mat.texture)
+                blend = 1 if mat.texture.flags & 0x20 else 0
+        out += struct.pack('<8B4BH5hIi', typ, b(G, 0), b(G, 0xE), b(G, 0x16), b(G, 0x17), b(G, 0x5C), b(G, 0x68),
+                           1 if shape else 0, b(R, 0x29), b(R, 0x2A), b(E, 0x3C), blend, max(0, h(S, 0)),
+                           h(G, 0x10), h(G, 0x12), h(G, 0x14), h(G, 8), h(G, 0xA), un('I', R, 0xC)[0], tex)
+        out += struct.pack('<20f', f(G, 4)[0], *f(G, 0x18, 3), *f(G, 0x24, 3), *f(G, 0x30, 3), *f(G, 0x48, 3),
+                           *f(G, 0x3C, 3), f(G, 0x54)[0], f(G, 0x58)[0], f(G, 0x60)[0], f(G, 0x64)[0])
+        out += struct.pack('<20f', *f(E, 4, 3), *f(E, 0x10, 3), *f(E, 0x1C, 3), f(E, 0x28)[0], *f(E, 0x2C, 3),
+                           f(E, 0x38)[0], *f(E, 0x40, 3), *f(E, 0x4C, 3))
+        out += struct.pack('<7f', *off_min, *off_max, f(R, 0x2C)[0])
+        out += struct.pack('<8f', *half, *amb, *dif)
+    return bytes(out)
+
+
 def ways_chunk(d):
     """WAYS (core tc_level.c read_ways; docs/ENGINE.md "Ways and waypoints"): u16 n_waypoints, u16 n_persos,
     n_waypoints x { f32 position[3], f32 radius, u16 father (its perso's id: level perso k + 1; 0 none: world axes),
@@ -1524,6 +1625,10 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
         if t == 29 and not d.se:  # a waypoint: its number in the level's table (waypoints(), the .ttlv WAYS)
             got = waypoints(d).get(ref, 0) if ref else 0
             if got or not ref:
+                return got
+        if t == 37 and ref and not d.se:  # a particle source (PROC 214): its index in the .ttlv PRTC
+            got = particle_sources(d).get(ref)
+            if got is not None:
                 return got
         if ref is not None or t in (14, 15, 20, 24, 25, 32):
             unresolved[t] += 1

@@ -154,6 +154,11 @@ private final class RecordingFile {
     var segmentCount: UInt32 { raw?.pointee.segment_count ?? 0 }
     func info(_ i: UInt32) -> tc_replay_segment { raw!.pointee.segments[Int(i)] }
 
+    /// Just before segment i's viewer is made: the global state it started from (the level-saved table).
+    func prepare(_ i: UInt32) {
+        if let raw { tc_replay_prepare(raw, i) }
+    }
+
     func begin(_ i: UInt32, _ v: UnsafeMutablePointer<tc_viewer>) {
         segment = i
         if let raw { tc_replay_begin(raw, i, v, false) }

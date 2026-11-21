@@ -12,6 +12,7 @@
 #   make castcheck  -> the level persos' own AI (tc_cast.h) on sud0, north, Land: awake, skipped primitives, pickups
 #   make forcecheck -> the cast's forces on the player, every level with a cast: each perso that takes Ed from in front
 #                      of it must let him go (tests/forcecheck.c; tools/ttre/cast.py KEPT_OFF_MAIN)
+#   make particlecheck -> particles (tc_particles.h): Totalski's snow, Land's rain, marmite's spray fill and stay in their fields
 #   make movecheck  -> what each level perso does with Ed near it: rows to diff between builds (docs/ENGINE.md "Perso motion")
 #   make replaycheck -> sessions recorded and replayed headless, then any keepers in ../files/recordings (docs/RECORDING.md)
 #   make hudcheck   -> the game's HUD (tc_hud.h): its data, Totalski's start text and clock, the standard HUD, the inventory
@@ -48,7 +49,7 @@ SRC := $(wildcard src/*.c) $(wildcard src/custom/*.c)
 endif
 OBJ := $(SRC:src/%.c=$(BUILD)/%.o)
 
-all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/forcecheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay $(BUILD)/probe
+all: lib $(BUILD)/playcheck $(BUILD)/aicheck $(BUILD)/mechcheck $(BUILD)/crashcheck $(BUILD)/skicheck $(BUILD)/viewcheck $(BUILD)/portalcheck $(BUILD)/sectorcheck $(BUILD)/camcheck $(BUILD)/castcheck $(BUILD)/forcecheck $(BUILD)/movecheck $(BUILD)/replaycheck $(BUILD)/debugcheck $(BUILD)/hudcheck $(BUILD)/soundcheck $(BUILD)/menucheck $(BUILD)/perfcheck $(BUILD)/replay $(BUILD)/probe $(BUILD)/particlecheck
 lib: $(BUILD)/libtoniccore.a
 
 # Makefile: a change of flags (as -ffp-contract) rebuilds everything.
@@ -75,6 +76,9 @@ $(BUILD)/skicheck: tests/skicheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/viewcheck: tests/viewcheck.c $(BUILD)/libtoniccore.a
+	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
+
+$(BUILD)/particlecheck: tests/particlecheck.c $(BUILD)/libtoniccore.a
 	$(CC) $(CFLAGS) $< $(BUILD)/libtoniccore.a $(LDLIBS) -o $@
 
 $(BUILD)/portalcheck: tests/portalcheck.c $(BUILD)/libtoniccore.a
@@ -139,6 +143,9 @@ skicheck: $(BUILD)/skicheck
 viewcheck: $(BUILD)/viewcheck
 	$(BUILD)/viewcheck ../files/out/ttlv bar
 
+particlecheck: $(BUILD)/particlecheck
+	$(BUILD)/particlecheck ../files/out/ttlv
+
 portalcheck: $(BUILD)/portalcheck
 	$(BUILD)/portalcheck ../files/out/ttlv
 
@@ -197,7 +204,7 @@ menucheck: $(BUILD)/menucheck
 	$(BUILD)/menucheck ../files/out/ttlv
 
 # The gate. Each check runs whatever the others did; a red line names its log.
-GATE := check probecheck mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck forcecheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck
+GATE := check probecheck mechcheck aicheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck forcecheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck particlecheck
 SE_TTLV := ../files/out/se/ttlv
 checkall: all
 	@mkdir -p $(BUILD)/logs; failed=""; \
@@ -214,4 +221,4 @@ checkall: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all lib checkall check aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck forcecheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay probe probecheck clean
+.PHONY: all lib checkall check particlecheck aicheck mechcheck crashcheck skicheck viewcheck portalcheck sectorcheck camcheck castcheck forcecheck movecheck replaycheck debugcheck hudcheck soundcheck menucheck tapecheck perfcheck replay probe probecheck clean

@@ -840,7 +840,19 @@ This was the simple demo I thought of making that eventually spiraled into remak
   above the deepest pits (below the horizon), cock01 = two backdrop panels, pyramide = a ceiling opening. So no
   camera-follow needed for now.
 - **Material flag bit 0x400 = backface culling** (raymap: flags_backfaceCulling = 1 << 10); clear on double-sided
-  materials (sky domes, water, shadows, paintings). Not "unlit". The viewer draws everything without culling anyway.
+  materials (sky domes, water, shadows, paintings). Not "unlit". **Ported 2026-11-20:** surface flag
+  TC_FLAG_ONE_SIDED (ttlv.py surface), culled in both frontends with the front counter-clockwise (the stored face
+  normal's side, docs/DECOMP.md), TC_FLAG_MIRRORED reversing it under a mirroring matrix (tc_viewer_draw.c add_draw),
+  never on billboards. sud0: 4,339 of 4,539 static triangles are one-sided; the two-sided ones are O_ZARBI (the rainbow
+  river and falls), the sky, PATINE, OMBRE, the TABLO paintings, OO_MER01 (the sea). Why it matters beyond speed:
+  coincident reversed twins with a texture per side, which without culling fought at one depth (the later draw won
+  from both sides): Totalski's finish banner (`br_arriveeeNZ` / `finishNZ`, ARRIVEE one way, FINISH the other), its
+  chalet roofs (`mr_chalet4txy` / `tt_chalet`), sud0's `mr_maison01` / `03` near (-192, -152), carota's carrot belly,
+  north's boat deck, Transit's painted square; and same-material reversed twins in blended meshes (sud0's rainbow falls
+  before the Canyon cave, Totalski's `*_anu` glass, skymap's vitrine), which are two-sided materials and so drawn twice
+  in the original too (left so). Checked in the app (Claude, OPENTONIC_SHOT): Totalski's start unchanged with the
+  counter-clockwise front, inside-out with the clockwise one; the banner shows FINISH from the course side, the other
+  text from behind. The SDL build's culled pipelines are type-checked only.
 - **Fog:** sector data +4 environment entries = {ptr mechanics env, ptr ?, ptr visual env}; visual env = {u32, ptr,
   f32 near, f32 far, f32 third distance (40000 / 600 / 128; unused), f32 rgb}. Engine default 20000/30000/40000 light
   blue (0.736, 0.768, 0.961) = no visible fog. Real fog: north black 80..120 (night), Totalski light blue 200..400,

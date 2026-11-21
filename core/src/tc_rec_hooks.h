@@ -4,19 +4,24 @@
 #include "tonic/tc_rec.h"
 
 /* The settings doors, in the order a frontend called them: the inputs tc_viewer_update reads are taken with the frame
- * instead. Numbers are the file format: only add. DEMO_ON / OFF: Ed's autopilot, removed; old files still hold them. */
+ * instead. A door is only ever recorded from a frontend's call, never from inside another door or a frame (the replay
+ * applies each one it reads, so a nested one would happen twice). */
 typedef enum tc_rec_door {
     TC_RD_STEP_SPEED = 1, TC_RD_TOGGLE_PAUSE, TC_RD_RECENTER, TC_RD_CLOSEUP, TC_RD_FIRST_PERSON, TC_RD_SET_LOOK,
     TC_RD_STEP_LOOK, TC_RD_INVERT_Y, TC_RD_LIGHT_SET, TC_RD_FOLLOW_LIGHT, TC_RD_STEP_GAMMA, TC_RD_STEP_FOV, TC_RD_FOG,
-    TC_RD_LIGHTING, TC_RD_SECTORS, TC_RD_WHEEL, TC_RD_TOGGLE_PLAY, TC_RD_TOGGLE_AI, TC_RD_DEMO_ON, TC_RD_DEMO_OFF,
+    TC_RD_LIGHTING, TC_RD_SECTORS, TC_RD_WHEEL, TC_RD_TOGGLE_PLAY, TC_RD_TOGGLE_AI,
     TC_RD_DEBUG, /* the debug menu opened or closed; its moves are the frames' held actions */
     TC_RD_HUD,   /* the HUD is there (tc_viewer_set_hud): a sliding stage waits for Jump behind its start text */
     TC_RD_SET_VIEW, /* tc_viewer_set_view: a = fog | lighting << 1 | speed step << 4, x = gamma */
     TC_RD_GAME_MENU, /* tc_viewer_set_game_menu: a = on */
     TC_RD_SET_FOV, /* tc_viewer_set_fov: x = degrees */
+    TC_RD_HUD_AUTO_HIDE, /* tc_viewer_set_hud_auto_hide: a = on */
     TC_RD_COUNT
 } tc_rec_door_id;
 
+/* At the very start of tc_viewer_init, before the game reads anything: the level-saved table as the new level finds it
+ * (tc_cast_level_saves_*, global; written with the segment by tc_rec_begin). */
+void tc_rec_prepare(tc_recorder *r);
 void tc_rec_begin(tc_recorder *r, tc_viewer *v, const tc_viewer_desc *desc);
 void tc_rec_end(tc_recorder *r, tc_viewer *v);
 void tc_rec_door(tc_recorder *r, tc_rec_door_id door, int32_t a, float x, float y);

@@ -2062,6 +2062,7 @@ static uint32_t procedure(run *r, uint32_t i) {
     uint32_t c = N(r, i)->param;
     tc_ai_perso *p = r->p;
     float *pr;
+    int32_t ctx = r->ctx; /* the context as given, for the camera's particles (no perso of the cast) */
     /* InPersoContext(perso, procedure): the effect on that perso, the arguments as Me's (AI_004913a0). PlaySound3D /
      * Other (145 / 146) read the context themselves (play_sound_from). */
     if (r->ctx != 0 && c != 145 && c != 146 && proc_on_context(c)) {
@@ -2438,6 +2439,27 @@ static uint32_t procedure(run *r, uint32_t i) {
         tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
         uint16_t m = (uint16_t)as_int(arg(r, i, 0));
         g->powers = c == 200 ? m : c == 201 ? (uint16_t)(g->powers & ~m) : (uint16_t)(g->powers | m);
+        return 0;
+    }
+    case 212: case 213: case 214: { /* PROC_212Etc_0048b0f0: Proc_SetParticleGeneratorOn / Off (GAM_0042deb0: on, and
+                                      * the pre-warm asked again), Proc_SetParticleGenerator(source) (GAM_0042de80), on
+                                      * the perso's MSPrtSrc (+0x3C; none: nothing). Port: InPersoContext(camera, ...)
+                                      * lands in the globals (Totalski's YBA_DeclencheNeige, Land's WLand) */
+        tc_ai_globals *g = p->globals ? p->globals : &p->own_globals;
+        int o = ctx != 0 && p == r->p ? other_index(r->p, ctx) : -1;
+        bool camera = o >= 0 && r->p->model->others[o].role == 1;
+        int32_t *src = camera ? &g->camera_particle_source : &p->particle_source;
+        bool *on = camera ? &g->camera_particle_on : &p->particle_on;
+        uint32_t *serial = camera ? &g->camera_particle_serial : &p->particle_serial;
+        if (ctx != 0 && p == r->p && !camera && live(r->p, ctx) != r->p) return 0; /* another perso, not running here */
+        if (c == 214) {
+            uint32_t k = arg_param(r, i, 0);
+            if (k == TC_AI_NONE || k >= 0xFFFF) return 0;
+            *src = (int32_t)k + 1;
+        } else {
+            *on = c == 212;
+        }
+        if (c != 213) (*serial)++;
         return 0;
     }
     case 203: p->display_flag8 = false; return 0; /* Proc_TransparentDisplay: its transparency shows */

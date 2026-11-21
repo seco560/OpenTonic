@@ -347,6 +347,7 @@ void tc_game_step(tc_game *g, float dt, const tc_game_input *gi) {
         /* the game's tick (tc_main.h): the run-first persos, Ed, the rest */
         ran = tc_main_tick(m, g->has_cast ? &g->cast : NULL, &in, g->sounds, g->sound_sources, &g->sound_count,
                            TC_AI_MAX_SOUNDS, &mode_switch);
+        if (ran) g->tick_serial++;
         if (mode_switch < 0) g->use_ai = false;
         if (mode_switch > 0 && m->mode == TC_AI_MODE_WALK) g->walk_serial++;
         if (!ran) break;

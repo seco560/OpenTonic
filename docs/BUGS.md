@@ -136,6 +136,19 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     doesn't make it exact (the save was likely written again later in that run), so this is the likely cause, not a
     proven one. A fix: record the level-saved table with each segment, and replay with it. Other causes of the flakiness
     the user noticed are not looked into yet.
+  * **Fixed (Claude, 2026-11-21), headless-verified, not yet seen in an app.** The user: "When Ed goes into a different
+    level the replay breaks; control is handed back to the player ... Sometimes they drift." Found and fixed
+    (docs/RECORDING.md "How it behaves"): (1) the Swift build's renderer cleared its playback at a segment's end and the
+    same draw opened the replayed level's pending level as a normal one, under the player; (2) the level-saved table
+    is now recorded per segment and put back before its viewer (tc_replay_prepare): in the app, runs from NEW GAME or a
+    save replayed on whatever table the app held; (3) the game menu opened from photo mode recorded a nested pause
+    door, applied twice; (4) doors were applied before the frontend's draw instead of after it, and frames the run
+    didn't draw got the frontend's list: both reach the camera's sight; (5) a paused playback's camera wrote the
+    scripts' eye, the camera record and the game menu's drift clock into the game. Dialogues and pictures are ended by
+    the recorded presses only (fresh Jump / Action / Shoot), so they end where the run's did once the above hold.
+    Format version 2: older recordings are refused (listed, deletable). Of the user's 2026-11-21 runs, the cock01 one
+    that drifted at frame 0 (it started from TESTER.ttsv) had Ed exact throughout with that save's table installed by
+    hand; new recordings carry their own.
 
 ## Bigger Areas of Improvement
 

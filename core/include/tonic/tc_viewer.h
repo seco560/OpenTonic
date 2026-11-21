@@ -18,6 +18,7 @@
 #include "tc_debug.h"
 #include "tc_hud.h"
 #include "tc_game.h"
+#include "tc_particles.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -395,6 +396,15 @@ typedef struct tc_viewer {
     bool game_menu;
     float game_menu_time, game_menu_turn, game_menu_phase;
     float game_menu_hud;         /* the HUD's slides behind the game menu: time not yet ticked (tc_hud_slide, 1/30 s) */
+
+    /* Particles (tc_particles.h; docs/ENGINE.md "Particles"): stepped with the game's ticks (tick_serial last seen),
+     * drawn between them (tc_viewer_particles). */
+    tc_particles particles;
+    bool has_particles;
+    uint32_t particle_tick;
+    tc_particle_vertex *particle_vertices;
+    uint32_t particle_capacity;
+    tc_particle_batch particle_batches[TC_PARTICLE_MAX_BATCHES];
 } tc_viewer;
 
 /* Sets up the start camera (the middle of the level), the play session (with Ed's AI when ai_data loads) and
@@ -476,6 +486,14 @@ typedef struct tc_view_shadow {
     float inner;              /* share of the radius at full darkness; the rest fades to the rim */
 } tc_view_shadow;
 bool tc_viewer_shadow(const tc_viewer *v, tc_view_shadow *out);
+
+/* This frame's particles (tc_particles.h; docs/ENGINE.md "Particles": Totalski's snow, Land's rain, marmite's spray,
+ * Ed's bubbles): triangles in world space, facing the camera, in batches of one texture (a level texture, -1: none,
+ * white) and blend (additive: src alpha + one; else src alpha / one minus src alpha). Draw them after the transparent
+ * draws, depth-tested without writing depth, fogged as the level (by view depth), the vertex colour times the texture,
+ * the display gamma as the level's. Once a frame, after tc_viewer_update; valid until the next call. 0: none. */
+uint32_t tc_viewer_particles(tc_viewer *v, const tc_particle_vertex **vertices, uint32_t *vertex_count,
+                             const tc_particle_batch **batches);
 
 /* Screen transitions and portals. Load the effect textures once (paths relative to the level folder, as the level's
  * textures); each frame draw the overlay over the 3D frame. When tc_viewer_pending_level returns non-NULL (after the

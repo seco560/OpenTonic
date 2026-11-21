@@ -72,6 +72,7 @@ final class ControlsView: NSView {
         "REPLAYS (main menu): your recordings (play; Shift + Delete, Delete all) and the original demos (D); watching one, P pauses, Esc goes back.",
         "L: the original's lighting or the port's old one · H: the HUD's auto-hide · P: photo mode (all three in the menus' OPTIONS / game menu too).",
         "Photo mode (P, the game menu), or a paused replay: mouse, arrows and scroll move the camera round Ed, back where it was after; Esc back to the game.",
+        "In photo mode Space (pad: Cross / A) takes a photo: ~/Pictures/OpenTonicScreenshot<date>_<time>.jpeg, at the screen's resolution.",
         "F9 or the touchpad marks a moment in the recording, which is always on.",
         "F4: the debug menu: the game's powers and save values, who uses them, switches. The game holds while it is open; W / S choose, A / D change, Space or E switch.",
     ]

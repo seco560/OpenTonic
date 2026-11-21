@@ -420,6 +420,11 @@ typedef struct tc_ai_globals {
     char vignette[64];
     uint32_t vignette_ms;
     uint32_t vignette_serial;
+    /* The camera perso's particle source (InPersoContext(camera, PROC 212 / 213 / 214): Totalski's snow, Land's rain),
+     * as tc_ai_perso.particle_source; the camera is no perso of the cast. */
+    int32_t camera_particle_source;
+    bool camera_particle_on;
+    uint32_t camera_particle_serial;
     /* META 7 Action_SpeakAndWaitEnd (docs/ENGINE.md "Speech"): the line on show (1-based, the level's dialogues; 0 none) and
      * who says it (DAT_004ec6bc). The host runs it and ends it (tc_ai_speech_end). speech_host: it does; else a line ends
      * at once. */
@@ -518,6 +523,12 @@ struct tc_ai_perso {
     tc_ai_motion motion;         /* reset at the start of every step */
     bool display_flag8;          /* PROC_204 sets, PROC_203 clears (paired with opaque/translucent) */
     uint8_t transparency;        /* 255 opaque */
+    /* Its particle source (perso +0x3C's +0, MSPrtSrc; docs/ENGINE.md "Particles"): PROC 214 sets it (a .ttlv PRTC
+     * index + 1, 0 none), 212 / 213 turn it on / off (+8; turning it on asks for the pre-warm again: G +0x69). The host
+     * runs them (tc_particles.h); particle_serial counts the 212 and 214 calls. */
+    int32_t particle_source;
+    bool particle_on;
+    uint32_t particle_serial;
     uint64_t hidden_channels;    /* PROC_120 / PROC_121, bit = channel */
     float float13, float14;      /* FIELD 13 / 14 */
     int32_t change_level;        /* ChangeLevel's string index, -1 none */

@@ -1,5 +1,7 @@
 import Metal
 import MetalKit
+import ImageIO
+import UniformTypeIdentifiers
 import simd
 import TonicCore
 
@@ -57,6 +59,19 @@ import TonicCore
         var eye: SIMD4<Float>
     }
 
+    /// The front faces' winding on screen (TC_FLAG_ONE_SIDED), and a mirrored draw's.
+    static let frontWinding: MTLWinding = .counterClockwise
+    static let backWinding: MTLWinding = .clockwise
+    /// The particles' uniforms (matches ParticleParams in Shaders.metal).
+    private struct ParticleParams {
+        var viewProjection: float4x4
+        var fog: SIMD4<Float>       // near, far, enabled, strength
+        var fogColor: SIMD4<Float>
+        var eye: SIMD4<Float>
+        var forward: SIMD4<Float>
+        var misc: SIMD4<Float>      // gamma, textured, additive, 0
+    }
+
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let library: MTLLibrary
@@ -75,6 +90,8 @@ import TonicCore
     /// the level draws without it.
     private var shadowPipeline: MTLRenderPipelineState?
     private let shadowDepthState: MTLDepthStencilState
+    /// The particles (tc_viewer_particles): alpha-blended and added, depth-tested without writing. Optional.
+    private var particlePipeline: MTLRenderPipelineState?, particleAddPipeline: MTLRenderPipelineState?
     /// Filters a supersampled frame down into the drawable (one sample, no depth).
     private let downsamplePipeline: MTLRenderPipelineState
     /// Multisample antialiasing: 1 (off), 2, 4 or 8 samples, as far as the GPU goes; F2 cycles it. Kept across levels and
@@ -118,8 +135,13 @@ import TonicCore
     /// Gamepad buttons for the app (level select, controls, play / free-fly), after the frame that read them.
     var onGamepad: (Gamepad.Command) -> Void = { _ in }
     /// Playing a recording back: it runs the frames instead of tc_viewer_update; onPlaybackEnd at its segment's end.
+    /// A playback's renderer stays one until it is replaced: after its segment's end it shows the last frame and runs
+    /// nothing, and never answers the level's own level change (tc_viewer_pending_level) — the next segment is the
+    /// recording's, opened by onPlaybackEnd. (Until 2026-11-21 the end cleared `playback`, and the same draw opened the
+    /// pending level as a normal one under the player's control.)
     var playback: Playback?
     var onPlaybackEnd: () -> Void = {}
+    private var playbackDone = false
     private lazy var gamepad = Gamepad()  // made on first use, in draw (main actor)
     private var pendingSent = false
     private(set) var missingTextures = 0
@@ -141,6 +163,7 @@ import TonicCore
         view.depthStencilPixelFormat = .invalid
         view.sampleCount = 1
         view.preferredFramesPerSecond = 120
+        if Renderer.shotPrefix != nil { view.framebufferOnly = false }  // the frames can be read back (shots)
         memoryless = device.supportsFamily(.apple7)  // Apple silicon
 
         // Inside OpenTonic.app the shader sits in Contents/Resources; `swift run` builds use the SwiftPM bundle.
@@ -248,6 +271,23 @@ import TonicCore
         sd.depthAttachmentPixelFormat = depthFormat
         sd.rasterSampleCount = n
         shadowPipeline = try? device.makeRenderPipelineState(descriptor: sd)
+        func particles(additive: Bool) -> MTLRenderPipelineState? {
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = library.makeFunction(name: "particle_vertex")
+            d.fragmentFunction = library.makeFunction(name: "particle_fragment")
+            let c = d.colorAttachments[0]!
+            c.pixelFormat = colorFormat
+            c.isBlendingEnabled = true
+            c.sourceRGBBlendFactor = .sourceAlpha
+            c.destinationRGBBlendFactor = additive ? .one : .oneMinusSourceAlpha
+            c.sourceAlphaBlendFactor = additive ? .zero : .one
+            c.destinationAlphaBlendFactor = additive ? .one : .oneMinusSourceAlpha
+            d.depthAttachmentPixelFormat = depthFormat
+            d.rasterSampleCount = n
+            return try? device.makeRenderPipelineState(descriptor: d)
+        }
+        particlePipeline = particles(additive: false)
+        particleAddPipeline = particles(additive: true)
         msaa = n
         releaseTargets()
     }
@@ -402,19 +442,160 @@ import TonicCore
         }
     }
 
+    /// Shots for checking the look without a person at the screen (development): OPENTONIC_SHOT=/path/prefix writes the
+    /// drawn frame to prefix_<k>.png at the times (s since the level's first frame) in OPENTONIC_SHOT_AT ("2,5"; default
+    /// "3"), then quits. OPENTONIC_SHOT_TURN: the play camera turned this many radians a second meanwhile (a look round).
+    static let shotPrefix = ProcessInfo.processInfo.environment["OPENTONIC_SHOT"]
+    private static let shotTimes: [Double] = (ProcessInfo.processInfo.environment["OPENTONIC_SHOT_AT"] ?? "3")
+        .split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }.sorted()
+    private static let shotTurn = Float(ProcessInfo.processInfo.environment["OPENTONIC_SHOT_TURN"] ?? "") ?? 0
+    /// OPENTONIC_SHOT_HOLD: actions held meanwhile, "action@from-to" (tc_view_action numbers, seconds), comma-separated:
+    /// "0@1-5" walks forward from 1 s to 5 s.
+    private static let shotHolds: [(action: UInt32, from: Double, to: Double)] =
+        (ProcessInfo.processInfo.environment["OPENTONIC_SHOT_HOLD"] ?? "").split(separator: ",").compactMap { item in
+            let parts = item.split(separator: "@")
+            guard parts.count == 2, let a = UInt32(parts[0]) else { return nil }
+            let span = parts[1].split(separator: "-").compactMap { Double($0) }
+            return span.count == 2 ? (a, span[0], span[1]) : nil
+        }
+    /// OPENTONIC_SHOT_CAM="x,y,z,yaw,pitch" (degrees): free-fly, the camera there, before the first frame.
+    private static let shotCam: [Float] = (ProcessInfo.processInfo.environment["OPENTONIC_SHOT_CAM"] ?? "")
+        .split(separator: ",").compactMap { Float($0.trimmingCharacters(in: .whitespaces)) }
+    /// OPENTONIC_SHOT_ED="x,y,z,heading" (radians): Ed put there on the first frame (playing on, the camera behind him).
+    private static let shotEd: [Float] = (ProcessInfo.processInfo.environment["OPENTONIC_SHOT_ED"] ?? "")
+        .split(separator: ",").compactMap { Float($0.trimmingCharacters(in: .whitespaces)) }
+    /// OPENTONIC_SHOT_PHOTO=seconds: photo mode on then, and a photo asked for as Space does (the photo's own path).
+    private static let shotPhoto = Double(ProcessInfo.processInfo.environment["OPENTONIC_SHOT_PHOTO"] ?? "")
+    private var shotPhotoDone = 0
+    private var shotClock = 0.0, shotNext = 0, shotsPending = 0, shotPlaced = false
+
+    private func takeShot(_ cmd: MTLCommandBuffer, _ texture: MTLTexture) {
+        guard let prefix = Renderer.shotPrefix else { return }
+        let path = "\(prefix)_\(shotNext).png", last = shotNext + 1 >= Renderer.shotTimes.count
+        shotsPending += 1
+        readBack(cmd, texture) { image in
+            Renderer.write(image, to: URL(fileURLWithPath: path), type: UTType.png, quality: nil)
+            print("shot: \(path)")
+            if last { DispatchQueue.main.async { exit(0) } }
+        }
+    }
+
+    /// The texture's pixels (BGRA8, the drawable's) once the command buffer has run, as an image, on a queue of its own.
+    private func readBack(_ cmd: MTLCommandBuffer, _ texture: MTLTexture, then: @escaping @Sendable (CGImage) -> Void) {
+        let w = texture.width, h = texture.height, row = w * 4
+        guard let buffer = device.makeBuffer(length: row * h, options: .storageModeShared),
+              let blit = cmd.makeBlitCommandEncoder() else { return }
+        blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: w, height: h, depth: 1), to: buffer, destinationOffset: 0,
+                  destinationBytesPerRow: row, destinationBytesPerImage: row * h)
+        blit.endEncoding()
+        nonisolated(unsafe) let read = buffer
+        cmd.addCompletedHandler { _ in
+            let data = Data(bytes: read.contents(), count: row * h)
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let provider = CGDataProvider(data: data as CFData),
+                      let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: row,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue |
+                                                                   CGImageAlphaInfo.noneSkipFirst.rawValue),
+                                          provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+                else { return }
+                then(image)
+            }
+        }
+    }
+
+    @discardableResult
+    nonisolated private static func write(_ image: CGImage, to url: URL, type: UTType, quality: Double?) -> Bool {
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil) else { return false }
+        let options = quality.map { [kCGImageDestinationLossyCompressionQuality: $0] as CFDictionary }
+        CGImageDestinationAddImage(dest, image, options)
+        return CGImageDestinationFinalize(dest)
+    }
+
+    // ---- Photo mode's photos (the user, 2026-11-20; the SDL build's sdl/src/photo.c) ----
+    // Space or the pad's Cross / A in photo mode (P, the game menu's PHOTO MODE): the next frame, as shown, at the
+    // drawable's pixels (the screen's native resolution), into ~/Pictures as OpenTonicScreenshot<date>_<time>.jpeg; then
+    // a white flash, not in the photo.
+    private var photoWanted = false
+    private var photoFlashStart: CFTimeInterval = 0
+    private static let photoFlashTime: CFTimeInterval = 0.3
+    private lazy var flashTexture: MTLTexture? = {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 1, height: 1, mipmapped: false)
+        return device.makeTexture(descriptor: d)
+    }()
+
+    /// Photo mode: the game held (tc_viewer_toggle_pause), no menu over it, not a playback.
+    func inPhotoMode() -> Bool {
+        guard let v = viewer?.raw else { return false }
+        return v.pointee.paused && !v.pointee.game_menu && playback == nil
+    }
+
+    /// Asks for a photo of the next frame (photo mode only).
+    func requestPhoto(_ view: MTKView) {
+        guard inPhotoMode() else { return }
+        view.framebufferOnly = false  // the next drawables can be read; back once it is taken
+        photoWanted = true
+    }
+
+    private func takePhoto(_ cmd: MTLCommandBuffer, _ texture: MTLTexture) {
+        let folder = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures")
+        let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let base = "OpenTonicScreenshot" + stamp.string(from: Date())
+        readBack(cmd, texture) { image in
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var url = folder.appendingPathComponent(base + ".jpeg")
+            var n = 2
+            while FileManager.default.fileExists(atPath: url.path), n < 100 {  // two in one second: _2, _3 ...
+                url = folder.appendingPathComponent("\(base)_\(n).jpeg")
+                n += 1
+            }
+            if Renderer.write(image, to: url, type: UTType.jpeg, quality: 0.92) {
+                print("photo: \(url.path) (\(image.width) x \(image.height))")
+            } else {
+                print("photo: could not write \(url.path)")
+            }
+        }
+    }
+
+    /// The flash after a photo: white over the frame, fading out.
+    private func drawPhotoFlash(_ enc: MTLRenderCommandEncoder) {
+        let t = CACurrentMediaTime() - photoFlashStart
+        guard photoFlashStart > 0, t < Renderer.photoFlashTime, let tex = flashTexture else { return }
+        var px: [UInt8] = [255, 255, 255, UInt8(max(0, min(255, 178 * (1 - t / Renderer.photoFlashTime))))]
+        tex.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &px, bytesPerRow: 4)
+        var verts = [OverlayVertex(position: [0, 0], uv: [0, 0]), OverlayVertex(position: [1, 0], uv: [1, 0]),
+                     OverlayVertex(position: [0, 1], uv: [0, 1]), OverlayVertex(position: [1, 0], uv: [1, 0]),
+                     OverlayVertex(position: [1, 1], uv: [1, 1]), OverlayVertex(position: [0, 1], uv: [0, 1])]
+        var params = OverlayParams(mode: 3, threshold: 0)
+        enc.setRenderPipelineState(overlayPipeline)
+        enc.setDepthStencilState(overlayDepthState)
+        enc.setVertexBytes(&verts, length: MemoryLayout<OverlayVertex>.stride * verts.count, index: 0)
+        enc.setFragmentBytes(&params, length: MemoryLayout<OverlayParams>.stride, index: 0)
+        enc.setFragmentTexture(tex, index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+    }
+
     func draw(in view: MTKView) {
         guard let v = viewer?.raw else { return }
         let now = CACurrentMediaTime()
         let dt = Float(min(now - (lastTime ?? now), 0.1))
         lastTime = now
-        let commands = gamepad.poll(v, dt: dt, watching: playback != nil && playback?.paused != true)
+        var commands = gamepad.poll(v, dt: dt, watching: playback != nil && playback?.paused != true, photo: inPhotoMode())
+        if commands.contains(.photo) {
+            commands.removeAll { $0 == .photo }
+            requestPhoto(view)
+        }
         if !commands.isEmpty {
             let send = onGamepad
             DispatchQueue.main.async { commands.forEach(send) }  // the level select replaces this renderer: not from inside draw
         }
         if let playback {
-            if !playback.advance(dt, v) {
-                self.playback = nil
+            if !playbackDone, !playback.advance(dt, v) {
+                playbackDone = true
                 let end = onPlaybackEnd
                 DispatchQueue.main.async { end() }  // opening a level replaces this renderer: not from inside draw
             }
@@ -491,6 +672,14 @@ import TonicCore
                                     diffuse: SIMD4(d.diffuse.0, d.diffuse.1, d.diffuse.2, 0),
                                     water: SIMD4(d.water_z, d.underwater != 0 ? 1 : 0, Float(d.light_first), Float(d.light_extra)))
             enc.setVertexBytes(&params, length: MemoryLayout<DrawParams>.stride, index: 2)
+            // one-sided materials (TC_FLAG_ONE_SIDED): their back faces culled, the front counter-clockwise (reversed by
+            // a mirroring matrix, TC_FLAG_MIRRORED)
+            if d.flags & TC_FLAG_ONE_SIDED != 0 {
+                enc.setCullMode(.back)
+                enc.setFrontFacing(d.flags & TC_FLAG_MIRRORED != 0 ? Renderer.backWinding : Renderer.frontWinding)
+            } else {
+                enc.setCullMode(.none)
+            }
             enc.setVertexBuffer(m.vertices, offset: 0, index: 0)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: Int(d.index_count), indexType: .uint32, indexBuffer: m.indices,
                                       indexBufferOffset: Int(d.first_index) * 4)
@@ -498,14 +687,18 @@ import TonicCore
         // Opaque draws, Ed's shadow on them, then the transparent ones (alpha blended, no depth writes): water drawn
         // over shallow ground stays on top of the shadow.
         for i in 0..<Int(opaque) { drawMesh(draws[i]) }
+        enc.setCullMode(.none)
         drawShadow(enc, v, f)
         enc.setDepthStencilState(blendedDepthState)
         for i in Int(opaque)..<Int(count) { drawMesh(draws[i]) }
+        enc.setCullMode(.none)  // the rest is two-sided
+        drawParticles(enc, v, f)
         drawOverlay(enc, viewer!)
         drawCrosshair(enc, v, Float(size.width / max(size.height, 1)))
         drawHud(enc, v, Float(size.width / max(size.height, 1)))
         drawSpeech(enc, v, Float(size.width / max(size.height, 1)))
         drawDebug(enc, v, Float(size.width / max(size.height, 1)))
+        drawPhotoFlash(enc)
         enc.endEncoding()
         if let scaled {  // supersampled: filter it down into the drawable
             let p = MTLRenderPassDescriptor()
@@ -517,6 +710,43 @@ import TonicCore
                 down.setFragmentTexture(scaled, index: 0)
                 down.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 down.endEncoding()
+            }
+        }
+        if photoWanted, !drawable.texture.isFramebufferOnly {  // the frame as shown (asked for in photo mode)
+            photoWanted = false
+            if inPhotoMode() { takePhoto(cmd, drawable.texture) }
+            photoFlashStart = CACurrentMediaTime()
+            if Renderer.shotPrefix == nil { view.framebufferOnly = true }
+        }
+        if Renderer.shotPrefix != nil {
+            if Renderer.shotEd.count == 4, !shotPlaced, let p = tc_viewer_player(v) {
+                let e = Renderer.shotEd
+                tc_player_teleport(UnsafeMutablePointer(mutating: p), tc_vec3(x: e[0], y: e[1], z: e[2]), e[3])
+                tc_viewer_recenter_camera(v)
+                shotPlaced = true
+            }
+            if Renderer.shotCam.count == 5 {
+                if !shotPlaced, v.pointee.playing { tc_viewer_toggle_play(v) }
+                if !shotPlaced, ProcessInfo.processInfo.environment["OPENTONIC_SHOT_ALL"] != nil { tc_viewer_cycle_sectors(v) }
+                shotPlaced = true
+                let c = Renderer.shotCam
+                v.pointee.camera.position = tc_vec3(x: c[0], y: c[1], z: c[2])
+                v.pointee.camera.yaw = c[3] * .pi / 180
+                v.pointee.camera.pitch = c[4] * .pi / 180
+            }
+            shotClock += Double(dt)
+            if let at = Renderer.shotPhoto, shotClock >= at, shotPhotoDone < 2 {  // a frame to pause, the next to ask
+                if shotPhotoDone == 0, !v.pointee.paused { tc_viewer_toggle_pause(v) }
+                if shotPhotoDone == 1 { requestPhoto(view) }
+                shotPhotoDone += 1
+            }
+            if Renderer.shotTurn != 0 { tc_viewer_mouse_look(v, Renderer.shotTurn * dt * 400, 0) }
+            for h in Renderer.shotHolds {
+                tc_viewer_set_action(v, tc_view_action(rawValue: h.action), shotClock >= h.from && shotClock < h.to)
+            }
+            if shotNext < Renderer.shotTimes.count, shotClock >= Renderer.shotTimes[shotNext] {
+                takeShot(cmd, drawable.texture)
+                shotNext += 1
             }
         }
         cmd.present(drawable)
@@ -548,6 +778,37 @@ import TonicCore
         enc.setFragmentBytes(&p, length: MemoryLayout<ShadowParams>.stride, index: 3)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         enc.setDepthBias(0, slopeScale: 0, clamp: 0)
+    }
+
+    /// The particles (tc_viewer_particles, after tc_viewer_draws), as the SDL build's view_draw_particles: Totalski's snow,
+    /// Land's rain, marmite's spray, Ed's bubbles. One vertex buffer a frame, a draw per batch.
+    private func drawParticles(_ enc: MTLRenderCommandEncoder, _ v: UnsafeMutablePointer<tc_viewer>, _ f: tc_view_frame) {
+        var verts: UnsafePointer<tc_particle_vertex>?, batches: UnsafePointer<tc_particle_batch>?
+        var nv: UInt32 = 0
+        let nb = Int(tc_viewer_particles(v, &verts, &nv, &batches))
+        guard nb > 0, nv > 0, let verts, let batches, let particlePipeline,
+              let buffer = device.makeBuffer(bytes: verts, length: Int(nv) * MemoryLayout<tc_particle_vertex>.stride,
+                                             options: .storageModeShared) else { return }
+        let right = SIMD3<Float>(f.cam_right), up = SIMD3<Float>(f.cam_up)
+        var p = ParticleParams(viewProjection: float4x4(f.view_projection),
+                               fog: SIMD4(f.fog_near, f.fog_far, f.fog_on ? 1 : 0, f.fog_strength),
+                               fogColor: SIMD4(f.fog_color.0, f.fog_color.1, f.fog_color.2, 0), eye: SIMD4(SIMD3(f.eye), 0),
+                               forward: SIMD4(cross(up, right), 0), misc: SIMD4(f.gamma, 0, 0, 0))
+        enc.setDepthStencilState(blendedDepthState)
+        enc.setVertexBuffer(buffer, offset: 0, index: 0)
+        enc.setFragmentSamplerState(samplers[0], index: 0)
+        for i in 0..<nb {
+            let b = batches[i]
+            let tex = b.texture >= 0 && Int(b.texture) < textures.count ? textures[Int(b.texture)] : nil
+            guard let pipeline = b.additive != 0 ? particleAddPipeline : particlePipeline else { continue }
+            p.misc.y = tex != nil ? 1 : 0
+            p.misc.z = b.additive != 0 ? 1 : 0
+            enc.setRenderPipelineState(pipeline)
+            enc.setFragmentTexture(tex ?? lightmap, index: 0)
+            enc.setVertexBytes(&p, length: MemoryLayout<ParticleParams>.stride, index: 3)
+            enc.setFragmentBytes(&p, length: MemoryLayout<ParticleParams>.stride, index: 3)
+            enc.drawPrimitives(type: .triangle, vertexStart: Int(b.first), vertexCount: Int(b.count))
+        }
     }
 
     private struct OverlayVertex { var position: SIMD2<Float>; var uv: SIMD2<Float> }

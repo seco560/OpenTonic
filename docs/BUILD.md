@@ -142,3 +142,18 @@ to the painting's floor tiles, geometry laid out from it, textures projected fro
 `files/out/gltf/ConceptFoyer/` and imports it as the level ConceptFoyer (Imported). How it works: the script's
 docstring.
 
+
+## Shots of the macOS app (development)
+For looking at a change without a person at the screen (2026-11-20). Environment variables read by Renderer.swift; none
+set, nothing changes:
+- `OPENTONIC_SHOT=/path/prefix`: writes the drawn frame to `prefix_<k>.png` at the times in `OPENTONIC_SHOT_AT`
+  (seconds since the level's first frame, comma-separated, default `3`), then quits.
+- `OPENTONIC_SHOT_ED="x,y,z,heading"`: Ed put there on the first frame (heading in radians, as tc_player).
+- `OPENTONIC_SHOT_CAM="x,y,z,yaw,pitch"`: free-fly with the camera there (degrees); `OPENTONIC_SHOT_ALL=1` also draws
+  every sector (free-fly far from Ed sees only his sector's list otherwise).
+- `OPENTONIC_SHOT_HOLD="action@from-to,..."`: tc_view_action numbers held over those seconds (`0@1-10` walks forward).
+- `OPENTONIC_SHOT_TURN=rad_per_s`: the camera turned meanwhile.
+- `OPENTONIC_SHOT_PHOTO=seconds`: photo mode on at that time and a photo taken as Space takes one (to ~/Pictures).
+
+Example: `OPENTONIC_SHOT=/tmp/land OPENTONIC_SHOT_AT=11 OPENTONIC_SHOT_HOLD=0@1-10 .build/out/Products/Release/OpenTonic
+files/out/ttlv/Land.ttlv` (Land's rain, once Ed is out from under the overhang).

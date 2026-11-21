@@ -29,7 +29,12 @@ struct tc_recorder {
     bool has_story;
     int32_t lives;
     int16_t values[31];
+    uint8_t *saves;              /* the level-saved table as the next level finds it (tc_rec_prepare): save_count entries */
+    uint32_t save_count, save_room;
 };
+
+/* A level-saved table entry in the file: level u32, perso u16, var u16, size u8, bytes[12]. */
+#define SAVE_ENTRY 21u
 
 /* ---- hashes ---- */
 
@@ -157,8 +162,8 @@ const char *tc_rec_door_name(uint32_t door) {
     static const char *const names[TC_RD_COUNT] = {
         "?", "step speed", "pause", "recentre camera", "close-up", "first person", "look settings", "step look",
         "invert y", "light set", "follow light", "step gamma", "step fov", "fog", "lighting", "sectors", "wheel",
-        "play / free-fly", "AI / simple controller", "demo on", "demo off", "debug menu", "hud", "view settings",
-        "game menu", "field of view"
+        "play / free-fly", "AI / simple controller", "debug menu", "hud", "view settings", "game menu",
+        "field of view", "hud auto-hide"
     };
     return door < TC_RD_COUNT ? names[door] : "?";
 }
@@ -226,6 +231,7 @@ void tc_recorder_free(tc_recorder *r) {
         tc_rec_end(r, r->viewer);
     }
     flush(r);
+    tc_free(r->saves);
     tc_free(r->buf);
     tc_free(r);
 }
@@ -279,14 +285,36 @@ static void write_story(tc_recorder *r, const tc_viewer *v) {
     put(r, r->values, sizeof r->values);
 }
 
+void tc_rec_prepare(tc_recorder *r) {
+    uint32_t i, n = tc_cast_level_saves_count();
+    r->save_count = 0;
+    if (n > r->save_room) {
+        uint8_t *b = (uint8_t *)tc_alloc((size_t)n * SAVE_ENTRY);
+        if (!b) return; /* out of memory: the segment says it started from none */
+        tc_free(r->saves);
+        r->saves = b;
+        r->save_room = n;
+    }
+    for (i = 0; i < n; i++) {
+        tc_cast_level_value lv;
+        uint8_t *o = r->saves + (size_t)r->save_count * SAVE_ENTRY;
+        if (!tc_cast_level_saves_get(i, &lv)) continue;
+        memcpy(o, &lv.level, 4);
+        memcpy(o + 4, &lv.perso, 2);
+        memcpy(o + 6, &lv.var, 2);
+        o[8] = lv.size;
+        memcpy(o + 9, lv.bytes, 12);
+        r->save_count++;
+    }
+}
+
 /* The frontends make the next level's viewer before they free the last one: the new one closes the old one's segment. */
 void tc_rec_begin(tc_recorder *r, tc_viewer *v, const tc_viewer_desc *desc) {
     const tc_ed_ai *d = tc_viewer_driver(v);
     const tc_viewer_carry *c = desc->carry;
     const tc_ai_model *m = d ? d->ai.model : NULL;
     uint32_t n = desc->level_name ? (uint32_t)strlen(desc->level_name) : 0;
-    uint32_t carry = c ? (uint32_t)(offsetof(tc_viewer_carry, dsg) + c->dsg_size) : 0;
-    uint32_t tail = c ? (uint32_t)(sizeof(*c) - offsetof(tc_viewer_carry, vertical_fov)) : 0;
+    uint32_t saves = r->save_count * SAVE_ENTRY;
     if (r->viewer) {
         r->viewer->rec = NULL;
         tc_rec_end(r, r->viewer);
@@ -298,7 +326,7 @@ void tc_rec_begin(tc_recorder *r, tc_viewer *v, const tc_viewer_desc *desc) {
     r->move[0] = r->move[1] = r->look[0] = r->look[1] = 0;
     r->sample_wait = r->cast_wait = 0;
     r->has_story = false;
-    head(r, TC_RT_SEGMENT, 4 + n + 8 + 32 + 16 + 8 + carry + tail);
+    head(r, TC_RT_SEGMENT, 4 + n + 8 + 32 + 16 + 4 + (c ? (uint32_t)sizeof(*c) : 0) + 4 + saves);
     put_text(r, desc->level_name);
     put_u32(r, v->level->edition);
     put_u32(r, desc->seed);
@@ -311,12 +339,11 @@ void tc_rec_begin(tc_recorder *r, tc_viewer *v, const tc_viewer_desc *desc) {
         put(r, &v->level->data_hash, 8);
         put(r, m ? &m->data_hash : &none, 8);
     }
-    put_u32(r, carry);
-    put_u32(r, tail);
-    if (c) {
-        put(r, c, carry);
-        put(r, &c->vertical_fov, tail);
-    }
+    put_u32(r, c ? 1 : 0);
+    if (c) put(r, c, sizeof(*c));
+    put_u32(r, r->save_count);
+    put(r, r->saves, saves);
+    r->save_count = 0; /* the next segment's comes with its own tc_rec_prepare */
     write_sample(r, v);
     write_story(r, v);
     write_cast(r, v);
@@ -463,7 +490,7 @@ static void take_text(cursor *c, char *out, uint32_t size) {
 }
 
 static void read_segment(cursor *c, tc_replay_segment *s) {
-    uint32_t carry, tail;
+    uint32_t n;
     memset(s, 0, sizeof *s);
     take_text(c, s->level, sizeof s->level);
     s->edition = take_u32(c);
@@ -472,16 +499,12 @@ static void read_segment(cursor *c, tc_replay_segment *s) {
     take(c, s->ai_stamp, 16);
     take(c, &s->level_hash, 8);
     take(c, &s->ai_hash, 8);
-    carry = take_u32(c);
-    tail = take_u32(c);
-    s->has_carry = carry != 0;
-    if (carry) {
-        if (carry > offsetof(tc_viewer_carry, vertical_fov)) carry = offsetof(tc_viewer_carry, vertical_fov);
-        take(c, &s->carry, carry);
-        if (tail > sizeof(s->carry) - offsetof(tc_viewer_carry, vertical_fov))
-            tail = (uint32_t)(sizeof(s->carry) - offsetof(tc_viewer_carry, vertical_fov));
-        take(c, &s->carry.vertical_fov, tail);
-    }
+    s->has_carry = take_u32(c) != 0;
+    if (s->has_carry) take(c, &s->carry, (uint32_t)sizeof(s->carry));
+    n = take_u32(c);
+    if (n > c->left / SAVE_ENTRY) n = c->left / SAVE_ENTRY; /* cut short: what is there */
+    s->saves = c->p;
+    s->save_count = n;
 }
 
 static void read_frame(cursor *c, float *dt, uint32_t *held, float *mouse, float *move, float *look) {
@@ -536,11 +559,6 @@ tc_result tc_replay_open(tc_replay *r, const void *data, size_t size) {
                 s->seconds += dt;
             } else if (type == TC_RT_DRAW) s->draws++;
             else if (type == TC_RT_MARK) s->marks++;
-            else if (type == TC_RT_DOOR && n >= 4) {
-                uint32_t door;
-                memcpy(&door, body, 4);
-                if (door == TC_RD_DEMO_ON) r->autopilot = true;
-            }
             else if (type == TC_RT_SEGMENT_END) s->closed = true;
             s->end = type == TC_RT_SEGMENT_END ? start : at;
         }
@@ -571,16 +589,16 @@ void tc_replay_summarize(const tc_replay *r, tc_replay_summary *o) {
     }
     if (shown > 4) snprintf(o->levels + n, sizeof o->levels - n, " and %u more", shown - 4);
     if (!shown) snprintf(o->levels, sizeof o->levels, "no level");
-    o->playable = r->segment_count > 0 && !r->autopilot;
+    o->playable = r->segment_count > 0;
     whole = (uint32_t)(o->seconds + 0.5);
     n = (size_t)snprintf(o->details, sizeof o->details, "%u:%02u", whole / 60, whole % 60);
     if (o->marks) n += (size_t)snprintf(o->details + n, sizeof o->details - n, ", %u mark%s", o->marks, o->marks == 1 ? "" : "s");
-    if (r->autopilot) snprintf(o->details + n, sizeof o->details - n, ", the old autopilot: can't be played");
-    else if (r->truncated || !r->closed) snprintf(o->details + n, sizeof o->details - n, ", did not end cleanly");
+    if (r->truncated || !r->closed) snprintf(o->details + n, sizeof o->details - n, ", did not end cleanly");
 }
 
 void tc_replay_close(tc_replay *r) {
     tc_free(r->segments);
+    tc_free(r->sight);
     memset(r, 0, sizeof *r);
 }
 
@@ -657,6 +675,22 @@ bool tc_replay_walk(const tc_replay *r, size_t *at, tc_replay_record *o) {
 
 /* ---- replaying ---- */
 
+void tc_replay_prepare(const tc_replay *r, uint32_t segment) {
+    const tc_replay_segment *s = segment < r->segment_count ? &r->segments[segment] : NULL;
+    uint32_t i;
+    tc_cast_level_saves_clear();
+    for (i = 0; s && i < s->save_count; i++) {
+        const uint8_t *e = s->saves + (size_t)i * SAVE_ENTRY;
+        tc_cast_level_value lv;
+        memcpy(&lv.level, e, 4);
+        memcpy(&lv.perso, e + 4, 2);
+        memcpy(&lv.var, e + 6, 2);
+        lv.size = e[8];
+        memcpy(lv.bytes, e + 9, 12);
+        if (lv.size) tc_cast_level_saves_put(&lv);
+    }
+}
+
 void tc_replay_begin(tc_replay *r, uint32_t segment, tc_viewer *v, bool verify) {
     r->viewer = v;
     r->verify = verify;
@@ -667,31 +701,100 @@ void tc_replay_begin(tc_replay *r, uint32_t segment, tc_viewer *v, bool verify) 
     r->held = 0;
     r->move[0] = r->move[1] = r->look[0] = r->look[1] = 0;
     r->paused = r->drawn = false;
+    r->sight_kept = true; /* nothing drawn yet in the run: its first frame's camera found an empty list */
+    r->sight_count = 0;
     tc_viewer_hud_waits(v, false); /* the recording says whether its run had the HUD (TC_RD_HUD) */
     memset(&r->drift, 0, sizeof r->drift);
 }
 
+/* The run's draw list, kept while the viewer's own may be drawn over by a frame the run didn't draw. */
+static void keep_sight(tc_replay *r) {
+    const tc_viewer *v = r->viewer;
+    if (r->sight_kept) return;
+    if (v->draw_count > r->sight_room) {
+        tc_view_draw *b = (tc_view_draw *)tc_alloc((size_t)v->draw_count * sizeof *b);
+        if (!b) return; /* out of memory: the frontend's list stands */
+        tc_free(r->sight);
+        r->sight = b;
+        r->sight_room = v->draw_count;
+    }
+    if (v->draw_count) memcpy(r->sight, v->draws, (size_t)v->draw_count * sizeof *r->sight);
+    r->sight_count = v->draw_count;
+    r->sight_kept = true;
+}
+
+/* ... and back, before a frame runs: the camera's sight reads it (tc_viewer_camera.c camera_sight). */
+static void put_sight_back(tc_replay *r) {
+    tc_viewer *v = r->viewer;
+    if (!r->sight_kept) return;
+    if (r->sight_count > v->draw_cap) {
+        tc_view_draw *b = (tc_view_draw *)tc_calloc(r->sight_count, sizeof *b);
+        if (!b) return;
+        tc_free(v->draws);
+        v->draws = b;
+        v->draw_cap = r->sight_count;
+    }
+    if (r->sight_count) memcpy(v->draws, r->sight, (size_t)r->sight_count * sizeof *v->draws);
+    v->draw_count = r->sight_count;
+}
+
 void tc_replay_pause(tc_replay *r, bool on) {
     tc_viewer *v = r->viewer;
+    tc_replay_held_view *h = &r->resume;
+    tc_cast *c;
     if (on == r->paused || !v) return;
     r->paused = on;
+    c = v->game && v->game->has_cast ? &v->game->cast : NULL;
     if (on) {
-        r->was_inspecting = v->inspecting;
-        r->saved_camera = v->camera;
-        r->saved_cam = v->cam;
-        r->saved_shot = v->shot;
-        r->saved_orbit = v->orbit_distance;
+        keep_sight(r); /* the frontend draws from the player's camera now */
+        h->inspecting = v->inspecting;
+        h->camera = v->camera;
+        h->cam = v->cam;
+        h->shot = v->shot;
+        h->orbit_distance = v->orbit_distance;
+        h->director = v->director;
+        h->director_released = v->director_released;
+        h->ski_shot = v->ski_shot;
+        h->looked = v->looked;
+        h->director_serial = v->director_serial;
+        h->sight_skip_lo = v->sight_skip_lo;
+        h->sight_skip_hi = v->sight_skip_hi;
+        h->director_eye = v->director_eye;
+        h->director_saved_fov = v->director_saved_fov;
+        h->look_yaw_frame = v->look_yaw_frame;
+        h->look_rise_frame = v->look_rise_frame;
+        h->game_menu_time = v->game_menu_time; /* the drift behind the game menu: tcv_look runs its clock */
+        if (c) {
+            h->has_scripts_eye = c->has_scripts_eye;
+            h->scripts_eye = c->scripts_eye;
+            h->has_cam_now = c->globals.has_cam_now;
+            memcpy(h->cam_now, c->globals.cam_now, sizeof h->cam_now);
+        }
         v->inspecting = true;
         return;
     }
-    v->inspecting = r->was_inspecting;
-    v->camera = r->saved_camera;
-    v->cam = r->saved_cam;
-    v->shot = r->saved_shot;
-    v->orbit_distance = r->saved_orbit;
-    if (r->drawn) { /* the camera's sight reads the last draw list: this camera's isn't the run's */
-        uint32_t count, opaque;
-        tc_viewer_draws(v, &count, &opaque);
+    v->inspecting = h->inspecting;
+    v->camera = h->camera;
+    v->cam = h->cam;
+    v->shot = h->shot;
+    v->orbit_distance = h->orbit_distance;
+    v->director = h->director;
+    v->director_released = h->director_released;
+    v->ski_shot = h->ski_shot;
+    v->looked = h->looked;
+    v->director_serial = h->director_serial;
+    v->sight_skip_lo = h->sight_skip_lo;
+    v->sight_skip_hi = h->sight_skip_hi;
+    v->director_eye = h->director_eye;
+    v->director_saved_fov = h->director_saved_fov;
+    v->look_yaw_frame = h->look_yaw_frame;
+    v->look_rise_frame = h->look_rise_frame;
+    v->game_menu_time = h->game_menu_time;
+    if (c) {
+        c->has_scripts_eye = h->has_scripts_eye;
+        c->scripts_eye = h->scripts_eye;
+        c->globals.has_cam_now = h->has_cam_now;
+        memcpy(c->globals.cam_now, h->cam_now, sizeof h->cam_now);
     }
 }
 
@@ -719,13 +822,14 @@ static void apply_door(tc_viewer *v, uint32_t door, int32_t a, float x) {
     case TC_RD_HUD: tc_viewer_hud_waits(v, true); break;
     case TC_RD_GAME_MENU: tc_viewer_set_game_menu(v, a != 0); break;
     case TC_RD_SET_FOV: tc_viewer_set_fov(v, x); break;
+    case TC_RD_HUD_AUTO_HIDE: tc_viewer_set_hud_auto_hide(v, a != 0); break;
     case TC_RD_SET_VIEW: {
         static const float speeds[] = {0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 0.75f, 1, 1.5f, 2};
         int s = (a >> 4) & 15;
         tc_viewer_set_view(v, x, speeds[s < 8 ? s : 5], (a & 1) != 0, (uint32_t)(a >> 1) & 7);
         break;
     }
-    case TC_RD_DEMO_ON: case TC_RD_DEMO_OFF: case TC_RD_COUNT: break;
+    case TC_RD_COUNT: break;
     }
 }
 
@@ -821,7 +925,9 @@ bool tc_replay_step(tc_replay *r, float *dt) {
         uint32_t n;
         cursor c;
         if (!next_record(r, &at, &type, &body, &n)) break;
-        if (type == TC_RT_FRAME && stepped) break;
+        /* the run's frontend drew (or not) after the frame, then called its doors: stop here, so this frontend's draw
+         * comes before them too */
+        if (stepped && (type == TC_RT_FRAME || type == TC_RT_DOOR)) break;
         r->at = at;
         c.p = body;
         c.left = n;
@@ -832,6 +938,7 @@ bool tc_replay_step(tc_replay *r, float *dt) {
             float x;
             take(&c, &a, 4);
             x = take_f32(&c);
+            put_sight_back(r); /* some doors read the draw list too (the game menu's drift) */
             apply_door(r->viewer, door, a, x);
             break;
         }
@@ -839,6 +946,7 @@ bool tc_replay_step(tc_replay *r, float *dt) {
             tc_viewer *v = r->viewer;
             float step, mouse[2];
             read_frame(&c, &step, &r->held, mouse, r->move, r->look);
+            put_sight_back(r); /* the run didn't draw the last frame, this frontend did: the run's list again */
             /* the viewer's input fields as they were: the doors' dead zones are in them already */
             v->held = r->held;
             v->mouse_dx = mouse[0], v->mouse_dy = mouse[1];
@@ -861,7 +969,9 @@ bool tc_replay_step(tc_replay *r, float *dt) {
             break;
         case TC_RT_DRAW: {
             uint32_t count, opaque;
-            const tc_view_draw *d = tc_viewer_draws(r->viewer, &count, &opaque);
+            const tc_view_draw *d;
+            r->sight_kept = false; /* the run drew: so does the replay, and the list is the run's again */
+            d = tc_viewer_draws(r->viewer, &count, &opaque);
             r->drawn = true;
             if (r->verify && n) {
                 uint32_t want = take_u32(&c);
@@ -894,6 +1004,8 @@ bool tc_replay_step(tc_replay *r, float *dt) {
         default: break;
         }
     }
+    /* not drawn in the run: what the frontend draws now must not reach the next frame's camera */
+    if (stepped && !r->drawn) keep_sight(r);
     if (!stepped && r->verify) compare_carry(r);
     return stepped;
 }

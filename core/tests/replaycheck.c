@@ -7,6 +7,9 @@
  *   - a changed input is caught, at the frame it changed things;
  *   - input arriving between the frames of a replay changes nothing;
  *   - pausing a replay and turning the camera round Ed changes nothing either, and the camera comes back;
+ *   - a frontend's own draw after every replayed frame (as both frontends do, drawn or not in the run) changes nothing;
+ *   - the game menu opened from photo mode (one door that does two things) replays once;
+ *   - a segment starts from the level-saved table it was recorded with, whatever the table holds when it is replayed;
  *   - pausing in play: the camera turns round Ed and only that, and comes back.
  * Usage: replaycheck [out/ttlv]. Test-only stdio. */
 #include <stdio.h>
@@ -90,6 +93,21 @@ static float script_random(void) {
     return (float)(script_rng >> 8) / (float)(1u << 24);
 }
 
+/* The draw list the camera's sight reads (the last one drawn), as each frame of the run found it before it ran. */
+#define MAX_TRACKED 4096
+static uint64_t sight_hash[MAX_TRACKED];
+static uint32_t sight_frames;
+static bool track_sight;
+static uint32_t sight_compared, sight_bad;
+
+static uint64_t hash_list(const tc_view_draw *d, uint32_t n) {
+    const uint8_t *b = (const uint8_t *)d;
+    uint64_t h = 1469598103934665603ull ^ n;
+    size_t i;
+    for (i = 0; i < (size_t)n * sizeof *d; i++) h = (h ^ b[i]) * 1099511628211ull;
+    return h;
+}
+
 /* A player's session: uneven dts, keys, the stick, the mouse, doors, a pause, a frame now and then not drawn. */
 static void play(tc_viewer *v, int frames) {
     int i;
@@ -115,6 +133,12 @@ static void play(tc_viewer *v, int frames) {
         if (i == 440) tc_viewer_cycle_sectors(v);
         if (i == 460) tc_viewer_step_look(v, 1);
         if (i == 480) tc_viewer_release_all(v);
+        if (i == 520) tc_viewer_toggle_pause(v);       /* photo mode, */
+        if (i == 530) tc_viewer_set_game_menu(v, true); /* then the game menu over it: out of photo mode first */
+        if (i == 560) tc_viewer_set_game_menu(v, false);
+        if (i == 580) tc_viewer_set_hud_auto_hide(v, true);
+        if (i == 620) tc_viewer_cycle_sectors(v);
+        if (track_sight && sight_frames < MAX_TRACKED) sight_hash[sight_frames++] = hash_list(v->draws, v->draw_count);
         tc_viewer_update(v, dt);
         if (i % 53 != 7) tc_viewer_draws(v, &count, &opaque); /* minimised: no draw */
     }
@@ -126,6 +150,8 @@ static tc_vec3 place_at;
 static float place_heading;
 static bool stray_inputs;
 static bool pause_and_look;
+static bool frontend_draws;  /* draw after every step, as the frontends do */
+static bool no_prepare;      /* replay without putting the segment's level-saved table back (shows it matters) */
 static uint32_t pauses, pauses_restored;
 
 /* A frontend's paused playback: the camera turned, drawn from, then resumed. */
@@ -155,9 +181,20 @@ static const tc_replay_drift *replay_segment(tc_replay *r, uint32_t i, world *w,
     const tc_replay_segment *s = &r->segments[i];
     float dt;
     describe(&d, w, name, s->seed, NULL, s->has_carry ? &s->carry : NULL);
+    if (!no_prepare) tc_replay_prepare(r, i);
     if (tc_viewer_init(&v, &d) != TC_OK) return NULL;
     tc_replay_begin(r, i, &v, true);
     do {
+        if (frontend_draws) { /* the frame on show: drawn whether or not the run drew it */
+            uint32_t c, o;
+            tc_viewer_draws(&v, &c, &o);
+            /* what the next frame's camera will read: the replay's kept list, else the viewer's */
+            if (i == 0 && r->frame < sight_frames && !r->paused) {
+                uint64_t h = r->sight_kept ? hash_list(r->sight, r->sight_count) : hash_list(v.draws, v.draw_count);
+                sight_compared++;
+                if (h != sight_hash[r->frame]) sight_bad++;
+            }
+        }
         if ((int)r->frame == place_frame && i == 0) place_ed(&v);
         if (pause_and_look && r->drawn && r->frame % 37 == 0) pause_replay(r, &v);
         if (stray_inputs) { /* a player leaning on everything while watching: the frame's own inputs replace them */
@@ -198,9 +235,12 @@ static void session(const char *folder, const char *name, int frames) {
     describe(&d, &w, name, 0x1234567u, rec, NULL);
     if (tc_viewer_init(&v, &d) != TC_OK) { check(0, "viewer"); unload(&w); return; }
     tc_viewer_set_look(&v, 1.25f, false, true);
+    sight_frames = 0;
+    track_sight = true;
     play(&v, frames / 2);
     tc_recorder_mark(rec, "halfway");
     play(&v, frames - frames / 2);
+    track_sight = false;
     tc_viewer_free(&v);
     tc_recorder_free(rec);
     check(tc_replay_open(&r, m.data, m.size) == TC_OK && r.segment_count == 1 && r.closed && !r.truncated, "the file reads back");
@@ -222,6 +262,18 @@ static void session(const char *folder, const char *name, int frames) {
     show(name, drift);
     snprintf(what, sizeof what, "paused %u times with the camera turned: exact, and the camera back each time", pauses);
     check(drift && !drift->drifted && got == (uint32_t)frames && pauses > 3 && pauses_restored == pauses, what);
+    frontend_draws = true;
+    sight_compared = sight_bad = 0;
+    drift = replay_segment(&r, 0, &w, name, &got);
+    show(name, drift);
+    check(drift && !drift->drifted && got == (uint32_t)frames, "the frontend's own draw after every frame changes nothing");
+    snprintf(what, sizeof what, "... and every frame's camera reads the run's draw list (%u of %u differ)", sight_bad, sight_compared);
+    check(sight_compared + 1 >= (uint32_t)frames && sight_bad == 0, what);
+    pause_and_look = stray_inputs = true;
+    drift = replay_segment(&r, 0, &w, name, &got);
+    pause_and_look = stray_inputs = frontend_draws = false;
+    show(name, drift);
+    check(drift && !drift->drifted && got == (uint32_t)frames, "... nor with pauses and stray inputs on top");
     {
         /* a crash's file: cut anywhere, it opens and runs up to the cut */
         tc_replay cut;
@@ -418,7 +470,7 @@ static void portal(const char *folder) {
     unload(&a);
 }
 
-/* What the Replays menu shows, and a file from the days of the autopilot: listed, deletable, not playable. */
+/* What the Replays menu shows. */
 static void summaries(const char *folder) {
     world w;
     memfile m = {0};
@@ -428,10 +480,6 @@ static void summaries(const char *folder) {
     tc_replay r;
     tc_replay_summary s;
     char what[256];
-    uint8_t *old;
-    uint32_t door = 19, zero = 0;
-    uint8_t head[5] = {TC_RT_DOOR, 16, 0, 0, 0};
-    size_t at;
     if (!load(&w, folder, "bar")) { printf("  (no bar: summaries skipped)\n"); return; }
     rec = tc_recorder_create(sink, &m);
     tc_recorder_note(rec, "started", "2026-11-06_003012");
@@ -455,24 +503,97 @@ static void summaries(const char *folder) {
     tc_replay_summarize(&r, &s);
     check(s.playable && strstr(s.details, "did not end cleanly"), "cut short: still playable, and it says so");
     tc_replay_close(&r);
-    /* the door the autopilot left, put after the first segment's opening records */
-    at = r.size;
-    old = (uint8_t *)malloc(m.size + 21);
-    tc_replay_open(&r, m.data, m.size);
-    at = r.segments[0].first;
+    {   /* another format's file: refused, not misread */
+        uint32_t other = TC_REC_VERSION + 1;
+        memcpy(m.data + 4, &other, 4);
+        check(tc_replay_open(&r, m.data, m.size) == TC_ERR_STALE, "another format version: refused");
+    }
+    free(m.data);
+    unload(&w);
+}
+
+/* The level-saved table (global: tc_cast_level_saves_*): a segment that starts from a carry (a portal, a loaded game)
+ * reads it, so a playback must start it from the recorded one, not from whatever the process holds then. Every
+ * level-saved variable of sud0's cast gets another value in the table, the run is recorded on top of it, and then the
+ * table is scrambled before the replay. */
+static uint32_t level_key(const char *name, uint32_t edition) {
+    uint32_t h = 2166136261u ^ edition;
+    for (; *name; name++) h = (h ^ (uint32_t)(*name >= 'A' && *name <= 'Z' ? *name + 32 : *name)) * 16777619u;
+    return h;
+}
+
+static uint32_t fill_saves(tc_viewer *v, const char *name, uint8_t delta) {
+    const tc_cast *c = tc_viewer_cast(v);
+    uint32_t i, n = 0;
+    for (i = 0; c && i < c->count; i++) {
+        const tc_cast_actor *a = &c->actors[i];
+        const tc_ai_dsg_def *d = &a->model.dsg;
+        uint16_t k;
+        if (!a->ai->model || !a->ai->dsg) continue;
+        for (k = 0; d->vars && k < d->count; k++) {
+            int w = tc_ai_dsg_width(d->vars[k].type);
+            tc_cast_level_value lv;
+            if (!(d->vars[k].save & TC_AI_DSG_SAVE_LEVEL) || w <= 0 || w > 12 || d->vars[k].offset + (uint32_t)w > d->size) continue;
+            memset(&lv, 0, sizeof lv);
+            lv.level = level_key(name, v->level->edition);
+            lv.perso = (uint16_t)a->entry->id;
+            lv.var = k;
+            lv.size = (uint8_t)w;
+            memcpy(lv.bytes, a->ai->dsg + d->vars[k].offset, (size_t)w);
+            lv.bytes[0] ^= delta;
+            if (tc_cast_level_saves_put(&lv)) n++;
+        }
+    }
+    return n;
+}
+
+static void saves(const char *folder) {
+    world w;
+    memfile m = {0};
+    tc_recorder *rec;
+    tc_viewer v;
+    tc_viewer_desc d;
+    tc_viewer_carry carry;
+    tc_replay r;
+    const tc_replay_drift *drift;
+    uint32_t got = 0, n;
+    char what[160];
+    if (!load(&w, folder, "sud0")) { printf("  (no sud0: saves skipped)\n"); return; }
+    describe(&d, &w, "sud0", 3, NULL, NULL);
+    tc_viewer_init(&v, &d); /* to find the variables (a fresh start: the table is cleared) */
+    n = fill_saves(&v, "sud0", 1);
+    tc_viewer_free(&v);
+    memset(&carry, 0, sizeof carry);
+    strcpy(carry.level, "sud0"); /* arriving, as a portal's or a loaded game's level does: the table is read */
+    rec = tc_recorder_create(sink, &m);
+    describe(&d, &w, "sud0", 4, rec, &carry);
+    tc_viewer_init(&v, &d);
+    play(&v, 600);
+    tc_viewer_free(&v);
+    tc_recorder_free(rec);
+    check(tc_replay_open(&r, m.data, m.size) == TC_OK && r.segment_count == 1 && r.segments[0].save_count == n && n > 0,
+          "the segment holds the level-saved table it started from");
+    printf("  %u level-saved values in sud0's table\n", n);
+    tc_cast_level_saves_clear();
+    describe(&d, &w, "sud0", 3, NULL, NULL);
+    tc_viewer_init(&v, &d);
+    fill_saves(&v, "sud0", 2);
+    tc_viewer_free(&v);
+    drift = replay_segment(&r, 0, &w, "sud0", &got);
+    show("sud0", drift);
+    snprintf(what, sizeof what, "replayed over another table: exact (%u frames)", got);
+    check(drift && !drift->drifted && got == 600, what);
+    no_prepare = true;
+    tc_cast_level_saves_clear();
+    describe(&d, &w, "sud0", 3, NULL, NULL);
+    tc_viewer_init(&v, &d);
+    fill_saves(&v, "sud0", 2);
+    tc_viewer_free(&v);
+    drift = replay_segment(&r, 0, &w, "sud0", &got);
+    no_prepare = false;
+    check(drift && drift->drifted, "... and without putting it back it drifts (the table is what made the difference)");
+    tc_cast_level_saves_clear();
     tc_replay_close(&r);
-    memcpy(old, m.data, at);
-    memcpy(old + at, head, 5);
-    memcpy(old + at + 5, &door, 4);
-    memcpy(old + at + 9, &zero, 4);
-    memcpy(old + at + 13, &zero, 4);
-    memcpy(old + at + 17, &zero, 4);
-    memcpy(old + at + 21, m.data + at, m.size - at);
-    tc_replay_open(&r, old, m.size + 21);
-    tc_replay_summarize(&r, &s);
-    check(r.autopilot && !s.playable && strstr(s.details, "autopilot"), "an autopilot run: listed, not playable");
-    tc_replay_close(&r);
-    free(old);
     free(m.data);
     unload(&w);
 }
@@ -527,6 +648,8 @@ int main(int argc, char **argv) {
     printf("level change\n");
     chain(dir);
     portal(dir);
+    printf("level-saved table\n");
+    saves(dir);
     printf("pausing\n");
     live_pause(dir);
     printf("the Replays menu\n");

@@ -9,6 +9,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
     tc_vec3 lo, hi;
     float size;
     memset(v, 0, sizeof(*v));
+    if (desc->recorder) tc_rec_prepare(desc->recorder); /* the level-saved table, before the game reads it */
     v->crosshair_effect = -1;
     v->level = l;
     v->ai_result = TC_OK;
@@ -213,6 +214,7 @@ tc_result tc_viewer_init(tc_viewer *v, const tc_viewer_desc *desc) {
 
 void tc_viewer_free(tc_viewer *v) {
     uint32_t i;
+    tcv_free_particles(v);
     if (v->rec) tc_rec_end(v->rec, v);
     tcv_tape_free(v);
     tc_debug_free(&v->debug);
@@ -338,6 +340,7 @@ static void update_frame(tc_viewer *v, float dt) {
     prof = TC_PROF_BEGIN();
     tcv_update_portals(v, v->paused ? 0 : dt);
     tcv_update_light(v, v->paused ? 0 : dt); /* the game clock, as Ed's AI */
+    tcv_update_particles(v); /* after the game's ticks and the camera: the camera's snow and rain follow it */
     TC_PROF_END(TC_PZ_PORTALS, prof);
     if (!v->paused) v->animation_time += dt * v->animation_speed;
 }
@@ -375,10 +378,14 @@ void tc_viewer_step_speed(tc_viewer *v, int dir) {
     v->animation_speed = steps[i < 0 ? 0 : i >= count ? count - 1 : i];
 }
 
-void tc_viewer_toggle_pause(tc_viewer *v) {
-    REC_DOOR(TC_RD_TOGGLE_PAUSE, 0, 0);
+static void toggle_pause(tc_viewer *v) {
     v->paused = !v->paused;
     tcv_set_inspecting(v, v->paused && v->playing);
+}
+
+void tc_viewer_toggle_pause(tc_viewer *v) {
+    REC_DOOR(TC_RD_TOGGLE_PAUSE, 0, 0);
+    toggle_pause(v);
 }
 
 void tc_viewer_step_gamma(tc_viewer *v, bool up) {
@@ -391,7 +398,7 @@ void tc_viewer_set_game_menu(tc_viewer *v, bool on) {
     if (on == v->game_menu) return;
     REC_DOOR(TC_RD_GAME_MENU, on ? 1 : 0, 0);
     if (on) {
-        if (v->paused) tc_viewer_toggle_pause(v); /* out of photo mode first: its camera comes back */
+        if (v->paused) toggle_pause(v); /* out of photo mode first: its camera comes back (part of this door) */
         v->paused = true;
         tcv_set_inspecting(v, v->playing);
         /* The drift starts from the very view the game was paused on (the user, 2026-11-15: a zoom of its own made the

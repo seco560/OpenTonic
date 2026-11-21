@@ -323,6 +323,44 @@ fragment float4 shadow_fragment(ShadowOut in [[stage_in]], constant ShadowParams
     return float4(0.0, 0.0, 0.0, a);
 }
 
+// ---- Particles (tc_viewer_particles; the SDL build's shaders/particle.vert/.frag) ----
+// Triangles the core built facing the camera: snow sprites, rain streaks (transparent tail, opaque head). Drawn after the
+// transparent draws, depth-tested without writing; alpha-blended or added (misc.z). Must match ParticleParams in
+// Renderer.swift. The vertices: tc_particle_vertex, 9 floats (position, uv, rgba).
+struct ParticleParams {
+    float4x4 viewProjection;
+    float4 fog;              // near, far, enabled (0/1), strength (0..1)
+    float4 fogColor;
+    float4 eye;
+    float4 forward;          // the camera's (view depth for the fog)
+    float4 misc;             // gamma, textured (0/1), additive (0/1), unused
+};
+struct ParticleOut { float4 position [[position]]; float2 uv; float4 color; float3 world; };
+
+vertex ParticleOut particle_vertex(uint vid [[vertex_id]], const device float *v [[buffer(0)]],
+                                   constant ParticleParams &p [[buffer(3)]]) {
+    const device float *q = v + vid * 9;
+    ParticleOut out;
+    out.world = float3(q[0], q[1], q[2]);
+    out.position = p.viewProjection * float4(out.world, 1.0);
+    out.uv = float2(q[3], q[4]);
+    out.color = float4(q[5], q[6], q[7], q[8]);
+    return out;
+}
+
+fragment float4 particle_fragment(ParticleOut in [[stage_in]], texture2d<float> tex [[texture(0)]],
+                                  sampler smp [[sampler(0)]], constant ParticleParams &p [[buffer(3)]]) {
+    float4 c = in.color;
+    if (p.misc.y > 0.5) c *= tex.sample(smp, in.uv);
+    if (c.a <= 0.0) discard_fragment();
+    float3 rgb = pow(saturate(c.rgb), float3(1.0 / p.misc.x));
+    if (p.fog.z > 0.5 && p.fog.y > p.fog.x) {  // by view depth, as the level's
+        float t = saturate((dot(in.world - p.eye.xyz, p.forward.xyz) - p.fog.x) / (p.fog.y - p.fog.x)) * p.fog.w;
+        rgb = p.misc.z > 0.5 ? rgb * (1.0 - t) : mix(rgb, p.fogColor.rgb, t);  // added: fades out into the fog
+    }
+    return float4(rgb, c.a);
+}
+
 // ---- Supersampling: the level's frame, drawn at scale x the drawable's pixels, filtered down into it ----
 // One full-screen triangle; linear filtering at the destination's pixel centres (at 2x a 2 x 2 box filter), as the
 // SDL build's linear blit.

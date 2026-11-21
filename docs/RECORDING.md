@@ -40,8 +40,7 @@ It took the place of the old Demo (Ed's autopilot, removed 2026-11-06: the user 
 - Keys: up / down, Return plays, Delete or Backspace deletes, R flips Record runs, Esc back. SDL's pad: Cross plays,
   Square deletes, Triangle flips Record runs, Circle back. The Swift build's level select and this menu have no pad control, as before.
 - Rows are read from the whole of every file, so a very large folder will open slowly (not measured).
-- Files from the autopilot's days are listed, deletable, not playable: their inputs came from code that is gone.
-  `replay check` skips them.
+- Files of another format version (all made before 2026-11-21) are listed, deletable, not playable.
 
 ## The original demos
 
@@ -80,7 +79,11 @@ sound, particle and module-visibility events, per-perso transparency. Not seen o
 - the settings doors, in the order they were called (`tc_rec_door_id`);
 - when the frame was drawn: the camera's sight test reads the last draw list and the camera feeds Ed's AI, so a replay
   draws where the run drew, and frames without a draw (minimised) stay that way;
-- per level: its name, edition, seed and portal carry.
+- per level: its name, edition, seed and portal carry, and the level-saved table as the level found it
+  (tc_cast_level_saves_*: global, filled by the levels left before, a loaded game, cleared by a new one). A playback
+  puts it back before making the segment's viewer (`tc_replay_prepare`), so a segment replays the same whatever the
+  app played before it; until 2026-11-21 it didn't, and every run from NEW GAME or LOAD GAME replayed on the app's
+  leftover table.
 
 **To tell how a later build differs:**
 - a trail about 30 times a second (`tc_rec_sample`): Ed, the camera, his behaviour, state, clip, hit points, lives,
@@ -99,8 +102,19 @@ sound, particle and module-visibility events, per-perso transparency. Not seen o
   the frame that crashed is in the file and `replay check` runs into the same crash under a debugger. `replay info` tells a
   crash ("ended inside a level") from quitting ("closed").
 - **Levels are segments.** A portal makes a new viewer and a new segment in the same file. Each segment starts from its recorded
-  seed and carry, so drift in one level doesn't spoil the next, and `check` compares the level change a run ended with
+  seed, carry and level-saved table, so drift in one level doesn't spoil the next, and `check` compares the level change a run ended with
   against the next segment's carry.
+- **A level change in a playback is the recording's.** The replayed level asks for its next level as in the run
+  (tc_viewer_pending_level); the frontends never answer that in a playback: at the segment's end they open the next
+  segment's level from the file. Until 2026-11-21 the Swift build's renderer dropped its playback at a segment's end
+  and, in the same draw, opened the pending level as a normal one: control went to the player at every level change.
+- **The frontend's own draws don't reach the run.** The camera's sight reads the last draw list. A replay step stops
+  short of the doors the run's frontend called after its draw, so this frontend's draw comes where the run's did; a
+  frame the run didn't draw (and a paused playback's look round) keeps the run's list in the replay and puts it back
+  before the next frame. A paused playback also puts back what its camera told the game (the scripts' eye, the camera
+  record the scripts read, the game menu's drift clock).
+- **One door, one record.** The replay applies every door it reads, so a door is recorded only from a frontend's call,
+  never from inside another (the game menu opened from photo mode used to record a nested pause too: applied twice).
 - **Drift is reported, not just failed.** `check` gives the first difference (frame, time, field, both values), how many
   records differ, and how far Ed got from the recorded trail. Some drift is an intended fix. A change of data is said
   separately. Exit 0 exact, 1 drifted, 2 couldn't run.
@@ -131,7 +145,11 @@ Headless (`make -C core replaycheck`, plus one-off runs):
   build has never run here: syntax-checked only, as this Mac has no glslangValidator to link it. Whether the user's own
   runs replay exact has not been checked with `replay check`.
 - **Mac against Linux:** unmeasured. sinf and friends come from each system's libm.
-- Recordings made before a format change: `TC_REC_VERSION` refuses them. Samples can grow without that.
+- Recordings made before a format change: `TC_REC_VERSION` refuses them (listed, deletable, not playable). Nothing
+  converts old runs: the format is the build's (version 2 since 2026-11-21: the level-saved table, the whole carry,
+  the autopilot's doors gone).
+- The 2026-11-21 fixes (level change, table, doors, draws, pause) are verified headless (`make -C core replaycheck`,
+  each fix also shown to be caught when taken out again); not yet in either app.
 
 ## Open
 

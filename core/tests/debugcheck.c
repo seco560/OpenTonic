@@ -265,6 +265,7 @@ int main(int argc, char **argv) {
         tc_recorder_free(rec);
         check(ended == (uint16_t)(TC_AI_POWERS_ALL & ~7u), "recorded: the session ends without power 7");
         check(tc_replay_open(&r, m.data, m.size) == TC_OK && r.segment_count == 1, "the recording reads back");
+        if (r.segment_count == 1) tc_replay_prepare(&r, 0);
         if (r.segment_count == 1 && make(&v, r.segments[0].seed, NULL, NULL)) {
             tc_replay_begin(&r, 0, &v, true);
             while (tc_replay_step(&r, &dt)) {}

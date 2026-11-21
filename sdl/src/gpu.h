@@ -13,6 +13,9 @@ typedef struct gpu {
     /* Level pipelines (as Renderer.swift): textured and flat (opaque, depth write); TC_FLAG_TRANSPARENT surfaces
      * are drawn after everything opaque without writing depth: textured alpha-blended, or flat. */
     SDL_GPUGraphicsPipeline *textured, *flat, *textured_blended, *flat_no_depth_write;
+    /* The same four culling back faces (TC_FLAG_ONE_SIDED): [0] front counter-clockwise, [1] clockwise (a mirroring
+     * matrix, TC_FLAG_MIRRORED); each NULL: drawn two-sided. */
+    SDL_GPUGraphicsPipeline *culled[2][4];
     /* Multisample antialiasing of the level (1 = off): the level pipelines and 3D targets use this many samples,
      * resolved into the swapchain at the end of the 3D pass. Opaque textured surfaces get alpha to coverage then,
      * so alpha-tested cutouts (foliage, fences, sprites) are antialiased too. */
@@ -22,6 +25,13 @@ typedef struct gpu {
      * with the level pipelines (the same sample count). */
     SDL_GPUGraphicsPipeline *shadow;
     SDL_GPUShader *shadow_vs, *shadow_fs;
+    /* The particles (shaders/particle.*; tc_viewer_particles): alpha-blended and added, depth-tested without writing;
+     * rebuilt with the level pipelines. Optional. Their vertices: a buffer refilled each frame (gpu_particles_upload). */
+    SDL_GPUGraphicsPipeline *particles, *particles_add;
+    SDL_GPUShader *particle_vs, *particle_fs;
+    SDL_GPUBuffer *particle_buffer;
+    SDL_GPUTransferBuffer *particle_transfer;
+    Uint32 particle_capacity;         /* bytes */
     SDL_GPUGraphicsPipeline *ui;      /* 2D quads, alpha-blended, no depth */
     SDL_GPUGraphicsPipeline *overlay; /* screen transitions (docs/PORTALS.md): free-cornered quads, as ui */
     SDL_GPUGraphicsPipeline *bar;     /* the loading screen's rainbow bar (shaders/bar.frag), as ui */
@@ -40,6 +50,13 @@ typedef struct gpu {
     SDL_GPUTexture *scaled;
     Uint32 target_w, target_h;
     int target_samples;
+    /* A photo of the frame (gpu_frame_capture): the frame drawn into `capture` (the swapchain can't be read), then shown
+     * from it and read back into capture_pixels. */
+    SDL_GPUTexture *capture, *capture_swapchain;
+    SDL_GPUTransferBuffer *capture_transfer;
+    Uint32 capture_w, capture_h;
+    bool capturing;
+    uint8_t *capture_pixels;
 } gpu;
 
 /* msaa: the wanted sample count (1, 2, 4, 8); the largest supported one up to it is used. */
@@ -90,6 +107,11 @@ int gpu_next_scale(const gpu *g);
 /* No depth; clear = false keeps what earlier passes drew (overlays). */
 SDL_GPURenderPass *gpu_pass_2d(gpu *g, gpu_frame *f, bool clear, SDL_FColor clear_color);
 void gpu_frame_end(gpu *g, gpu_frame *f);
+/* This frame becomes a photo: call right after gpu_frame_begin. The frame then draws into a texture of its size, which
+ * gpu_frame_end shows and reads back (waiting for the GPU: one frame's hitch); gpu_capture_take then has it. */
+bool gpu_frame_capture(gpu *g, gpu_frame *f);
+/* The last captured frame's pixels (RGBA8, top row first, w x h; the caller SDL_frees them), or NULL. */
+uint8_t *gpu_capture_take(gpu *g, int *w, int *h);
 
 /* A tinted, textured rectangle in target pixels (top-left origin) in a 2D pass. tex NULL: solid colour.
  * uv NULL: the whole texture. */
@@ -119,6 +141,20 @@ typedef struct gpu_shadow {
     float eye[3];
 } gpu_shadow;
 void gpu_draw_shadow(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, const gpu_shadow *s);
+
+/* The particles (tc_viewer_particles): the frame's vertices copied up before the 3D pass begins (false: none to draw),
+ * then each batch drawn in it after the transparent draws. */
+typedef struct gpu_particle_params {
+    float view_projection[16];
+    float fog[4];        /* near, far, enabled (0/1), strength */
+    float fog_color[4];
+    float eye[4];
+    float forward[4];
+    float misc[4];       /* gamma, textured, additive, 0 */
+} gpu_particle_params;
+bool gpu_particles_upload(gpu *g, gpu_frame *f, const void *vertices, Uint32 bytes);
+void gpu_draw_particles(gpu *g, gpu_frame *f, SDL_GPURenderPass *pass, const gpu_particle_params *p, SDL_GPUTexture *tex,
+                        bool additive, Uint32 first, Uint32 count);
 
 /* The loading screen's bar (main.swift's RainbowBar) over rect, in target pixels, in a 2D pass: tex the rainbow pool
  * (sud0's o_zarbi_auntxy.png, sampled repeating), NULL = plain white; scale = pixels per point; time in seconds. */

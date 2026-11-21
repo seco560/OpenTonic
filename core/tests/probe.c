@@ -805,6 +805,7 @@ static int start_from_recording(const char *path, float seconds) {
         const tc_replay_segment *s = &r.segments[seg];
         if (s->edition) snprintf(folder, sizeof folder, "%s/../se/ttlv", S.dir);
         else snprintf(folder, sizeof folder, "%s", S.dir);
+        tc_replay_prepare(&r, seg);
         if (!load_level(folder, s->level, s->has_carry ? &s->carry : NULL, s->seed)) return 0;
     }
     tc_replay_begin(&r, seg, &S.v, false);

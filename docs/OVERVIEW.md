@@ -154,8 +154,7 @@ SSX ride 535 thousand -> some 110 thousand; free-fly over the city barely change
 anything; the cars' 94 thousand triangles each remain the cost there). It costs the core 1 to 2.5 ms a frame on the
 Celeron. viewcheck measures what it changes of the picture against a 960 x 540 software render of each frame: 5
 pixels of 52 million (hairline cracks between the city's walls, which the small depth picture cannot hold). Levels
-with sectors are untouched. Not done yet, next in line if needed: backface culling (the pipelines draw both faces),
-drawing the opaque draws front to back, a SIMD rasteriser.
+with sectors are untouched. Not done yet, next in line if needed: drawing the opaque draws front to back, a SIMD rasteriser.
 
 **The cars (2026-11-14).** Each of LibertyCity2001's cars is some 94 thousand triangles. Two rules, both for
 custom-gameplay cars only: one more than `TC_VIEW_CAR_HIDE_HEIGHT` (100) below the camera is not drawn, and one more

@@ -24,6 +24,13 @@ extern "C" {
  * `tiling`): wrap along u / v when set, clamp to the edge otherwise. */
 #define TC_FLAG_WRAP_U (1u << 4)
 #define TC_FLAG_WRAP_V (1u << 5)
+/* The material culls back faces (its flag 0x400; raymap's flags_backfaceCulling): drawn from the side its triangles'
+ * winding faces only (counter-clockwise seen from the front: the side the stored face normal points to). Two-sided
+ * materials (skies, water, shadows, paintings, sud0's rainbow falls) lack it. Never on billboards. Totalski's finish
+ * banner (ARRIVEE one side, FINISH the other) and other coincident twins need it to show the right face. */
+#define TC_FLAG_ONE_SIDED (1u << 6)
+/* Set by tc_viewer on draws whose model matrix mirrors (negative determinant): the front faces' winding is reversed. */
+#define TC_FLAG_MIRRORED (1u << 7)
 /* The original's alpha test for cut-outs (GliDX6vr.dll: ALPHAFUNC GREATEREQUAL, ALPHAREF 0xE1). */
 #define TC_ALPHA_REF (225.0f / 255.0f)
 #define TC_HIDDEN 0xFFFFu /* "shown object" value of a hidden channel */
@@ -413,6 +420,47 @@ typedef struct tc_ways {
 /* The ways of a perso (by id), or NULL. */
 const tc_perso_ways *tc_ways_of(const tc_ways *w, int32_t perso);
 
+/* .ttlv PRTC (tools/ttre/ai.py particles_chunk; docs/ENGINE.md "Particles"): the particle sources the scripts set on a
+ * perso (PROC 214 Proc_SetParticleGenerator, node type 37 = an index here; PROC 212 / 213 turn it on / off). One
+ * source = the exe's MSPrtSrc record {generator, particle system, field, ...}: the generator puts new particles in its
+ * place by the perso, the field moves them (an acceleration, a jitter) and takes them out when they leave its box or
+ * sphere (placed by the perso each frame when `follow`), the system holds and draws them (camera-facing sprites, or
+ * lines from the last frame's place to this one's). Totalski's snow and Land's rain (on the camera), marmite's spray,
+ * Ed's underwater bubbles. */
+enum { TC_PRT_POINTS = 2, TC_PRT_LINES = 3, TC_PRT_SPRITES = 4 };
+typedef struct tc_particle_source {
+    uint8_t type;                /* TC_PRT_*: S +0xC (points are not drawn: no retail source has them) */
+    uint8_t emit;                /* G +0: 0 never, 1 every frame, 2 by chance (chance), 3 counted (every, modulo) */
+    uint8_t count_mode;          /* G +0xE: 0 count, 1 random in [count_lo, count_hi] */
+    uint8_t position_mode;       /* G +0x16: 0 corner[0], 1 the parallelogram of corners 0-2, 2 the box of 0-3 */
+    uint8_t transform;           /* G +0x17: by the perso's matrix: 0 rotated, 1 moved, 2 both (velocities: 0, 2) */
+    uint8_t life_mode;           /* G +0x5C: 0 forever, 1 life, 2 random in [life, life_max] (s) */
+    uint8_t spread;              /* G +0x68: sprites start up to 30 units lower (before the transform) */
+    uint8_t sphere;              /* E +0: 0 a box (box_min, box_max), else a sphere (centre, radius) */
+    uint8_t follow;              /* +0x29: the field is placed by the perso every frame (offsets) */
+    uint8_t ceiling;             /* +0x2A: not drawn with a ceiling nearer than ceiling_distance over the perso */
+    uint8_t deflector;           /* E +0x3C: particles in the deflector's box slide outwards (marmite's spray) */
+    uint8_t additive;            /* the sprite's texture adds (flag 0x20, "_AD"), else alpha-blended */
+    uint16_t max;                /* S +0: the pool */
+    int16_t count, count_lo, count_hi, every, modulo;
+    uint32_t env_mask;           /* +0xC: 0xFFFFFFFF any; else bit 0: may be in water, bit 1: may be in air */
+    int32_t texture;             /* level texture, -1 none (lines) */
+    float chance;
+    tc_vec3 corner[4];           /* where new particles start, in the perso's axes (transform) */
+    tc_vec3 direction;           /* x speed, + a random vector in [-jitter, jitter]^3 */
+    float speed, jitter;
+    float life, life_max;
+    tc_vec3 box_min, box_max, centre;
+    float radius;
+    tc_vec3 acceleration;        /* world, + a jitter of field_jitter per axis (one random vector per 48 particles) */
+    float field_jitter;
+    tc_vec3 deflector_a, deflector_b; /* relative to the perso's place when first drawn */
+    tc_vec3 offset_min, offset_max;   /* the field's box from the perso's place, or its centre in the perso's axes */
+    float ceiling_distance;
+    float half_size[2];          /* sprites */
+    float ambient[3], diffuse[3]; /* the material's */
+} tc_particle_source;
+
 typedef struct tc_level {
     char converter[16];          /* the converter's stamp (STMP), for log lines */
     uint64_t data_hash;          /* the file's content without the stamp and paths (recordings: tc_rec.h) */
@@ -438,6 +486,8 @@ typedef struct tc_level {
     tc_cast_data cast;           /* .ttlv CAST (count 0: none) */
     tc_pcol pcol;                /* .ttlv PCOL (count 0: none; older files baked the persos' collision into COLL) */
     tc_ways ways;
+    uint32_t particle_source_count; /* .ttlv PRTC (absent: none; PROC 214 then does nothing) */
+    tc_particle_source *particle_sources;
     uint32_t sound_rolloff_count; /* .ttlv SND3 (absent: none): the persos with a sound rolloff of their own */
     tc_level_rolloff *sound_rolloffs;
     uint32_t pick_count;         /* .ttlv SPIK (absent: none; those events play nothing) */

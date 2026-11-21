@@ -304,6 +304,10 @@ final class GameView: MTKView {
             if !event.isARepeat { onEscape?() }
             return
         }
+        if event.keyCode == 49, let r = renderer, r.inPhotoMode() {  // Space in photo mode: a photo (Renderer.requestPhoto)
+            if !event.isARepeat { r.requestPhoto(self) }
+            return
+        }
         if event.keyCode == 101 {  // F9: mark this moment in the recording
             if !event.isARepeat, Recording.shared.mark() { updateTitle() }
             return
@@ -787,6 +791,7 @@ final class GameView: MTKView {
             noLevel(name)
             return false
         }
+        p.prepare(i)  // the level-saved table the run's level found (global: the app's own would be another)
         openLevel(url, carry: s.has_carry ? s.carry : nil, seed: s.seed)
         guard let r = renderer, let v = r.viewer, v.level.url == url else {
             noLevel(name)
@@ -1077,7 +1082,7 @@ final class GameView: MTKView {
                         tc_viewer_toggle_closeup(v)
                         view?.updateTitle()
                     }
-                case .press, .pausePlayback: break
+                case .press, .pausePlayback, .photo: break
                 }
             }
             renderer = r

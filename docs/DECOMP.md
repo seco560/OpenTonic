@@ -429,7 +429,7 @@ lit. Per draw it picks a D3D6 texture-stage preset (built once in FUN_10012550, 
   (FUN_004521b0) pushes no sector lights, so as read they never apply. The dark spots on the slope are more likely the
   missing ambient floor: the formula never goes below 2 x ambient (0.2 there), the port's clamp(R) / 128 goes to 0.
 
-## Particles (read 2026-11-04, the user's sud0 snow question; nothing ported)
+## Particles (read 2026-11-04, the user's sud0 snow question; **read whole and ported 2026-11-20: docs/ENGINE.md "Particles"**, which corrects the record's names below: +0 is the generator, +4 the particle system, +8 the field)
 - **Per-perso particle source:** perso +0x3C (`GAM\Actions\MSPrtSrc.c`, `GAM_MSPrtSrc_0042db10` ...). Its +0 is the
   live source, null at load; **PROC 214** sets it (another perso's too: the procs take a perso context), **212 / 213**
   turn it on / off, 215..223 change it (`PROC_212Etc_0048b0f0`). Each frame `GAM_0042df50` (from the perso's frame,

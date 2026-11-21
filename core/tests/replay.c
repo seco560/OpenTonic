@@ -80,10 +80,10 @@ static int info(const char *path) {
         if (o.type == TC_RT_NOTE) printf("  %s: %s\n", o.key, o.text);
     for (i = 0; i < r.segment_count; i++) {
         const tc_replay_segment *s = &r.segments[i];
-        printf("  [%u] %s%s, seed %08x, %u frames, %.1f s, %u draws, %u marks%s%s%s, data %s %016llx / %s %016llx\n", i,
+        printf("  [%u] %s%s, seed %08x, %u frames, %.1f s, %u draws, %u marks%s%s, %u level-saved values%s, data %s %016llx / %s %016llx\n", i,
                s->level, s->edition ? " (SE)" : "", s->seed, s->frames, s->seconds, s->draws, s->marks,
-               s->has_carry ? ", through a portal to " : "", s->has_carry ? (s->carry.place[0] ? s->carry.place : "the start") : "",
-               s->closed ? "" : ", NOT CLOSED", s->level_stamp, (unsigned long long)s->level_hash, s->ai_stamp,
+               s->has_carry ? ", arriving at " : "", s->has_carry ? (s->carry.place[0] ? s->carry.place : "the start") : "",
+               s->save_count, s->closed ? "" : ", NOT CLOSED", s->level_stamp, (unsigned long long)s->level_hash, s->ai_stamp,
                (unsigned long long)s->ai_hash);
         seconds += s->seconds;
     }
@@ -222,6 +222,7 @@ static int check_segment(tc_replay *r, uint32_t i, const char *dir) {
     desc.level_name = s->level;
     desc.carry = s->has_carry ? &s->carry : NULL;
     desc.seed = s->seed;
+    tc_replay_prepare(r, i);
     if (tc_viewer_init(&v, &desc) != TC_OK) {
         printf("  [%u] %s: no viewer\n", i, s->level);
         free(ai);
@@ -258,12 +259,6 @@ static int check(const char *path, const char *dir) {
     int worst = 0;
     if (!open_file(path, &r, &data)) return 2;
     printf("%s: %u levels, %s\n", path, r.segment_count, ending(&r));
-    if (r.autopilot) {
-        printf("  made with Ed's autopilot, since removed: skipped\n");
-        tc_replay_close(&r);
-        free(data);
-        return 2;
-    }
     for (i = 0; i < r.segment_count; i++) {
         int e = check_segment(&r, i, dir);
         if (e > worst) worst = e;

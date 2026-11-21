@@ -19,6 +19,7 @@
 #include "tc_speech.h"
 #include "tc_debug.h"
 #include "tc_hud.h"
+#include "tc_particles.h"
 #include "tc_viewer.h"
 #include "tc_menu.h"
 #include "tc_save.h"

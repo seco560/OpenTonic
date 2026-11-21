@@ -47,7 +47,10 @@ tc_result tc_viewer_set_hud(tc_viewer *v, const void *data, size_t size) {
     return r;
 }
 
-void tc_viewer_set_hud_auto_hide(tc_viewer *v, bool on) { if (v->game) v->game->hud.auto_hide = on; }
+void tc_viewer_set_hud_auto_hide(tc_viewer *v, bool on) {
+    REC_DOOR(TC_RD_HUD_AUTO_HIDE, on ? 1 : 0, 0);
+    if (v->game) v->game->hud.auto_hide = on;
+}
 
 bool tc_viewer_hud_auto_hide(const tc_viewer *v) { return v->game && v->game->hud.auto_hide; }
 

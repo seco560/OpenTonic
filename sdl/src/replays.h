@@ -1,6 +1,6 @@
 /* The Replays menu: the recordings (record.h) in a list, newest first, each to play or delete; Sources/OpenTonic/
  * ReplaysScreen.swift is the Swift build's. Over the level select, which stays open underneath. Row text is the core's
- * (tc_replay_summarize). Deleting asks first, in the row; an autopilot run can't be played. A run ends on the way to a
+ * (tc_replay_summarize). Deleting asks first, in the row; a file of another format version can't be played. A run ends on the way to a
  * menu, so nothing here is being written. All sizes in pixels. */
 #ifndef TV_REPLAYS_H
 #define TV_REPLAYS_H

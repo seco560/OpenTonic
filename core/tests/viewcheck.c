@@ -53,7 +53,13 @@ static void frame(tc_viewer *v, float dt) {
     for (i = 0; i < count && !bad; i++) {
         const tc_mesh *m = tc_viewer_mesh(v, d[i].mesh);
         int transparent = (d[i].flags & TC_FLAG_TRANSPARENT) != 0 || d[i].alpha < 1; /* a perso's fade: blended */
-        if (!m || m->index_count == 0 || (d[i].flags & ~TC_FLAG_WATER) != m->surface.flags || transparent != (i >= opaque)) bad = 1;
+        /* the viewer adds WATER and MIRRORED, and drops ONE_SIDED on billboards (tc_viewer_draw.c add_draw) */
+        const uint32_t viewer_set = TC_FLAG_WATER | TC_FLAG_MIRRORED | TC_FLAG_ONE_SIDED;
+        if (!m || m->index_count == 0 || (d[i].flags & ~viewer_set) != (m->surface.flags & ~viewer_set) ||
+            transparent != (i >= opaque)) bad = 1;
+        if (m && (d[i].flags & TC_FLAG_ONE_SIDED) != ((m->surface.flags & TC_FLAG_BILLBOARD) ? 0 : (m->surface.flags & TC_FLAG_ONE_SIDED)))
+            bad = 1;
+        if ((d[i].flags & TC_FLAG_MIRRORED) && !(d[i].flags & TC_FLAG_ONE_SIDED)) bad = 1;
         if (d[i].texture < -1 || d[i].texture >= (int32_t)v->level->texture_count) bad = 1;
         if (d[i].mesh < v->level->mesh_count && v->split && v->split[d[i].mesh]) bad = 1;
         if (m && (d[i].first_index % 3 || d[i].index_count % 3 || d[i].index_count == 0 ||

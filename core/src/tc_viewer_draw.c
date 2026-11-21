@@ -327,6 +327,12 @@ static void add_draw(tc_viewer *v, draw_list *dl, uint32_t mesh, const tc_mat4 *
     d->mesh = mesh;
     d->texture = texture_at(v, &m->surface, v->animation_time);
     d->flags = m->surface.flags | (is_water(v, mesh) ? TC_FLAG_WATER : 0);
+    if (d->flags & TC_FLAG_BILLBOARD) d->flags &= ~TC_FLAG_ONE_SIDED; /* the shaders turn them to the camera */
+    else if (d->flags & TC_FLAG_ONE_SIDED) { /* a mirroring matrix swaps which winding faces front */
+        const float *a = model->m; /* column-major */
+        float det = a[0] * (a[5] * a[10] - a[6] * a[9]) - a[4] * (a[1] * a[10] - a[2] * a[9]) + a[8] * (a[1] * a[6] - a[2] * a[5]);
+        if (det < 0) d->flags |= TC_FLAG_MIRRORED;
+    }
     d->first_index = first;
     d->index_count = count;
     d->model = *model;

@@ -71,7 +71,9 @@ These are not bugs: they are parts of the game that are faked or missing.
 | Card types 8 and 9 (some props' physics) | they only turn in place |
 | The camera's "watch him fall" mode; fixed shots at a ski finish | not ported |
 | Shadows | parked; a stand-in blob |
-| Hotspots, the other light kind, surface waves, sud0's snow | not ported |
+| Hotspots, the other light kind, surface waves | not ported |
+| Backface culling by material (2026-11-20; docs/NOTES.md "Material flag bit 0x400") | ported; fixes two-sided signs and walls showing both textures (Totalski's finish banner). Seen by Claude on Metal; SDL type-checked only |
+| Particles: Totalski's snow, Land's rain, marmite's spray, Ed's bubbles (2026-11-20) | ported (docs/ENGINE.md "Particles"); snow and rain seen by Claude in the app, not yet by the user |
 | Portals, passages, Totalski's obstacles, light managers | data made by the converter, not characters running their scripts |
 
 ## What is next

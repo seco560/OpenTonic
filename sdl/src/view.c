@@ -250,15 +250,19 @@ static void draw_mesh(draw_ctx *c, const tc_view_draw *d) {
     const tc_surface *s = &tc_viewer_mesh(&v->viewer, d->mesh)->surface;
     bool transparent = (d->flags & TC_FLAG_TRANSPARENT) != 0 || d->alpha < 1; /* a perso's fade: blended */
     SDL_GPUTexture *tex = d->texture >= 0 && v->textures ? v->textures[d->texture] : NULL;
+    /* one-sided materials: back faces culled (front counter-clockwise; a mirroring matrix reverses it) */
+    SDL_GPUGraphicsPipeline *const *culled = (d->flags & TC_FLAG_ONE_SIDED) ? g->culled[(d->flags & TC_FLAG_MIRRORED) ? 1 : 0] : NULL;
     if (tex) {
-        bind(c, transparent ? g->textured_blended : g->textured);
+        SDL_GPUGraphicsPipeline *p = culled ? culled[transparent ? 2 : 0] : NULL;
+        bind(c, p ? p : transparent ? g->textured_blended : g->textured);
         int wrap = (d->flags & TC_FLAG_WRAP_U ? 1 : 0) | (d->flags & TC_FLAG_WRAP_V ? 2 : 0);
         SDL_GPUTextureSamplerBinding samplers[2] = {{tex, g->level_samplers[wrap]}, {v->lightmap, g->clamp_sampler}};
         SDL_BindGPUFragmentSamplers(c->pass, 0, samplers, 2);
         gpu_flags f = {d->flags, !transparent && g->msaa > 1, {0, 0}};  /* coverage: as the textured pipeline */
         SDL_PushGPUFragmentUniformData(c->cmd, 1, &f, sizeof f);
     } else {
-        bind(c, transparent ? g->flat_no_depth_write : g->flat);
+        SDL_GPUGraphicsPipeline *p = culled ? culled[transparent ? 3 : 1] : NULL;
+        bind(c, p ? p : transparent ? g->flat_no_depth_write : g->flat);
         SDL_GPUTextureSamplerBinding lightmap = {v->lightmap, g->clamp_sampler};
         SDL_BindGPUFragmentSamplers(c->pass, 0, &lightmap, 1);
     }
@@ -294,6 +298,12 @@ void view_draw_frame(view *v, gpu_frame *f) {
     tc_view_frame fr;
     tc_viewer_frame(&v->viewer, (float)f->width / (float)SDL_max(f->height, 1u), &fr);
     SDL_FColor clear = {fr.clear_color[0], fr.clear_color[1], fr.clear_color[2], 1};
+    /* the particles' vertices go up before the 3D pass (a copy pass can't run inside it) */
+    const tc_particle_vertex *pv;
+    const tc_particle_batch *pb;
+    uint32_t pv_count = 0;
+    uint32_t pb_count = tc_viewer_particles(&v->viewer, &pv, &pv_count, &pb);
+    if (pb_count && !gpu_particles_upload(v->g, f, pv, pv_count * (Uint32)sizeof *pv)) pb_count = 0;
     SDL_GPURenderPass *pass = gpu_pass_3d(v->g, f, clear);
     if (!pass) return;
     if (!v->vertices || !v->indices) { gpu_pass_3d_end(v->g, f, pass); return; }
@@ -361,6 +371,22 @@ void view_draw_frame(view *v, gpu_frame *f) {
         SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
     }
     for (uint32_t i = opaque; i < count; i++) draw_mesh(&c, &draws[i]);
+    if (pb_count) { /* Totalski's snow, Land's rain ... (tc_viewer_particles), over the transparent draws */
+        gpu_particle_params pp;
+        SDL_zero(pp);
+        SDL_memcpy(pp.view_projection, fr.view_projection.m, sizeof pp.view_projection);
+        pp.fog[0] = fr.fog_near, pp.fog[1] = fr.fog_far, pp.fog[2] = fr.fog_on ? 1.0f : 0.0f, pp.fog[3] = fr.fog_strength;
+        vec4(pp.fog_color, tc_v3(fr.fog_color[0], fr.fog_color[1], fr.fog_color[2]), 0);
+        vec4(pp.eye, fr.eye, 0);
+        vec4(pp.forward, tc_v3_cross(fr.cam_up, fr.cam_right), 0);
+        pp.misc[0] = fr.gamma;
+        for (uint32_t i = 0; i < pb_count; i++) {
+            SDL_GPUTexture *tex = pb[i].texture >= 0 && (uint32_t)pb[i].texture < v->texture_count ? v->textures[pb[i].texture] : NULL;
+            pp.misc[1] = tex ? 1.0f : 0.0f;
+            pp.misc[2] = pb[i].additive ? 1.0f : 0.0f;
+            gpu_draw_particles(v->g, f, pass, &pp, tex, pb[i].additive != 0, pb[i].first, pb[i].count);
+        }
+    }
     gpu_pass_3d_end(v->g, f, pass);
 }
 

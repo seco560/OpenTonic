@@ -860,7 +860,7 @@ placed in 3D since 2026-11-14, "3D sound" below), animation sound events, Displa
 | PROC 201 / 202 (and COND 90 TestPower, 82 uses, which the interpreter has) | 21 | Ed's powers | PROC 201 / 202 **skipped** |
 | PROC 118 SaveGame | 21 | | **skipped** |
 | PROC 126-128 PersoLight | 77 | a light carried by a perso (lightning, glows) | **skipped**, purely visual |
-| PROC 212-214 particles | 8 | | **skipped**, purely visual |
+| PROC 212-214 particles | 8 | particle sources (snow, rain, spray, bubbles) | **works** since 2026-11-20 ("Particles") |
 | PROC 165 / 173 / 182 / 192 / 199 | 134 | camera speed, angle, shake, orientation | **skipped** (the camera is the port's own) |
 | PROC 241 (c2boxer) | 2 | under a distance, something on a channel (`0x48b7d0`, not read): 750 hits in 5 s | **skipped**, not understood |
 
@@ -890,7 +890,7 @@ the Special Edition exe's exports (tools/exe/se_ai_map.tsv: what ai.load_names s
   his channel 0x27 towards the camera, 100 long; shown by `GAM_00411fb0`); PROC 291 / 292 `Mode291 / 292`
   (`0x48cc20`: the perso into or out of three 4-slot effect tables, `GAM_004145f0` (position and velocity: a splash),
   `GAM_00414980`, `GAM_004142b0`; drawn as particles and quads by `GAM_00414170` / `GAM_00414330`); PROC 126-128
-  (perso lights), PROC 212-214, FUNC 111 `Func_ColorRGB` (carota's lightning, north's torches).
+  (perso lights), FUNC 111 `Func_ColorRGB` (carota's lightning, north's torches).
 - **Open, read as far as here:**
   - PROC 12-14 `SetParent` family (case 0xC: Me under the perso; 0xD: the perso under Me; 0xE: Me under the perso's
     channel n): carota's IVP_plate_forme1, sud0's HEG_Shield and boss mushroom, marmite's crates. Needs the port's
@@ -906,6 +906,78 @@ the Special Edition exe's exports (tools/exe/se_ai_map.tsv: what ai.load_names s
     (the camera is the port's own).
 - Stubs that stay (tc_ai.c's "no-ops for now"): PROC 25 / 26 (the SuperObject's display flag 0x10000, +0x198 /
   +0x2C; its reader not traced), 32 / 33, 80, 105-108 (channel overrides), 278 / 279.
+
+## Particles (2026-11-20; **read** unless marked)
+The user (2026-11-20): "On Ski Slope we should have falling snow." The exe's particle module (0x47EF00..0x480FB0, no
+names) and the per-perso source (`GAM\Actions\MSPrtSrc.c`, 0x42DB00..0x42E9C0), read whole; ported as `tc_particles`
+(core/src/tc_particles.c), `tc_viewer_particles` (core/src/tc_viewer_particles.c), the frontends' particle pipelines
+(Shaders.metal `particle_*`, sdl/shaders/particle.*). docs/DECOMP.md "Particles" had the pieces' names swapped
+(its "system" is the generator, its "generator" the particle system); corrected here.
+- **Who has one.** Scanning every retail level's scripts for PROC 212-214 (`PROC_212Etc_0048b0f0`): Ed (Bubbles, two
+  records, 18 behaviours), **Totalski's `YBA_DeclencheNeige`** (once: `InPersoContext(camera, SetParticleGenerator)`, on:
+  the snow), **Land's `WLand`** (World: the same on the camera: the rain), **marmite's `JET_Tiboutte`** (a nozzle's
+  spray). No other perso, no SE check yet. sud0's snow field has none (docs/DECOMP.md: so what sud0 shows there, if
+  anything, is something else).
+- **The source record** (REF37, script node type 37 = the .ttlv PRTC index): +0 generator G, +4 particle system S,
+  +8 field E, +0xC environment mask (0xFFFFFFFF none; bit 0 water allowed, bit 1 air), +0x10 / +0x1C the field's offsets
+  (box min / max from the perso's place, or the sphere's centre in its axes), +0x28 offsets set, +0x29 follow, +0x2A the
+  ceiling test, +0x2C its distance. **PROC 214** (`GAM_0042de80`) sets the perso's source (+0x3C's +0) and, the first
+  time (+0x28 clear), copies E's box or centre into the offsets (`GAM_0042e1a0`); **212 / 213** (`GAM_0042deb0`) set +8
+  on / off; 212 also clears G +0x69 (the pre-warm runs again). 215-223 change parameters: no retail script uses them.
+- **G, the generator** (`FUN_0047f360`, `FUN_0047f3d0`, spawn `FUN_0047f430` / `0047fb10` / `00480300` by S's type): +0
+  emit mode (0 never, 1 every frame, 2 when a random number < +4, 3 counted: +0xC counts up to +8, then +0xC = (+0xC + 1)
+  % +0xA); +0xE count mode (0 the fixed +0x10, 1 random in [+0x12, +0x14]); new ones capped at S's max x the detail
+  (`DAT_004e275c`, the options' 0.15 / 0.25 / 0.5 / 1: `GAM_00411ce0`). Velocity = +0x3C x +0x54 + a random vector in
+  [-+0x58, +0x58]^3, rotated by the perso's matrix when +0x17 is 0 or 2. Position by +0x16: 0 the corner +0x18; 1
+  `P0 (1-a-b) + P1 a + P2 b` (corners +0x18, +0x24, +0x30: a parallelogram); 2 the same with +0x48 (a box); sprites with
+  +0x68 then drop by a random 0..30 (z, before the transform); then by +0x17: 2 the full matrix, 1 its translation only, 0
+  its rotation only. Life (+0x5C): 0 forever, 1 now + +0x60, 2 now + random in [+0x60, +0x64].
+- **S, the particle system**: +0 max, +2 count, +4 velocities, +8 a geometric object whose vertices are the particles
+  (sprites: element type 3, one per vertex; lines: element type 6, two vertices a particle, `FUN_00448bf0` gives the first
+  (now) alpha 0xFF and the second (last frame's place) 0: a streak), +0xC type (2 points, 3 lines, 4 sprites), +0x10 the
+  per-particle records (death time first). Type 4 pre-warms: the first pass after switching on runs the generator 70
+  times at once, the clock +0.02 s each (`FUN_0047f260`, `DAT_004d2c6c`).
+- **E, the field** (moves them, `FUN_0047f750` / `0047feb0` / `00480680` / `004809a0`): v += (E +0x2C + jitter) dt, p +=
+  v dt, where the jitter is one random vector in [-+0x38, +0x38]^3 per 48 particles, each particle taking a permutation
+  of (x, y, z, -x, -y, -z) from the table at 0x4E2780. Out when its life is over, or outside the field: E +0 = 0 a box
+  (+4 / +0x10), else a sphere (+0x1C, radius +0x28). Kills swap the last particle in. The deflector (E +0x3C, its box +0x40
+  / +0x4C placed by the perso once): inside it a particle slides along the ground away from the box's middle at its own
+  speed (marmite's spray splashing).
+- **Each frame** (`GAM_00428070` -> `GAM_0042df50`, the perso's frame): with follow, the generator's three corners must
+  be where the mask allows, then the field goes where the perso is (`GAM_0042e200`: a box by the offsets, cut at a water
+  surface between its corners with `MEC_EnvLookup`'s depth; a sphere's centre through the matrix); then, if on and placed,
+  the generator. Later the world walk moves every source's pool (`GAM_0042e7e0` -> `GAM_0042e570`) and draws it
+  (`GAM_0042e870` -> `GAM_0042e5e0` -> `FUN_00446050`, as any object: lit, Z-tested), unless the ceiling test (`GAM_0042e680`)
+  finds the static world within +0x2C straight above the perso.
+- **The data:** Totalski's snow: 15 a frame, `EFFECTS/FLOCON_ANU.TGA` sprites 0.2 x 0.2, pool 1000 (pre-warmed full),
+  spawned 0..100 ahead of the camera, 25 to each side, 10 above to 20 below, falling at 1 u/s plus -5 u/s^2 with a jitter
+  of 3, out beyond 50 from a point 30 below the camera, hidden under a ceiling nearer than 110. Land's rain: 4 a frame,
+  lines, falling at 20 u/s, accelerated (0, -9, -9.81) (a wind), spawned 30 above the camera over a 60 x 53 patch, out
+  beyond 50, the same ceiling test; its material is untextured, ambient 0.7 (white under the formula). marmite's spray:
+  `BULLE_AD` sprites, 10 a frame round the nozzle, falling at 7 u/s^2, deflected on the ground 17.3 below. Ed's bubbles:
+  `BULLE_AD` (additive: texture flag 0x20), 1 with chance 0.05 a frame, rising at 1 u/s^2, in a box -6..6 x -6..6 x -2..8
+  round him cut at the water's surface, only where his origin is in water (mask 0xFFFFFFFD).
+- **The camera perso** is front = -Y, pan axis = -X (see "3D sound"): its matrix is built from the play camera.
+- **Port:**
+  - stepped at the game's tick (30 a second, `tc_game.tick_serial`), drawn between the last two ticks; generation and
+    the move run in one pass per tick over the emitters (the camera, the main character, the cast in its order), each
+    pool moved once even when two persos share a source (the exe would move it twice);
+  - the camera's source: in the cast the camera is a ghost (fix role 1), whose AI record takes the PROC; without a cast,
+    `tc_ai_globals.camera_particle_*`;
+  - the random numbers are an LCG (the exe's generator not read); the detail factor is the highest (1);
+  - drawn as camera-facing quads built on the CPU (sprites: the sprite's size; lines: one pixel at 600 lines wide,
+    `tc_particles_build`), depth-tested without writing, alpha-blended or added, fogged by view depth, the material's
+    ambient as the colour (sprites are not lit otherwise, as the level's billboards);
+  - the ceiling ray is the port's collision raycast through the static world (`tc_game.world`), any face.
+- **Seen (Claude, 2026-11-20, the app run with OPENTONIC_SHOT; the user allowed running it for that session):**
+  Totalski's snow falls at the start gate; Land's rain streaks slant in the wind once Ed walks out of the overhang at his
+  start, and are hidden under it. Most of Totalski's flakes end under the snow (the slab follows the camera's pitch and
+  nothing collides): as the data says. Ed's bubbles and marmite's spray: headless only (particlecheck; a forced dive).
+- **Checks:** `make particlecheck` (in the gate): the sources set, pools filled, every particle inside its field, the
+  triangles sane, on Totalski, Land and marmite.
+- **Next of the same kind** (read in the sweep above, not ported): PROC 291 / 292 `Mode291 / 292`, the splash tables
+  drawn by `GAM_00414170` / `GAM_00414330`; the 250-entry trail pool of `GAM_0042df50`'s second half (Ed's flight
+  trail?); PROC 126-128 perso lights.
 
 ## 3D sound (2026-11-14; **read** unless marked)
 How the original places a sound: read from the exe's sound3d.c (`SND_sound3d_00404db0` the request,
@@ -1282,6 +1354,14 @@ menucheck`): the core keeps the screens and lays them out; the frontends draw tw
   menu its standard elements slide in at the game's tick even when auto-hide has them out (`tc_hud_slide`, tc_viewer.c
   `game_menu_hud`), and back in the game auto-hide slides them out again. Both frontends draw the menu over the HUD, so
   the dim dims it. Photo mode (P) still has none. Checked in hudcheck.
+- **Photos** (the user, 2026-11-20): in photo mode Space or the pad's Cross / A (the jump button, idle while the game
+  holds; it does not reach the game there) takes the next frame as shown, at the window's pixels (the screen's native
+  resolution: the drawable on macOS, the swapchain on Linux), to the Pictures folder as
+  `OpenTonicScreenshot<yyyy-MM-dd_HH-mm-ss>.jpeg` (quality 92; `_2`, `_3` ... within one second), then flashes white
+  over 0.3 s (not in the photo). macOS: Renderer.swift `requestPhoto` / `takePhoto` (ImageIO, ~/Pictures). SDL:
+  `gpu_frame_capture` draws that frame into a texture of its own (the swapchain can't be read) and shows it from there,
+  reading it back after a fence wait (one frame's hitch); `sdl/src/photo.c` writes it on a thread with stb_image_write
+  (sdl/third_party, public domain / MIT) into SDL_GetUserFolder(SDL_FOLDER_PICTURES) (XDG on Linux), else ~/Pictures.
 - REPLAYS (the recordings, the original demos) is in EXTRAS, below TONIC VIEWER (the user; the levels grid's button
   is gone); its Back is the main menu (the frontends open the menu afresh). Cmd-L / Ctrl+L are Tonic Viewer's alone: a level of the grid back to the grid,
   the grid to the main menu; nothing in a game, on the menus or in a playback.

@@ -104,6 +104,7 @@ void tc_level_free(tc_level *level) {
     for (i = 0; i < level->light_perso_count; i++) tc_free(level->light_persos[i].scripts);
     tc_free(level->light_persos);
     tc_free(level->sound_rolloffs);
+    tc_free(level->particle_sources);
     for (i = 0; level->picks && i < level->pick_count; i++) tc_free(level->picks[i].clips);
     tc_free(level->picks);
     for (i = 0; i < level->ed.part_count; i++) free_mesh(&level->ed.parts[i].mesh);
@@ -677,6 +678,48 @@ static void read_ways(tc_ways *w, reader *r) {
     }
 }
 
+/* .ttlv PRTC (tools/ttre/ai.py particles_chunk): 252 bytes a source. */
+static tc_vec3 rd_vec3(reader *r) {
+    tc_vec3 v;
+    v.x = rd_f32(r);
+    v.y = rd_f32(r);
+    v.z = rd_f32(r);
+    return v;
+}
+static void read_particles(tc_level *level, reader *r) {
+    uint32_t i, k, n = rd_u16(r);
+    (void)rd_u16(r);
+    level->particle_sources = (tc_particle_source *)rd_array(r, n, sizeof(tc_particle_source), 252);
+    if (!level->particle_sources) return;
+    level->particle_source_count = n;
+    for (i = 0; i < n && !r->error; i++) {
+        tc_particle_source *s = &level->particle_sources[i];
+        s->type = rd_u8(r), s->emit = rd_u8(r), s->count_mode = rd_u8(r), s->position_mode = rd_u8(r);
+        s->transform = rd_u8(r), s->life_mode = rd_u8(r), s->spread = rd_u8(r), s->sphere = rd_u8(r);
+        s->follow = rd_u8(r), s->ceiling = rd_u8(r), s->deflector = rd_u8(r), s->additive = rd_u8(r);
+        s->max = rd_u16(r);
+        s->count = (int16_t)rd_u16(r), s->count_lo = (int16_t)rd_u16(r), s->count_hi = (int16_t)rd_u16(r);
+        s->every = (int16_t)rd_u16(r), s->modulo = (int16_t)rd_u16(r);
+        s->env_mask = rd_u32(r);
+        s->texture = (int32_t)rd_u32(r);
+        s->chance = rd_f32(r);
+        for (k = 0; k < 4; k++) s->corner[k] = rd_vec3(r);
+        s->direction = rd_vec3(r);
+        s->speed = rd_f32(r), s->jitter = rd_f32(r), s->life = rd_f32(r), s->life_max = rd_f32(r);
+        s->box_min = rd_vec3(r), s->box_max = rd_vec3(r), s->centre = rd_vec3(r);
+        s->radius = rd_f32(r);
+        s->acceleration = rd_vec3(r);
+        s->field_jitter = rd_f32(r);
+        s->deflector_a = rd_vec3(r), s->deflector_b = rd_vec3(r);
+        s->offset_min = rd_vec3(r), s->offset_max = rd_vec3(r);
+        s->ceiling_distance = rd_f32(r);
+        s->half_size[0] = rd_f32(r), s->half_size[1] = rd_f32(r);
+        for (k = 0; k < 3; k++) s->ambient[k] = rd_f32(r);
+        for (k = 0; k < 3; k++) s->diffuse[k] = rd_f32(r);
+        if (s->texture >= (int32_t)level->texture_count) s->texture = -1;
+    }
+}
+
 const tc_perso_ways *tc_ways_of(const tc_ways *w, int32_t perso) {
     uint16_t i;
     for (i = 0; w && i < w->perso_count; i++)
@@ -1000,6 +1043,11 @@ tc_result tc_level_load(tc_level *level, const uint8_t *data, size_t size) {
 
     if (chunk_need(&cs, "WAYS", r)) { /* optional: the waypoints and ways (absent: the way primitives do nothing) */
         read_ways(&level->ways, r);
+        if ((e = chunk_end(r)) != TC_OK) goto fail;
+    }
+
+    if (chunk_need(&cs, "PRTC", r)) { /* optional: the particle sources (absent: PROC 214 does nothing) */
+        read_particles(level, r);
         if ((e = chunk_end(r)) != TC_OK) goto fail;
     }
 

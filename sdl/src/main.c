@@ -7,6 +7,7 @@
 #include "intro.h"
 #include "menu.h"
 #include "music.h"
+#include "photo.h"
 #include "picker.h"
 #include "record.h"
 #include "replays.h"
@@ -60,6 +61,7 @@ static const char *controls_text =
     "Replays (the main menu's):  Enter plays, Delete deletes, D the original demos, Esc back  -  Pad: Cross plays, Square deletes, L1 demos, Circle back\n"
     "Watching one:  P or Cross pauses  -  Esc or Start back to the list\n"
     "Photo mode, a paused playback:  mouse, arrows, right stick and wheel move the camera round Ed, back where it was after\n"
+    "Photo mode:  Space or Cross takes a photo (the Pictures folder, OpenTonicScreenshot<date>_<time>.jpeg)\n"
     "\n"
     "Gamepad (positions as on a PlayStation pad; Xbox: A B X Y = Cross Circle Square Triangle):\n"
     "  Left stick:  move Ed (push further to run) / fly  -  Right stick:  camera  -  R3 (click):  free-fly / play\n"
@@ -135,6 +137,10 @@ typedef struct app {
     uint32_t replay_segment;
     float replay_clock;          /* seconds of real time the recording is behind */
     bool replay_paused;          /* P, Cross: the frames wait, the camera turns round Ed (tc_replay_pause) */
+    /* Photo mode's photos (photo.h): Space or Cross asks (photo_wanted), the next frame is the photo; then a white flash
+     * fading from photo_ns over PHOTO_FLASH_NS (not in the photo). */
+    bool photo_wanted;
+    Uint64 photo_ns;
     /* The original demos, watched as a playback is (replaying is on): the tapes in their round. */
     bool demo;
     char **demo_tapes;
@@ -461,6 +467,7 @@ static bool playback_level(app *a, uint32_t i) {
     SDL_snprintf(pattern, sizeof pattern, "%s.ttlv", s->level);
     char **levels = folder ? SDL_GlobDirectory(folder, pattern, SDL_GLOB_CASEINSENSITIVE, &n) : NULL;
     char *path = levels && n > 0 ? path_join(folder, levels[0]) : NULL;
+    if (path) tc_replay_prepare(&a->replay, i);  /* the level-saved table the run's level found (global) */
     bool ok = path && open_level_seeded(a, path, s->has_carry ? &s->carry : NULL, s->seed);
     SDL_free(levels);
     SDL_free(path);
@@ -895,10 +902,17 @@ static void back_to_menu(app *a) {
 
 /* ---- input ---- */
 
+#define PHOTO_FLASH_NS 300000000ull
+/* Photo mode (P, the game menu's PHOTO MODE): the game held, the camera free round Ed, no menu or controls over it. */
+static bool photo_mode(const app *a) {
+    return a->view && a->view->viewer.paused && !a->view->viewer.game_menu && !a->replaying && !a->help;
+}
+
 static void level_key(app *a, const SDL_KeyboardEvent *k) {
     tc_viewer *v = &a->view->viewer;
     SDL_Scancode sc = k->scancode;
     if (sc == SDL_SCANCODE_ESCAPE) { if (!k->repeat) open_game_menu(a); return; }  /* the game menu (photo mode: out of it) */
+    if (sc == SDL_SCANCODE_SPACE && photo_mode(a)) { if (!k->repeat) a->photo_wanted = true; return; }  /* a photo */
     if (sc == SDL_SCANCODE_F4) {  /* F4: the debug menu (tc_debug.h) */
         if (!k->repeat) tc_viewer_toggle_debug(v);
         return;
@@ -1250,6 +1264,7 @@ static void pad_button(app *a, const SDL_GamepadButtonEvent *b) {
         return;
     }
     if (a->view) {
+        if (button == SDL_GAMEPAD_BUTTON_SOUTH && photo_mode(a)) { a->photo_wanted = true; return; }  /* Cross: a photo */
         if (button == SDL_GAMEPAD_BUTTON_TOUCHPAD) { mark_moment(a); return; }  /* F9 */
         if (button == SDL_GAMEPAD_BUTTON_START) { open_game_menu(a); return; }  /* the game menu (Esc) */
         if (tc_viewer_debug_open(&a->view->viewer)) {  /* the menu (F4) takes the held actions and nothing else */
@@ -1716,6 +1731,7 @@ static void draw(app *a) {
         loading_prepare(a, a->next_name);
     }
     gpu_frame f;
+    bool photo = false;
     if (!gpu_frame_begin(&a->g, &f)) { SDL_Delay(16); return; }  /* minimised */
     if (a->intro) {
         intro_upload(a->intro, &f);
@@ -1728,10 +1744,14 @@ static void draw(app *a) {
             SDL_EndGPURenderPass(pass);
         }
     } else if (a->view) {
+        photo = a->photo_wanted && photo_mode(a) && gpu_frame_capture(&a->g, &f);
+        a->photo_wanted = false;
         view_draw_frame(a->view, &f);
         bool sight = view_draw_crosshair(a->view, &f, NULL);
         bool speech = a->speech_on && a->speech, menu = a->debug_on && a->debug, hud = a->hud_on && a->hud;
-        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu || hud || a->menu_on) {  /* screen transition or loading screen, the gunsight, the controls */
+        Uint64 since = SDL_GetTicksNS() - a->photo_ns;
+        float flash = a->photo_ns && !photo && since < PHOTO_FLASH_NS ? 0.7f * (1 - (float)since / PHOTO_FLASH_NS) : 0;
+        if (o.kind != TC_VO_NONE || a->help || sight || speech || menu || hud || a->menu_on || flash > 0) {  /* screen transition or loading screen, the gunsight, the controls */
             SDL_GPURenderPass *pass = gpu_pass_2d(&a->g, &f, false, (SDL_FColor){0, 0, 0, 1});
             if (pass) {
                 view_draw_overlay(a->view, &f, pass, &o);
@@ -1743,6 +1763,8 @@ static void draw(app *a) {
                 if (menu) draw_debug(a, &f, pass);
                 if (a->menu_on) menu_draw(&a->menu, &f, pass);  /* the game menu */
                 if (a->help) draw_help(a, &f, pass);
+                if (flash > 0) gpu_quad(&a->g, &f, pass, NULL, (SDL_FRect){0, 0, (float)f.width, (float)f.height}, NULL,
+                                        (SDL_FColor){1, 1, 1, flash});  /* a photo was taken (not in it) */
                 SDL_EndGPURenderPass(pass);
             }
         }
@@ -1766,6 +1788,14 @@ static void draw(app *a) {
         }
     }
     gpu_frame_end(&a->g, &f);
+    if (photo) { /* the frame as shown, at the window's pixels: to the Pictures folder (photo.h) */
+        int w = 0, h = 0;
+        uint8_t *px = gpu_capture_take(&a->g, &w, &h);
+        if (px) {
+            photo_save(px, w, h);
+            a->photo_ns = SDL_GetTicksNS();
+        }
+    }
 }
 
 /* ---- startup ---- */
