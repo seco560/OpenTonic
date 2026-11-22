@@ -423,7 +423,8 @@ The user's request: enemies hurt Ed, the thermometer works (a life point more ev
 floating mercury heals. Nearly all of it is Ed's own scripts and the level's; the port had three gaps.
 - **How Ed is hurt.** Passive: his R0 collects, every frame, the persos whose ZDE zones of a damage type meet his body
   zone 6 (`CollectNearby(dsg92..96, 6, mask)`: 0x10 hit, 0x4 deadly, 0x20 knocked down, 0x40 thrown, 0x80 burnt) and reads
-  touched materials (0x10 deadly, 0x100 thrown, 0x400 lava). Every dsg51 ms (the blink after a hit, dsg47) a hit sets
+  touched materials (COND 59 TouchingObject, the obstacle's collide identifier: 0x10 deadly, 0x100 thrown, 0x400
+  lava; a stub returning false until 2026-11-22, docs/DECOMP.md). Every dsg51 ms (the blink after a hit, dsg47) a hit sets
   dsg0 (5 / 21 / 23 / 26) and forces his hurt behaviour B1, which takes a point (`SubHitPoints(Me, 1)`) and plays the
   matching fall (state 302, 246, 292 ...); at 0 his R0 sends him to B14, his death (B73 cover, B99: `TakeLife` while
   lives are left, else `ChangeLevel('death')`: the port's restart, docs/NOTES.md "Dying and respawning"). Some enemies

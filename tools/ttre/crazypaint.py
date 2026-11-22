@@ -68,6 +68,16 @@ STROKES = {
     'Y': [[(0, 6), (2, 3), (4, 6)], [(2, 3), (2, 0)]],
     'Z': [[(0, 6), (4, 6), (0, 0), (4, 0)]],
     '!': [[(2, 6), (2, 1.8)], [(2, 0.4), (2, 0)]],
+    # Crazy City's (2026-11-22): the rest its signs spell
+    'G': [[(4, 5.2), (3, 6), (1, 6), (0, 4.5), (0, 1.5), (1, 0), (3, 0), (4, 1), (4, 2.8), (2.4, 2.8)]],
+    'H': [[(0, 0), (0, 6)], [(4, 0), (4, 6)], [(0, 3.1), (4, 3.1)]],
+    'I': [[(2, 0), (2, 6)], [(1, 6), (3, 6)], [(1, 0), (3, 0)]],
+    'J': [[(1, 6), (4, 6)], [(3, 6), (3, 1.2), (2, 0), (1, 0), (0, 1)]],
+    'L': [[(0, 6), (0, 0), (4, 0)]],
+    'M': [[(0, 0), (0, 6), (2, 2.5), (4, 6), (4, 0)]],
+    'Q': [[(2, 6), (0.3, 5), (0, 3), (0.3, 1), (2, 0), (3.7, 1), (4, 3), (3.7, 5), (2, 6)], [(2.4, 1.4), (4.2, -0.4)]],
+    'V': [[(0, 6), (2, 0), (4, 6)]],
+    'X': [[(0, 6), (4, 0)], [(0, 0), (4, 6)]],
 }
 
 
@@ -403,4 +413,144 @@ def planks(seed=29, w=64, h=64, base=(120, 74, 44)):
         if (v * 5) % 1.0 < 0.06:
             c = tuple(ch * 0.4 for ch in base)
         return c + (255,)
+    return _px(w, h, fn)
+
+
+# ---- Crazy City's (2026-11-22, tools/ttre/crazycity.py): its neighbourhoods' signs, roads and tiles ----
+
+def _distance(segs, px, py):
+    return min((_segment_distance(px, py, a, b) for a, b in segs), default=1e9)
+
+
+def neon(text, glow=(255, 60, 200), w=256, h=64, seed=31):
+    """A neon sign: the word in bent glass tubes, white hot in the middle, its colour round it, on a dark board with a
+    tube along its edge."""
+    size = min(h * 0.62, (w * 0.86) / max(1.0, text_width(text, 1.0)))
+    segs = text_strokes(text, (w - text_width(text, size)) / 2, h / 2 + size / 2, size, 0.08, 1.0, seed)
+    tube = size * 0.07
+
+    def fn(x, y):
+        d = _distance(segs, x, y)
+        edge = min(x, y, w - 1 - x, h - 1 - y)
+        c = (22, 12, 34)
+        c = _mix(c, glow, 0.85 * _smooth(tube * 5, tube, d))
+        c = _mix(c, glow, 0.9 * _smooth(4.0, 1.5, abs(edge - 3.0)))
+        c = _mix(c, (255, 244, 250), _smooth(tube + 0.6, tube - 0.6, d))
+        return c + (255,)
+    return _px(w, h, fn)
+
+
+def checker(a=(240, 110, 170), b=(70, 200, 210), cells=4, w=64, h=64, seed=37):
+    """Glazed tiles in two colours with grout between, a little uneven."""
+    n = _noise(seed, 8)
+
+    def fn(x, y):
+        u, v = x / w * cells, y / h * cells
+        c = a if (int(u) + int(v)) % 2 else b
+        c = tuple(ch * (0.88 + 0.18 * n(x / w, y / h)) for ch in c)
+        if min(u % 1.0, v % 1.0) < 0.05:
+            c = (60, 52, 58)
+        return c + (255,)
+    return _px(w, h, fn)
+
+
+def asphalt(w=128, h=128, seed=41):
+    """A road's tarmac: dark grey grit, patched here and there."""
+    n, m = _noise(seed, 16), _noise(seed + 1, 4)
+    rng = random.Random(seed)
+    grit = [rng.random() for _ in range(w * h)]
+
+    def fn(x, y):
+        k = 52 + 26 * n(x / w, y / h) + 22 * (grit[y * w + x] - 0.5)
+        if m(x / w, y / h) > 0.72:
+            k *= 0.8
+        return (k, k * 0.98, k * 1.04, 255)
+    return _px(w, h, fn)
+
+
+def solid(rgb, w=8, h=8):
+    """One colour (road markings)."""
+    return _px(w, h, lambda x, y: tuple(rgb) + (255,))
+
+
+def bands(a=(225, 40, 50), b=(245, 240, 230), count=4, w=64, h=64):
+    """Horizontal bands (the lighthouse's), a little worn."""
+    n = _noise(43, 8)
+
+    def fn(x, y):
+        c = a if int(y / h * count) % 2 else b
+        return tuple(ch * (0.85 + 0.2 * n(x / w, y / h)) for ch in c) + (255,)
+    return _px(w, h, fn)
+
+
+def mural(text='CRAZY CITY', w=512, h=128, seed=47):
+    """A wall painting: rainbow waves and spirals, the words in fat outlined letters over them."""
+    size = min(h * 0.55, w * 0.9 / max(1.0, text_width(text, 1.0)))
+    segs = text_strokes(text, (w - text_width(text, size)) / 2, h / 2 + size / 2, size, 0.18, 4.0, seed)
+    colours = [(240, 70, 90), (250, 170, 50), (250, 230, 80), (90, 200, 120), (70, 150, 230), (160, 90, 220)]
+
+    def fn(x, y):
+        u, v = x / w, y / h
+        k = int((v * 6 + 0.6 * math.sin(u * 14 + v * 3)) % 6)
+        c = colours[k]
+        dx, dy = (u * 4) % 1.0 - 0.5, (v - 0.5) * 1.0
+        r, a = math.hypot(dx, dy), math.atan2(dy, dx)
+        if r < 0.45 and ((r * 40 - a) % (2 * math.pi)) < 1.0:
+            c = _mix(c, (255, 255, 255), 0.5)
+        d = _distance(segs, x, y)
+        c = _mix(c, (20, 16, 30), _smooth(size * 0.2, size * 0.15, d))
+        c = _mix(c, (255, 250, 235), _smooth(size * 0.13, size * 0.09, d))
+        return c + (255,)
+    return _px(w, h, fn)
+
+
+def clock(w=128, h=128, hours=7.3, minutes=-0.15):
+    """A clock face: cream, twelve ticks, a dark rim, its hands at a time no clock shows (the minute hand runs
+    backwards)."""
+    def fn(x, y):
+        u, v = (x + 0.5) / w * 2 - 1, 1 - (y + 0.5) / h * 2
+        r = math.hypot(u, v)
+        if r > 1.0:
+            return (0, 0, 0, 0)
+        if r > 0.9:
+            return (50, 34, 30, 255)
+        c = (244, 232, 200)
+        a = math.atan2(u, v) % (2 * math.pi)
+        if r > 0.72 and (a * 12 / (2 * math.pi) + 0.03) % 1.0 < 0.06:
+            c = (40, 30, 30)
+        for ang, length, width in ((hours / 12 * 2 * math.pi, 0.48, 0.06), (minutes * 2 * math.pi, 0.72, 0.035)):
+            px, py = math.sin(ang), math.cos(ang)
+            t = u * px + v * py
+            if 0 <= t <= length and abs(u * py - v * px) < width:
+                c = (30, 24, 40)
+        return c + (255,)
+    return _px(w, h, fn)
+
+
+def helipad(w=128, h=128):
+    """A roof's landing pad: dark grey, a yellow ring and an H."""
+    segs = text_strokes('H', w / 2 - 0.5 * text_width('H', 52), h / 2 + 26, 52)
+
+    def fn(x, y):
+        u, v = (x + 0.5) / w * 2 - 1, (y + 0.5) / h * 2 - 1
+        r = math.hypot(u, v)
+        c = (70, 72, 78)
+        if 0.78 < r < 0.88:
+            c = (240, 200, 40)
+        return _mix(c, (245, 245, 240), _stroke_cover(segs, x, y, 4.5)) + (255,)
+    return _px(w, h, fn)
+
+
+def big_letters(text, w=1024, h=192, seed=53):
+    """Huge letters standing on a hillside (cut out): white, shaded at their lower edge, each leaning its own way."""
+    size = min(h * 0.8, w * 0.92 / max(1.0, text_width(text, 1.0)))
+    segs = text_strokes(text, (w - text_width(text, size)) / 2, h * 0.9, size, 0.22, 6.0, seed)
+    width = size * 0.11
+
+    def fn(x, y):
+        d = _distance(segs, x, y)
+        if d > width:
+            return (0, 0, 0, 0)
+        k = 0.75 + 0.25 * (1 - y / h)
+        return (250 * k, 246 * k, 236 * k, 255)
     return _px(w, h, fn)

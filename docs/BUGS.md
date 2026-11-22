@@ -170,6 +170,45 @@ Originally created by me (i.e. technically author of this repo, not Claude) to r
     that drifted at frame 0 (it started from TESTER.ttsv) had Ed exact throughout with that save's table installed by
     hand; new recordings carry their own.
 
+* Audit, late 2026-11-21 (Claude, a fresh session with no memory of the work; headless only, nothing changed in code).
+  * **Gate:** `make -C core checkall` all ok on 7afcd15 (72 s).
+  * **Your two recordings of the day on this build:** 2026-11-21_140656 (sud0) drifts at 0.2 s, expected: its level
+    data was re-exported after it. 2026-11-21_145138 (north; no notes mention it) drifts at 4.4 s on the eye with
+    unchanged data. Recorded on f1d695f-dirty, before the camera commit 7afcd15, so an expected drift, not a proven
+    determinism bug. To make sure, record one short run on this build and `replay check` it.
+  * **What that north run did:** free-fly, Ed dropped at (438.9, 55.9, -60.7), off the edge, killed at z -105 by the
+    World perso WNorth2 (B60), cover, respawn, then held 3.7 s in B79 (a get-up, st283 -> st286) before control.
+    Reproduced with the probe (`probe north place 438.93 55.85 -60.71 ... stick 0 1`). It is the World's own
+    scripts, so not called a bug. Seen on the way: (a) during the cover Ed keeps falling and lands on the pit floor
+    at z -278 (hidden, alpha 0): harmless but wasted; (b) he is invisible (alpha 0) for the reveal's first second;
+    (c) the probe's `forced_by` keeps the last forcer after a release (WNorth2 here, perso 107 after cavedoc's
+    flame): probably the field's meaning, not a bug, but it makes "is Ed held?" hard to read.
+  * **Damage that works headless:** cavedoc's flame jet DAV_CracheFeu2 hurts Ed once (5 -> 4), knocks him back,
+    blinks, and its next burst does not hit him again. Death zones kill (north above). docs/STATUS.md's "Dying" row
+    ("lava and deadly water do not kill") predates the material handling in docs/ENGINE.md (0x10 deadly, 0x400
+    lava) and is probably stale: lava itself not tested this time.
+  * **Skipped primitives after 6 s of NEW GAME** (`probe -n LEVEL run 6 skipped`): sud0, north, cavedoc, marmite:
+    FUNC 133, PROC 282 once each; cock01 + PROC 165; pyramide + PROC 165, PROC 182. carota: PROC 126/127/128 (perso
+    lights, docs/ENGINE.md: skipped, visual only) ~1800 times in 6 s. Its glowing persos show no light; cheap to
+    keep skipping but the most-hit gap in the scripts. FUNC 133, PROC 165/182/282 not looked up.
+
+* 2026-11-22 (Claude; headless only, nothing seen in the app):
+  * **Lava kills now (COND 59, TouchingObject).** It was a stub returning false: Ed's scripts test the touched
+    obstacle's collide identifier with it 55 times (0x400 lava, 0x10 deadly, 0x20 special ground, 0x100 thrown ...).
+    Ported with the static triangles' identifiers (.ttai FCID) and the perso primitives' (docs/DECOMP.md). Headless:
+    dropped on cavedoc's lava, Ed dies at once (B14, state 294, hp 0), as his R0 / R15 say (SetHitPoints(Me, 0)).
+    Not checked: marmite's special ground (0x20, 64 triangles; ~20 of his behaviours use it), thrown (0x100), skymap's
+    acid (0x14). Re-export needed (done in place on this machine: the install will skip the levels).
+  * **forcecheck FAIL (new, expected): BigBoss perso 66 (HEG_ActiveEdCombatFinal)** "keeps" Ed: set down in front
+    of it with none of the final fight set up, he drops ~160 onto the arena's lava (0x480) and now burns; the port's
+    restart (keeps the level, the exe reloads it) puts him back in front of 66, which takes him again to the level
+    start in B102, waiting for a start sequence that already ran. A gap of the restart model reached by the check's
+    artificial approach; left red, not hidden. Was passing only because lava did nothing.
+  * **Crazy City** (the user: "a bunch of neighbourhoods", more flair, persos messing about): crazycity.py, four
+    districts round Crazy Town (docs/SE.md "Crazy City"). Headless: 1,748 drops across them land on their floors;
+    walks from the town into each; the lighthouse (to 25.4), the fire tower (32.8) and the building site climbed by
+    a camera-steered probe. The bar's barman borrowed for it plays one frame (a statue).
+
 ## Bigger Areas of Improvement
 
 These might not necessarily be called bugs, but rather more overarching issues with certain parts of the game. Also not including obvious ones, like implementing actual game mechanics, story progression, item collection etc. There's a lot to go still.

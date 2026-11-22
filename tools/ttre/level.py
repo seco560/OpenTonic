@@ -1077,17 +1077,31 @@ class LevelData:
         initial = masks[index[cur]] if cur in index else (1 << 32) - 1
         return zones, masks, initial
 
+    def collide_tail(self, cs):
+        """A collide set's fields past its eight lists (+0x00..+0x1C: ZDD, ZDE, ZDM, ZDR and their activations, the
+        same in both games; +0x20..+0x2C runtime): (diameter, priority, meets persos, single sphere, floor_ok).
+        Retail: f32 +0x30 diameter, u8 +0x34 priority, +0x35 meets, +0x36 single, +0x37 floor_ok (0x38 bytes).
+        The Special Edition's set is 0x34 bytes (its heap header before each one reads 0xE dwords, the header
+        included; the next block's header follows at +0x34): u8 +0x30 priority, +0x31 meets, +0x32 / +0x33 zero in
+        every level. Its priorities and meets match retail's for the same persos (Ed 0x7F / 1, the camera 0x4A / 1).
+        The diameter and single sphere (the retail skier's one-sphere body) and floor_ok are retail's additions: an
+        SE set has no single sphere, and floor_ok 1 (port choice: the SE has no such gate to read)."""
+        if self.se:
+            prio, meets = self.un('2B', cs, 0x30)
+            return 0.0, prio, meets, 0, 1
+        diameter, = self.un('f', cs, 0x30)
+        return (diameter,) + self.un('4B', cs, 0x34)
+
     def collide_set_flags(self, loc):
-        """(priority, flags) of a perso for PCOL: its collide set's (perso +0x14) byte +0x34 (priority; 0 without a set)
-        and PCOL flags: 1 +0x35 (meets other persos), 2 +0x37 (floor_ok: the hand point may land on it), 8 it has a
-        collide set; 4 std game +0x31 (carries persos standing on it), 16 std game +0x18 (active), 32 +0x17 (dead)."""
+        """(priority, flags) of a perso for PCOL: its collide set's (perso +0x14) priority (collide_tail; 0 without a
+        set) and PCOL flags: 1 meets other persos, 2 floor_ok (the hand point may land on it), 8 it has a collide set;
+        4 std game +0x31 (carries persos standing on it), 16 std game +0x18 (active), 32 +0x17 (dead)."""
         cs = self.lv.ptr(loc, 0x14)
         sg = self.lv.ptr(loc, 4)
         prio, flags = 0, 0
         if cs:
-            b = self.un('4B', cs, 0x34)
-            prio = b[0]
-            flags |= 8 | (1 if b[1] else 0) | (2 if b[3] else 0)
+            _, prio, meets, _, floor_ok = self.collide_tail(cs)
+            flags |= 8 | (1 if meets else 0) | (2 if floor_ok else 0)
         if sg:
             dead, active = self.un('2B', sg, 0x17)
             flags |= (4 if self.un('B', sg, 0x31)[0] else 0) | (16 if active else 0) | (32 if dead else 0)

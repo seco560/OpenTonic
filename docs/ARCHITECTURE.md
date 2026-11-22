@@ -235,9 +235,13 @@ model as retail's, so the core needs no SE cases.
 
 **What the SE export leaves out today** (each a `d.se` branch in tools/ttre):
 - which persos run: only the items and save points (SE_ITEM_FAMILIES, SE_SAVE_MODELS) and the outro's actors;
-- collide sets: none (no ZDE zones, no ZDM bodies). Read 2026-11-19 with retail's layout: the zone lists come out
-  plausible (SE Ed 17 ZDE zones, retail Ed 18; items one each), the tail +0x30..+0x37 does not (the sphere's size reads
-  as a denormal): that tail's layout is to be read in the SE exe (MAID3DVR.EXE keeps its COL_* names);
+- ~~collide sets~~ **done 2026-11-22 (step 1)**: the SE's set is 0x34 bytes (the heap header before each reads 0xE
+  dwords, itself included): the same eight lists, then u8 +0x30 priority, +0x31 meets persos; no diameter, single
+  sphere or floor_ok (retail's additions; level.collide_tail). Its ZDE zones read as retail's; its ZDM spheres did not
+  until ai.zone_parts followed the element's entry pointer (+4, as zde_prims does: retail's elements only happen to
+  repeat the first entry inline at +8). SE casts now carry their bodies and zones (CMCS); retail byte-identical
+  (9 levels compared chunk by chunk). PCOL priorities of SE persos were read from the next heap header (5 / 7) before;
+  the donor Ed is untouched (user: keep him, SE Ed's scripts must not touch his physics);
 - root motion (an SE animation frame's vector, not read), waypoints (WAYS), the activation radius (retail added
   SetActivity: an SE perso has none), animation events, the SE's own sound tables;
 - script references: a family, a sector, a water surface, a waypoint, a font resolve to nothing on SE levels;

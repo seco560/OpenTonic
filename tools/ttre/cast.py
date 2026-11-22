@@ -702,16 +702,16 @@ def collide_block(d, perso, n_states):
     f32 grip } } (ai.zdm_sets: its ZDM zones active per state; with +0x36, the one sphere), then ai.zde_block (its ZDE
     zones and their activation per state). Until 2026-11-19 the ZDM bodies were its family's, from a perso of it that
     had them: 40 cast persos of 13 retail levels walked on another's body (most have none of their own: pyramide's
-    bonuses, carota's bean teeth, cock01's gears, sud0's generated mushrooms). The Special Edition's collide sets are
-    read for the sphere only (no bodies, no zones: its layout past the lists is not read)."""
+    bonuses, carota's bean teeth, cock01's gears, sud0's generated mushrooms). The Special Edition's collide sets
+    (2026-11-22, docs/ARCHITECTURE.md §5 step 1): the same lists and zones, its own tail (level.collide_tail: no
+    single sphere)."""
     cs = d.lv.ptr(perso, 0x14)
     if cs:
-        diameter, = d.un('f', cs, 0x30)
-        prio, meets, single = d.un('3B', cs, 0x34)
+        diameter, prio, meets, single, _ = d.collide_tail(cs)
         out = struct.pack('<f2B', max(diameter, 0.0) * 0.5 if single else -1.0, prio, 1 if meets else 0)
     else:
         out = struct.pack('<f2B', -1.0, 0, 0)
-    bodies, per_state = ([], [0xFFFF] * n_states) if d.se else ai.zdm_sets(d, perso, n_states)
+    bodies, per_state = ai.zdm_sets(d, perso, n_states)
     out += struct.pack(f'<H{n_states}H', n_states, *per_state) + struct.pack('<HH', len(bodies), 0)
     for zs in bodies:
         out += struct.pack('<HH', len(zs), 0) + b''.join(struct.pack('<4f2H2f', *z[:4], z[4], z[5], z[6], z[7]) for z in zs)

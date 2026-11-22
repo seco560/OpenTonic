@@ -35,7 +35,7 @@ Edition's sectors).
 | Ledge hang | Ed hangs at odd angles, or clips instead of grabbing |
 | Pickups | some thermometers do not work (sud0, by the portal to the Special Edition's sud0). The antidotes play the wrong sound |
 | Machines and puzzles | missing: the platforms on sud0's way to the north plain, pushing the boulders there, cavedoc's popcorn machine. 2026-11-11 later, headless: sud0's platforms move and cavedoc's crate snaps into place (docs/BUGS.md "cavedoc playtest"); not seen. 2026-11-17: the user found sud0's tower slabs unusable; they had no collision (the persos' ZDR zones, never exported): Ed stands on them now; not seen |
-| Dying | in some pits Ed hits the bottom; some pits do nothing; after a respawn he is shown falling for half a second; lava and deadly water do not kill |
+| Dying | in some pits Ed hits the bottom; some pits do nothing; after a respawn he is shown falling for half a second; lava kills since 2026-11-22 (COND 59, docs/DECOMP.md; headless: cavedoc's lava, B14 at once); deadly water (skymap's acid, identifier 0x14) not checked since |
 | Pushed things | cavedoc's crate moves but does not start the machine (fixed headless 2026-11-11 later: its snap marker's reference to it was dead; docs/BUGS.md "cavedoc playtest"). marmite's boxes fly off one way without colliding |
 | Enemies | they can be killed and they hurt Ed; no proper sounds or collision |
 | Shooting | aiming in first person does not tilt the blowpipe (changed 2026-11-14: from the blowpipe, with the look's pitch; in flight along the flight path; not seen). "No shot leaves while one is in the air" (what the exe does there is not read) |

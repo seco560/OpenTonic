@@ -165,6 +165,9 @@ typedef struct tc_mec_walk {
     uint16_t ground_own, wall_own; /* the collide flags of the body part that made them (tc_ai_sphere.flags) */
     uint8_t ground_kind, wall_kind; /* what they touched (TC_MEC_VERTEX ...: the records' +0x7A; COND 39-43) */
     uint8_t ground_sound;        /* the ground contact's floor sound when it is a perso's (tc_pcol_prim.sound), 0xFF none */
+    /* The obstacle's collide identifier (record +0x74) when the contact is a perso's primitive (tc_pcol_prim.collide_id;
+     * a static triangle's is in the .ttai by *_tri, tc_ai_model.floor_ids): COND 59 */
+    uint16_t ground_touched, wall_touched, other_touched;
     uint32_t blocked;            /* frames the collide loop gave up (6 responses, still blocked: no move), debug */
     uint32_t passes;             /* responses in the last frame's collide loop, debug */
     /* Riding (docs/ENGINE.md "Moving collision, read"): the exe makes the perso a child of the obstacle's SuperObject

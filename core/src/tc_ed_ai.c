@@ -296,6 +296,13 @@ static float ground_per_frame(const tc_ed_ai *e, uint32_t s) {
     return g * (g * (st->speed ? st->speed : 30) > 4 ? e->run_scale : e->walk_scale);
 }
 
+/* A contact's obstacle collide identifier (COND 59): the static triangle's (.ttai FCID; none when the table was
+ * dropped for another level's collision, tc_ai_model_link), else the perso primitive's the walk kept. */
+static uint16_t touched(const tc_ai_model *m, uint32_t tri, uint16_t perso) {
+    if (tri == UINT32_MAX) return perso;
+    return tri < m->floor_id_count ? m->floor_ids[tri] : 0;
+}
+
 /* The footstep switch (docs/NOTES.md "Footsteps"): an animation's step sound (Bnk_0 event 49) plays the step of the
  * floor's sound type v (GameMaterial +8, .ttai FSND per triangle): TC_AI_STEP_SOUND + v is added next to Ed's own
  * step (event 49), which keeps playing (the user hears both in the original). The floor = the triangle under the origin (the exe: the ground contact's material). */
@@ -452,6 +459,14 @@ static void step(tc_ed_ai *e, float dt, uint32_t inputs, float stick_x, float st
     a->ground_material = e->dyn.card_type == 1 || e->dyn.card_type == 5 ? 0 : e->dyn.walk.ground_own;
     a->wall_material = e->dyn.card_type == 1 || e->dyn.card_type == 5 ? 0 : e->dyn.walk.wall_own;
     a->ground_kind = e->dyn.walk.ground_kind, a->wall_kind = e->dyn.walk.wall_kind, a->perso_kind = e->dyn.walk.other_kind;
+    /* ... and COND 59 the obstacles' (record +0x74): a perso's primitive's, or the static triangle's from the .ttai */
+    if (e->dyn.card_type == 1 || e->dyn.card_type == 5) {
+        a->ground_touched = a->wall_touched = a->perso_touched = 0;
+    } else {
+        a->ground_touched = touched(a->model, e->dyn.walk.ground_tri, e->dyn.walk.ground_touched);
+        a->wall_touched = touched(a->model, e->dyn.walk.wall_tri, e->dyn.walk.wall_touched);
+        a->perso_touched = e->dyn.walk.other_touched;
+    }
     if (e->camera >= 0) a->other_positions[e->camera] = camera;
     /* dynamics +0x2BC / +0x2C0: the lagged attack / bank in flight, the lagged polar angle / heading swimming */
     a->report_2bc = e->dyn.card_type == 1 ? e->dyn.swim.polar_lagged : e->dyn.fly.attack_lagged;

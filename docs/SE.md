@@ -632,6 +632,43 @@ at the arch's doorstep (the land grid dipping under it: fixed by keeping the lan
 deep, and a doorstep of flagstones). The looks were judged from a scratch software render of the .ttlv (the port's
 lighting, the haze), not in the app. **Not seen in the app.**
 
+### Crazy City (2026-11-22): four neighbourhoods more
+The user: "supercharge it, a bunch of neighbourhoods, almost as if it was Crazy City", more flair, persos messing
+about, use any related assets. All ours (tools/ttre/crazycity.py; crazytown.py builds them in): past the cliff ring,
+each reached by a cut through the rock with a neon sign over it.
+- **The Strip** (west, x -170..-70): a cove; a promenade of checker tiles under neon fronts (a hotel with Grogh's TV on
+  its roof, an arcade with a joystick, an ice-cream parlour with a giant dropped cone, a diner, a disco under the CD),
+  palms, lamps; a beach sloping into a wading lagoon (parasols, a sandcastle of three jumps, a Ferris wheel leaning
+  9 degrees with bulbs and cabins); a pier on stilts to a round head with a striped lighthouse whose stair winds three
+  times round it to the lamp room (roof 25.4); stepping stones to a bath tub afloat; a drowned house's roof; the
+  retail game's fireworks frozen in the sky.
+- **The Heights** (north): a stair up the cliff to three terraces: the gallery row (Transit's coloured tiles, an
+  open-air screen showing Grogh's TV, the giant toilet as a sculpture, boutiques with the pharmacy's shop window, a
+  "CRAZY CITY" mural on the retaining wall), a ramp to the villas' lane (pools, topiary), a stair to the overlook (a
+  radio mast with CRAZY FM, an observatory with a swirled dome, Transit's rocket, a telescope) and "CRAZY CITY" in
+  letters the size of houses on the hill behind.
+- **Downtown** (south, beside the arrival arch): asphalt streets on a grid, dashed lines, traffic lights shining all
+  four ways, bath-tub cars at the kerbs; blocks of crooked towers (some faces Land's tower brick, Marmite's green
+  plates, sud0's walls), neon shop signs, billboards; a plaza with a clock tower telling four wrong times and a bath-tub
+  fountain; a park with a bandstand; a building site of two floors to climb, a crane holding a bath tub; a tower with
+  a fire stair winding four times round it to a helipad (32.8).
+- **The Junkyard** (south-east): barbed wire, floodlights with Marmite's portholes, heaps of the town's odd things
+  (colanders, funnels, discs, toilets, cameras), Marmite's crates stacked in a spiral a jump apart up to a crane cab,
+  a boat hull up on blocks.
+- **Who is about** (crazycity.placements): 17 characters of the retail levels copied as scenery (their PRSO records:
+  geometry, first animation looping, textures; no scripts, no collision): the pyramid's madman (twice), the bar's
+  barman (one frame: a statue), cock01's three skating fridges in the plaza, Transit's ducks on the lagoon and clay
+  sheep on the beach, sud0's boxing mushrooms in the park and Doc at the observatory, Land's snails on the lawns, the
+  mammoth in the scrapyard, Suzy at the end of the pier.
+- **How:** a district is a union of rectangles; inside, the height field sinks under its own floors and the cliffs
+  give way; past the cliff ring a bank rises round it a metre over its nearest floor (no trench at its edges), solid
+  as far as 14 out. Textures: the SE's, crazypaint's new painters (neon, checker tiles, asphalt, bands, mural, clocks,
+  helipad, hill letters; the font now has G H I J L M Q V X) and the retail game's (out/Textures, copied as `rt_*`).
+  The level: 75k triangles (34k collision), 373 textures.
+- **Checked headless:** a drop at every 4 m of the districts (1,748) lands on the floor each declares; walks from the
+  town through each cut; the stairs, ramp and climbs (probe steered by the camera: the stick is camera-relative).
+  **Not seen:** looks, lighting, scale, the camera on the spiral stairs, frame rate on the Celeron.
+
 ## Ultimate Goal
 
 The long-term goal these steps lead to (user, 2026-11-05): Open Tonic as one merged Definitive Edition, Ed moving

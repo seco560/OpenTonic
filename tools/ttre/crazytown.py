@@ -4,7 +4,8 @@ What survives (docs/SE.md "Crazy Town"): no level (no snapshot, geometry, collis
 Special Edition keeps its textures (Textures.cnt "crazy town": 112 of them), its world-map region and name ("Crazy
 Town", INVENTOR/MONDE.INV: "crazytown_not_used") and its music; the retail game keeps an unused gate sign, "Crazy Tower"
 (gen_arche/arche_crazy), and the soundtrack's "Bonus (Crazy Town)" in Bnk_89 (tools/music.tsv). The layout below is
-ours, not a restoration: a crooked village round a leaning tower, built only from those textures.
+ours, not a restoration: a crooked village round a leaning tower, built only from those textures; since 2026-11-22
+the neighbourhoods of Crazy City round it, past its cliffs (crazycity.py).
 
     python3 -m tools.ttre.crazytown [out folder, default files/out]
 
@@ -34,6 +35,7 @@ import sys
 
 from . import chunks
 from . import crazyquarter as cq
+from . import crazycity as cc
 from . import import_gltf as ig
 from .custom import EDITS, blend, opaque_box, read_png, save_png, scaled
 
@@ -61,7 +63,7 @@ ROUND_CAMERA = 1 << 8  # TCX_FLAG_ROUND_CAMERA (core/include/tonic/custom/tcx.h)
 KEYED = {'vg_arbregeoNZ', 'vg_buissongeoNZ', 'vg_buissongeo02NZ', 'rendu6_NZ', 'xx_coronneNZ', 'xx_cd_NZ'}
 
 GRID = 2.5             # the height field's spacing
-EXTENT = 165.0         # it covers [-EXTENT, EXTENT]^2 (past the old quarter, crazyquarter.py)
+EXTENT = 182.0         # it covers [-EXTENT, EXTENT]^2 (past the old quarter and Crazy City's districts, crazycity.py)
 SOLID_RADIUS = 105.0
 CLIFF_SETBACK = 4.2    # the cliffs rise this far behind their upright foot (cliff_foot): no ground cell in front of it
                        # (2.5 x 2.5, so up to 3.6 across) reaches the rise   # ground beyond this is out of reach: drawn, not collided with
@@ -134,8 +136,8 @@ class Lighting:
                     sun, sky = 0.0, a
                     break
             if self.land:
-                inside = cq.outside(p[0], p[1]) < 0.01
-                above = p[2] - (cq.floor_at(p[0], p[1]) if inside else self.land.height(p[0], p[1]))
+                floor = cc.floor_at(p[0], p[1])  # a district's own floor, or None: the land's
+                above = p[2] - (floor if floor is not None else self.land.height(p[0], p[1]))
                 foot = 0.6 + 0.4 * smoothstep(-0.5, 3.0, above)
                 sky *= foot
                 sun *= 0.75 + 0.25 * foot
@@ -193,12 +195,21 @@ class Land:
         h += (-1.0 - h) * smoothstep(6.0, 2.5, d)
         r, a = math.hypot(x, y), math.atan2(y, x)
         rim = cliff_radius(a)
-        out = cq.outside(x, y)  # the old quarter: the cliffs give way round it, the land under it goes out of sight
+        # the old quarter and Crazy City's districts: the cliffs give way round them, the land under them goes out of
+        # sight
+        district, out = cc.nearest(x, y)
         rise = smoothstep(rim + CLIFF_SETBACK, rim + CLIFF_SETBACK + 6.0, r) * smoothstep(1.5, 7.0, out)
         h += rise * (20.0 + 2.5 * math.sin(5 * a) + 1.5 * math.sin(x / 7.0) * math.cos(y / 9.0))
-        # under the quarter, kept just under its lowest floor (no deeper: the grid's 2.5 cells would dig a ditch along
-        # its walls, and a ledge at the arch's doorstep)
-        return min(h, cq.ZA - 0.3) if out <= 0.0 else h
+        if district is cq:
+            # under the quarter, kept just under its lowest floor (no deeper: the grid's 2.5 cells would dig a ditch
+            # along its walls, and a ledge at the arch's doorstep)
+            return min(h, cq.ZA - 0.3) if out <= 0.0 else h
+        if out <= 0.0:  # under a district: just under its floor there
+            return min(h, district.floor_at(x, y) - 0.3)
+        # past the cliff ring, a bank round it a little over its nearest floor, fading into the rock: its edge is a
+        # slope up, not a drop into a trench between it and the rock
+        bank = (1.0 - smoothstep(6.0, 9.0, out)) * smoothstep(rim, rim + 3.0, r)
+        return h + (max(h, district.near_floor(x, y) + 1.0) - h) * bank
 
     def normal(self, x, y):
         e = 0.5
@@ -345,7 +356,8 @@ def ground(b, land, paths):
                 uv = [(dot(p, t) / tile, -p[2] / tile) for p in pts]
             else:
                 uv = [(p[0] / tile, -p[1] / tile) for p in pts]
-            solid = math.hypot(x, y) < SOLID_RADIUS and cq.outside(x, y) > 0.5  # the quarter has its own floors
+            # the districts have their own floors; the land round them is solid as far as their banks reach
+            solid = cc.outside(x, y) > 0.5 and (math.hypot(x, y) < SOLID_RADIUS or cc.new_outside(x, y) < 14.0)
             for a, c, d in ((0, 1, 2), (0, 2, 3)):
                 b.tri(key, (pts[a], pts[c], pts[d]), (uv[a], uv[c], uv[d]), (nrm[a], nrm[c], nrm[d]), solid=solid)
 
@@ -364,8 +376,8 @@ def cliff_foot(b):
         pts.append((r * math.cos(a), r * math.sin(a)))
     for k in range(n):
         p, q = pts[k], pts[(k + 1) % n]
-        if cq.outside(0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1])) < 2.0:
-            continue  # where the old quarter goes through
+        if cc.outside(0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1])) < 2.0:
+            continue  # where the old quarter or a district goes through
         b.face(rock, [(p[0], p[1], -2.5), (q[0], q[1], -2.5), (q[0], q[1], 12.0), (p[0], p[1], 12.0)], (8.0, 8.0))
 
 
@@ -704,7 +716,7 @@ def plants(b, land, avoid, paths, rng):
             return False
         if abs(y - river_y(x)) < 7.5 or any(polyline_distance((x, y), line) < 3.5 for line in paths):
             return False
-        if any(math.dist((x, y), (ax, ay)) < ar + room for ax, ay, ar in avoid) or cq.outside(x, y) < room + 3:
+        if any(math.dist((x, y), (ax, ay)) < ar + room for ax, ay, ar in avoid) or cc.outside(x, y) < room + 3:
             return False
         return all(math.dist((x, y), p) > room + 2 for p in placed)
 
@@ -752,6 +764,8 @@ def finish(src, dst, build_dir, level_dir):
         names.append(c['TEXS'][o + 2:o + 2 + size].decode())
         o += 2 + size
     names = [os.path.relpath(os.path.normpath(os.path.join(build_dir, t)), level_dir).replace(os.sep, '/') for t in names]
+    # Crazy City's passers-by (crazycity.placements): records of the retail levels beside this one's build folder
+    c['PRSO'] = cc.persos_chunk(os.path.join(os.path.dirname(os.path.abspath(build_dir)), 'ttlv'), level_dir, names)
     c['TEXS'] = struct.pack('<I', len(names)) + b''.join(struct.pack('<H', len(t.encode())) + t.encode() for t in names)
     mesh = bytearray(c['MESH'])
     count, = struct.unpack_from('<I', mesh)
@@ -836,7 +850,7 @@ def build(out):
     works = (52.0, -9.5)
     pads = [(0.0, 0.0, 18.0, 22.0, 0.15), (ax, ay, 9.0, 14.0, 0.0), (mill[0], mill[1], 6.0, 9.0, None),
             (privy[0], privy[1], 2.5, 5.0, None), (tub[0], tub[1], 2.5, 5.0, None), (disc[0], disc[1], 8.0, 11.0, None),
-            (cq.ARCH_X, -2.0, 4.5, 9.0, cq.ZA)]
+            (cq.ARCH_X, -2.0, 4.5, 9.0, cq.ZA)] + cc.pads()
     pads += [(c[0], c[1], max(w, d) * 0.75, max(w, d) * 0.75 + 4.0, None) for c, w, d, *_ in houses]
     land = Land(pads)
     xr_w, xr_e = -24.0, 24.0
@@ -846,7 +860,7 @@ def build(out):
         [(17.0, 1.0), (40.0, 1.5), (60.0, 0.5), (70.0, -1.5), (cq.ARCH_X, 0.8)],
         [(-6.0, 16.0), (-7.0, 50.0)],
         [(12.0, -46.0), privy], [(-12.0, -46.0), mill],
-    ]
+    ] + cc.paths()
 
     # the lights before anything is lit: a lantern by each house's door and the tower's, lamps round the square and
     # along the road east, the old quarter's own
@@ -867,7 +881,7 @@ def build(out):
     LIGHT.land = land
     LIGHT.lamps = [(at, tuple(k * 1.1 for k in warm), 7.0) for at, _ in lanterns]
     LIGHT.lamps += [((x + 0.7, y, land.height(x, y) + 3.0), warm, 10.0) for x, y in posts]
-    LIGHT.lamps += cq.lamps()
+    LIGHT.lamps += cq.lamps() + cc.lamps()
     LIGHT.covered = cq.covered()
 
     b = Builder(src, tex_dir)
@@ -892,6 +906,7 @@ def build(out):
     for x, y in posts:
         cq.lamp_post(b, x, y, land.height(x, y))
     cq.build(b)
+    cc.build(b, land)
     avoid = [(c[0], c[1], max(w, d)) for c, w, d, *_ in houses]
     avoid += [(mill[0], mill[1], 10.0), (privy[0], privy[1], 4.0), (tub[0], tub[1], 4.0), (disc[0], disc[1], 6.0),
               (ax, ay, 12.0), (skull[0], skull[1], 3.0), (works[0], works[1], 7.0)]

@@ -303,6 +303,9 @@ Little-endian. Every chunk is required; the per-state tables hold one row per ST
           the perso's axes: the capture is "the player's origin inside" (COND_13) instead of the radius
   FSND  the floors' sound types (docs/NOTES.md "Footsteps"): u32 n (= the .ttlv's collision triangles), n x u8
           (GameMaterial +8 of the triangle's material, 0xFF none)
+  FCID  the floors' collide identifiers: u32 n (= FSND's n), n x u16 (the triangle's collide material identifier,
+          GameMaterial +0xC -> u16 +2, 0 none; level.collide_id): the obstacle side of a contact,
+          which COND 59 (TouchingObject: 0x400 lava, 0x20 special ground ...) tests
   LINK  u32 n_triangles, u32 CRC-32 of the .ttlv's COLL chunk: FSND indexes those triangles, so the core ignores it
           when the level's collision differs (an imported level using a donor's .ttai)
 """
@@ -541,7 +544,9 @@ def own_material(d, gm):
 def zone_parts(d, g):
     """A ZDx zone's GeometricObjectCollide -> its mechanics parts [(cx, cy, cz, r, flags, element type, rebound, grip)]
     (own_material): each sphere of
-    its type 7 elements (entries inline at element +8: {u16 centre vertex, u16, f32 radius, ptr game material}), then
+    its type 7 elements (element {u32 n, ptr entries}, 12-byte entries {u16 centre vertex, u16, f32 radius, ptr game
+    material}, as zde_prims; until 2026-11-22 read inline at element +8, where retail's elements happen to hold the
+    first entry again and the Special Edition's do not: its ZDM spheres came out empty), then
     its points: element type 5 (Points), whose vertices FUN_00470b40 sweeps as moving points, radius 0, flags from the
     vertex's material (object +0xC, one GameMaterial per vertex; FUN_004702d0). Ed's zone 9 is a point 1.3 ahead and 2.0
     up with flag 8: it lands on ledge tops and GroundMaterialIs(8) hangs him (docs/DECOMP.md "Ledge hang")."""
@@ -554,14 +559,14 @@ def zone_parts(d, g):
     parts, in_spheres = [], set()
     for k, t in enumerate(types):
         el = lv.ptr(lv.ptr(g, 0x1C), 4 * k)
-        if t == 7 and el:
-            for j in range(min(un('I', el)[0], 16)):
-                c, = un('H', el, 8 + 12 * j)
-                if c < nv:
-                    in_spheres.add(c)
-                    gm = lv.ptr(el, 8 + 12 * j + 8)
-                    parts.append(un('3f', verts, 12 * c) + un('f', el, 8 + 12 * j + 4) + (collide_flags(d, gm), 7) +
-                                 own_material(d, gm))
+        entries = lv.ptr(el, 4) if t == 7 and el else None
+        for j in range(min(un('I', el)[0], 16) if entries else 0):
+            c, = un('H', entries, 12 * j)
+            if c < nv:
+                in_spheres.add(c)
+                gm = lv.ptr(entries, 12 * j + 8)
+                parts.append(un('3f', verts, 12 * c) + un('f', entries, 12 * j + 4) + (collide_flags(d, gm), 7) +
+                             own_material(d, gm))
     if 5 in types:
         for v in range(min(nv, 16)):
             if v not in in_spheres:
@@ -581,12 +586,12 @@ def zdm_sets(d, perso, n_states):
     type 5) is his hand point (zone_parts). A collide set with byte +0x36 set (the skier) has no ZDM: see below."""
     lv, un = d.lv, d.un
     cs = lv.ptr(perso, 0x14) if perso else None
-    if cs and un('B', cs, 0x36)[0]:
+    if cs and d.collide_tail(cs)[3]:
         # Collide set byte +0x36 set (GAM_00431720; the skier): the mechanics sweep one sphere centred on the
         # perso's origin (FUN_0043d480 -> FUN_004717d0) of radius +0x30 x 0.5 (DAT_004d2928; skier 1.3 -> 0.65),
         # whatever the state. His riding poses reach 0.61-0.65 below the origin: the board rides on that sphere.
         # Radius 0 (north's guards: +0x30 = 0): the same sweep with a point (FUN_004717d0's sphere of radius 0).
-        r = un('f', cs, 0x30)[0] * 0.5
+        r = d.collide_tail(cs)[0] * 0.5
         return ([[(0.0, 0.0, 0.0, max(r, 0.0), 0, 7 if r > 0 else 5, 1.0, 1.0)]], [0] * n_states)
     if not cs or not lv.ptr(cs, 8) or not lv.ptr(cs, 0x18):
         return [], [0xFFFF] * n_states
@@ -665,7 +670,7 @@ def zde_block(d, perso, n_states):
     zone (in its axes), else 1 + the object-list index of a part zone (part_zones: in that object's axes). At most 32
     zones (Ed has 18). Core: tc_level.h tc_zde_set."""
     lv, un = d.lv, d.un
-    cs = lv.ptr(perso, 0x14) if perso and not d.se else None  # the Special Edition's collide sets: not read (no zones)
+    cs = lv.ptr(perso, 0x14) if perso else None
     zones, active = [], [0] * n_states
     e = lv.ptr(lv.ptr(cs, 4)) if cs and lv.ptr(cs, 4) else None
     while e and len(zones) < 32:
@@ -1880,6 +1885,8 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
     tris, _, sounds = d.collision(skip_decals=d.player() != fix_ed, sounds=True, persos=False)  # as ttlv.py writes COLL
     out += struct.pack('<I', len(sounds)) + bytes(x & 0xFF for x in sounds)
     cut('FSND')
+    out += struct.pack('<I', len(sounds)) + b''.join(struct.pack('<H', x >> 8) for x in sounds)
+    cut('FCID')
     coll = struct.pack('<I', len(tris)) + b''.join(struct.pack('<9f', *a, *b, *c) for a, b, c in tris)
     out += struct.pack('<II', len(tris), zlib.crc32(coll))  # the .ttlv's COLL chunk, byte for byte
     cut('LINK')

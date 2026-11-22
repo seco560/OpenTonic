@@ -250,7 +250,11 @@ typedef struct tc_ai_model {
      * none): the footstep switch picks step sound 0x390002 + it (docs/NOTES.md "Footsteps"). */
     uint32_t floor_sound_count;
     uint8_t *floor_sounds;
-    /* The level collision floor_sounds indexes (LINK: triangle count, CRC-32 of the .ttlv's COLL chunk). */
+    /* .ttai FCID, per collision triangle as floor_sounds: its collide material's identifier (GameMaterial +0xC -> u16
+     * +2, 0 none), the obstacle side of a contact (ContactRecord +0x74) that COND 59 tests (0x400 lava ...). */
+    uint32_t floor_id_count;
+    uint16_t *floor_ids;
+    /* The level collision floor_sounds and floor_ids index (LINK: triangle count, CRC-32 of the .ttlv's COLL chunk). */
     uint32_t link_triangles, link_crc;
     /* Optional (Special Edition levels that switch walking / skiing): MODZ, and ALTM = a whole second .ttai (the
      * skier), a copy of its bytes for tc_ai_model_load. */
@@ -477,6 +481,10 @@ struct tc_ai_perso {
     /* The collide flags of the body part (tc_ai_sphere.flags) that made the ground and wall contacts, 0 none: the
      * material conditions read these (ContactRecord +0x70, the own material; COND 44-49, FUN_00497890). */
     uint16_t ground_material, wall_material;
+    /* The collide identifiers of what the ground, wall and perso contacts touched (the obstacle's material, record
+     * +0x74; 0 none): COND 59 (TouchingObject, FUN_004978d0: 0x10 deadly, 0x20 special ground, 0x400 lava ...).
+     * Host-fed. */
+    uint16_t ground_touched, wall_touched, perso_touched;
     /* What those contacts and the perso one touched (the records' +0x7A, TC_MEC_VERTEX 0 .. TC_MEC_BOX 4): COND 39-43,
      * Cond_CollideWithPoint / Triangle / Edge / Sphere / AlignedBox (COND_39Etc_004984a0). Host-fed. */
     uint8_t ground_kind, wall_kind, perso_kind;

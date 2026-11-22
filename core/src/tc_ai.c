@@ -49,7 +49,7 @@ static tc_vec3 rd_vec3(reader *r) {
 }
 
 /* Chunks (tools/ttre/ai.py): SCPT, STAT, BTNS, STRS, VECS, PRSO, CARD, BODY, ZDMF, TRIG, PORT, PLAC, TRAN, SNDS, WPTS,
- * MECE, ZONE, FSND, LINK; all required (the water is the .ttlv's: SECT). Each is read to its exact end (chunk_end). */
+ * MECE, ZONE, FSND, FCID, LINK; all required (the water is the .ttlv's: SECT). Each is read to its exact end (chunk_end). */
 #define CHUNK_END(r) do { if ((e = chunk_end(r)) != TC_OK) goto fail; } while (0)
 
 static void rd_portals(reader *r, tc_ai_model *m) {
@@ -409,6 +409,12 @@ tc_result tc_ai_model_load(tc_ai_model *m, const uint8_t *data, size_t size) {
     for (i = 0; m->floor_sounds && i < m->floor_sound_count; i++) m->floor_sounds[i] = rd_u8(r);
     CHUNK_END(r);
 
+    chunk_need(&cs, "FCID", r);
+    m->floor_id_count = rd_u32(r);
+    m->floor_ids = (uint16_t *)rd_array(r, m->floor_id_count, 2, 2);
+    for (i = 0; m->floor_ids && i < m->floor_id_count; i++) m->floor_ids[i] = rd_u16(r);
+    CHUNK_END(r);
+
     chunk_need(&cs, "LINK", r);
     m->link_triangles = rd_u32(r);
     m->link_crc = rd_u32(r);
@@ -550,6 +556,9 @@ void tc_ai_model_link(tc_ai_model *m, const tc_level *level) {
     tc_free(m->floor_sounds);
     m->floor_sounds = NULL;
     m->floor_sound_count = 0;
+    tc_free(m->floor_ids);
+    m->floor_ids = NULL;
+    m->floor_id_count = 0;
 }
 
 bool tc_ai_zone_contains(const float inverse[12], const tc_ai_zone_prim *prims, uint32_t count, tc_vec3 p) {
@@ -585,6 +594,7 @@ void tc_ai_model_free(tc_ai_model *m) {
     tc_free(m->mech_events);
     tc_free(m->water_point_sets);
     tc_free(m->floor_sounds);
+    tc_free(m->floor_ids);
     for (i = 0; m->portals && i < m->portal_count; i++) tc_free(m->portals[i].ops);
     tc_free(m->portals);
     free_strings(m->names, m->name_count);
@@ -1639,8 +1649,16 @@ static bool condition(run *r, uint32_t i) {
         return true;
     }
     case 37: return (p->report_high & 0x10000) != 0; /* COND_OnGroundEtc_00498370: report_seen & 0x10000, a perso contact */
-    case 30: case 38: case 59: case 64:
-        return false;    /* collision probes, zones, materials, touched objects, game state: not modelled yet */
+    case 59: { /* TouchingObject(mask) (COND_InBehaviourEtc_00498bb0 case 0x3B -> FUN_004978d0): the obstacle's
+                * collide identifier (record +0x74) of the ground contact, else the wall's, else the perso's, & mask */
+        uint32_t f = p->contacts;
+        int32_t mask = as_int(arg(r, i, 0));
+        if (f & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) return (p->ground_touched & mask) != 0;
+        if (f & (TC_AI_CONTACT_WALL | TC_AI_CONTACT_OVERHANG | TC_AI_CONTACT_CEILING)) return (p->wall_touched & mask) != 0;
+        return (p->report_high & 0x10000u) && (p->perso_touched & mask);
+    }
+    case 30: case 38: case 64:
+        return false;    /* collision probes, zones, game state: not modelled yet */
     default: unknown(r, i); return false;
     }
 }

@@ -88,7 +88,16 @@ see below). How the exe does it:
   (dynamics +0xB0, `AI_DynReport_00491e40`) +0x8C / +0x108 = the ground / wall record's +0x70, the *own* material.
   `FUN_00497890` tests `(identifier & mask) != 0`. So `GroundMaterialIs(8)` = "the hand point is on a ledge" ->
   reflexes R0 / R25 / R26 -> B19 -> state 46 -> B82 (hanging). The level's own collide identifiers (the obstacle
-  side, e.g. the 0x8 hang spheres on Land) are read by no condition: the CLID chunk is gone.
+  side, e.g. the 0x8 hang spheres on Land) are read by none of these: the obstacle side is COND 59's (below).
+- **COND 59 TouchingObject reads the obstacle's side** (2026-11-22; `COND_InBehaviourEtc_00498bb0` case 0x3B ->
+  `FUN_004978d0`): with report +0x18 non-zero, the ground record's +0x74 (report block [0x24]) when its bits 1 / 2 are
+  set, else the wall record's (bits 4 / 8 / 0x10, [0x43]), else with 0x10000 the perso record's ([0x62]), each through
+  `FUN_00497890` (its collide material's identifier & mask). Ed's scripts use it 55 times: 0x400 lava (R0 / R15 / R20 /
+  R25: dsg0 26, his burnt death), 0x10 deadly, 0x20 special ground (~20 behaviours), 0x80, 0x100 thrown, 0x200, 0x1.
+  Until then the port returned false, so lava never killed. Port: .ttai FCID (each static triangle's identifier, as FSND),
+  the walk keeps a perso primitive's (tc_mec_walk ground / wall / other_touched); tc_ai.c case 59. In the levels: lava
+  0x400 / 0x480 in sud0, north, carota, pyramide, cavedoc (93 triangles), marmite; marmite 0x20 (64), 0x100 (48);
+  skymap's acid 0x14.
 - **Hanging** (card 11, `FUN_004adb4d`; forces `FUN_004c6993`): while the hand is on the ledge the grip cancels
   last frame's velocity and `FUN_004a7b71` presses the body 0.0125 into the ground every frame, so the hand touches
   the ledge again each frame; R10 lets go 200 ms after `GroundMaterialIs(8)` fails (the ledge ends). **The alignment**

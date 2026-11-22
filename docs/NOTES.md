@@ -1898,7 +1898,8 @@ cave stop Ed like a wall, where he should walk through them. Both are the sector
 ### Hanging from the hang spheres (.ttai v12, 2026-10-27; built, aicheck only, not yet run by the user)
 **Superseded 2026-10-28 (docs/DECOMP.md "Ledge hang, found and ported"): wrong trigger.** GroundMaterialIs tests Ed's
 *own* part's material (record +0x70), not the floor's: the hang is his zone 9 hand point (flag 8) landing on a ledge
-top. The spheres' obstacle id 0x8 is read by nothing; the CLID chunk and the per-triangle ids are gone. Kept for the
+top. The spheres' obstacle id 0x8 is read by none of the material conditions (COND 59 reads the obstacle side for its
+own masks: docs/DECOMP.md; the per-triangle ids came back as .ttai FCID 2026-11-22). Kept for the
 B82 / R10 script notes below.
 - **Trigger:** reflexes R0 / R25 / R26 `GroundMaterialIs(0x8)` -> B19 (velocity 0, state 46) -> **B82 + R10** (the hang).
   B82: stick sideways -> states 48 / 49 (shimmy, Proc10 rate), stick back (> 140 deg) -> state 44 + B90 (drop), stick

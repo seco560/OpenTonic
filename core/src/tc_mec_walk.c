@@ -443,6 +443,18 @@ static void continue_from(collide_ctx *x, tc_vec3 at, float t) {
     x->target = tc_v3_add(at, tc_v3_scale(x->velocity, (1 - t) * x->dt));
 }
 
+/* The ground contact record (+0xCC): the obstacle's normal, grip, triangle or sound and identifier, the own part's
+ * flags, the kind. */
+static void keep_ground(tc_mec_walk *w, const tc_mec_hit *h) {
+    w->ground_normal = h->normal;
+    w->ground_grip = hit_grip(h);
+    w->ground_tri = h->tri ? h->tri->source : UINT32_MAX;
+    w->ground_sound = h->tri ? 0xFF : h->sound;
+    w->ground_touched = h->tri ? 0 : h->collide_id;
+    w->ground_own = h->own_flags;
+    w->ground_kind = (uint8_t)h->kind;
+}
+
 /* MEC_004bb904: ground (slope = false) or steep slope (slope = true, with a card). */
 static void respond_ground(collide_ctx *x, const tc_mec_hit *h, bool slope) {
     tc_vec3 at = impact(x, h->t), v = x->velocity;
@@ -496,12 +508,7 @@ static bool step_up(collide_ctx *x, const tc_mec_hit *h) {
     x->start = from;
     x->target = top;
     x->velocity = x->dt > 0 ? tc_v3_div(off, x->dt) : tc_v3(0, 0, 0);
-    x->w->ground_normal = s.normal;
-    x->w->ground_grip = hit_grip(&s);
-    x->w->ground_tri = s.tri ? s.tri->source : UINT32_MAX;
-    x->w->ground_sound = s.tri ? 0xFF : s.sound;
-    x->w->ground_own = s.own_flags;
-    x->w->ground_kind = (uint8_t)s.kind;
+    keep_ground(x->w, &s);
     return true;
 }
 
@@ -549,18 +556,12 @@ static uint32_t classify(collide_ctx *x, const tc_mec_hit *h) {
         bits = c >= card_f(x->card, 0x28, -0.70710677f) ? TC_AI_CONTACT_OVERHANG : TC_AI_CONTACT_CEILING;
     }
     if (bits & (TC_AI_CONTACT_GROUND | TC_AI_CONTACT_SLOPE)) {
-        if (!(bits & TC_MEC_STEPPED)) {
-            x->w->ground_normal = h->normal;
-            x->w->ground_grip = hit_grip(h);
-            x->w->ground_tri = h->tri ? h->tri->source : UINT32_MAX;
-            x->w->ground_sound = h->tri ? 0xFF : h->sound;
-            x->w->ground_own = h->own_flags;
-            x->w->ground_kind = (uint8_t)h->kind;
-        }
+        if (!(bits & TC_MEC_STEPPED)) keep_ground(x->w, h);
     } else {
         x->w->wall_normal = h->normal;
         x->w->wall_grip = hit_grip(h);
         x->w->wall_tri = h->tri ? h->tri->source : UINT32_MAX;
+        x->w->wall_touched = h->tri ? 0 : h->collide_id;
         x->w->wall_own = h->own_flags;
         x->w->wall_kind = (uint8_t)h->kind;
     }
@@ -572,6 +573,7 @@ static void keep_other(collide_ctx *x, const tc_mec_hit *h) {
     x->w->other = h->obstacle;
     x->w->other_channel = h->obstacle_channel;
     x->w->other_kind = (uint8_t)h->kind;
+    x->w->other_touched = h->collide_id;
 }
 
 /* MEC_004bd689: a contact with a perso. The carrier itself: as any contact, and 0x30000 (still on it); on the carried
@@ -602,12 +604,7 @@ static uint32_t respond_perso(collide_ctx *x, const tc_mec_hit *h) {
         respond_ground(x, h, c >= ground && x->card != NULL);
         bits = TC_MEC_ON_PERSO | (c < ground ? TC_AI_CONTACT_SLOPE : TC_AI_CONTACT_GROUND);
         keep_other(x, h);
-        x->w->ground_normal = h->normal;
-        x->w->ground_grip = hit_grip(h);
-        x->w->ground_tri = UINT32_MAX;
-        x->w->ground_sound = h->sound;
-        x->w->ground_own = h->own_flags;
-        x->w->ground_kind = (uint8_t)h->kind;
+        keep_ground(x->w, h);
         x->target = tc_v3_add(x->target, tc_v3_scale(h->normal, PUSH_OUT));
         return bits;
     }
@@ -657,12 +654,7 @@ static bool resnap(collide_ctx *x, tc_vec3 *position, float distance, float min_
     to = tc_v3_add(impact(&(collide_ctx){.start = *position, .target = low}, h.t), tc_v3_scale(UP, PUSH_OUT / c));
     if (tc_mec_sweep(x->world, x->body, x->heading, *position, to, NULL)) return false;
     *position = to;
-    x->w->ground_normal = h.normal;
-    x->w->ground_grip = hit_grip(&h);
-    x->w->ground_tri = h.tri ? h.tri->source : UINT32_MAX;
-    x->w->ground_sound = h.tri ? 0xFF : h.sound;
-    x->w->ground_own = h.own_flags;
-    x->w->ground_kind = (uint8_t)h.kind;
+    keep_ground(x->w, &h);
     return true;
 }
 
