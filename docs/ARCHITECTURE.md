@@ -242,14 +242,21 @@ model as retail's, so the core needs no SE cases.
   repeat the first entry inline at +8). SE casts now carry their bodies and zones (CMCS); retail byte-identical
   (9 levels compared chunk by chunk). PCOL priorities of SE persos were read from the next heap header (5 / 7) before;
   the donor Ed is untouched (user: keep him, SE Ed's scripts must not touch his physics);
-- root motion (an SE animation frame's vector, not read), waypoints (WAYS), the activation radius (retail added
-  SetActivity: an SE perso has none), animation events, the SE's own sound tables;
-- script references: a family, a sector, a water surface, a waypoint, a font resolve to nothing on SE levels;
+- ~~root motion, waypoints~~ **done 2026-11-22 (step 2)**: the SE frame's +8 vector is retail's root motion (the SE
+  exe's FUN_00424e70 / FUN_00425720 do what GAM_0042a8d0 does; docs/SE.md "Animation"), now in the CMCS root rows; the
+  SE's waypoints, ways and links are laid out as retail's (WP_ exports; every link straight), so WAYS, the type 29
+  nodes and the waypoint dsgvars are exported as retail's, the persos numbered from SE_ID_BASE; the donor's .ttai has
+  its waypoint references cleared (se.clear_waypoints; none set today). The frame's turn (mode 3) is unexported in
+  both editions;
+- the activation radius (retail added SetActivity: an SE perso has none), animation events, the SE's own sound
+  tables;
+- script references: a family, a sector, a water surface, a font, a particle source resolve to nothing on SE
+  levels (a waypoint since 2026-11-22 does);
 - the primitives: mapped (tools/exe/se_ai_map.tsv, every SE primitive has a retail counterpart); the pairs matched by
   order alone are the least sure.
 
-**Order:** (1) collide sets: `collide_block` is the one place since stage 4; (2) root motion and waypoints; (3) the
-script references; (4) sounds and animation events; (5) let the SE persos run, level by level, judged by forcecheck
+**Order:** (1) collide sets: `collide_block` is the one place since stage 4 (done); (2) root motion and waypoints
+(done); (3) the script references; (4) sounds and animation events; (5) let the SE persos run, level by level, judged by forcecheck
 and castcheck (the report of stage 5, not a list of names).
 
 **The full Ed instead of the donor.** Today an SE level borrows the player from the retail level of its name (EDPL and

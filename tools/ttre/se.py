@@ -253,10 +253,44 @@ EMPTY = {'TRIG': struct.pack('<HH', 0, 0), 'PORT': struct.pack('<HHH', 0, 0, 0),
          'ZONE': struct.pack('<HH', 0, 0)}
 
 
+def _clear_dsg_waypoints(body, o):
+    """Zero the waypoint dsgvars (type 8: a number in the donor level's WAYS) of the dsgvar block at body[o:]
+    (ai.perso_dsg_block); returns the offset past the block."""
+    n, size = struct.unpack_from('<H2xI', body, o)
+    infos, buf = o + 8, o + 8 + 8 * n
+    for k in range(n):
+        off, typ = struct.unpack_from('<IB', body, infos + 8 * k)
+        if typ == 8 and off + 4 <= size:
+            struct.pack_into('<I', body, buf + off, 0)
+    return buf + size + (-size % 4)
+
+
+def clear_waypoints(tag, body):
+    """SCPT / PRSO of the donor's .ttai with every waypoint reference made 0 (none): the donor's are numbers in its
+    retail level's WAYS, which would name unrelated waypoints of the SE level's own WAYS (2026-11-22). A guard: in the
+    33 .ttai measured that day every such reference is already 0 (the fix camera's waypoint dsgvar and the retail
+    skier's five are empty; no type 29 script node)."""
+    body = bytearray(body)
+    if tag == 'SCPT':
+        n, = struct.unpack_from('<I', body)
+        for k in range(n):
+            if body[4 + 8 * k + 4] == 29:
+                struct.pack_into('<I', body, 4 + 8 * k, 0)
+        o = 4 + 8 * n
+        o += 4 + 4 * struct.unpack_from('<I', body, o)[0]
+        nn, nr = struct.unpack_from('<2H', body, o)
+        _clear_dsg_waypoints(body, o + 4 + 8 * (nn + nr) + 4)
+    elif tag == 'PRSO':
+        n, o = struct.unpack_from('<H', body)[0], 4
+        for _ in range(n):
+            o = _clear_dsg_waypoints(body, o + 4)
+    return bytes(body)
+
+
 def write_ttai(src, dst, extra=(), replace=()):
     """The donor's .ttai for an SE level: level-bound chunks emptied (EMPTY) or replaced (`replace` [(tag, bytes)]: the
-    SE level's own, portal_chunks), the transition textures' paths re-rooted from the donor's folder to dst's, `extra`
-    [(tag, bytes)] appended. Chunk order kept."""
+    SE level's own, portal_chunks), its waypoint references cleared (clear_waypoints), the transition textures' paths
+    re-rooted from the donor's folder to dst's, `extra` [(tag, bytes)] appended. Chunk order kept."""
     replace = dict(replace)
     raw = open(src, 'rb').read()
     order, o = [], 8
@@ -272,6 +306,8 @@ def write_ttai(src, dst, extra=(), replace=()):
             body = replace[tag]
         elif tag in EMPTY:
             body = EMPTY[tag]
+        elif tag in ('SCPT', 'PRSO'):
+            body = clear_waypoints(tag, body)
         elif tag == 'TRAN':
             body = retarget_tran(body, os.path.dirname(os.path.abspath(src)), os.path.dirname(os.path.abspath(dst)))
         out.append((tag, body))

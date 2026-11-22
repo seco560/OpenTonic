@@ -678,10 +678,8 @@ def chunk(d, cast, prso_index, family_cache, donor_head=None):
 def roots_block(d, states, keys):
     """A family's root motion (CMCS; the walkers of core tc_cast_mec.c): its animations', so its family's, as Ed's .ttai
     BODY (ai.py): u32 n_rows, n_rows x f32[3] (each A3D frame's own vector, units per animation frame in its axes),
-    n_states x { u32 first row, u16 n_rows, u16 0 }. The Special Edition's: none."""
-    n = len(states)
-    if d.se:
-        return struct.pack('<I', 0) + struct.pack('<IHH', 0, 0, 0) * n
+    n_states x { u32 first row, u16 n_rows, u16 0 }. The Special Edition's too since 2026-11-22 (its frame +8 vector:
+    ai.root_motion)."""
     roots = ai.root_motion(d, states, keys)
     rows, index = [], []
     for k in keys:

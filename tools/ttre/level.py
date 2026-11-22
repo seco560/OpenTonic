@@ -255,6 +255,12 @@ class Anim:
             out.append(row)
         return out
 
+    @property
+    def root(self):
+        """Per frame, the frame's own vector (frame +2 -> vectors): the root motion (ai.root_motion); a frame
+        without one (index out of range) 0."""
+        return [tuple(self.vec[f[1]]) if f[1] < len(self.vec) else (0.0, 0.0, 0.0) for f in self.frames]
+
     def parents(self, fi):
         fr, parent = self.frames[fi], [-1] * len(self.chans)
         for c, par in self.hier[fr[3]:fr[3] + fr[2]]:
@@ -340,7 +346,8 @@ def se_matrix(un, m):
 class SeAnim:
     """A Special Edition animation (docs/SE.md "Animations"), with Anim's interface (fps, n_frames, chans, objects,
     parents, pose). No A3D: the AnimationReference holds ptr frames (+0), u8 n_frames (+4), u8 speed, u8 n_channels;
-    frame = 16 bytes {ptr channels, ptr f32 matrix, ptr f32 vector (both root motion, unread), ptr hierarchy (null, or
+    frame = 16 bytes {ptr channels, ptr f32 3x3 (the root's turn: not read, as retail's frame quaternion), ptr f32
+    vector (the root motion: root, ai.root_motion; null 0), ptr hierarchy (null, or
     {u32 n, ptr n x {u16 child, u16 parent}}: channel indices, as retail TT)}; channels = ptr[n_channels] -> {ptr
     compressed matrix (the value 1: identity), u32 info: object-list index = low byte (0xFF none), channel id = byte 1,
     kind = byte 3 (0 an object, 2 none: always with object 0xFF; the 4 the player knows: none seen)}. Read from GAM\\PlayAnim (FUN_00423080). A
@@ -352,6 +359,7 @@ class SeAnim:
     n_frames: int
     frames: list
     hier: list
+    root: list
 
     @property
     def chans(self):
@@ -828,8 +836,10 @@ class LevelData:
         nf, speed, nc = un('3B', ar, 4)
         if not fr or not nf or not nc:
             return None
-        frames, hier = [], []
+        frames, hier, root = [], [], []
         for f in range(nf):
+            v = lv.ptr(fr, 16 * f + 8)  # the root motion (FUN_00424e70 sums it, as retail's GAM_0042a8d0)
+            root.append(un('3f', v) if v else (0.0, 0.0, 0.0))
             h = lv.ptr(fr, 16 * f + 12)
             pr = lv.ptr(h, 4) if h else None
             hier.append([un('2H', pr, 4 * i) for i in range(min(un('I', h)[0], 256))] if pr else [])
@@ -850,7 +860,7 @@ class LevelData:
                     parts = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), SE_NO_SCALE
                 row.append((obj,) + parts)
             frames.append(row)
-        return SeAnim(state_speed or speed or 30, nf, frames, hier)
+        return SeAnim(state_speed or speed or 30, nf, frames, hier, root)
 
     def load_objects(self, p, ol, used):
         """Fill p.objects / p.collides for the object-list entries in `used`."""

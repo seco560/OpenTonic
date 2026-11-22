@@ -424,11 +424,14 @@ def root_motion(d, states, keys):
     (0, -0.08, 0), run (10) (0, -0.2, 0), backward walk (2) +0.08; take-off, landing, idle: none. Times the
     animation's frame rate it gives the speeds hand-tuned earlier (walk 0.08 x 30 x 139 % = 3.3 u/s, run 0.2 x 45 =
     9 u/s), so this is the ground speed of states whose AI sets no move direction. The frame quaternion next to it
-    is the identity for every state of Ed's (not exported). Frames without a vector (index out of range) are 0."""
-    lv, out = d.lv, {}
+    is the identity for every state of Ed's (not exported). Frames without a vector (index out of range) are 0.
+    The Special Edition's (2026-11-22): its frame's +8 vector (SeAnim.root), summed by FUN_00424e70 and pushed as
+    mode 12 by FUN_00425720 just as retail's GAM_0042a8d0 does, in the same units (SE Ed's walk is (0, -0.08, 0) too);
+    its frame +4 3x3, the turn (mode 3), is not exported, as retail's quaternion."""
+    out = {}
     for k in set(keys) - {-1}:
-        a = d.read_a3d(lv.ptr(lv.ptr(states[k], 0xC), 0x28))
-        rows = [tuple(a.vec[f[1]]) if f[1] < len(a.vec) else (0.0, 0.0, 0.0) for f in a.frames]
+        a = d.state_anim(states[k])
+        rows = a.root if a else []
         if any(any(c != 0 for c in r) for r in rows):
             out[k] = rows
     return out
@@ -1476,10 +1479,15 @@ def ways_chunk(d):
     n_waypoints x { f32 position[3], f32 radius, u16 father (its perso's id: level perso k + 1; 0 none: world axes),
     u16 0 }, n_persos x { u16 perso id, u16 n_ways, n_ways x { u16 n_points, n_points x u16 waypoint (1-based) },
     padded to 4 }. The ways' links are not exported: every link in the 21 retail levels is type 0 (straight; link +0x38),
-    whose GoOverWay goes waypoint to waypoint."""
+    whose GoOverWay goes waypoint to waypoint. The Special Edition's (2026-11-22) are laid out as retail's (the SE exe's
+    WP_fnuw_WayPoint_SizeOf 0x1C, WP_fnv_WayPoint_GetVertex +4, GetRadius +0x10, GetSuperObject +0x14; WP_fnv_Way_Alloc:
+    ptr waypoints, ptr links, u8 n; its link's type at +0x38 too), and all 417 links of its levels are type 0 as well;
+    its persos are numbered from cast.SE_ID_BASE, as its cast's are."""
+    from .cast import SE_ID_BASE
     lv, un = d.lv, d.un
     table = waypoints(d)
-    ids = {p.loc: k + 1 for k, p in enumerate(d.persos())}
+    base = SE_ID_BASE if d.se else 0
+    ids = {p.loc: base + k + 1 for k, p in enumerate(d.persos())}
     out = bytearray(struct.pack('<HH', len(table), 0))
     for w in sorted(table, key=table.get):
         father = lv.ptr(w, 0x14)
@@ -1508,13 +1516,14 @@ def perso_dsg_block(d, perso, ids=None):
     LevelData.perso_ids(); 0 none) instead of the snapshot's pointer, which is the perso's SuperObject (its +4 is the
     perso; a few point at the perso itself). Before 2026-11-11 the pointer went out raw and named no perso: every
     reference a level designer stored in a dsgvar was dead (cavedoc: the crate helpers' crate, the falling platforms'
-    chain, the toaster cameras' toasters). The Special Edition keeps the raw pointers (its id range is cast.py's)."""
+    chain, the toaster cameras' toasters). The Special Edition keeps the raw perso pointers (its id range is cast.py's); its waypoints are numbered
+    as retail's (2026-11-22)."""
     dsg, buf = [], b''
     parts = _dsg_parts(d, perso)
     if parts:
         dsg, src, size = parts
         buf = bytearray(d.un(f'{size}B', src))
-        table = {} if d.se else waypoints(d)  # the Special Edition's ways: not exported (0: none)
+        table = waypoints(d)
         ids = None if d.se else ids if ids is not None else d.perso_ids()
         for off, typ in dsg:
             if typ == 8 and off + 4 <= size:
@@ -1628,7 +1637,7 @@ def export(ai, path, behaviours=None, main_buttons=None, tables=False, perso_ids
             got = {loc: k for k, (loc, _, _) in enumerate(d.surfaces())}.get(ref)
             if got is not None:
                 return got
-        if t == 29 and not d.se:  # a waypoint: its number in the level's table (waypoints(), the .ttlv WAYS)
+        if t == 29:  # a waypoint: its number in the level's table (waypoints(), the .ttlv WAYS)
             got = waypoints(d).get(ref, 0) if ref else 0
             if got or not ref:
                 return got

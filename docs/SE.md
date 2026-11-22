@@ -264,8 +264,14 @@ close:
 - **No effect in the data:** the half-rate mode (AnimRef +0x68: odd frames interpolated at run time) and the AnimRef
   origin (+0x10: a state change moves the perso by the difference) are unset on all 291 initial-state animations; +0x6C too.
   Only initial states were scanned.
-- **Not ported:** frame +4 (a 3x3) and +8, accumulated by FUN_00424fd0 / FUN_00425720: root motion, by the look. Only
-  matters once SE persos walk by their own AI.
+- **Root motion (read and exported 2026-11-22):** frame +8 is an f32 vector, the root motion. FUN_00424e70 sums the
+  vectors of the frames played since the last update and divides by the tick's milliseconds; FUN_00425720 puts its
+  direction and length in the dynamics' proposal (+0x378, +0x384) and pushes mode 12 (0xC), the same as retail's
+  GAM_0042a8d0. Same units as retail's A3D frame vector: SE Ed's walk is (0, -0.08, 0), as retail Ed's. So it goes into
+  the same CMCS root rows (cast.roots_block, ai.root_motion via SeAnim.root). Frame +4, a 3x3 that FUN_00424fd0
+  multiplies over the same frames into a mode 3 turn, is not exported, as retail's frame quaternion isn't either (a
+  gap of both editions). Every one of the levels' state animations has both pointers; 1,190 to 4,222 non-zero vectors
+  per level; 0 to 385 non-identity 3x3s.
 - **Open: the speed of SE props.** ttlv.ANIM_TIME_SCALE (0.25) was matched by eye on retail props in Wine and is unexplained:
   the exe's formula says 1. It is applied to SE props too. Retail and SE props carry the same speeds (15, 25, 30), so the
   data doesn't say the SE differs, and nobody has compared SE props with the original. The state clips (Ed, the cast) run
